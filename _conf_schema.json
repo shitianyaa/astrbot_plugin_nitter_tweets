@@ -1,0 +1,162 @@
+{
+  "instances": {
+    "description": "Nitter 实例列表",
+    "type": "list",
+    "default": [
+      "https://nitter.catsarch.com",
+      "https://nitter.tiekoetter.com",
+      "https://nuku.trabun.org",
+      "https://nitter.privacyredirect.com",
+      "https://xcancel.com",
+      "https://nitter.net",
+      "https://nitter.space",
+      "https://lightbrd.com",
+      "https://nitter.kareem.one",
+      "https://nitter.poast.org"
+    ],
+    "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
+  },
+  "default_limit": {
+    "description": "默认获取条数",
+    "type": "int",
+    "default": 5,
+    "hint": "用户未传数量时使用，范围 1-20。"
+  },
+  "max_limit": {
+    "description": "单次最大条数",
+    "type": "int",
+    "default": 10,
+    "hint": "为避免刷屏和公共实例压力，建议不要超过 10。代码会限制在 1-20。"
+  },
+  "request_timeout": {
+    "description": "单个 Nitter 实例超时秒数",
+    "type": "float",
+    "default": 12.0,
+    "hint": "某个实例超时后会自动尝试下一个实例。"
+  },
+  "cooldown_seconds": {
+    "description": "用户请求冷却秒数",
+    "type": "float",
+    "default": 15.0,
+    "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。"
+  },
+  "user_agent": {
+    "description": "Nitter 请求 User-Agent",
+    "type": "string",
+    "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
+    "hint": "发送给 Nitter 实例的 User-Agent。"
+  },
+  "download_media": {
+    "description": "下载推文媒体",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后会把推文链接传给 xdown.app 解析图片/视频下载地址，并下载到本地缓存后发送。"
+  },
+  "download_images": {
+    "description": "下载图片",
+    "type": "bool",
+    "default": true
+  },
+  "download_videos": {
+    "description": "下载视频和 GIF",
+    "type": "bool",
+    "default": true,
+    "hint": "视频/GIF 体积可能较大，也更容易受平台限制；失败时会保留文本链接。"
+  },
+  "max_media_per_tweet": {
+    "description": "单条推文最大媒体数",
+    "type": "int",
+    "default": 4,
+    "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。"
+  },
+  "media_timeout": {
+    "description": "媒体解析/下载超时秒数",
+    "type": "float",
+    "default": 25.0
+  },
+  "media_max_size_mb": {
+    "description": "单个媒体大小上限 MB",
+    "type": "float",
+    "default": 25.0,
+    "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
+  },
+  "xdown_api_url": {
+    "description": "xdown 解析 API",
+    "type": "string",
+    "default": "https://xdown.app/api/ajaxSearch",
+    "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
+  },
+  "media_user_agent": {
+    "description": "媒体解析/下载 User-Agent",
+    "type": "string",
+    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+  },
+  "schedule_enabled": {
+    "description": "启用定时检查",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会按配置定时检查 watch_users 是否有新推文，并推送到 push_targets。"
+  },
+  "watch_users": {
+    "description": "关注账号列表",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+  },
+  "push_targets": {
+    "description": "定时推送目标列表",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个，支持 group:ID、private:ID、平台ID:group:ID、平台ID:private:ID、平台ID:GroupMessage:ID、平台ID:FriendMessage:ID。"
+  },
+  "platform_id": {
+    "description": "默认平台适配器 ID",
+    "type": "string",
+    "default": "",
+    "hint": "用于 push_targets 中未指定平台的条目，如 group:123。留空则自动检测，失败时默认 aiocqhttp。"
+  },
+  "interval_check_enabled": {
+    "description": "启用间隔检查",
+    "type": "bool",
+    "default": true,
+    "hint": "schedule_enabled 开启后生效。按 check_interval_minutes 周期检查。"
+  },
+  "check_interval_minutes": {
+    "description": "间隔检查分钟数",
+    "type": "int",
+    "default": 30,
+    "hint": "范围 1-1440。"
+  },
+  "daily_check_enabled": {
+    "description": "启用每日定点检查",
+    "type": "bool",
+    "default": false,
+    "hint": "schedule_enabled 开启后生效。可与间隔检查同时开启。"
+  },
+  "daily_check_times": {
+    "description": "每日检查时间列表",
+    "type": "list",
+    "default": [
+      "08:00"
+    ],
+    "hint": "格式 HH:MM，每行一个。"
+  },
+  "scheduled_fetch_limit": {
+    "description": "定时检查每账号拉取条数",
+    "type": "int",
+    "default": 5,
+    "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
+  },
+  "send_target_interval": {
+    "description": "多目标发送间隔秒数",
+    "type": "float",
+    "default": 1.5,
+    "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+  },
+  "send_user_interval": {
+    "description": "多账号发送间隔秒数",
+    "type": "float",
+    "default": 2.0,
+    "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+  }
+}

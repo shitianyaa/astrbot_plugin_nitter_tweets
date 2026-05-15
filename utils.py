@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import hashlib
+import html
+import re
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+
+DEFAULT_INSTANCES = [
+    "https://nitter.catsarch.com",
+    "https://nitter.tiekoetter.com",
+    "https://nuku.trabun.org",
+    "https://nitter.privacyredirect.com",
+    "https://xcancel.com",
+    "https://nitter.net",
+    "https://nitter.space",
+    "https://lightbrd.com",
+    "https://nitter.kareem.one",
+    "https://nitter.poast.org",
+]
+
+
+def clamp_int(value, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = minimum
+    return max(minimum, min(maximum, number))
+
+
+def clamp_float(value, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = minimum
+    return max(minimum, min(maximum, number))
+
+
+def clean_text(raw: str) -> str:
+    text = re.sub(r"(?i)<br\s*/?>", "\n", raw)
+    text = re.sub(r"(?s)<[^>]+>", "", text)
+    text = html.unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def file_uri(path: Path) -> str:
+    if not path.is_absolute():
+        path = path.resolve()
+    posix_path = path.as_posix()
+    if posix_path.startswith("/"):
+        return f"file:////{posix_path.lstrip('/')}"
+    return path.as_uri()
+
+
+def generate_file_name(url: str, default_suffix: str = "") -> str:
+    parsed = urlparse(url)
+    suffix = Path(parsed.path).suffix
+    if not suffix:
+        query = parse_qs(parsed.query)
+        media_format = (query.get("format") or [""])[0].strip(".")
+        suffix = f".{media_format}" if media_format else default_suffix
+    digest = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
+    return f"{digest}{suffix or default_suffix}"
+
+
+def load_instances(value) -> list[str]:
+    if isinstance(value, str):
+        raw_items = re.split(r"[\n,]+", value)
+    elif isinstance(value, list):
+        raw_items = [str(item) for item in value]
+    else:
+        raw_items = DEFAULT_INSTANCES
+
+    instances: list[str] = []
+    for item in raw_items:
+        item = item.strip().rstrip("/")
+        if not item:
+            continue
+        if not item.startswith(("http://", "https://")):
+            item = f"https://{item}"
+        if item not in instances:
+            instances.append(item)
+    return instances or DEFAULT_INSTANCES
+
+
+def normalize_username(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        path = urlparse(value).path.strip("/")
+        value = path.split("/", 1)[0] if path else ""
+    value = value.lstrip("@").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", value):
+        return ""
+    return value
+
+
+def safe_call(obj, method_name: str):
+    method = getattr(obj, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        return method()
+    except Exception:
+        return None
+
+
+def node_uin(event):
+    for method_name in ("get_self_id", "get_sender_id"):
+        value = safe_call(event, method_name)
+        if value:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return value
+    return 10000
