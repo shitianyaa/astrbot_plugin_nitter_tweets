@@ -27,6 +27,7 @@ class TweetItem:
     link: str
     published: str
     media: list[TweetMedia] = field(default_factory=list)
+    translation: str = ""
 
     @property
     def status_id(self) -> str:

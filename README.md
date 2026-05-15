@@ -23,6 +23,14 @@ https://x.com/<username>/status/<tweet_id>
 
 如果媒体解析或下载失败，推文文本和原始链接仍会正常发送。
 
+## 非中文推文翻译
+
+开启 `translate_enabled` 后，插件会先用轻量规则判断推文是否不像中文；需要翻译时，会调用 AstrBot 已配置的大模型，把译文追加到推文节点中。
+
+手动 `/推文` 查询会优先使用当前会话绑定的模型。定时推送没有真实触发会话，建议在 `translation_provider_id` 中选择一个固定模型；留空时会尝试使用第一个推送目标的默认模型。
+
+可通过 `translate_system_prompt` 和 `translate_prompt_template` 自定义翻译风格，例如要求保留术语、改成口语化中文等。模板中需要包含 `{text}`，插件会把推文正文替换进去。
+
 ## 配置
 
 - `instances`：Nitter 实例列表，建议把自建实例放在第一位。
@@ -34,6 +42,10 @@ https://x.com/<username>/status/<tweet_id>
 - `max_media_per_tweet`：单条推文最多发送多少个媒体。
 - `media_max_size_mb`：单个媒体大小上限。
 - `xdown_api_url`：Twitter/X 媒体解析 API。
+- `translate_enabled`：是否翻译非中文推文。
+- `translation_provider_id`：翻译使用的大模型，支持在 WebUI 选择现有 provider。
+- `translate_chinese_ratio_threshold`：中文占比低于该值时判定为非中文。
+- `translate_system_prompt` / `translate_prompt_template`：翻译提示词。
 
 ## 定时检查
 
@@ -61,6 +73,7 @@ https://x.com/<username>/status/<tweet_id>
 - 公共 Nitter 实例不适合高频抓取，长期稳定使用建议自建实例。
 - 视频/GIF 比图片更容易触发平台大小、格式或风控限制；如果合并转发失败，插件会回退为普通文本。
 - 本插件不依赖 `astrbot_plugin_parser-main` 运行，只参考了它的 Twitter 媒体解析思路。
+- 翻译功能使用 AstrBot 的 `context.llm_generate(...)` 接口；大模型输出质量和费用取决于你选择的 provider。
 
 ## 致谢
 

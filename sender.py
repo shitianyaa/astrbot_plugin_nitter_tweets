@@ -223,6 +223,9 @@ class TweetSender:
             lines.append(tweet.published)
         if tweet.text:
             lines.append(tweet.text)
+        if tweet.translation:
+            lines.append("中文翻译：")
+            lines.append(tweet.translation)
         if tweet.link:
             lines.append(tweet.link)
         if tweet.media:

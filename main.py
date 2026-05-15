@@ -11,12 +11,14 @@ try:
     from .nitter_client import NitterClient
     from .scheduler import NitterTweetScheduler
     from .sender import TweetSender
+    from .translator import TweetTranslator
     from .utils import clamp_float, clamp_int, normalize_username, safe_call
 except ImportError:
     from media import MediaService
     from nitter_client import NitterClient
     from scheduler import NitterTweetScheduler
     from sender import TweetSender
+    from translator import TweetTranslator
     from utils import clamp_float, clamp_int, normalize_username, safe_call
 
 
@@ -24,7 +26,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.3.0",
+    "0.4.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -33,8 +35,15 @@ class NitterTweetsPlugin(Star):
         self.nitter = NitterClient(config)
         self.media = MediaService(config)
         self.sender = TweetSender()
+        self.translator = TweetTranslator(context, config)
         self.scheduler = NitterTweetScheduler(
-            self, context, config, self.nitter, self.media, self.sender
+            self,
+            context,
+            config,
+            self.nitter,
+            self.media,
+            self.sender,
+            self.translator,
         )
         self.default_limit = clamp_int(config.get("default_limit", 5), 1, 20)
         self.max_limit = clamp_int(config.get("max_limit", 10), 1, 20)
@@ -47,7 +56,8 @@ class NitterTweetsPlugin(Star):
         logger.info(
             "Nitter tweets plugin loaded: "
             f"{len(self.nitter.instances)} instances, "
-            f"media={'on' if self.media.enabled else 'off'}"
+            f"media={'on' if self.media.enabled else 'off'}, "
+            f"translate={'on' if self.translator.enabled else 'off'}"
         )
         self.scheduler.start(reason="initialize")
 
@@ -94,6 +104,7 @@ class NitterTweetsPlugin(Star):
             await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
             return
 
+        await self.translator.attach_translations(tweets, event.unified_msg_origin)
         await self.media.attach_media(tweets)
         if not await self.sender.send(event, username, instance, tweets):
             await event.send(

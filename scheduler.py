@@ -25,13 +25,14 @@ SEEN_LIMIT_PER_USER = 100
 
 
 class NitterTweetScheduler:
-    def __init__(self, owner, context, config, nitter, media, sender):
+    def __init__(self, owner, context, config, nitter, media, sender, translator):
         self.owner = owner
         self.context = context
         self.config = config
         self.nitter = nitter
         self.media = media
         self.sender = sender
+        self.translator = translator
         self._task: asyncio.Task | None = None
         self._last_interval_slot: int | None = None
         self._daily_slots: set[str] = set()
@@ -151,6 +152,7 @@ class NitterTweetScheduler:
 
             if new_tweets:
                 new_tweets.reverse()
+                await self.translator.attach_translations(new_tweets, targets[0])
                 await self.media.attach_media(new_tweets)
                 success = 0
                 for target_index, umo in enumerate(targets):
