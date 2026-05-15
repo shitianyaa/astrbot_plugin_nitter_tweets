@@ -1,5 +1,9 @@
 # Nitter 推文记录
 
+<div align="center">
+  <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
+</div>
+
 通过 Nitter RSS 获取指定 X/Twitter 用户最近公开推文，并以聊天记录/合并转发形式发送。
 
 ## 用法
@@ -82,6 +86,7 @@ https://x.com/<username>/status/<tweet_id>
 - [`astrbot_plugin_parser`](https://github.com/Zhalslar/astrbot_plugin_parser)：参考了其中 Twitter/X 媒体解析、媒体下载与消息发送分层的实现思路。
 - [Nitter](https://github.com/zedeus/nitter) 及各公共实例维护者：提供公开推文 RSS 的访问方式。公共实例不建议用于高频抓取，长期使用请自建实例并控制请求频率。
 - [xdown.app](https://xdown.app/)：提供 Twitter/X 推文媒体解析接口，本插件通过该接口获取图片、MP4、GIF 下载地址。
+- [count.getloli.com](https://count.getloli.com/)：提供 README 访问计数图片。
 - [AstrBot](https://github.com/Soulter/AstrBot)、OneBot/aiocqhttp 生态：提供插件运行、消息组件与合并转发能力。
 
 本插件与 X/Twitter、Nitter、xdown.app 均无官方关联。推文文本、图片、视频等内容版权归原作者或权利方所有，请遵守相关平台规则和当地法律法规。
