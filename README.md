@@ -91,6 +91,10 @@ https://x.com/<username>/status/<tweet_id>
 
 本插件与 X/Twitter、Nitter、xdown.app 均无官方关联。推文文本、图片、视频等内容版权归原作者或权利方所有，请遵守相关平台规则和当地法律法规。
 
+## 更新日志
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。
+
 ## License
 
 本项目代码采用 MIT License，详见 [LICENSE](./LICENSE)。
