@@ -20,11 +20,10 @@ MENTION_RE = re.compile(r"(?<!\w)@\w+")
 SPACE_RE = re.compile(r"\s+")
 
 
-DEFAULT_SYSTEM_PROMPT = (
-    "你是专业翻译助手。把用户提供的推文翻译成简体中文。"
-    "保留人名、账号、链接、标签和原有换行，不添加解释，不输出原文。"
+DEFAULT_TRANSLATE_PROMPT = (
+    "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。"
+    "保留人名、账号、链接、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}"
 )
-DEFAULT_PROMPT_TEMPLATE = "请把下面这条推文翻译成简体中文：\n\n{text}"
 
 
 class TweetTranslator:
@@ -37,14 +36,7 @@ class TweetTranslator:
         self.chinese_ratio_threshold = clamp_float(
             config.get("translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
         )
-        self.system_prompt = (
-            str(config.get("translate_system_prompt", "") or "").strip()
-            or DEFAULT_SYSTEM_PROMPT
-        )
-        self.prompt_template = (
-            str(config.get("translate_prompt_template", "") or "").strip()
-            or DEFAULT_PROMPT_TEMPLATE
-        )
+        self.prompt_template = self._load_prompt(config)
         if "{text}" not in self.prompt_template:
             self.prompt_template = f"{self.prompt_template}\n\n{{text}}"
 
@@ -111,7 +103,6 @@ class TweetTranslator:
             resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
-                system_prompt=self.system_prompt,
             )
         except Exception as exc:
             logger.warning(f"[NitterTweets] tweet translation failed: {exc}")
@@ -128,6 +119,21 @@ class TweetTranslator:
         text = URL_RE.sub("", text or "")
         text = MENTION_RE.sub("", text)
         return SPACE_RE.sub("", text)
+
+    @staticmethod
+    def _load_prompt(config) -> str:
+        prompt = str(config.get("translate_prompt", "") or "").strip()
+        if prompt:
+            return prompt
+
+        old_system = str(config.get("translate_system_prompt", "") or "").strip()
+        old_template = str(config.get("translate_prompt_template", "") or "").strip()
+        if old_system or old_template:
+            return "\n\n".join(
+                part for part in (old_system, old_template) if part
+            ).strip()
+
+        return DEFAULT_TRANSLATE_PROMPT
 
     @staticmethod
     def _clean_completion(text: str) -> str:

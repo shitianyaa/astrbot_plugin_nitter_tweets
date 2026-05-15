@@ -33,7 +33,7 @@ https://x.com/<username>/status/<tweet_id>
 
 手动 `/推文` 查询会优先使用当前会话绑定的模型。定时推送没有真实触发会话，建议在 `translation_provider_id` 中选择一个固定模型；留空时会尝试使用第一个推送目标的默认模型。
 
-可通过 `translate_system_prompt` 和 `translate_prompt_template` 自定义翻译风格，例如要求保留术语、改成口语化中文等。模板中需要包含 `{text}`，插件会把推文正文替换进去。
+可通过 `translate_prompt` 自定义翻译风格，例如要求保留术语、改成口语化中文等。提示词中需要包含 `{text}`，插件会把推文正文替换进去。
 
 ## 配置
 
@@ -49,7 +49,7 @@ https://x.com/<username>/status/<tweet_id>
 - `translate_enabled`：是否翻译非中文推文。
 - `translation_provider_id`：翻译使用的大模型，支持在 WebUI 选择现有 provider。
 - `translate_chinese_ratio_threshold`：中文占比低于该值时判定为非中文。
-- `translate_system_prompt` / `translate_prompt_template`：翻译提示词。
+- `translate_prompt`：翻译提示词，需包含 `{text}`。
 
 ## 定时检查
 
