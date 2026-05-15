@@ -37,6 +37,8 @@ https://x.com/<username>/status/<tweet_id>
 
 可通过 `translate_prompt` 自定义翻译风格，例如要求保留术语、改成口语化中文等。提示词中需要包含 `{text}`，插件会把推文正文替换进去。
 
+翻译链路会输出 `[NitterTweets] translation ...` 日志，可用于确认是否开启、是否匹配为非中文、使用了哪个 provider，以及模型是否返回译文。
+
 ## 配置
 
 - `instances`：Nitter 实例列表，建议把自建实例放在第一位。

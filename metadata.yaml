@@ -1,5 +1,5 @@
 name: astrbot_plugin_nitter_tweets
-version: 0.4.1
+version: 0.4.2
 display_name: Nitter 推文记录
 desc: 通过 Nitter RSS 获取指定用户公开推文和媒体，支持手动查询与定时推送。
 description: 通过可配置的 Nitter 实例轮询指定用户 RSS，将最近公开推文发送为合并转发聊天记录；可通过 xdown 解析并下载图片、视频、GIF；支持按间隔或每日定点检查关注账号并推送新推文；可调用 AstrBot 已配置大模型翻译非中文推文。

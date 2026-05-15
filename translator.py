@@ -44,56 +44,120 @@ class TweetTranslator:
         self, tweets: list[TweetItem], umo: str | None = None
     ) -> None:
         if not self.enabled:
+            logger.info("[NitterTweets] translation skipped: translate_enabled=false")
             return
 
-        provider_id = await self._resolve_provider_id(umo)
+        if not tweets:
+            logger.info("[NitterTweets] translation skipped: no tweets")
+            return
+
+        provider_id, provider_source = await self._resolve_provider_id(umo)
         if not provider_id:
             logger.warning(
                 "[NitterTweets] translation enabled but no LLM provider is available"
             )
             return
 
-        for tweet in tweets:
-            if tweet.translation or not self._should_translate(tweet.text):
+        logger.info(
+            "[NitterTweets] translation check started: "
+            f"tweets={len(tweets)}, provider={provider_id} ({provider_source})"
+        )
+
+        translated = 0
+        skipped = 0
+        failed = 0
+        for index, tweet in enumerate(tweets, 1):
+            status_id = tweet.status_id or f"index-{index}"
+            if tweet.translation:
+                skipped += 1
+                logger.info(
+                    f"[NitterTweets] translation skipped: status={status_id}, reason=already_translated"
+                )
                 continue
-            translation = await self._translate(provider_id, tweet.text)
+
+            should_translate, reason = self._translation_decision(tweet.text)
+            if not should_translate:
+                skipped += 1
+                logger.info(
+                    f"[NitterTweets] translation skipped: status={status_id}, reason={reason}"
+                )
+                continue
+
+            logger.info(
+                f"[NitterTweets] translation requested: status={status_id}, reason={reason}"
+            )
+            translation = await self._translate(provider_id, tweet.text, status_id)
             if translation:
                 tweet.translation = translation
+                translated += 1
+                logger.info(
+                    "[NitterTweets] translation completed: "
+                    f"status={status_id}, chars={len(translation)}"
+                )
+            else:
+                failed += 1
+                logger.warning(
+                    f"[NitterTweets] translation produced no text: status={status_id}"
+                )
 
-    async def _resolve_provider_id(self, umo: str | None) -> str:
+        logger.info(
+            "[NitterTweets] translation check finished: "
+            f"translated={translated}, skipped={skipped}, failed={failed}"
+        )
+
+    async def _resolve_provider_id(self, umo: str | None) -> tuple[str, str]:
         if self.provider_id:
-            return self.provider_id
+            return self.provider_id, "config"
 
-        if not umo:
-            return ""
+        provider_id = ""
 
-        try:
+        if umo:
             try:
-                provider_id = await self.context.get_current_chat_provider_id(umo=umo)
-            except TypeError:
-                provider_id = await self.context.get_current_chat_provider_id(umo)
-        except Exception as exc:
-            logger.debug(f"[NitterTweets] failed to resolve chat provider: {exc}")
-            return ""
-        return str(provider_id or "").strip()
+                try:
+                    provider_id = await self.context.get_current_chat_provider_id(umo=umo)
+                except TypeError:
+                    provider_id = await self.context.get_current_chat_provider_id(umo)
+            except Exception as exc:
+                logger.info(f"[NitterTweets] current chat provider lookup failed: {exc}")
+
+        provider_id = str(provider_id or "").strip()
+        if provider_id:
+            return provider_id, "current_chat"
+
+        provider_id = self._first_provider_id()
+        if provider_id:
+            logger.info(
+                "[NitterTweets] using first configured provider for translation "
+                "because no chat-specific provider was found"
+            )
+            return provider_id, "first_provider"
+
+        return "", "none"
 
     def _should_translate(self, text: str) -> bool:
+        return self._translation_decision(text)[0]
+
+    def _translation_decision(self, text: str) -> tuple[bool, str]:
         cleaned = self._clean_for_detection(text)
         if len(cleaned) < self.min_chars:
-            return False
+            return False, f"too_short(len={len(cleaned)}, min={self.min_chars})"
 
         if KANA_RE.search(cleaned) or HANGUL_RE.search(cleaned):
-            return True
+            return True, f"kana_or_hangul(len={len(cleaned)})"
 
         meaningful = [ch for ch in cleaned if not ch.isspace()]
         if not meaningful:
-            return False
+            return False, "empty_after_clean"
 
         chinese_count = sum(1 for ch in meaningful if CJK_RE.match(ch))
         chinese_ratio = chinese_count / len(meaningful)
-        return chinese_ratio < self.chinese_ratio_threshold
+        reason = (
+            f"chinese_ratio={chinese_ratio:.2f}, "
+            f"threshold={self.chinese_ratio_threshold:.2f}, len={len(meaningful)}"
+        )
+        return chinese_ratio < self.chinese_ratio_threshold, reason
 
-    async def _translate(self, provider_id: str, text: str) -> str:
+    async def _translate(self, provider_id: str, text: str, status_id: str) -> str:
         prompt_text = text.strip()
         if len(prompt_text) > self.max_chars:
             prompt_text = prompt_text[: self.max_chars].rstrip()
@@ -105,7 +169,9 @@ class TweetTranslator:
                 prompt=prompt,
             )
         except Exception as exc:
-            logger.warning(f"[NitterTweets] tweet translation failed: {exc}")
+            logger.warning(
+                f"[NitterTweets] tweet translation failed: status={status_id}, error={exc}"
+            )
             return ""
 
         completion = str(getattr(resp, "completion_text", "") or "").strip()
@@ -134,6 +200,24 @@ class TweetTranslator:
             ).strip()
 
         return DEFAULT_TRANSLATE_PROMPT
+
+    def _first_provider_id(self) -> str:
+        try:
+            provider_manager = getattr(self.context, "provider_manager", None)
+            if provider_manager is None:
+                return ""
+            providers = provider_manager.get_all_providers()
+            if isinstance(providers, dict) and providers:
+                return str(next(iter(providers.keys())) or "").strip()
+            if isinstance(providers, list) and providers:
+                first = providers[0]
+                for attr in ("id", "provider_id", "name"):
+                    value = getattr(first, attr, None)
+                    if value:
+                        return str(value).strip()
+        except Exception as exc:
+            logger.info(f"[NitterTweets] provider fallback lookup failed: {exc}")
+        return ""
 
     @staticmethod
     def _clean_completion(text: str) -> str:
