@@ -3,9 +3,20 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import re
+from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger
+
+try:
+    from astrbot.api.all import MessageChain
+except ImportError:
+    from astrbot.api.event import MessageChain
+
+try:
+    from astrbot.api.message_components import Plain
+except ImportError:
+    from astrbot.core.message.components import Plain
 
 try:
     from .utils import clamp_float, clamp_int, normalize_username
@@ -24,6 +35,139 @@ POLL_SECONDS = 30
 SEEN_LIMIT_PER_USER = 100
 
 
+@dataclass(slots=True)
+class PushTargetParseResult:
+    targets: list[str] = field(default_factory=list)
+    invalid_targets: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ScheduledPushResult:
+    username: str
+    new_count: int
+    success_targets: int
+    total_targets: int
+
+
+@dataclass(slots=True)
+class ScheduledCheckResult:
+    reason: str
+    users: list[str] = field(default_factory=list)
+    targets: list[str] = field(default_factory=list)
+    invalid_targets: list[str] = field(default_factory=list)
+    seen_users: int = 0
+    fetch_limit: int = 0
+    skipped_reason: str = ""
+    initialized_users: dict[str, int] = field(default_factory=dict)
+    no_new_users: list[str] = field(default_factory=list)
+    empty_users: list[str] = field(default_factory=list)
+    failed_users: dict[str, str] = field(default_factory=dict)
+    pushes: list[ScheduledPushResult] = field(default_factory=list)
+
+    @property
+    def new_tweet_count(self) -> int:
+        return sum(push.new_count for push in self.pushes)
+
+    @property
+    def pushed_target_successes(self) -> int:
+        return sum(push.success_targets for push in self.pushes)
+
+    @property
+    def pushed_target_attempts(self) -> int:
+        return sum(push.total_targets for push in self.pushes)
+
+    @property
+    def checked_user_count(self) -> int:
+        return (
+            len(self.initialized_users)
+            + len(self.no_new_users)
+            + len(self.empty_users)
+            + len(self.failed_users)
+            + len(self.pushes)
+        )
+
+    def has_visible_no_update(self) -> bool:
+        return (
+            not self.skipped_reason
+            and self.targets
+            and self.new_tweet_count == 0
+            and (
+                bool(self.initialized_users)
+                or bool(self.no_new_users)
+                or bool(self.empty_users)
+                or bool(self.failed_users)
+            )
+        )
+
+    def format_log_summary(self) -> str:
+        if self.skipped_reason:
+            return (
+                "[NitterTweets] scheduled check skipped: "
+                f"reason={self.skipped_reason}, users={len(self.users)}, "
+                f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
+            )
+
+        return (
+            "[NitterTweets] scheduled check finished: "
+            f"reason={self.reason}, users={len(self.users)}, targets={len(self.targets)}, "
+            f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
+            f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
+            f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
+            f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
+            f"invalid_targets={len(self.invalid_targets)}"
+        )
+
+    def format_message(self, title: str = "Nitter 定时检查结果") -> str:
+        lines = [
+            title,
+            f"触发原因: {self.reason}",
+            f"关注账号: {len(self.users)} 个",
+            f"推送目标: {len(self.targets)} 个",
+            f"已记录账号: {self.seen_users} 个",
+        ]
+        if self.fetch_limit:
+            lines.append(f"每账号拉取: {self.fetch_limit} 条")
+
+        if self.skipped_reason:
+            reason_text = {
+                "no_watch_users": "未配置 watch_users",
+                "no_push_targets": "未配置有效 push_targets",
+            }.get(self.skipped_reason, self.skipped_reason)
+            lines.append(f"检查跳过: {reason_text}")
+
+        if self.initialized_users:
+            items = [
+                f"@{username}({count} 条)"
+                for username, count in self.initialized_users.items()
+            ]
+            lines.append("首次记录: " + ", ".join(items))
+
+        if self.pushes:
+            items = [
+                f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
+                for item in self.pushes
+            ]
+            lines.append("新推文: " + "; ".join(items))
+
+        if self.no_new_users:
+            lines.append("无新推文: " + ", ".join(f"@{user}" for user in self.no_new_users))
+
+        if self.empty_users:
+            lines.append("RSS 无有效推文 ID: " + ", ".join(f"@{user}" for user in self.empty_users))
+
+        if self.failed_users:
+            items = [f"@{user}: {error}" for user, error in self.failed_users.items()]
+            lines.append("失败: " + "; ".join(items))
+
+        if self.invalid_targets:
+            lines.append("无效推送目标: " + ", ".join(self.invalid_targets))
+
+        if not self.skipped_reason and self.new_tweet_count == 0:
+            lines.append("本次没有发现需要推送的新推文。")
+
+        return "\n".join(lines)
+
+
 class NitterTweetScheduler:
     def __init__(self, owner, context, config, nitter, media, sender, translator):
         self.owner = owner
@@ -36,16 +180,28 @@ class NitterTweetScheduler:
         self._task: asyncio.Task | None = None
         self._last_interval_slot: int | None = None
         self._daily_slots: set[str] = set()
+        self._last_enabled_state: bool | None = None
 
     def start(self, reason: str = "") -> None:
         if self._task is not None and not self._task.done():
+            logger.info(
+                "[NitterTweets] scheduler already running "
+                f"({reason}); enabled={self.schedule_enabled}"
+            )
             return
         try:
-            self._task = asyncio.create_task(self._loop())
-            logger.info(f"[NitterTweets] scheduler started ({reason})")
+            loop = asyncio.get_running_loop()
+            self._task = loop.create_task(self._loop())
+            logger.info(
+                "[NitterTweets] scheduler started "
+                f"({reason}); enabled={self.schedule_enabled}, "
+                f"watch_users={len(self._watch_users())}, "
+                f"push_targets={len(self._parse_push_targets(log_invalid=False).targets)}"
+            )
         except RuntimeError:
-            logger.debug(
-                f"[NitterTweets] no running event loop during {reason}, scheduler waits"
+            logger.info(
+                f"[NitterTweets] no running event loop during {reason}; "
+                "scheduler will wait for the next startup hook"
             )
 
     async def stop(self) -> None:
@@ -56,13 +212,18 @@ class NitterTweetScheduler:
             await self._task
         except asyncio.CancelledError:
             pass
+        logger.info("[NitterTweets] scheduler stopped")
 
     async def _loop(self) -> None:
+        logger.info("[NitterTweets] scheduler loop entered")
         await asyncio.sleep(2)
         while True:
             try:
-                if self.config.get("schedule_enabled", False):
+                if self.schedule_enabled:
+                    self._log_enabled_state(True)
                     await self._tick()
+                else:
+                    self._log_enabled_state(False)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -70,6 +231,23 @@ class NitterTweetScheduler:
                 await asyncio.sleep(60)
                 continue
             await asyncio.sleep(POLL_SECONDS)
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    @property
+    def schedule_enabled(self) -> bool:
+        return bool(self.config.get("schedule_enabled", False))
+
+    def _log_enabled_state(self, enabled: bool) -> None:
+        if self._last_enabled_state is enabled:
+            return
+        self._last_enabled_state = enabled
+        if enabled:
+            logger.info("[NitterTweets] scheduler active: schedule_enabled=true")
+        else:
+            logger.info("[NitterTweets] scheduler idle: schedule_enabled=false")
 
     async def _tick(self) -> None:
         now = dt.datetime.now(CN_TZ)
@@ -101,37 +279,61 @@ class NitterTweetScheduler:
 
         if reasons:
             logger.info(f"[NitterTweets] scheduled check triggered: {', '.join(reasons)}")
-            await self.run_check()
+            await self.run_check(reason=", ".join(reasons))
 
-    async def run_check(self) -> None:
+    async def run_check(
+        self,
+        reason: str = "manual",
+        notify_no_updates: bool | None = None,
+    ) -> ScheduledCheckResult:
         users = self._watch_users()
+        target_info = self._parse_push_targets()
+        targets = target_info.targets
+        result = ScheduledCheckResult(
+            reason=reason,
+            users=users,
+            targets=targets,
+            invalid_targets=target_info.invalid_targets,
+        )
         if not users:
-            logger.debug("[NitterTweets] no watch_users configured, skip scheduled check")
-            return
-
-        targets = self._push_targets()
+            result.skipped_reason = "no_watch_users"
+            logger.info(result.format_log_summary())
+            return result
         if not targets:
-            logger.debug("[NitterTweets] no push_targets configured, skip scheduled check")
-            return
+            result.skipped_reason = "no_push_targets"
+            logger.info(result.format_log_summary())
+            return result
 
         seen_map = await self._get_seen_map()
+        result.seen_users = len(seen_map)
         fetch_limit = clamp_int(self.config.get("scheduled_fetch_limit", 5), 1, 20)
+        result.fetch_limit = fetch_limit
         target_interval = clamp_float(
             self.config.get("send_target_interval", 1.5), 0.0, 60.0
         )
         user_interval = clamp_float(
             self.config.get("send_user_interval", 2.0), 0.0, 60.0
         )
+        logger.info(
+            "[NitterTweets] scheduled check started: "
+            f"reason={reason}, users={len(users)}, targets={len(targets)}, "
+            f"invalid_targets={len(target_info.invalid_targets)}, fetch_limit={fetch_limit}"
+        )
 
         for user_index, username in enumerate(users):
             try:
                 instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
             except Exception as exc:
+                result.failed_users[username] = str(exc)
                 logger.warning(f"[NitterTweets] scheduled fetch @{username} failed: {exc}")
                 continue
 
             tweets = [tweet for tweet in tweets if tweet.status_id]
             if not tweets:
+                result.empty_users.append(username)
+                logger.info(
+                    f"[NitterTweets] scheduled check @{username}: no valid status ids"
+                )
                 continue
 
             fetched_ids = [tweet.status_id for tweet in tweets]
@@ -140,6 +342,7 @@ class NitterTweetScheduler:
             if not isinstance(seen_ids, list):
                 seen_map[username] = fetched_ids[:SEEN_LIMIT_PER_USER]
                 await self._put_seen_map(seen_map)
+                result.initialized_users[username] = len(fetched_ids)
                 logger.info(
                     f"[NitterTweets] initialized @{username} with {len(fetched_ids)} seen tweets"
                 )
@@ -152,8 +355,16 @@ class NitterTweetScheduler:
 
             if new_tweets:
                 new_tweets.reverse()
-                await self.translator.attach_translations(new_tweets, targets[0])
-                await self.media.attach_media(new_tweets)
+                try:
+                    await self.translator.attach_translations(new_tweets, targets[0])
+                    await self.media.attach_media(new_tweets)
+                except Exception as exc:
+                    result.failed_users[username] = f"prepare failed: {exc}"
+                    logger.warning(
+                        f"[NitterTweets] scheduled prepare @{username} failed: {exc}"
+                    )
+                    continue
+
                 success = 0
                 for target_index, umo in enumerate(targets):
                     try:
@@ -164,19 +375,99 @@ class NitterTweetScheduler:
                     except Exception as exc:
                         logger.warning(
                             f"[NitterTweets] scheduled push @{username} to {umo} failed: {exc}"
-                        )
+                    )
                     if target_index < len(targets) - 1 and target_interval > 0:
                         await asyncio.sleep(target_interval)
+                result.pushes.append(
+                    ScheduledPushResult(
+                        username=username,
+                        new_count=len(new_tweets),
+                        success_targets=success,
+                        total_targets=len(targets),
+                    )
+                )
                 logger.info(
                     f"[NitterTweets] pushed @{username} {len(new_tweets)} new tweets "
                     f"to {success}/{len(targets)} targets"
                 )
+            else:
+                result.no_new_users.append(username)
+                logger.info(f"[NitterTweets] scheduled check @{username}: no new tweets")
 
             seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
             await self._put_seen_map(seen_map)
 
             if user_index < len(users) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
+
+        logger.info(result.format_log_summary())
+        if self._should_notify_no_updates(result, notify_no_updates):
+            await self._send_no_update_notice(result, target_interval)
+        return result
+
+    async def status_summary(self) -> str:
+        users = self._watch_users()
+        target_info = self._parse_push_targets(log_invalid=False)
+        seen_map = await self._get_seen_map()
+        interval_minutes = clamp_int(
+            self.config.get("check_interval_minutes", 30), 1, 1440
+        )
+        daily_times = self._parse_daily_times()
+
+        lines = [
+            "Nitter 定时检查状态",
+            f"调度器: {'运行中' if self.is_running else '未运行'}",
+            f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
+            f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
+            f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
+            f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
+            f"关注账号: {len(users)} 个",
+            f"推送目标: {len(target_info.targets)} 个",
+            f"无效目标: {len(target_info.invalid_targets)} 个",
+            f"已记录账号: {len(seen_map)} 个",
+        ]
+        if daily_times:
+            formatted_times = ", ".join(f"{hour:02d}:{minute:02d}" for hour, minute in daily_times)
+            lines.append(f"每日时间: {formatted_times}")
+        if users:
+            lines.append("账号列表: " + ", ".join(f"@{user}" for user in users))
+        if target_info.targets:
+            lines.append("解析目标:")
+            for umo in target_info.targets[:8]:
+                lines.append(f"- {umo}")
+            if len(target_info.targets) > 8:
+                lines.append(f"- ... 还有 {len(target_info.targets) - 8} 个")
+        if target_info.invalid_targets:
+            lines.append("无效目标: " + ", ".join(target_info.invalid_targets))
+        return "\n".join(lines)
+
+    def _should_notify_no_updates(
+        self,
+        result: ScheduledCheckResult,
+        notify_no_updates: bool | None,
+    ) -> bool:
+        if notify_no_updates is None:
+            notify_no_updates = bool(self.config.get("notify_no_updates", False))
+        return bool(notify_no_updates and result.has_visible_no_update())
+
+    async def _send_no_update_notice(
+        self, result: ScheduledCheckResult, target_interval: float
+    ) -> None:
+        text = result.format_message("Nitter 定时检查无更新")
+        success = 0
+        for target_index, umo in enumerate(result.targets):
+            try:
+                await self.context.send_message(umo, MessageChain([Plain(text)]))
+                success += 1
+            except Exception as exc:
+                logger.warning(
+                    f"[NitterTweets] no-update notice to {umo} failed: {exc}"
+                )
+            if target_index < len(result.targets) - 1 and target_interval > 0:
+                await asyncio.sleep(target_interval)
+        logger.info(
+            f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
+        )
 
     async def _get_seen_map(self) -> dict[str, list[str]]:
         value = await self.owner.get_kv_data(KV_KEY_SEEN, {})
@@ -220,24 +511,33 @@ class NitterTweetScheduler:
         return users
 
     def _push_targets(self) -> list[str]:
+        return self._parse_push_targets().targets
+
+    def _parse_push_targets(self, log_invalid: bool = True) -> PushTargetParseResult:
         default_platform = self._get_platform()
         raw_targets = self.config.get("push_targets", []) or []
-        targets: list[str] = []
+        result = PushTargetParseResult()
         seen: set[str] = set()
         for raw in raw_targets:
             if not isinstance(raw, str):
+                invalid = repr(raw)
+                result.invalid_targets.append(invalid)
+                if log_invalid:
+                    logger.warning(f"[NitterTweets] invalid push target: {invalid}")
                 continue
             target = raw.strip().replace("：", ":")
             if not target:
                 continue
             umo = self._parse_target_to_umo(target, default_platform)
             if umo is None:
-                logger.warning(f"[NitterTweets] invalid push target: {raw!r}")
+                result.invalid_targets.append(raw)
+                if log_invalid:
+                    logger.warning(f"[NitterTweets] invalid push target: {raw!r}")
                 continue
             if umo not in seen:
                 seen.add(umo)
-                targets.append(umo)
-        return targets
+                result.targets.append(umo)
+        return result
 
     def _get_platform(self) -> str:
         configured = (self.config.get("platform_id", "") or "").strip()

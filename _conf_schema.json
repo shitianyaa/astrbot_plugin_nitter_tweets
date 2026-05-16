@@ -134,6 +134,12 @@
     "default": false,
     "hint": "开启后会按配置定时检查 watch_users 是否有新推文，并推送到 push_targets。"
   },
+  "notify_no_updates": {
+    "description": "定时检查无新推文时发送检查结果提示",
+    "type": "bool",
+    "default": false,
+    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。"
+  },
   "watch_users": {
     "description": "关注账号列表",
     "type": "list",

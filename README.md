@@ -61,6 +61,8 @@ https://x.com/<username>/status/<tweet_id>
 
 首次启用某个账号时，只会记录当前 RSS 中已有的推文 ID，不会推送历史内容，避免刷屏。之后发现新 ID 才会推送。
 
+默认情况下，没有新推文时只写日志，不往群里发消息。若希望每次检查都有可见反馈，可开启 `notify_no_updates`，插件会在无更新或首次记录账号时向 `push_targets` 发送检查摘要。
+
 ### 关键配置
 
 - `watch_users`：关注账号列表，支持 `NASA`、`@NASA`、`https://x.com/NASA`。
@@ -73,8 +75,25 @@ https://x.com/<username>/status/<tweet_id>
 - `interval_check_enabled` + `check_interval_minutes`：每 N 分钟检查一次。
 - `daily_check_enabled` + `daily_check_times`：每天固定时间检查，可与间隔检查同时开启。
 - `scheduled_fetch_limit`：定时检查时每个账号拉取最近多少条用于对比。
+- `notify_no_updates`：无新推文或首次记录账号时是否向推送目标发送检查摘要，默认关闭。
 - `send_target_interval`：多个目标之间的发送间隔。
 - `send_user_interval`：多个账号之间的发送间隔。
+
+### 诊断命令
+
+以下命令仅管理员可用：
+
+```text
+/推文状态
+/nitter_status
+/tweets_status
+/推文检查
+/nitter_check
+/tweets_check
+```
+
+- `/推文状态`：查看调度器是否运行、定时开关、关注账号、推送目标、无效目标和已记录账号数。
+- `/推文检查`：立即执行一次定时检查；如发现新推文，会按 `push_targets` 正常推送，并向命令发起者返回检查摘要。
 
 ## 说明
 

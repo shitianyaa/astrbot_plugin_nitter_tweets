@@ -26,7 +26,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.4.2",
+    "0.4.3",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -51,6 +51,7 @@ class NitterTweetsPlugin(Star):
             config.get("cooldown_seconds", 15.0), 0.0, 3600.0
         )
         self._cooldowns: dict[str, float] = {}
+        self.scheduler.start(reason="__init__")
 
     async def initialize(self):
         logger.info(
@@ -60,6 +61,10 @@ class NitterTweetsPlugin(Star):
             f"translate={'on' if self.translator.enabled else 'off'}"
         )
         self.scheduler.start(reason="initialize")
+
+    @filter.on_astrbot_loaded()
+    async def on_loaded(self):
+        self.scheduler.start(reason="on_astrbot_loaded")
 
     async def terminate(self):
         await self.scheduler.stop()
@@ -110,6 +115,27 @@ class NitterTweetsPlugin(Star):
             await event.send(
                 event.plain_result(self.sender.format_plain(username, instance, tweets))
             )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文状态", alias={"nitter_status", "tweets_status"})
+    async def cmd_tweets_status(self, event: AstrMessageEvent):
+        """Show scheduled tweet check status."""
+        event.stop_event()
+        self.scheduler.start(reason="status_command")
+        await event.send(event.plain_result(await self.scheduler.status_summary()))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文检查", alias={"nitter_check", "tweets_check"})
+    async def cmd_tweets_check(self, event: AstrMessageEvent):
+        """Run one scheduled tweet check immediately."""
+        event.stop_event()
+        self.scheduler.start(reason="manual_check")
+        await event.send(event.plain_result("正在执行 Nitter 定时检查..."))
+        result = await self.scheduler.run_check(
+            reason="manual_command",
+            notify_no_updates=False,
+        )
+        await event.send(event.plain_result(result.format_message()))
 
     def _cooldown_key(self, event: AstrMessageEvent) -> str:
         sender = safe_call(event, "get_sender_id") or "unknown"
