@@ -42,6 +42,17 @@ class PushTargetParseResult:
 
 
 @dataclass(slots=True)
+class WatchUsersInfo:
+    raw_count: int
+    users: list[str] = field(default_factory=list)
+    duplicates: list[str] = field(default_factory=list)
+    invalid_entries: list[str] = field(default_factory=list)
+    changed: bool = False
+    saved: bool = False
+    save_error: str = ""
+
+
+@dataclass(slots=True)
 class ScheduledPushResult:
     username: str
     new_count: int
@@ -63,6 +74,9 @@ class ScheduledCheckResult:
     empty_users: list[str] = field(default_factory=list)
     failed_users: dict[str, str] = field(default_factory=dict)
     pushes: list[ScheduledPushResult] = field(default_factory=list)
+    push_mode: str = "per_user"
+    merged_push_success_targets: int = 0
+    merged_push_total_targets: int = 0
 
     @property
     def new_tweet_count(self) -> int:
@@ -70,10 +84,14 @@ class ScheduledCheckResult:
 
     @property
     def pushed_target_successes(self) -> int:
+        if self.push_mode == "merged":
+            return self.merged_push_success_targets
         return sum(push.success_targets for push in self.pushes)
 
     @property
     def pushed_target_attempts(self) -> int:
+        if self.push_mode == "merged":
+            return self.merged_push_total_targets
         return sum(push.total_targets for push in self.pushes)
 
     @property
@@ -113,6 +131,7 @@ class ScheduledCheckResult:
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
+            f"push_mode={self.push_mode}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}"
         )
@@ -142,7 +161,17 @@ class ScheduledCheckResult:
             ]
             lines.append("首次记录: " + ", ".join(items))
 
-        if self.pushes:
+        if self.pushes and self.push_mode == "merged":
+            items = [
+                f"@{item.username} {item.new_count} 条"
+                for item in self.pushes
+            ]
+            lines.append("新推文: " + "; ".join(items))
+            lines.append(
+                "合并推送: "
+                f"{self.merged_push_success_targets}/{self.merged_push_total_targets}"
+            )
+        elif self.pushes:
             items = [
                 f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
                 for item in self.pushes
@@ -295,6 +324,9 @@ class NitterTweetScheduler:
             targets=targets,
             invalid_targets=target_info.invalid_targets,
         )
+        merge_updates = bool(self.config.get("merge_scheduled_updates", False))
+        result.push_mode = "merged" if merge_updates else "per_user"
+        merged_batches = []
         if not users:
             result.skipped_reason = "no_watch_users"
             logger.info(result.format_log_summary())
@@ -317,7 +349,8 @@ class NitterTweetScheduler:
         logger.info(
             "[NitterTweets] scheduled check started: "
             f"reason={reason}, users={len(users)}, targets={len(targets)}, "
-            f"invalid_targets={len(target_info.invalid_targets)}, fetch_limit={fetch_limit}"
+            f"invalid_targets={len(target_info.invalid_targets)}, "
+            f"fetch_limit={fetch_limit}, push_mode={result.push_mode}"
         )
 
         for user_index, username in enumerate(users):
@@ -365,31 +398,46 @@ class NitterTweetScheduler:
                     )
                     continue
 
-                success = 0
-                for target_index, umo in enumerate(targets):
-                    try:
-                        if await self.sender.send_to_umo(
-                            self.context, umo, username, instance, new_tweets
-                        ):
-                            success += 1
-                    except Exception as exc:
-                        logger.warning(
-                            f"[NitterTweets] scheduled push @{username} to {umo} failed: {exc}"
+                if merge_updates:
+                    merged_batches.append((username, instance, new_tweets))
+                    result.pushes.append(
+                        ScheduledPushResult(
+                            username=username,
+                            new_count=len(new_tweets),
+                            success_targets=0,
+                            total_targets=0,
+                        )
                     )
-                    if target_index < len(targets) - 1 and target_interval > 0:
-                        await asyncio.sleep(target_interval)
-                result.pushes.append(
-                    ScheduledPushResult(
-                        username=username,
-                        new_count=len(new_tweets),
-                        success_targets=success,
-                        total_targets=len(targets),
+                    logger.info(
+                        f"[NitterTweets] queued @{username} {len(new_tweets)} "
+                        "new tweets for merged push"
                     )
-                )
-                logger.info(
-                    f"[NitterTweets] pushed @{username} {len(new_tweets)} new tweets "
-                    f"to {success}/{len(targets)} targets"
-                )
+                else:
+                    success = 0
+                    for target_index, umo in enumerate(targets):
+                        try:
+                            if await self.sender.send_to_umo(
+                                self.context, umo, username, instance, new_tweets
+                            ):
+                                success += 1
+                        except Exception as exc:
+                            logger.warning(
+                                f"[NitterTweets] scheduled push @{username} to {umo} failed: {exc}"
+                            )
+                        if target_index < len(targets) - 1 and target_interval > 0:
+                            await asyncio.sleep(target_interval)
+                    result.pushes.append(
+                        ScheduledPushResult(
+                            username=username,
+                            new_count=len(new_tweets),
+                            success_targets=success,
+                            total_targets=len(targets),
+                        )
+                    )
+                    logger.info(
+                        f"[NitterTweets] pushed @{username} {len(new_tweets)} new tweets "
+                        f"to {success}/{len(targets)} targets"
+                    )
             else:
                 result.no_new_users.append(username)
                 logger.info(f"[NitterTweets] scheduled check @{username}: no new tweets")
@@ -400,13 +448,17 @@ class NitterTweetScheduler:
             if user_index < len(users) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
 
+        if merge_updates and merged_batches:
+            await self._send_merged_updates(merged_batches, result, target_interval)
+
         logger.info(result.format_log_summary())
         if self._should_notify_no_updates(result, notify_no_updates):
             await self._send_no_update_notice(result, target_interval)
         return result
 
     async def status_summary(self) -> str:
-        users = self._watch_users()
+        watch_info = self._watch_users_info()
+        users = watch_info.users
         target_info = self._parse_push_targets(log_invalid=False)
         seen_map = await self._get_seen_map()
         interval_minutes = clamp_int(
@@ -421,7 +473,8 @@ class NitterTweetScheduler:
             f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
             f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
             f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
-            f"关注账号: {len(users)} 个",
+            f"合并本轮更新: {'已启用' if self.config.get('merge_scheduled_updates', False) else '已关闭'}",
+            f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
             f"推送目标: {len(target_info.targets)} 个",
             f"无效目标: {len(target_info.invalid_targets)} 个",
             f"已记录账号: {len(seen_map)} 个",
@@ -431,6 +484,10 @@ class NitterTweetScheduler:
             lines.append(f"每日时间: {formatted_times}")
         if users:
             lines.append("账号列表: " + ", ".join(f"@{user}" for user in users))
+        if watch_info.duplicates:
+            lines.append("重复订阅: " + ", ".join(watch_info.duplicates[:8]))
+        if watch_info.invalid_entries:
+            lines.append("无效订阅: " + ", ".join(watch_info.invalid_entries[:8]))
         if target_info.targets:
             lines.append("解析目标:")
             for umo in target_info.targets[:8]:
@@ -440,6 +497,25 @@ class NitterTweetScheduler:
         if target_info.invalid_targets:
             lines.append("无效目标: " + ", ".join(target_info.invalid_targets))
         return "\n".join(lines)
+
+    def deduplicate_watch_users(self) -> WatchUsersInfo:
+        info = self._watch_users_info()
+        if not info.changed:
+            return info
+
+        self.config["watch_users"] = info.users
+        save_config = getattr(self.config, "save_config", None)
+        if not callable(save_config):
+            info.save_error = "当前配置对象不支持 save_config()"
+            return info
+
+        try:
+            save_config()
+            info.saved = True
+        except Exception as exc:
+            info.save_error = str(exc)
+            logger.warning(f"[NitterTweets] failed to save deduplicated watch_users: {exc}")
+        return info
 
     def _should_notify_no_updates(
         self,
@@ -467,6 +543,31 @@ class NitterTweetScheduler:
                 await asyncio.sleep(target_interval)
         logger.info(
             f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
+        )
+
+    async def _send_merged_updates(
+        self,
+        batches,
+        result: ScheduledCheckResult,
+        target_interval: float,
+    ) -> None:
+        success = 0
+        for target_index, umo in enumerate(result.targets):
+            try:
+                if await self.sender.send_merged_to_umo(self.context, umo, batches):
+                    success += 1
+            except Exception as exc:
+                logger.warning(
+                    f"[NitterTweets] merged scheduled push to {umo} failed: {exc}"
+                )
+            if target_index < len(result.targets) - 1 and target_interval > 0:
+                await asyncio.sleep(target_interval)
+
+        result.merged_push_success_targets = success
+        result.merged_push_total_targets = len(result.targets)
+        logger.info(
+            f"[NitterTweets] pushed {result.new_tweet_count} merged new tweets "
+            f"from {len(batches)} users to {success}/{len(result.targets)} targets"
         )
 
     async def _get_seen_map(self) -> dict[str, list[str]]:
@@ -498,17 +599,37 @@ class NitterTweetScheduler:
         return merged
 
     def _watch_users(self) -> list[str]:
+        return self._watch_users_info().users
+
+    def _watch_users_info(self) -> WatchUsersInfo:
         raw_users = self.config.get("watch_users", []) or []
         if isinstance(raw_users, str):
             raw_users = re.split(r"[\n,，]+", raw_users)
+        elif not isinstance(raw_users, list):
+            raw_users = [raw_users]
+        raw_entries = [str(raw).strip() for raw in raw_users if str(raw).strip()]
         users: list[str] = []
         seen: set[str] = set()
-        for raw in raw_users:
-            username = normalize_username(str(raw))
-            if username and username not in seen:
-                seen.add(username)
-                users.append(username)
-        return users
+        duplicates: list[str] = []
+        invalid_entries: list[str] = []
+        for raw in raw_entries:
+            username = normalize_username(raw)
+            if not username:
+                invalid_entries.append(raw)
+                continue
+            username_key = username.lower()
+            if username_key in seen:
+                duplicates.append(raw)
+                continue
+            seen.add(username_key)
+            users.append(username)
+        return WatchUsersInfo(
+            raw_count=len(raw_entries),
+            users=users,
+            duplicates=duplicates,
+            invalid_entries=invalid_entries,
+            changed=raw_entries != users,
+        )
 
     def _push_targets(self) -> list[str]:
         return self._parse_push_targets().targets

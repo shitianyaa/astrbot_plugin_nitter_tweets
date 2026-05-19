@@ -26,12 +26,13 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.4.3",
+    "0.4.4",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.config = config
         self.nitter = NitterClient(config)
         self.media = MediaService(config)
         self.sender = TweetSender()
@@ -58,7 +59,8 @@ class NitterTweetsPlugin(Star):
             "Nitter tweets plugin loaded: "
             f"{len(self.nitter.instances)} instances, "
             f"media={'on' if self.media.enabled else 'off'}, "
-            f"translate={'on' if self.translator.enabled else 'off'}"
+            f"translate={'on' if self.translator.enabled else 'off'}, "
+            f"merge_updates={'on' if self.config.get('merge_scheduled_updates', False) else 'off'}"
         )
         self.scheduler.start(reason="initialize")
 
@@ -136,6 +138,39 @@ class NitterTweetsPlugin(Star):
             notify_no_updates=False,
         )
         await event.send(event.plain_result(result.format_message()))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文订阅去重", alias={"nitter_dedup", "tweets_dedup", "推文关注去重"})
+    async def cmd_tweets_dedup(self, event: AstrMessageEvent):
+        """Normalize and deduplicate scheduled watch users."""
+        event.stop_event()
+        info = self.scheduler.deduplicate_watch_users()
+
+        lines = [
+            "Nitter 订阅作者去重",
+            f"原配置项: {info.raw_count} 个",
+            f"有效作者: {len(info.users)} 个",
+            f"重复项: {len(info.duplicates)} 个",
+            f"无效项: {len(info.invalid_entries)} 个",
+        ]
+        if info.changed:
+            if info.saved:
+                lines.append("结果: 已规范化并保存到 watch_users。")
+            elif info.save_error:
+                lines.append(f"结果: 已更新运行时配置，但保存失败：{info.save_error}")
+            else:
+                lines.append("结果: 已更新运行时配置。")
+        else:
+            lines.append("结果: watch_users 已经是去重后的规范列表。")
+
+        if info.users:
+            lines.append("作者列表: " + ", ".join(f"@{user}" for user in info.users))
+        if info.duplicates:
+            lines.append("已移除重复: " + ", ".join(info.duplicates[:10]))
+        if info.invalid_entries:
+            lines.append("已移除无效: " + ", ".join(info.invalid_entries[:10]))
+
+        await event.send(event.plain_result("\n".join(lines)))
 
     def _cooldown_key(self, event: AstrMessageEvent) -> str:
         sender = safe_call(event, "get_sender_id") or "unknown"

@@ -20,6 +20,9 @@ except ImportError:
     from utils import file_uri, node_uin, safe_call
 
 
+TweetBatch = tuple[str, str, list[TweetItem]]
+
+
 class TweetSender:
     async def send(
         self,
@@ -66,6 +69,28 @@ class TweetSender:
             logger.warning(f"Failed to send scheduled tweet fallback to {umo}: {exc}")
             return False
 
+    async def send_merged_to_umo(
+        self,
+        context,
+        umo: str,
+        batches: list[TweetBatch],
+    ) -> bool:
+        nodes = self._build_merged_nodes_for_uin(10000, batches)
+        try:
+            await context.send_message(umo, MessageChain([nodes]))
+            return True
+        except Exception as exc:
+            logger.warning(f"Failed to send merged scheduled tweets to {umo}: {exc}")
+
+        try:
+            await context.send_message(
+                umo, MessageChain([Plain(self.format_merged_plain(batches))])
+            )
+            return True
+        except Exception as exc:
+            logger.warning(f"Failed to send merged scheduled tweet fallback to {umo}: {exc}")
+            return False
+
     def _build_nodes(self, event, username: str, instance: str, tweets: list[TweetItem]):
         return self._build_nodes_for_uin(node_uin(event), username, instance, tweets)
 
@@ -97,8 +122,36 @@ class TweetSender:
             )
         return nodes
 
-    def _build_components(self, index: int, username: str, tweet: TweetItem):
-        components = [Plain(self.format_tweet(index, username, tweet))]
+    def _build_merged_nodes_for_uin(self, uin, batches: list[TweetBatch]):
+        nodes = Nodes([])
+        nodes.nodes.append(
+            Node(
+                uin=uin,
+                name="Nitter",
+                content=[Plain(self.format_merged_header(batches))],
+            )
+        )
+
+        index = 1
+        for username, instance, tweets in batches:
+            for tweet in tweets:
+                nodes.nodes.append(
+                    Node(
+                        uin=uin,
+                        name=f"@{username}",
+                        content=self._build_components(
+                            index, username, tweet, source=instance
+                        ),
+                    )
+                )
+                index += 1
+        return nodes
+
+    def _build_components(
+        self, index: int, username: str, tweet: TweetItem, source: str = ""
+    ):
+        text = self.format_tweet_with_source(index, username, tweet, source)
+        components = [Plain(text)]
         for media in tweet.media:
             if not media.path:
                 continue
@@ -215,6 +268,39 @@ class TweetSender:
             for index, tweet in enumerate(tweets, 1)
         )
         return "\n\n".join(blocks)
+
+    def format_merged_plain(self, batches: list[TweetBatch]) -> str:
+        blocks = [self.format_merged_header(batches)]
+        index = 1
+        for username, instance, tweets in batches:
+            for tweet in tweets:
+                blocks.append(
+                    self.format_tweet_with_source(index, username, tweet, instance)
+                )
+                index += 1
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def format_merged_header(batches: list[TweetBatch]) -> str:
+        total = sum(len(tweets) for _, _, tweets in batches)
+        accounts = "，".join(
+            f"@{username} {len(tweets)} 条" for username, _, tweets in batches
+        )
+        lines = [
+            f"Nitter 本次检查发现 {total} 条新推文",
+            f"更新账号：{accounts}",
+            "提示：公共实例可能不稳定，请勿高频请求。",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def format_tweet_with_source(
+        index: int, username: str, tweet: TweetItem, source: str = ""
+    ) -> str:
+        text = TweetSender.format_tweet(index, username, tweet)
+        if source:
+            text = f"{text}\n来源：{source}"
+        return text
 
     @staticmethod
     def format_tweet(index: int, username: str, tweet: TweetItem) -> str:
