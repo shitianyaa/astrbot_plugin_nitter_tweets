@@ -39,6 +39,14 @@ https://x.com/<username>/status/<tweet_id>
 
 翻译链路会输出 `[NitterTweets] translation ...` 日志，可用于确认是否开启、是否匹配为非中文、使用了哪个 provider，以及模型是否返回译文。
 
+## AI 评论与识图
+
+开启 `comment_enabled` 后，插件会在发送前按 `comment_probability` 概率调用文本大模型，为每条推文追加一段 `AI评论`。开启 `vision_enabled` 后，会按 `vision_probability` 概率调用视觉模型识别已下载的第一张图片，并追加 `AI识图`。
+
+如果同一条推文同时触发识图和评论，插件会先识图，再把图片描述、推文原文和已有中文翻译一起交给评论模型。模型调用失败不会影响原推文、媒体和链接发送。
+
+`comment_provider_id` 和 `vision_provider_id` 可分别选择模型。识图模型留空时会优先使用 AstrBot 全局图片描述模型 `default_image_caption_provider_id`；仍找不到时再尝试会话默认模型或第一个 provider。
+
 ## 配置
 
 - `instances`：Nitter 实例列表，建议把自建实例放在第一位。
@@ -54,6 +62,14 @@ https://x.com/<username>/status/<tweet_id>
 - `translation_provider_id`：翻译使用的大模型，支持在 WebUI 选择现有 provider。
 - `translate_chinese_ratio_threshold`：中文占比低于该值时判定为非中文。
 - `translate_prompt`：翻译提示词，需包含 `{text}`。
+- `comment_enabled`：是否启用 AI 评论。
+- `comment_provider_id`：AI 评论使用的大模型。
+- `comment_probability`：每条推文触发 AI 评论的概率，范围 0-1。
+- `comment_prompt`：评论提示词，可使用 `{text}`、`{translation}`、`{image_caption}`、`{link}`。
+- `vision_enabled`：是否启用 AI 识图。
+- `vision_provider_id`：AI 识图使用的视觉模型，留空优先使用 AstrBot 全局图片描述模型。
+- `vision_probability`：每条推文触发 AI 识图的概率，范围 0-1。
+- `vision_prompt`：识图提示词。
 
 ## 定时检查
 
@@ -108,6 +124,7 @@ https://x.com/<username>/status/<tweet_id>
 - 视频/GIF 比图片更容易触发平台大小、格式或风控限制；如果合并转发失败，插件会回退为普通文本。
 - 本插件不依赖 `astrbot_plugin_parser-main` 运行，只参考了它的 Twitter 媒体解析思路。
 - 翻译功能使用 AstrBot 的 `context.llm_generate(...)` 接口；大模型输出质量和费用取决于你选择的 provider。
+- AI 评论与识图也使用 AstrBot 的 `context.llm_generate(...)` 接口；识图只分析已下载到本地的图片，不分析视频内容。
 
 ## 致谢
 

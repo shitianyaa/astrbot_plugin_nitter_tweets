@@ -28,6 +28,8 @@ class TweetItem:
     published: str
     media: list[TweetMedia] = field(default_factory=list)
     translation: str = ""
+    image_caption: str = ""
+    ai_comment: str = ""
 
     @property
     def status_id(self) -> str:

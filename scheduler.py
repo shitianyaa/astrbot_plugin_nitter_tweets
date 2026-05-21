@@ -198,7 +198,9 @@ class ScheduledCheckResult:
 
 
 class NitterTweetScheduler:
-    def __init__(self, owner, context, config, nitter, media, sender, translator):
+    def __init__(
+        self, owner, context, config, nitter, media, sender, translator, enricher=None
+    ):
         self.owner = owner
         self.context = context
         self.config = config
@@ -206,6 +208,7 @@ class NitterTweetScheduler:
         self.media = media
         self.sender = sender
         self.translator = translator
+        self.enricher = enricher
         self._task: asyncio.Task | None = None
         self._last_interval_slot: int | None = None
         self._daily_slots: set[str] = set()
@@ -391,6 +394,8 @@ class NitterTweetScheduler:
                 try:
                     await self.translator.attach_translations(new_tweets, targets[0])
                     await self.media.attach_media(new_tweets)
+                    if self.enricher is not None:
+                        await self.enricher.attach_enrichments(new_tweets, targets[0])
                 except Exception as exc:
                     result.failed_users[username] = f"prepare failed: {exc}"
                     logger.warning(

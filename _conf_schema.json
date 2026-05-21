@@ -128,6 +128,67 @@
     "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、链接、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
     "hint": "必须包含 {text}，插件会把推文正文替换进去。"
   },
+  "comment_enabled": {
+    "description": "启用 AI 评论",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。"
+  },
+  "comment_provider_id": {
+    "description": "AI 评论使用的模型",
+    "type": "string",
+    "_special": "select_provider",
+    "default": "",
+    "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。"
+  },
+  "comment_probability": {
+    "description": "AI 评论触发概率",
+    "type": "float",
+    "default": 0.3,
+    "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。"
+  },
+  "comment_max_chars": {
+    "description": "AI 评论输入最大字符数",
+    "type": "int",
+    "default": 2000,
+    "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。"
+  },
+  "comment_prompt": {
+    "description": "AI 评论提示词",
+    "type": "text",
+    "default": "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，生成一句简短、自然、有信息量的中文点评。不要复述原文，不要使用 Markdown。\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}",
+    "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。"
+  },
+  "vision_enabled": {
+    "description": "启用 AI 识图",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。"
+  },
+  "vision_provider_id": {
+    "description": "AI 识图使用的模型",
+    "type": "string",
+    "_special": "select_provider",
+    "default": "",
+    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话或第一个 provider。"
+  },
+  "vision_probability": {
+    "description": "AI 识图触发概率",
+    "type": "float",
+    "default": 0.3,
+    "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。"
+  },
+  "vision_prompt": {
+    "description": "AI 识图提示词",
+    "type": "text",
+    "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。"
+  },
+  "vision_first_image_only": {
+    "description": "仅识别第一张图片",
+    "type": "bool",
+    "default": true,
+    "hint": "当前版本固定只取每条推文第一张图片识别；保留该开关用于明确成本控制策略。"
+  },
   "schedule_enabled": {
     "description": "启用定时检查",
     "type": "bool",

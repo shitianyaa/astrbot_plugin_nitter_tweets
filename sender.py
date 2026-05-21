@@ -312,6 +312,12 @@ class TweetSender:
         if tweet.translation:
             lines.append("中文翻译：")
             lines.append(tweet.translation)
+        if tweet.image_caption:
+            lines.append("AI识图：")
+            lines.append(tweet.image_caption)
+        if tweet.ai_comment:
+            lines.append("AI评论：")
+            lines.append(tweet.ai_comment)
         if tweet.link:
             lines.append(tweet.link)
         if tweet.media:

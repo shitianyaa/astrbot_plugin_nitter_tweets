@@ -7,6 +7,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 
 try:
+    from .enricher import TweetEnricher
     from .media import MediaService
     from .nitter_client import NitterClient
     from .scheduler import NitterTweetScheduler
@@ -14,6 +15,7 @@ try:
     from .translator import TweetTranslator
     from .utils import clamp_float, clamp_int, normalize_username, safe_call
 except ImportError:
+    from enricher import TweetEnricher
     from media import MediaService
     from nitter_client import NitterClient
     from scheduler import NitterTweetScheduler
@@ -26,7 +28,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.4.4",
+    "0.5.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -37,6 +39,7 @@ class NitterTweetsPlugin(Star):
         self.media = MediaService(config)
         self.sender = TweetSender()
         self.translator = TweetTranslator(context, config)
+        self.enricher = TweetEnricher(context, config)
         self.scheduler = NitterTweetScheduler(
             self,
             context,
@@ -45,6 +48,7 @@ class NitterTweetsPlugin(Star):
             self.media,
             self.sender,
             self.translator,
+            self.enricher,
         )
         self.default_limit = clamp_int(config.get("default_limit", 5), 1, 20)
         self.max_limit = clamp_int(config.get("max_limit", 10), 1, 20)
@@ -60,6 +64,7 @@ class NitterTweetsPlugin(Star):
             f"{len(self.nitter.instances)} instances, "
             f"media={'on' if self.media.enabled else 'off'}, "
             f"translate={'on' if self.translator.enabled else 'off'}, "
+            f"ai_enrich={'on' if self.enricher.enabled else 'off'}, "
             f"merge_updates={'on' if self.config.get('merge_scheduled_updates', False) else 'off'}"
         )
         self.scheduler.start(reason="initialize")
@@ -113,6 +118,7 @@ class NitterTweetsPlugin(Star):
 
         await self.translator.attach_translations(tweets, event.unified_msg_origin)
         await self.media.attach_media(tweets)
+        await self.enricher.attach_enrichments(tweets, event.unified_msg_origin)
         if not await self.sender.send(event, username, instance, tweets):
             await event.send(
                 event.plain_result(self.sender.format_plain(username, instance, tweets))
