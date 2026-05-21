@@ -201,6 +201,12 @@
     "default": false,
     "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。"
   },
+  "check_on_startup": {
+    "description": "启动后立即检查",
+    "type": "bool",
+    "default": false,
+    "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。"
+  },
   "merge_scheduled_updates": {
     "description": "合并本轮新推文为一条聊天记录",
     "type": "bool",

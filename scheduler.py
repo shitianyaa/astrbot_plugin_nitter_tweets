@@ -212,6 +212,7 @@ class NitterTweetScheduler:
         self._task: asyncio.Task | None = None
         self._last_interval_slot: int | None = None
         self._daily_slots: set[str] = set()
+        self._startup_schedule_seeded = False
         self._last_enabled_state: bool | None = None
 
     def start(self, reason: str = "") -> None:
@@ -285,6 +286,16 @@ class NitterTweetScheduler:
         now = dt.datetime.now(CN_TZ)
         reasons: list[str] = []
 
+        if not self._startup_schedule_seeded:
+            self._startup_schedule_seeded = True
+            if not self.config.get("check_on_startup", False):
+                self._seed_schedule_slots(now)
+                logger.info(
+                    "[NitterTweets] startup scheduled check skipped: "
+                    "check_on_startup=false"
+                )
+                return
+
         if self.config.get("interval_check_enabled", True):
             interval_minutes = clamp_int(
                 self.config.get("check_interval_minutes", 30), 1, 1440
@@ -312,6 +323,20 @@ class NitterTweetScheduler:
         if reasons:
             logger.info(f"[NitterTweets] scheduled check triggered: {', '.join(reasons)}")
             await self.run_check(reason=", ".join(reasons))
+
+    def _seed_schedule_slots(self, now: dt.datetime) -> None:
+        if self.config.get("interval_check_enabled", True):
+            interval_minutes = clamp_int(
+                self.config.get("check_interval_minutes", 30), 1, 1440
+            )
+            self._last_interval_slot = int(now.timestamp() // (interval_minutes * 60))
+
+        if self.config.get("daily_check_enabled", False):
+            for hour, minute in self._parse_daily_times():
+                if now.hour == hour and now.minute == minute:
+                    self._daily_slots.add(
+                        f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
+                    )
 
     async def run_check(
         self,
@@ -475,6 +500,7 @@ class NitterTweetScheduler:
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
+            f"启动立即检查: {'已启用' if self.config.get('check_on_startup', False) else '已关闭'}",
             f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
             f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
             f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
@@ -521,6 +547,9 @@ class NitterTweetScheduler:
             info.save_error = str(exc)
             logger.warning(f"[NitterTweets] failed to save deduplicated watch_users: {exc}")
         return info
+
+    def watch_users_info(self) -> WatchUsersInfo:
+        return self._watch_users_info()
 
     def _should_notify_no_updates(
         self,

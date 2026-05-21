@@ -146,6 +146,32 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result(result.format_message()))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文订阅列表", alias={"nitter_list", "tweets_list", "推文关注列表"})
+    async def cmd_tweets_list(self, event: AstrMessageEvent):
+        """Show configured scheduled watch users."""
+        event.stop_event()
+        info = self.scheduler.watch_users_info()
+
+        lines = [
+            "Nitter 订阅作者列表",
+            f"原配置项: {info.raw_count} 个",
+            f"有效作者: {len(info.users)} 个",
+            f"重复项: {len(info.duplicates)} 个",
+            f"无效项: {len(info.invalid_entries)} 个",
+        ]
+        if info.users:
+            lines.append("作者列表:")
+            lines.extend(f"{index}. @{user}" for index, user in enumerate(info.users, 1))
+        else:
+            lines.append("作者列表为空。")
+        if info.duplicates:
+            lines.append("重复项: " + ", ".join(info.duplicates[:10]))
+        if info.invalid_entries:
+            lines.append("无效项: " + ", ".join(info.invalid_entries[:10]))
+
+        await event.send(event.plain_result("\n".join(lines)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文订阅去重", alias={"nitter_dedup", "tweets_dedup", "推文关注去重"})
     async def cmd_tweets_dedup(self, event: AstrMessageEvent):
         """Normalize and deduplicate scheduled watch users."""
