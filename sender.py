@@ -13,11 +13,9 @@ except ImportError:
     from astrbot.core.message.components import Image, Node, Nodes, Plain, Video
 
 try:
-    from .models import TweetItem, TweetMedia
-    from .utils import file_uri, node_uin, safe_call
+    from .utils import TweetItem, TweetMedia, file_uri, node_uin, safe_call
 except ImportError:
-    from models import TweetItem, TweetMedia
-    from utils import file_uri, node_uin, safe_call
+    from utils import TweetItem, TweetMedia, file_uri, node_uin, safe_call
 
 
 TweetBatch = tuple[str, str, list[TweetItem]]
@@ -39,6 +37,20 @@ class TweetSender:
         except Exception as exc:
             logger.warning(f"Failed to send forwarded tweet nodes: {exc}")
 
+        # 去掉视频后重试
+        if any(m.is_video for t in tweets for m in t.media if m.path):
+            try:
+                nodes_nv = self._build_nodes(
+                    event, username, instance, tweets, exclude_videos=True
+                )
+                await event.send(event.chain_result([nodes_nv]))
+                logger.info("Sent forwarded tweets without videos after initial failure")
+                return True
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to send forwarded tweet nodes without videos: {exc}"
+                )
+
         try:
             return await self._send_onebot_forward(event, raw_nodes)
         except Exception as exc:
@@ -59,6 +71,22 @@ class TweetSender:
             return True
         except Exception as exc:
             logger.warning(f"Failed to send scheduled forwarded tweets to {umo}: {exc}")
+
+        # 去掉视频后重试
+        if any(m.is_video for t in tweets for m in t.media if m.path):
+            try:
+                nodes_nv = self._build_nodes_for_uin(
+                    10000, username, instance, tweets, exclude_videos=True
+                )
+                await context.send_message(umo, MessageChain([nodes_nv]))
+                logger.info(
+                    f"Sent scheduled tweets to {umo} without videos after initial failure"
+                )
+                return True
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to send scheduled tweets to {umo} without videos: {exc}"
+                )
 
         try:
             await context.send_message(
@@ -82,6 +110,25 @@ class TweetSender:
         except Exception as exc:
             logger.warning(f"Failed to send merged scheduled tweets to {umo}: {exc}")
 
+        # 去掉视频后重试
+        has_video = any(
+            m.is_video for _, _, ts in batches for t in ts for m in t.media if m.path
+        )
+        if has_video:
+            try:
+                nodes_nv = self._build_merged_nodes_for_uin(
+                    10000, batches, exclude_videos=True
+                )
+                await context.send_message(umo, MessageChain([nodes_nv]))
+                logger.info(
+                    f"Sent merged tweets to {umo} without videos after initial failure"
+                )
+                return True
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to send merged tweets to {umo} without videos: {exc}"
+                )
+
         try:
             await context.send_message(
                 umo, MessageChain([Plain(self.format_merged_plain(batches))])
@@ -91,11 +138,17 @@ class TweetSender:
             logger.warning(f"Failed to send merged scheduled tweet fallback to {umo}: {exc}")
             return False
 
-    def _build_nodes(self, event, username: str, instance: str, tweets: list[TweetItem]):
-        return self._build_nodes_for_uin(node_uin(event), username, instance, tweets)
+    def _build_nodes(
+        self, event, username: str, instance: str, tweets: list[TweetItem],
+        exclude_videos: bool = False,
+    ):
+        return self._build_nodes_for_uin(
+            node_uin(event), username, instance, tweets, exclude_videos
+        )
 
     def _build_nodes_for_uin(
-        self, uin, username: str, instance: str, tweets: list[TweetItem]
+        self, uin, username: str, instance: str, tweets: list[TweetItem],
+        exclude_videos: bool = False,
     ):
         nodes = Nodes([])
         nodes.nodes.append(
@@ -117,12 +170,16 @@ class TweetSender:
                 Node(
                     uin=uin,
                     name=f"@{username}",
-                    content=self._build_components(index, username, tweet),
+                    content=self._build_components(
+                        index, username, tweet, exclude_videos=exclude_videos
+                    ),
                 )
             )
         return nodes
 
-    def _build_merged_nodes_for_uin(self, uin, batches: list[TweetBatch]):
+    def _build_merged_nodes_for_uin(
+        self, uin, batches: list[TweetBatch], exclude_videos: bool = False,
+    ):
         nodes = Nodes([])
         nodes.nodes.append(
             Node(
@@ -140,7 +197,8 @@ class TweetSender:
                         uin=uin,
                         name=f"@{username}",
                         content=self._build_components(
-                            index, username, tweet, source=instance
+                            index, username, tweet, source=instance,
+                            exclude_videos=exclude_videos,
                         ),
                     )
                 )
@@ -148,7 +206,8 @@ class TweetSender:
         return nodes
 
     def _build_components(
-        self, index: int, username: str, tweet: TweetItem, source: str = ""
+        self, index: int, username: str, tweet: TweetItem, source: str = "",
+        exclude_videos: bool = False,
     ):
         text = self.format_tweet_with_source(index, username, tweet, source)
         components = [Plain(text)]
@@ -159,7 +218,11 @@ class TweetSender:
             if media.is_image:
                 components.append(Image(uri))
             elif media.is_video:
-                components.append(Video(uri))
+                if not exclude_videos:
+                    components.append(Video(uri))
+                else:
+                    # 视频被排除时，追加文本链接作为替代
+                    components.append(Plain(f"[视频] {tweet.x_url}"))
         return components
 
     def _build_onebot_nodes(

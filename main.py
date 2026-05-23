@@ -7,20 +7,16 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 
 try:
-    from .enricher import TweetEnricher
-    from .media import MediaService
-    from .nitter_client import NitterClient
+    from .enricher import TweetEnricher, TweetTranslator
+    from .media import MediaService, NitterClient
     from .scheduler import NitterTweetScheduler
     from .sender import TweetSender
-    from .translator import TweetTranslator
     from .utils import clamp_float, clamp_int, normalize_username, safe_call
 except ImportError:
-    from enricher import TweetEnricher
-    from media import MediaService
-    from nitter_client import NitterClient
+    from enricher import TweetEnricher, TweetTranslator
+    from media import MediaService, NitterClient
     from scheduler import NitterTweetScheduler
     from sender import TweetSender
-    from translator import TweetTranslator
     from utils import clamp_float, clamp_int, normalize_username, safe_call
 
 
@@ -28,7 +24,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.5.0",
+    "0.6.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):

@@ -2,6 +2,20 @@
 
 所有重要变更都会记录在这里。
 
+## [0.6.0] - 2026-05-23
+
+### Added
+
+- 新增 `vision_max_images` 配置（替代原 `vision_first_image_only`），支持每条推文识别多张图片，识图并发执行（asyncio.gather）。
+- 发送合并转发消息失败时，自动去掉视频重试一次；视频位置替换为文本链接。
+- 媒体类型检测增加 URL 扩展名兜底，解决 xdown 返回链接文字不含关键词时无法识别类型的问题。
+
+### Changed
+
+- 重构代码结构：`models.py` 合入 `utils.py`，`translator.py` 合入 `enricher.py`，`nitter_client.py` 合入 `media.py`，文件从 9 个精简为 6 个。
+- 重写 enricher 模块，识图与评论的 provider 解析统一为单一 `_resolve_provider` 方法。
+- 统一日志前缀为 `[NitterTweets]`。
+
 ## [0.5.0] - 2026-05-21
 
 ### Added

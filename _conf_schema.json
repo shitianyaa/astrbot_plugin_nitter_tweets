@@ -183,11 +183,11 @@
     "type": "text",
     "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。"
   },
-  "vision_first_image_only": {
-    "description": "仅识别第一张图片",
-    "type": "bool",
-    "default": true,
-    "hint": "当前版本固定只取每条推文第一张图片识别；保留该开关用于明确成本控制策略。"
+  "vision_max_images": {
+    "description": "AI 识图最大图片数",
+    "type": "int",
+    "default": 1,
+    "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。"
   },
   "schedule_enabled": {
     "description": "启用定时检查",

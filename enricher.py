@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import random
 import re
 from pathlib import Path
@@ -7,12 +8,17 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .models import TweetItem
-    from .utils import clamp_float, clamp_int, file_uri
+    from .utils import TweetItem, clamp_float, clamp_int
 except ImportError:
-    from models import TweetItem
-    from utils import clamp_float, clamp_int, file_uri
+    from utils import TweetItem, clamp_float, clamp_int
 
+
+LOG_PREFIX = "[NitterTweets]"
+
+DEFAULT_VISION_PROMPT = (
+    "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。"
+    "输出自然简体中文，不要使用 Markdown。"
+)
 
 DEFAULT_COMMENT_PROMPT = (
     "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，"
@@ -20,108 +26,111 @@ DEFAULT_COMMENT_PROMPT = (
     "\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}"
 )
 
-DEFAULT_VISION_PROMPT = (
-    "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。"
-    "输出自然简体中文，不要使用 Markdown。"
+SPACE_RE = re.compile(r"\s+")
+
+# 清理前缀
+_PREFIXES_TO_STRIP = (
+    "AI评论：", "评论：", "点评：",
+    "AI识图：", "图片描述：", "识图结果：",
 )
 
-SPACE_RE = re.compile(r"\s+")
+# 翻译相关
+CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+KANA_RE = re.compile(r"[\u3040-\u30ff]")
+HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+URL_RE = re.compile(r"https?://\S+")
+MENTION_RE = re.compile(r"(?<!\w)@\w+")
+
+DEFAULT_TRANSLATE_PROMPT = (
+    "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。"
+    "保留人名、账号、链接、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}"
+)
 
 
 class TweetEnricher:
+    """AI 识图 + 评论，参照 get_px 的两步式设计。"""
+
     def __init__(self, context, config):
         self.context = context
-        self.comment_enabled = bool(config.get("comment_enabled", False))
+
+        # ── 开关与概率 ──
         self.vision_enabled = bool(config.get("vision_enabled", False))
-        self.comment_provider_id = str(config.get("comment_provider_id", "") or "").strip()
+        self.comment_enabled = bool(config.get("comment_enabled", False))
+        self.vision_probability = clamp_float(config.get("vision_probability", 0.3), 0.0, 1.0)
+        self.comment_probability = clamp_float(config.get("comment_probability", 0.3), 0.0, 1.0)
+
+        # ── Provider ──
         self.vision_provider_id = str(config.get("vision_provider_id", "") or "").strip()
-        self.comment_probability = clamp_float(
-            config.get("comment_probability", 0.3), 0.0, 1.0
-        )
-        self.vision_probability = clamp_float(
-            config.get("vision_probability", 0.3), 0.0, 1.0
-        )
-        self.comment_max_chars = clamp_int(
-            config.get("comment_max_chars", 2000), 100, 10000
-        )
-        self.vision_first_image_only = bool(config.get("vision_first_image_only", True))
-        self.comment_prompt_template = self._load_comment_prompt(config)
-        self.vision_prompt = self._load_vision_prompt(config)
-        self._cached_framework_vlm_id: str | None = None
+        self.comment_provider_id = str(config.get("comment_provider_id", "") or "").strip()
+
+        # ── 图片 ──
+        self.vision_max_images = clamp_int(config.get("vision_max_images", 1), 1, 12)
+        self.comment_max_chars = clamp_int(config.get("comment_max_chars", 2000), 100, 10000)
+
+        # ── 提示词 ──
+        self.vision_prompt = self._load_prompt(config, "vision_prompt", DEFAULT_VISION_PROMPT)
+        self.comment_prompt_template = self._load_prompt(config, "comment_prompt", DEFAULT_COMMENT_PROMPT)
 
     @property
     def enabled(self) -> bool:
-        return self.comment_enabled or self.vision_enabled
+        return self.vision_enabled or self.comment_enabled
+
+    # ──────────────────────────────────────────────────────────────────
+    # 入口
+    # ──────────────────────────────────────────────────────────────────
 
     async def attach_enrichments(
-        self, tweets: list[TweetItem], umo: str | None = None
+        self, tweets: list[TweetItem], umo: str | None = None,
     ) -> None:
         if not self.enabled:
-            logger.info("[NitterTweets] AI enrich skipped: disabled")
+            logger.info(f"{LOG_PREFIX} AI enrich skipped: disabled")
             return
         if not tweets:
-            logger.info("[NitterTweets] AI enrich skipped: no tweets")
+            logger.info(f"{LOG_PREFIX} AI enrich skipped: no tweets")
             return
 
-        comment_provider_id = ""
-        vision_provider_id = ""
-        if self.comment_enabled and self.comment_probability > 0:
-            comment_provider_id, comment_source = await self._resolve_comment_provider(umo)
-            if comment_provider_id:
-                logger.info(
-                    "[NitterTweets] AI comment provider resolved: "
-                    f"{comment_provider_id} ({comment_source})"
-                )
-            else:
-                logger.warning("[NitterTweets] AI comment enabled but no provider is available")
+        # ── 解析模型 ──
+        v_pid = ""
+        c_pid = ""
         if self.vision_enabled and self.vision_probability > 0:
-            vision_provider_id, vision_source = await self._resolve_vision_provider(umo)
-            if vision_provider_id:
-                logger.info(
-                    "[NitterTweets] AI vision provider resolved: "
-                    f"{vision_provider_id} ({vision_source})"
-                )
+            v_pid = await self._resolve_provider(self.vision_provider_id, umo, prefer_vision=True)
+            if v_pid:
+                logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid}")
             else:
-                logger.warning("[NitterTweets] AI vision enabled but no provider is available")
+                logger.warning(f"{LOG_PREFIX} AI vision enabled but no provider available")
+        if self.comment_enabled and self.comment_probability > 0:
+            c_pid = await self._resolve_provider(self.comment_provider_id, umo)
+            if c_pid:
+                logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid}")
+            else:
+                logger.warning(f"{LOG_PREFIX} AI comment enabled but no provider available")
 
-        captioned = 0
-        commented = 0
-        skipped = 0
-        failed = 0
+        # ── 逐条处理 ──
+        captioned = commented = skipped = failed = 0
+
         for index, tweet in enumerate(tweets, 1):
-            status_id = tweet.status_id or f"index-{index}"
+            sid = tweet.status_id or f"index-{index}"
 
-            if (
-                self.vision_enabled
-                and vision_provider_id
-                and not tweet.image_caption
-                and self._roll(self.vision_probability)
-            ):
-                image_path = self._first_image_path(tweet)
-                if image_path:
-                    caption = await self._caption_image(
-                        vision_provider_id, image_path, status_id
-                    )
-                    if caption:
-                        tweet.image_caption = caption
+            # ── 识图 ──
+            if self.vision_enabled and v_pid and not tweet.image_caption and self._roll(self.vision_probability):
+                image_paths = self._image_paths(tweet, self.vision_max_images)
+                if image_paths:
+                    captions = await self._vision_images(v_pid, image_paths, sid)
+                    if captions:
+                        tweet.image_caption = (
+                            captions[0] if len(captions) == 1
+                            else "\n".join(f"[{i}/{len(captions)}] {c}" for i, c in enumerate(captions, 1))
+                        )
                         captioned += 1
                     else:
                         failed += 1
                 else:
                     skipped += 1
-                    logger.info(
-                        f"[NitterTweets] AI vision skipped: status={status_id}, reason=no_image"
-                    )
+                    logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=no_image")
 
-            if (
-                self.comment_enabled
-                and comment_provider_id
-                and not tweet.ai_comment
-                and self._roll(self.comment_probability)
-            ):
-                comment = await self._comment_tweet(
-                    comment_provider_id, tweet, status_id
-                )
+            # ── 评论 ──
+            if self.comment_enabled and c_pid and not tweet.ai_comment and self._roll(self.comment_probability):
+                comment = await self._comment_tweet(c_pid, tweet, sid)
                 if comment:
                     tweet.ai_comment = comment
                     commented += 1
@@ -129,215 +138,148 @@ class TweetEnricher:
                     failed += 1
 
         logger.info(
-            "[NitterTweets] AI enrich finished: "
-            f"tweets={len(tweets)}, captioned={captioned}, "
-            f"commented={commented}, skipped={skipped}, failed={failed}"
+            f"{LOG_PREFIX} AI enrich finished: tweets={len(tweets)}, "
+            f"captioned={captioned}, commented={commented}, "
+            f"skipped={skipped}, failed={failed}"
         )
 
-    async def _caption_image(
-        self, provider_id: str, image_path: Path, status_id: str
-    ) -> str:
-        image_url = file_uri(image_path)
-        try:
-            response = await self._llm_generate_with_image(
-                provider_id=provider_id,
-                prompt=self.vision_prompt,
-                image_url=image_url,
-            )
-        except Exception as exc:
-            logger.warning(
-                f"[NitterTweets] AI vision failed: status={status_id}, error={exc}"
-            )
-            return ""
+    # ──────────────────────────────────────────────────────────────────
+    # 识图（并发）
+    # ──────────────────────────────────────────────────────────────────
 
-        caption = self._clean_completion(getattr(response, "completion_text", "") or "")
-        if caption:
-            logger.info(
-                f"[NitterTweets] AI vision completed: status={status_id}, chars={len(caption)}"
-            )
-        else:
-            logger.warning(f"[NitterTweets] AI vision returned empty text: status={status_id}")
-        return caption
+    async def _vision_images(
+        self, provider_id: str, image_paths: list[Path], status_id: str,
+    ) -> list[str]:
+        """并发识图多张图片，返回描述列表。"""
 
-    async def _comment_tweet(
-        self, provider_id: str, tweet: TweetItem, status_id: str
-    ) -> str:
+        async def _caption_one(idx: int, path: Path) -> str:
+            image_url = path.as_uri()
+            try:
+                resp = await self.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    prompt=self.vision_prompt,
+                    image_urls=[image_url],
+                )
+            except Exception as exc:
+                logger.warning(f"{LOG_PREFIX} AI vision failed: status={status_id} img={idx}, error={exc}")
+                return ""
+            text = self._clean((resp.completion_text or "").strip())
+            if text:
+                logger.info(f"{LOG_PREFIX} AI vision done: status={status_id} img={idx}, chars={len(text)}")
+            else:
+                logger.warning(f"{LOG_PREFIX} AI vision empty: status={status_id} img={idx}")
+            return text
+
+        results = await asyncio.gather(*[_caption_one(i, p) for i, p in enumerate(image_paths, 1)])
+        return [r for r in results if r]
+
+    # ──────────────────────────────────────────────────────────────────
+    # 评论
+    # ──────────────────────────────────────────────────────────────────
+
+    async def _comment_tweet(self, provider_id: str, tweet: TweetItem, status_id: str) -> str:
         text = (tweet.text or "").strip()
         if len(text) > self.comment_max_chars:
             text = text[: self.comment_max_chars].rstrip()
-        image_caption = (tweet.image_caption or "").strip()
-        if not text and not image_caption:
-            logger.info(
-                f"[NitterTweets] AI comment skipped: status={status_id}, reason=no_text_or_caption"
-            )
+        caption = (tweet.image_caption or "").strip()
+        if not text and not caption:
+            logger.info(f"{LOG_PREFIX} AI comment skipped: status={status_id}, reason=no_content")
             return ""
 
-        prompt = self._render_comment_prompt(
-            text=text,
-            translation=tweet.translation,
-            image_caption=image_caption,
-            link=tweet.link,
-        )
+        prompt = self._render_comment_prompt(text, tweet.translation, caption, tweet.link)
         try:
-            response = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=prompt,
-            )
+            resp = await self.context.llm_generate(chat_provider_id=provider_id, prompt=prompt)
         except Exception as exc:
-            logger.warning(
-                f"[NitterTweets] AI comment failed: status={status_id}, error={exc}"
-            )
+            logger.warning(f"{LOG_PREFIX} AI comment failed: status={status_id}, error={exc}")
             return ""
 
-        comment = self._clean_completion(getattr(response, "completion_text", "") or "")
-        if self._same_text(comment, tweet.text) or self._same_text(comment, tweet.translation):
+        comment = self._clean((resp.completion_text or "").strip())
+        if self._same(comment, tweet.text) or self._same(comment, tweet.translation):
             return ""
         if comment:
-            logger.info(
-                f"[NitterTweets] AI comment completed: status={status_id}, chars={len(comment)}"
-            )
+            logger.info(f"{LOG_PREFIX} AI comment done: status={status_id}, chars={len(comment)}")
         else:
-            logger.warning(f"[NitterTweets] AI comment returned empty text: status={status_id}")
+            logger.warning(f"{LOG_PREFIX} AI comment empty: status={status_id}")
         return comment
 
-    async def _resolve_comment_provider(self, umo: str | None) -> tuple[str, str]:
-        if self.comment_provider_id:
-            return self.comment_provider_id, "config"
-        provider_id = await self._current_chat_provider_id(umo)
-        if provider_id:
-            return provider_id, "current_chat"
-        provider_id = self._first_provider_id()
-        if provider_id:
-            return provider_id, "first_provider"
-        return "", "none"
+    # ──────────────────────────────────────────────────────────────────
+    # Provider 解析（配置 > 框架全局视觉模型 > 当前会话）
+    # ──────────────────────────────────────────────────────────────────
 
-    async def _resolve_vision_provider(self, umo: str | None) -> tuple[str, str]:
-        if self.vision_provider_id:
-            return self.vision_provider_id, "config"
+    async def _resolve_provider(
+        self, config_pid: str, umo: str | None, prefer_vision: bool = False,
+    ) -> str:
+        if config_pid:
+            return config_pid
 
-        framework_provider_id = self._framework_vision_provider_id()
-        if framework_provider_id:
-            return framework_provider_id, "default_image_caption_provider"
-
-        provider_id = await self._current_chat_provider_id(umo)
-        if provider_id:
-            return provider_id, "current_chat"
-
-        provider_id = self._first_provider_id()
-        if provider_id:
-            return provider_id, "first_provider"
-        return "", "none"
-
-    async def _current_chat_provider_id(self, umo: str | None) -> str:
-        if not umo:
-            return ""
-        try:
+        # 框架全局图片描述模型（仅视觉）
+        if prefer_vision:
             try:
-                provider_id = await self.context.get_current_chat_provider_id(umo=umo)
-            except TypeError:
-                provider_id = await self.context.get_current_chat_provider_id(umo)
-        except Exception as exc:
-            logger.info(f"[NitterTweets] current chat provider lookup failed: {exc}")
-            return ""
-        return str(provider_id or "").strip()
+                cfg = self.context.get_config()
+                vlm = str((cfg.get("provider_settings") or {}).get(
+                    "default_image_caption_provider_id", "",
+                ) or "").strip()
+                if vlm:
+                    return vlm
+            except Exception:
+                pass
 
-    def _framework_vision_provider_id(self) -> str:
-        if self._cached_framework_vlm_id is not None:
-            return self._cached_framework_vlm_id
+        # 当前会话模型
+        if umo:
+            try:
+                pid = await self.context.get_current_chat_provider_id(umo=umo)
+                if pid:
+                    return str(pid).strip()
+            except Exception:
+                pass
 
-        provider_id = ""
+        # 第一个可用 provider
         try:
-            astrbot_config = self.context.get_config()
-            provider_settings = astrbot_config.get("provider_settings", {})
-            provider_id = str(
-                provider_settings.get("default_image_caption_provider_id", "") or ""
-            ).strip()
-        except Exception as exc:
-            logger.info(f"[NitterTweets] framework vision provider lookup failed: {exc}")
+            pm = getattr(self.context, "provider_manager", None)
+            if pm is not None:
+                providers = pm.get_all_providers()
+                if isinstance(providers, dict) and providers:
+                    return str(next(iter(providers.keys()))).strip()
+                if isinstance(providers, list) and providers:
+                    for attr in ("id", "provider_id", "name"):
+                        val = getattr(providers[0], attr, None)
+                        if val:
+                            return str(val).strip()
+        except Exception:
+            pass
 
-        self._cached_framework_vlm_id = provider_id
-        return provider_id
-
-    def _first_provider_id(self) -> str:
-        try:
-            provider_manager = getattr(self.context, "provider_manager", None)
-            if provider_manager is None:
-                return ""
-            providers = provider_manager.get_all_providers()
-            if isinstance(providers, dict) and providers:
-                return str(next(iter(providers.keys())) or "").strip()
-            if isinstance(providers, list) and providers:
-                first = providers[0]
-                for attr in ("id", "provider_id", "name"):
-                    value = getattr(first, attr, None)
-                    if value:
-                        return str(value).strip()
-        except Exception as exc:
-            logger.info(f"[NitterTweets] provider fallback lookup failed: {exc}")
         return ""
 
-    async def _llm_generate_with_image(self, provider_id: str, prompt: str, image_url: str):
-        try:
-            return await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=prompt,
-                image_urls=[image_url],
-            )
-        except Exception as exc:
-            if not self._should_retry_image_url_as_string(exc):
-                raise
-            logger.warning(
-                "[NitterTweets] image_urls list form failed, retrying as string: "
-                f"{exc}"
-            )
-            return await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=prompt,
-                image_urls=image_url,
-            )
+    # ──────────────────────────────────────────────────────────────────
+    # 提示词渲染
+    # ──────────────────────────────────────────────────────────────────
 
-    def _render_comment_prompt(
-        self, text: str, translation: str, image_caption: str, link: str
-    ) -> str:
-        replacements = {
+    def _render_comment_prompt(self, text: str, translation: str, caption: str, link: str) -> str:
+        mapping = {
             "text": text,
             "translation": translation or "无",
-            "image_caption": image_caption or "无",
+            "image_caption": caption or "无",
             "link": link or "",
         }
         return re.sub(
             r"\{(text|translation|image_caption|link)\}",
-            lambda match: replacements[match.group(1)],
+            lambda m: mapping[m.group(1)],
             self.comment_prompt_template,
         )
 
-    @staticmethod
-    def _load_comment_prompt(config) -> str:
-        prompt = str(config.get("comment_prompt", "") or "").strip()
-        if not prompt:
-            return DEFAULT_COMMENT_PROMPT
-        if (
-            "{text}" not in prompt
-            and "{translation}" not in prompt
-            and "{image_caption}" not in prompt
-        ):
-            prompt = (
-                f"{prompt}\n\n推文：{{text}}\n中文翻译：{{translation}}"
-                "\n图片描述：{image_caption}"
-            )
-        return prompt
+    # ──────────────────────────────────────────────────────────────────
+    # 工具方法
+    # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _load_vision_prompt(config) -> str:
-        prompt = str(config.get("vision_prompt", "") or "").strip()
-        return prompt or DEFAULT_VISION_PROMPT
-
-    @staticmethod
-    def _first_image_path(tweet: TweetItem) -> Path | None:
+    def _image_paths(tweet: TweetItem, max_count: int = 1) -> list[Path]:
+        paths: list[Path] = []
         for media in tweet.media:
             if media.is_image and media.path:
-                return media.path
-        return None
+                paths.append(media.path)
+                if len(paths) >= max_count:
+                    break
+        return paths
 
     @staticmethod
     def _roll(probability: float) -> bool:
@@ -348,36 +290,182 @@ class TweetEnricher:
         return random.random() < probability
 
     @staticmethod
-    def _should_retry_image_url_as_string(exc: Exception) -> bool:
-        text = str(exc).lower()
-        markers = (
-            "list object",
-            "startswith",
-            "image_urls",
-            "expected list",
-            "expected str",
-            "typeerror",
-        )
-        return any(marker in text for marker in markers)
-
-    @staticmethod
-    def _clean_completion(text: str) -> str:
-        text = str(text or "").strip()
+    def _clean(text: str) -> str:
         text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
         text = re.sub(r"\s*```$", "", text).strip()
-        for prefix in (
-            "AI评论：",
-            "评论：",
-            "点评：",
-            "AI识图：",
-            "图片描述：",
-            "识图结果：",
-        ):
+        for prefix in _PREFIXES_TO_STRIP:
             if text.startswith(prefix):
-                return text[len(prefix) :].strip()
+                return text[len(prefix):].strip()
         return text
 
     @staticmethod
-    def _same_text(left: str, right: str) -> bool:
-        normalize = lambda value: SPACE_RE.sub("", value or "").casefold()
-        return bool(left) and bool(right) and normalize(left) == normalize(right)
+    def _same(left: str, right: str) -> bool:
+        def norm(v: str) -> str:
+            return SPACE_RE.sub("", v or "").casefold()
+        return bool(left) and bool(right) and norm(left) == norm(right)
+
+    @staticmethod
+    def _load_prompt(config, key: str, default: str) -> str:
+        prompt = str(config.get(key, "") or "").strip()
+        return prompt or default
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 翻译
+# ──────────────────────────────────────────────────────────────────────
+
+class TweetTranslator:
+    def __init__(self, context, config):
+        self.context = context
+        self.enabled = bool(config.get("translate_enabled", False))
+        self.provider_id = str(config.get("translation_provider_id", "") or "").strip()
+        self.min_chars = clamp_int(config.get("translate_min_chars", 8), 0, 1000)
+        self.max_chars = clamp_int(config.get("translate_max_chars", 2000), 100, 10000)
+        self.chinese_ratio_threshold = clamp_float(
+            config.get("translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
+        )
+        self.prompt_template = self._load_prompt(config)
+        if "{text}" not in self.prompt_template:
+            self.prompt_template = f"{self.prompt_template}\n\n{{text}}"
+
+    async def attach_translations(
+        self, tweets: list[TweetItem], umo: str | None = None,
+    ) -> None:
+        if not self.enabled:
+            logger.info(f"{LOG_PREFIX} translation skipped: translate_enabled=false")
+            return
+        if not tweets:
+            logger.info(f"{LOG_PREFIX} translation skipped: no tweets")
+            return
+
+        provider_id, source = await self._resolve_provider(umo)
+        if not provider_id:
+            logger.warning(f"{LOG_PREFIX} translation enabled but no provider available")
+            return
+        logger.info(f"{LOG_PREFIX} translation started: tweets={len(tweets)}, provider={provider_id} ({source})")
+
+        translated = skipped = failed = 0
+        for index, tweet in enumerate(tweets, 1):
+            sid = tweet.status_id or f"index-{index}"
+            if tweet.translation:
+                skipped += 1
+                continue
+
+            should, reason = self._should_translate(tweet.text)
+            if not should:
+                skipped += 1
+                logger.info(f"{LOG_PREFIX} translation skipped: status={sid}, reason={reason}")
+                continue
+
+            logger.info(f"{LOG_PREFIX} translation requested: status={sid}, reason={reason}")
+            result = await self._translate(provider_id, tweet.text, sid)
+            if result:
+                tweet.translation = result
+                translated += 1
+                logger.info(f"{LOG_PREFIX} translation done: status={sid}, chars={len(result)}")
+            else:
+                failed += 1
+
+        logger.info(f"{LOG_PREFIX} translation finished: translated={translated}, skipped={skipped}, failed={failed}")
+
+    # ── 判断是否需要翻译 ──
+
+    def _should_translate(self, text: str) -> tuple[bool, str]:
+        cleaned = self._clean_for_detect(text)
+        if len(cleaned) < self.min_chars:
+            return False, f"too_short(len={len(cleaned)}, min={self.min_chars})"
+
+        if KANA_RE.search(cleaned) or HANGUL_RE.search(cleaned):
+            return True, f"kana_or_hangul(len={len(cleaned)})"
+
+        meaningful = [ch for ch in cleaned if not ch.isspace()]
+        if not meaningful:
+            return False, "empty_after_clean"
+
+        chinese_count = sum(1 for ch in meaningful if CJK_RE.match(ch))
+        ratio = chinese_count / len(meaningful)
+        reason = f"chinese_ratio={ratio:.2f}, threshold={self.chinese_ratio_threshold:.2f}, len={len(meaningful)}"
+        return ratio < self.chinese_ratio_threshold, reason
+
+    async def _translate(self, provider_id: str, text: str, status_id: str) -> str:
+        prompt_text = text.strip()
+        if len(prompt_text) > self.max_chars:
+            prompt_text = prompt_text[: self.max_chars].rstrip()
+
+        prompt = self.prompt_template.replace("{text}", prompt_text)
+        try:
+            resp = await self.context.llm_generate(chat_provider_id=provider_id, prompt=prompt)
+        except Exception as exc:
+            logger.warning(f"{LOG_PREFIX} translation failed: status={status_id}, error={exc}")
+            return ""
+
+        result = self._clean((resp.completion_text or "").strip())
+        if self._same(result, text):
+            return ""
+        return result
+
+    # ── Provider 解析（配置 > 当前会话 > 第一个） ──
+
+    async def _resolve_provider(self, umo: str | None) -> tuple[str, str]:
+        if self.provider_id:
+            return self.provider_id, "config"
+
+        if umo:
+            try:
+                pid = await self.context.get_current_chat_provider_id(umo=umo)
+                pid = str(pid or "").strip()
+                if pid:
+                    return pid, "current_chat"
+            except Exception:
+                pass
+
+        # 第一个可用 provider
+        try:
+            pm = getattr(self.context, "provider_manager", None)
+            if pm is not None:
+                providers = pm.get_all_providers()
+                if isinstance(providers, dict) and providers:
+                    return str(next(iter(providers.keys()))).strip(), "first_provider"
+                if isinstance(providers, list) and providers:
+                    for attr in ("id", "provider_id", "name"):
+                        val = getattr(providers[0], attr, None)
+                        if val:
+                            return str(val).strip(), "first_provider"
+        except Exception:
+            pass
+
+        return "", "none"
+
+    # ── 工具方法 ──
+
+    @staticmethod
+    def _clean_for_detect(text: str) -> str:
+        text = URL_RE.sub("", text or "")
+        text = MENTION_RE.sub("", text)
+        return SPACE_RE.sub("", text)
+
+    @staticmethod
+    def _load_prompt(config) -> str:
+        prompt = str(config.get("translate_prompt", "") or "").strip()
+        if prompt:
+            return prompt
+        old_system = str(config.get("translate_system_prompt", "") or "").strip()
+        old_template = str(config.get("translate_prompt_template", "") or "").strip()
+        if old_system or old_template:
+            return "\n\n".join(p for p in (old_system, old_template) if p).strip()
+        return DEFAULT_TRANSLATE_PROMPT
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        for prefix in ("译文：", "翻译：", "中文翻译："):
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+        return text
+
+    @staticmethod
+    def _same(left: str, right: str) -> bool:
+        def norm(v: str) -> str:
+            return SPACE_RE.sub("", v or "").casefold()
+        return bool(left) and norm(left) == norm(right)

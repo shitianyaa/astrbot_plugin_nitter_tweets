@@ -41,7 +41,7 @@ https://x.com/<username>/status/<tweet_id>
 
 ## AI 评论与识图
 
-开启 `comment_enabled` 后，插件会在发送前按 `comment_probability` 概率调用文本大模型，为每条推文追加一段 `AI评论`。开启 `vision_enabled` 后，会按 `vision_probability` 概率调用视觉模型识别已下载的第一张图片，并追加 `AI识图`。
+开启 `comment_enabled` 后，插件会在发送前按 `comment_probability` 概率调用文本大模型，为每条推文追加一段 `AI评论`。开启 `vision_enabled` 后，会按 `vision_probability` 概率调用视觉模型识别推文中的图片（数量由 `vision_max_images` 控制），并追加 `AI识图`。多张图片会并发识别，结果以 `[1/N]` 格式拼接。
 
 如果同一条推文同时触发识图和评论，插件会先识图，再把图片描述、推文原文和已有中文翻译一起交给评论模型。模型调用失败不会影响原推文、媒体和链接发送。
 
@@ -69,6 +69,7 @@ https://x.com/<username>/status/<tweet_id>
 - `vision_enabled`：是否启用 AI 识图。
 - `vision_provider_id`：AI 识图使用的视觉模型，留空优先使用 AstrBot 全局图片描述模型。
 - `vision_probability`：每条推文触发 AI 识图的概率，范围 0-1。
+- `vision_max_images`：每条推文最多识别几张图片，范围 1-12，默认 1。
 - `vision_prompt`：识图提示词。
 
 ## 定时检查
@@ -128,7 +129,7 @@ https://x.com/<username>/status/<tweet_id>
 ## 说明
 
 - 公共 Nitter 实例不适合高频抓取，长期稳定使用建议自建实例。
-- 视频/GIF 比图片更容易触发平台大小、格式或风控限制；如果合并转发失败，插件会回退为普通文本。
+- 视频/GIF 比图片更容易触发平台大小、格式或风控限制；如果合并转发失败，插件会自动去掉视频重试一次，仍失败则回退为普通文本。
 - 本插件不依赖 `astrbot_plugin_parser-main` 运行，只参考了它的 Twitter 媒体解析思路。
 - 翻译功能使用 AstrBot 的 `context.llm_generate(...)` 接口；大模型输出质量和费用取决于你选择的 provider。
 - AI 评论与识图也使用 AstrBot 的 `context.llm_generate(...)` 接口；识图只分析已下载到本地的图片，不分析视频内容。
