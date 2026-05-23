@@ -64,7 +64,8 @@ class TweetEnricher:
         self.comment_provider_id = str(config.get("comment_provider_id", "") or "").strip()
 
         # ── 图片 ──
-        self.vision_max_images = clamp_int(config.get("vision_max_images", 1), 1, 12)
+        self.vision_max_images = clamp_int(config.get("vision_max_images", 3), 1, 20)
+        self.vision_max_total = clamp_int(config.get("vision_max_total", 6), 1, 50)
         self.comment_max_chars = clamp_int(config.get("comment_max_chars", 2000), 100, 10000)
 
         # ── 提示词 ──
@@ -107,26 +108,37 @@ class TweetEnricher:
 
         # ── 逐条处理 ──
         captioned = commented = skipped = failed = 0
+        vision_used = 0  # 已识图总数
 
         for index, tweet in enumerate(tweets, 1):
             sid = tweet.status_id or f"index-{index}"
 
-            # ── 识图 ──
+            # ── 识图（受 vision_max_images 单条上限 + vision_max_total 全局上限控制）──
             if self.vision_enabled and v_pid and not tweet.image_caption and self._roll(self.vision_probability):
-                image_paths = self._image_paths(tweet, self.vision_max_images)
-                if image_paths:
-                    captions = await self._vision_images(v_pid, image_paths, sid)
-                    if captions:
-                        tweet.image_caption = (
-                            captions[0] if len(captions) == 1
-                            else "\n".join(f"[{i}/{len(captions)}] {c}" for i, c in enumerate(captions, 1))
-                        )
-                        captioned += 1
-                    else:
-                        failed += 1
-                else:
+                remaining = self.vision_max_total - vision_used
+                if remaining <= 0:
+                    logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=global_limit_reached ({self.vision_max_total})")
                     skipped += 1
-                    logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=no_image")
+                else:
+                    per_tweet_cap = min(self.vision_max_images, remaining)
+                    image_paths = self._image_paths(tweet, per_tweet_cap)
+                    if image_paths:
+                        actual = len(image_paths)
+                        if actual < len([m for m in tweet.media if m.is_image and m.path]):
+                            logger.info(f"{LOG_PREFIX} AI vision capped: status={sid}, {actual} images (global remaining={remaining})")
+                        captions = await self._vision_images(v_pid, image_paths, sid)
+                        vision_used += actual
+                        if captions:
+                            tweet.image_caption = (
+                                captions[0] if len(captions) == 1
+                                else "\n".join(f"[{i}/{len(captions)}] {c}" for i, c in enumerate(captions, 1))
+                            )
+                            captioned += 1
+                        else:
+                            failed += 1
+                    else:
+                        skipped += 1
+                        logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=no_image")
 
             # ── 评论 ──
             if self.comment_enabled and c_pid and not tweet.ai_comment and self._roll(self.comment_probability):
