@@ -114,7 +114,7 @@ class MediaService:
             try:
                 tweet.media = await self.resolve_and_download(tweet)
             except Exception as exc:
-                logger.warning(f"Failed to resolve media for {tweet.link}: {exc}")
+                self._add_media_warning(tweet, f"媒体解析失败，已保留原文链接：{exc}")
 
     async def resolve_and_download(self, tweet: TweetItem) -> list[TweetMedia]:
         media_urls = await asyncio.to_thread(self._resolve_media_urls, tweet)
@@ -123,23 +123,41 @@ class MediaService:
 
         downloaded: list[TweetMedia] = []
         seen: set[str] = set()
-        for media in media_urls:
+        for index, media in enumerate(media_urls):
             if media.url in seen:
                 continue
             seen.add(media.url)
             if len(downloaded) >= self.max_per_tweet:
+                if any(item.is_video for item in media_urls[index:]):
+                    self._add_media_warning(
+                        tweet,
+                        f"视频/GIF 超过单条媒体上限 {self.max_per_tweet}，已保留原文链接",
+                    )
                 break
             if media.is_image and not self.include_images:
                 continue
             if media.is_video and not self.include_videos:
+                self._add_media_warning(
+                    tweet, "视频/GIF 已按配置跳过，已保留原文链接"
+                )
                 continue
             try:
                 media.path = await asyncio.to_thread(self._download, media)
             except Exception as exc:
+                if media.is_video:
+                    self._add_media_warning(
+                        tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
+                    )
                 logger.warning(f"Failed to download media {media.url}: {exc}")
                 continue
             downloaded.append(media)
         return downloaded
+
+    @staticmethod
+    def _add_media_warning(tweet: TweetItem, message: str) -> None:
+        if message not in tweet.media_warnings:
+            tweet.media_warnings.append(message)
+        logger.warning(f"[NitterTweets] {message}: {tweet.x_url}")
 
     def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
         data = urlencode({"q": tweet.x_url, "lang": "zh-cn"}).encode("utf-8")

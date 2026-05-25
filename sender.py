@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from astrbot.api import logger
 
 try:
@@ -19,6 +21,14 @@ except ImportError:
 
 
 TweetBatch = tuple[str, str, list[TweetItem]]
+
+
+@dataclass(slots=True)
+class MergedSendOutcome:
+    success: bool
+    mode: str
+    omitted_videos: int = 0
+    error: str = ""
 
 
 class TweetSender:
@@ -102,29 +112,34 @@ class TweetSender:
         context,
         umo: str,
         batches: list[TweetBatch],
-    ) -> bool:
+    ) -> MergedSendOutcome:
+        omitted_videos = self._count_attached_videos(batches)
         nodes = self._build_merged_nodes_for_uin(10000, batches)
         try:
             await context.send_message(umo, MessageChain([nodes]))
-            return True
+            return MergedSendOutcome(success=True, mode="full_forward")
         except Exception as exc:
+            error = str(exc)
             logger.warning(f"Failed to send merged scheduled tweets to {umo}: {exc}")
 
-        # 去掉视频后重试
-        has_video = any(
-            m.is_video for _, _, ts in batches for t in ts for m in t.media if m.path
-        )
-        if has_video:
+        if omitted_videos:
             try:
                 nodes_nv = self._build_merged_nodes_for_uin(
                     10000, batches, exclude_videos=True
                 )
                 await context.send_message(umo, MessageChain([nodes_nv]))
-                logger.info(
-                    f"Sent merged tweets to {umo} without videos after initial failure"
+                logger.warning(
+                    f"Sent merged tweets to {umo} without {omitted_videos} "
+                    "video/GIF attachments after initial failure"
                 )
-                return True
+                return MergedSendOutcome(
+                    success=True,
+                    mode="forward_without_videos",
+                    omitted_videos=omitted_videos,
+                    error=error,
+                )
             except Exception as exc:
+                error = str(exc)
                 logger.warning(
                     f"Failed to send merged tweets to {umo} without videos: {exc}"
                 )
@@ -133,10 +148,20 @@ class TweetSender:
             await context.send_message(
                 umo, MessageChain([Plain(self.format_merged_plain(batches))])
             )
-            return True
+            return MergedSendOutcome(
+                success=True,
+                mode="plain_fallback",
+                omitted_videos=omitted_videos,
+                error=error,
+            )
         except Exception as exc:
             logger.warning(f"Failed to send merged scheduled tweet fallback to {umo}: {exc}")
-            return False
+            return MergedSendOutcome(
+                success=False,
+                mode="failed",
+                omitted_videos=omitted_videos,
+                error=str(exc),
+            )
 
     def _build_nodes(
         self, event, username: str, instance: str, tweets: list[TweetItem],
@@ -205,24 +230,41 @@ class TweetSender:
                 index += 1
         return nodes
 
+    @staticmethod
+    def _count_attached_videos(batches: list[TweetBatch]) -> int:
+        return sum(
+            1
+            for _, _, tweets in batches
+            for tweet in tweets
+            for media in tweet.media
+            if media.path and media.is_video
+        )
+
     def _build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",
         exclude_videos: bool = False,
     ):
         text = self.format_tweet_with_source(index, username, tweet, source)
         components = [Plain(text)]
+        video_notice_added = False
         for media in tweet.media:
             if not media.path:
+                continue
+            if media.is_video and exclude_videos:
+                if not video_notice_added:
+                    components.append(
+                        Plain(
+                            "视频/GIF 附件未作为消息发送，请打开原文查看："
+                            f"{tweet.x_url}"
+                        )
+                    )
+                    video_notice_added = True
                 continue
             uri = file_uri(media.path)
             if media.is_image:
                 components.append(Image(uri))
             elif media.is_video:
-                if not exclude_videos:
-                    components.append(Video(uri))
-                else:
-                    # 视频被排除时，追加文本链接作为替代
-                    components.append(Plain(f"[视频] {tweet.x_url}"))
+                components.append(Video(uri))
         return components
 
     def _build_onebot_nodes(
@@ -380,6 +422,8 @@ class TweetSender:
             lines.append(tweet.ai_comment)
         if tweet.link:
             lines.append(tweet.link)
+        if tweet.media_warnings:
+            lines.append("媒体提示：" + "；".join(tweet.media_warnings))
         if tweet.media:
             image_count = sum(1 for item in tweet.media if item.is_image)
             video_count = sum(1 for item in tweet.media if item.is_video)

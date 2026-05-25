@@ -77,6 +77,7 @@ class ScheduledCheckResult:
     push_mode: str = "per_user"
     merged_push_success_targets: int = 0
     merged_push_total_targets: int = 0
+    delivery_warnings: list[str] = field(default_factory=list)
 
     @property
     def new_tweet_count(self) -> int:
@@ -125,6 +126,10 @@ class ScheduledCheckResult:
                 f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
             )
 
+        warning_part = (
+            f", warnings={len(self.delivery_warnings)}"
+            if self.delivery_warnings else ""
+        )
         return (
             "[NitterTweets] scheduled check finished: "
             f"reason={self.reason}, users={len(self.users)}, targets={len(self.targets)}, "
@@ -133,7 +138,7 @@ class ScheduledCheckResult:
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
             f"push_mode={self.push_mode}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
-            f"invalid_targets={len(self.invalid_targets)}"
+            f"invalid_targets={len(self.invalid_targets)}{warning_part}"
         )
 
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
@@ -187,6 +192,10 @@ class ScheduledCheckResult:
         if self.failed_users:
             items = [f"@{user}: {error}" for user, error in self.failed_users.items()]
             lines.append("失败: " + "; ".join(items))
+
+        if self.delivery_warnings:
+            lines.append("发送提示:")
+            lines.extend(f"- {warning}" for warning in self.delivery_warnings)
 
         if self.invalid_targets:
             lines.append("无效推送目标: " + ", ".join(self.invalid_targets))
@@ -588,8 +597,30 @@ class NitterTweetScheduler:
         success = 0
         for target_index, umo in enumerate(result.targets):
             try:
-                if await self.sender.send_merged_to_umo(self.context, umo, batches):
+                outcome = await self.sender.send_merged_to_umo(
+                    self.context, umo, batches
+                )
+                if outcome.success:
                     success += 1
+                    if outcome.mode != "full_forward":
+                        if outcome.omitted_videos:
+                            warning = (
+                                f"{umo} 合并推送已降级：mode={outcome.mode}，"
+                                f"{outcome.omitted_videos} 个视频/GIF 未作为附件发送，"
+                                "消息中已包含原文链接。"
+                            )
+                        else:
+                            warning = (
+                                f"{umo} 合并推送已降级：mode={outcome.mode}，"
+                                "已改用普通文本发送。"
+                            )
+                        result.delivery_warnings.append(warning)
+                        logger.warning(f"[NitterTweets] {warning}")
+                else:
+                    logger.warning(
+                        f"[NitterTweets] merged scheduled push to {umo} failed: "
+                        f"{outcome.error}"
+                    )
             except Exception as exc:
                 logger.warning(
                     f"[NitterTweets] merged scheduled push to {umo} failed: {exc}"
