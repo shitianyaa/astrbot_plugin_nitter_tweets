@@ -25,7 +25,7 @@
 https://x.com/<username>/status/<tweet_id>
 ```
 
-然后请求 `xdown.app/api/ajaxSearch` 获取图片、MP4、GIF 下载地址。媒体会下载到插件目录下的 `cache/`，再作为本地 `Image` / `Video` 消息段放入合并转发节点。
+然后请求 `xdown.app/api/ajaxSearch` 获取图片、MP4、GIF 下载地址。媒体会下载到插件目录下的 `cache/`，再作为本地 `Image` / `Video` 消息段放入合并转发节点。缓存默认保留 3 天，插件会自动清理超过保留时间的文件。
 
 如果媒体解析或下载失败，推文文本和原始链接仍会正常发送，并在对应推文中显示媒体提示。
 
@@ -57,6 +57,7 @@ https://x.com/<username>/status/<tweet_id>
 - `download_videos`：是否下载视频和 GIF。
 - `max_media_per_tweet`：单条推文最多发送多少个媒体。
 - `media_max_size_mb`：单个媒体大小上限。
+- `media_cache_retention_days`：媒体缓存保留天数，默认 3 天；设为 0 可关闭自动清理。
 - `xdown_api_url`：Twitter/X 媒体解析 API。
 - `translate_enabled`：是否翻译非中文推文。
 - `translation_provider_id`：翻译使用的大模型，支持在 WebUI 选择现有 provider。

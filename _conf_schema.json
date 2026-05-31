@@ -80,6 +80,12 @@
     "default": 25.0,
     "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
   },
+  "media_cache_retention_days": {
+    "description": "媒体缓存保留天数",
+    "type": "float",
+    "default": 3.0,
+    "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 可关闭自动清理。"
+  },
   "xdown_api_url": {
     "description": "xdown 解析 API",
     "type": "string",

@@ -6,6 +6,7 @@
 
 ### Added
 
+- 新增 `media_cache_retention_days` 配置，默认自动清理超过 3 天的媒体缓存。
 - 新增 `vision_max_images` 配置（替代原 `vision_first_image_only`），支持每条推文识别多张图片，识图并发执行（asyncio.gather）。
 - 发送合并转发消息失败时，自动去掉视频重试一次；视频位置替换为文本链接。
 - 媒体类型检测增加 URL 扩展名兜底，解决 xdown 返回链接文字不含关键词时无法识别类型的问题。

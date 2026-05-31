@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -94,6 +95,11 @@ class MediaService:
         self.timeout = clamp_float(config.get("media_timeout", 25.0), 5.0, 120.0)
         self.max_bytes = clamp_float(config.get("media_max_size_mb", 25.0), 1.0, 200.0)
         self.max_bytes = int(self.max_bytes * 1024 * 1024)
+        self.cache_retention_days = clamp_float(
+            config.get("media_cache_retention_days", 3.0), 0.0, 3650.0
+        )
+        self.cache_cleanup_interval = 3600.0
+        self._last_cache_cleanup = 0.0
         self.xdown_url = str(
             config.get("xdown_api_url", "https://xdown.app/api/ajaxSearch")
         )
@@ -108,6 +114,7 @@ class MediaService:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     async def attach_media(self, tweets: list[TweetItem]) -> None:
+        await asyncio.to_thread(self.cleanup_cache)
         if not self.enabled or self.max_per_tweet <= 0:
             return
         for tweet in tweets:
@@ -205,6 +212,7 @@ class MediaService:
         default_suffix = ".mp4" if media.is_video else ".jpg"
         file_path = self.cache_dir / generate_file_name(media.url, default_suffix)
         if file_path.exists() and file_path.stat().st_size > 0:
+            file_path.touch()
             return file_path
 
         temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
@@ -239,6 +247,35 @@ class MediaService:
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise
+
+    def cleanup_cache(self, force: bool = False) -> None:
+        if self.cache_retention_days <= 0:
+            return
+
+        now = time.time()
+        if not force and now - self._last_cache_cleanup < self.cache_cleanup_interval:
+            return
+        self._last_cache_cleanup = now
+
+        cutoff = now - self.cache_retention_days * 24 * 60 * 60
+        removed = 0
+        failed = 0
+        for path in self.cache_dir.iterdir():
+            if not path.is_file():
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            except OSError as exc:
+                failed += 1
+                logger.warning(f"[NitterTweets] failed to clean cache file {path}: {exc}")
+
+        if removed or failed:
+            logger.info(
+                "[NitterTweets] media cache cleanup finished: "
+                f"removed={removed}, failed={failed}, retention_days={self.cache_retention_days:g}"
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────
