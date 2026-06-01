@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from astrbot.api import logger
@@ -46,6 +47,36 @@ DEFAULT_TRANSLATE_PROMPT = (
     "保留人名、账号、链接、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}"
 )
 
+VISION_UNAVAILABLE_NOTICE = (
+    "AI识图未执行：未找到可用视觉模型。请在插件配置中设置 vision_provider_id，"
+    "或在 AstrBot 中设置全局图片描述模型。"
+)
+VISION_UNAVAILABLE_LOG = (
+    "AI vision skipped: no vision provider available. "
+    "Set vision_provider_id or provider_settings.default_image_caption_provider_id."
+)
+VISION_FAILED_NOTICE = (
+    "AI识图调用失败：当前模型可能不支持图片，或模型配置已失效。"
+    "请检查 vision_provider_id 或 AstrBot 全局图片描述模型。"
+)
+
+
+@dataclass(slots=True)
+class EnrichmentReport:
+    vision_provider_id: str = ""
+    vision_provider_source: str = ""
+    vision_unavailable: bool = False
+    vision_captioned: int = 0
+    vision_skipped: int = 0
+    vision_failed: int = 0
+    comment_provider_id: str = ""
+    comment_provider_source: str = ""
+    commented: int = 0
+    notice: str = ""
+
+    def visible_notices(self) -> list[str]:
+        return [self.notice] if self.notice else []
+
 
 class TweetEnricher:
     """AI 识图 + 评论，参照 get_px 的两步式设计。"""
@@ -82,27 +113,39 @@ class TweetEnricher:
 
     async def attach_enrichments(
         self, tweets: list[TweetItem], umo: str | None = None,
-    ) -> None:
+    ) -> EnrichmentReport:
+        report = EnrichmentReport()
         if not self.enabled:
             logger.info(f"{LOG_PREFIX} AI enrich skipped: disabled")
-            return
+            return report
         if not tweets:
             logger.info(f"{LOG_PREFIX} AI enrich skipped: no tweets")
-            return
+            return report
 
         # ── 解析模型 ──
         v_pid = ""
         c_pid = ""
         if self.vision_enabled and self.vision_probability > 0:
-            v_pid = await self._resolve_provider(self.vision_provider_id, umo, prefer_vision=True)
+            v_pid, v_source = await self._resolve_provider(
+                self.vision_provider_id, umo, prefer_vision=True
+            )
+            report.vision_provider_id = v_pid
+            report.vision_provider_source = v_source
             if v_pid:
-                logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid}")
+                logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid} ({v_source})")
             else:
-                logger.warning(f"{LOG_PREFIX} AI vision enabled but no provider available")
+                report.vision_unavailable = True
+                if self._has_image_paths(tweets):
+                    report.notice = VISION_UNAVAILABLE_NOTICE
+                logger.warning(f"{LOG_PREFIX} {VISION_UNAVAILABLE_LOG}")
         if self.comment_enabled and self.comment_probability > 0:
-            c_pid = await self._resolve_provider(self.comment_provider_id, umo)
+            c_pid, c_source = await self._resolve_provider(
+                self.comment_provider_id, umo
+            )
+            report.comment_provider_id = c_pid
+            report.comment_provider_source = c_source
             if c_pid:
-                logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid}")
+                logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid} ({c_source})")
             else:
                 logger.warning(f"{LOG_PREFIX} AI comment enabled but no provider available")
 
@@ -114,11 +157,17 @@ class TweetEnricher:
             sid = tweet.status_id or f"index-{index}"
 
             # ── 识图（受 vision_max_images 单条上限 + vision_max_total 全局上限控制）──
-            if self.vision_enabled and v_pid and not tweet.image_caption and self._roll(self.vision_probability):
+            if (
+                self.vision_enabled
+                and v_pid
+                and not tweet.image_caption
+                and self._roll(self.vision_probability)
+            ):
                 remaining = self.vision_max_total - vision_used
                 if remaining <= 0:
                     logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=global_limit_reached ({self.vision_max_total})")
                     skipped += 1
+                    report.vision_skipped += 1
                 else:
                     per_tweet_cap = min(self.vision_max_images, remaining)
                     image_paths = self._image_paths(tweet, per_tweet_cap)
@@ -134,10 +183,13 @@ class TweetEnricher:
                                 else "\n".join(f"[{i}/{len(captions)}] {c}" for i, c in enumerate(captions, 1))
                             )
                             captioned += 1
+                            report.vision_captioned += 1
                         else:
                             failed += 1
+                            report.vision_failed += 1
                     else:
                         skipped += 1
+                        report.vision_skipped += 1
                         logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=no_image")
 
             # ── 评论 ──
@@ -146,14 +198,29 @@ class TweetEnricher:
                 if comment:
                     tweet.ai_comment = comment
                     commented += 1
+                    report.commented += 1
                 else:
                     failed += 1
+
+        if (
+            report.vision_failed > 0
+            and report.vision_captioned == 0
+            and not report.notice
+            and self._has_image_paths(tweets)
+        ):
+            report.notice = VISION_FAILED_NOTICE
+            logger.warning(
+                f"{LOG_PREFIX} AI vision failed for all attempted tweets: "
+                f"provider={report.vision_provider_id} "
+                f"source={report.vision_provider_source}"
+            )
 
         logger.info(
             f"{LOG_PREFIX} AI enrich finished: tweets={len(tweets)}, "
             f"captioned={captioned}, commented={commented}, "
             f"skipped={skipped}, failed={failed}"
         )
+        return report
 
     # ──────────────────────────────────────────────────────────────────
     # 识图（并发）
@@ -220,9 +287,9 @@ class TweetEnricher:
 
     async def _resolve_provider(
         self, config_pid: str, umo: str | None, prefer_vision: bool = False,
-    ) -> str:
+    ) -> tuple[str, str]:
         if config_pid:
-            return config_pid
+            return config_pid, "config"
 
         # 框架全局图片描述模型（仅视觉）
         if prefer_vision:
@@ -232,18 +299,24 @@ class TweetEnricher:
                     "default_image_caption_provider_id", "",
                 ) or "").strip()
                 if vlm:
-                    return vlm
+                    return vlm, "global_image_caption"
             except Exception:
                 pass
 
         # 当前会话模型
         if umo:
             try:
-                pid = await self.context.get_current_chat_provider_id(umo=umo)
+                pid = str(
+                    await self.context.get_current_chat_provider_id(umo=umo) or ""
+                ).strip()
                 if pid:
-                    return str(pid).strip()
+                    return pid, "current_chat"
             except Exception:
                 pass
+
+        # 视觉模型不盲目使用第一个 provider，避免把纯文本模型误当识图模型。
+        if prefer_vision:
+            return "", "none"
 
         # 第一个可用 provider
         try:
@@ -251,16 +324,16 @@ class TweetEnricher:
             if pm is not None:
                 providers = pm.get_all_providers()
                 if isinstance(providers, dict) and providers:
-                    return str(next(iter(providers.keys()))).strip()
+                    return str(next(iter(providers.keys()))).strip(), "first_provider"
                 if isinstance(providers, list) and providers:
                     for attr in ("id", "provider_id", "name"):
                         val = getattr(providers[0], attr, None)
                         if val:
-                            return str(val).strip()
+                            return str(val).strip(), "first_provider"
         except Exception:
             pass
 
-        return ""
+        return "", "none"
 
     # ──────────────────────────────────────────────────────────────────
     # 提示词渲染
@@ -292,6 +365,14 @@ class TweetEnricher:
                 if len(paths) >= max_count:
                     break
         return paths
+
+    @staticmethod
+    def _has_image_paths(tweets: list[TweetItem]) -> bool:
+        return any(
+            bool(media.is_image and media.path)
+            for tweet in tweets
+            for media in tweet.media
+        )
 
     @staticmethod
     def _roll(probability: float) -> bool:

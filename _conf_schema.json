@@ -176,7 +176,7 @@
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话或第一个 provider。"
+    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。"
   },
   "vision_probability": {
     "description": "AI 识图触发概率",

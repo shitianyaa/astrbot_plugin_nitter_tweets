@@ -114,10 +114,15 @@ class NitterTweetsPlugin(Star):
 
         await self.translator.attach_translations(tweets, event.unified_msg_origin)
         await self.media.attach_media(tweets)
-        await self.enricher.attach_enrichments(tweets, event.unified_msg_origin)
-        if not await self.sender.send(event, username, instance, tweets):
+        enrich_report = await self.enricher.attach_enrichments(
+            tweets, event.unified_msg_origin
+        )
+        notices = enrich_report.visible_notices()
+        if not await self.sender.send(event, username, instance, tweets, notices=notices):
             await event.send(
-                event.plain_result(self.sender.format_plain(username, instance, tweets))
+                event.plain_result(
+                    self.sender.format_plain(username, instance, tweets, notices=notices)
+                )
             )
 
     @filter.permission_type(filter.PermissionType.ADMIN)

@@ -45,7 +45,9 @@ https://x.com/<username>/status/<tweet_id>
 
 如果同一条推文同时触发识图和评论，插件会先识图，再把图片描述、推文原文和已有中文翻译一起交给评论模型。模型调用失败不会影响原推文、媒体和链接发送。
 
-`comment_provider_id` 和 `vision_provider_id` 可分别选择模型。识图模型留空时会优先使用 AstrBot 全局图片描述模型 `default_image_caption_provider_id`；仍找不到时再尝试会话默认模型或第一个 provider。
+`comment_provider_id` 和 `vision_provider_id` 可分别选择模型。识图模型留空时会优先使用 AstrBot 全局图片描述模型 `default_image_caption_provider_id`；仍找不到时再尝试当前会话模型，不会盲目使用第一个 provider 作为视觉模型。
+
+如果找不到可用视觉模型，或模型存在但识图调用失败，手动 `/推文` 查询会在结果头部显示一次 `AI增强提示`；定时推送默认只写日志，不会向推送目标刷屏。无论识图是否可用，原推文、链接和媒体都会继续发送。
 
 ## 配置
 
@@ -68,7 +70,7 @@ https://x.com/<username>/status/<tweet_id>
 - `comment_probability`：每条推文触发 AI 评论的概率，范围 0-1。
 - `comment_prompt`：评论提示词，可使用 `{text}`、`{translation}`、`{image_caption}`、`{link}`。
 - `vision_enabled`：是否启用 AI 识图。
-- `vision_provider_id`：AI 识图使用的视觉模型，留空优先使用 AstrBot 全局图片描述模型。
+- `vision_provider_id`：AI 识图使用的视觉模型，留空优先使用 AstrBot 全局图片描述模型，其次使用当前会话模型。
 - `vision_probability`：每条推文触发 AI 识图的概率，范围 0-1。
 - `vision_max_images`：每条推文最多识别几张图片，范围 1-12，默认 1。
 - `vision_prompt`：识图提示词。
@@ -133,7 +135,7 @@ https://x.com/<username>/status/<tweet_id>
 - 视频/GIF 比图片更容易触发平台大小、格式或风控限制；如果合并转发失败，插件会自动去掉视频重试一次，受影响推文会显示原文链接，日志和 `/推文检查` 会提示本次发送已降级；仍失败则回退为普通文本。
 - 本插件不依赖 `astrbot_plugin_parser-main` 运行，只参考了它的 Twitter 媒体解析思路。
 - 翻译功能使用 AstrBot 的 `context.llm_generate(...)` 接口；大模型输出质量和费用取决于你选择的 provider。
-- AI 评论与识图也使用 AstrBot 的 `context.llm_generate(...)` 接口；识图只分析已下载到本地的图片，不分析视频内容。
+- AI 评论与识图也使用 AstrBot 的 `context.llm_generate(...)` 接口；识图只分析已下载到本地的图片，不分析视频内容。未配置视觉模型或模型调用失败时，会保留原推文发送。
 
 ## 致谢
 

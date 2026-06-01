@@ -38,9 +38,12 @@ class TweetSender:
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        notices: list[str] | None = None,
     ) -> bool:
-        nodes = self._build_nodes(event, username, instance, tweets)
-        raw_nodes = self._build_onebot_nodes(event, username, instance, tweets)
+        nodes = self._build_nodes(event, username, instance, tweets, notices=notices)
+        raw_nodes = self._build_onebot_nodes(
+            event, username, instance, tweets, notices=notices
+        )
         try:
             await event.send(event.chain_result([nodes]))
             return True
@@ -51,7 +54,8 @@ class TweetSender:
         if any(m.is_video for t in tweets for m in t.media if m.path):
             try:
                 nodes_nv = self._build_nodes(
-                    event, username, instance, tweets, exclude_videos=True
+                    event, username, instance, tweets,
+                    exclude_videos=True, notices=notices
                 )
                 await event.send(event.chain_result([nodes_nv]))
                 logger.info("Sent forwarded tweets without videos after initial failure")
@@ -165,15 +169,15 @@ class TweetSender:
 
     def _build_nodes(
         self, event, username: str, instance: str, tweets: list[TweetItem],
-        exclude_videos: bool = False,
+        exclude_videos: bool = False, notices: list[str] | None = None,
     ):
         return self._build_nodes_for_uin(
-            node_uin(event), username, instance, tweets, exclude_videos
+            node_uin(event), username, instance, tweets, exclude_videos, notices
         )
 
     def _build_nodes_for_uin(
         self, uin, username: str, instance: str, tweets: list[TweetItem],
-        exclude_videos: bool = False,
+        exclude_videos: bool = False, notices: list[str] | None = None,
     ):
         nodes = Nodes([])
         nodes.nodes.append(
@@ -181,11 +185,7 @@ class TweetSender:
                 uin=uin,
                 name="Nitter",
                 content=[
-                    Plain(
-                        f"@{username} 最近 {len(tweets)} 条公开推文\n"
-                        f"来源：{instance}\n"
-                        "提示：公共实例可能不稳定，请勿高频请求。"
-                    )
+                    Plain(self._format_header(username, instance, len(tweets), notices))
                 ],
             )
         )
@@ -273,6 +273,7 @@ class TweetSender:
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        notices: list[str] | None = None,
     ) -> list[dict]:
         uin = str(node_uin(event))
         items = [
@@ -281,9 +282,7 @@ class TweetSender:
                 "uin": uin,
                 "content": [
                     self._raw_text(
-                        f"@{username} 最近 {len(tweets)} 条公开推文\n"
-                        f"来源：{instance}\n"
-                        "提示：公共实例可能不稳定，请勿高频请求。"
+                        self._format_header(username, instance, len(tweets), notices)
                     )
                 ],
             }
@@ -363,11 +362,20 @@ class TweetSender:
         except TypeError:
             await call_action(action, **base_payload, message=raw_nodes)
 
-    def format_plain(self, username: str, instance: str, tweets: list[TweetItem]) -> str:
+    def format_plain(
+        self,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+    ) -> str:
         blocks = [
             f"@{username} 最近 {len(tweets)} 条公开推文",
             f"来源：{instance}",
         ]
+        notice_text = self._format_notices(notices)
+        if notice_text:
+            blocks.append(notice_text)
         blocks.extend(
             self.format_tweet(index, username, tweet)
             for index, tweet in enumerate(tweets, 1)
@@ -417,6 +425,9 @@ class TweetSender:
         if tweet.translation:
             lines.append("中文翻译：")
             lines.append(tweet.translation)
+        if tweet.image_caption:
+            lines.append("AI识图：")
+            lines.append(tweet.image_caption)
         if tweet.ai_comment:
             lines.append("AI评论：")
             lines.append(tweet.ai_comment)
@@ -435,3 +446,32 @@ class TweetSender:
             if parts:
                 lines.append("媒体：" + "，".join(parts))
         return "\n".join(lines)
+
+    @classmethod
+    def _format_header(
+        cls,
+        username: str,
+        instance: str,
+        tweet_count: int,
+        notices: list[str] | None = None,
+    ) -> str:
+        lines = [
+            f"@{username} 最近 {tweet_count} 条公开推文",
+            f"来源：{instance}",
+            "提示：公共实例可能不稳定，请勿高频请求。",
+        ]
+        notice_text = cls._format_notices(notices)
+        if notice_text:
+            lines.append(notice_text)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_notices(notices: list[str] | None = None) -> str:
+        clean_notices = [
+            notice.strip() for notice in notices or [] if notice and notice.strip()
+        ]
+        if not clean_notices:
+            return ""
+        return "\n".join(
+            ["AI增强提示：", *[f"- {notice}" for notice in clean_notices]]
+        )
