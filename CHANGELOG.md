@@ -2,6 +2,30 @@
 
 所有重要变更都会记录在这里。
 
+## [0.6.1] - 2026-06-05
+
+### Fixed
+
+- 修复 Telegram、微信等非 OneBot 平台因合并转发节点不受支持导致不推送的问题；非 QQ 平台会自动使用普通消息链。
+- 修复手动 `/推文` 发送路径在部分平台无支持消息段时没有明确失败提示的问题。
+- 修复 Nitter RSS 将 YouTube 链接改写为 `piped.video` 后在正文或译文中重复出现的问题；现在仅将 Piped 链接还原为 `youtu.be`，其他外链保留在原文位置。
+- 修复 URL 提取误识别邮箱域名的问题。
+- 修复 Linux 环境下本地媒体文件 URI 多出斜杠，导致 OneBot 可能收到 `//AstrBot/...` 路径的问题。
+- 修复视频推文的封面图可能被当作普通图片一起发送的问题。
+
+### Added
+
+- 新增 `send_image_attachments` 和 `send_video_attachments` 配置；配置界面改为只展示“发送图片附件”和“发送视频/GIF 附件”两个开关。
+- `send_video_attachments` 默认关闭；关闭时保留原帖链接并提示打开原文查看。
+
+### Changed
+
+- 定时推送的合并转发仅 OneBot v11/`aiocqhttp` 使用；其他平台发送普通消息链。
+- 翻译输入改为去除 URL 后的正文，避免译文重复输出链接。
+- `push_targets` 配置说明改为推荐使用 `/sid` 获取完整 UMO；配置界面不再展示 `platform_id`。
+- 精简 README，并补充多镜像重试、手动检查、多目标推送、平台发送差异和 AI 协助说明。
+- 移除配置界面中的 `download_media`、`download_images`、`download_videos`，升级后以新的图片/视频发送开关为准。
+
 ## [0.6.0] - 2026-05-23
 
 ### Added

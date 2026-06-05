@@ -9,9 +9,9 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .utils import TweetItem, clamp_float, clamp_int
+    from .utils import TweetItem, clamp_float, clamp_int, strip_external_links
 except ImportError:
-    from utils import TweetItem, clamp_float, clamp_int
+    from utils import TweetItem, clamp_float, clamp_int, strip_external_links
 
 
 LOG_PREFIX = "[NitterTweets]"
@@ -44,7 +44,7 @@ MENTION_RE = re.compile(r"(?<!\w)@\w+")
 
 DEFAULT_TRANSLATE_PROMPT = (
     "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。"
-    "保留人名、账号、链接、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}"
+    "保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}"
 )
 
 VISION_UNAVAILABLE_NOTICE = (
@@ -481,7 +481,9 @@ class TweetTranslator:
         return ratio < self.chinese_ratio_threshold, reason
 
     async def _translate(self, provider_id: str, text: str, status_id: str) -> str:
-        prompt_text = text.strip()
+        prompt_text = strip_external_links(text)
+        if not prompt_text:
+            return ""
         if len(prompt_text) > self.max_chars:
             prompt_text = prompt_text[: self.max_chars].rstrip()
 
@@ -492,8 +494,8 @@ class TweetTranslator:
             logger.warning(f"{LOG_PREFIX} translation failed: status={status_id}, error={exc}")
             return ""
 
-        result = self._clean((resp.completion_text or "").strip())
-        if self._same(result, text):
+        result = strip_external_links(self._clean((resp.completion_text or "").strip()))
+        if self._same(result, prompt_text):
             return ""
         return result
 

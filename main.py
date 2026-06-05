@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from astrbot.api.all import AstrBotConfig, Context, Star, logger
+from astrbot.api.all import AstrBotConfig, Context, MessageChain, Plain, Star, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 
@@ -24,7 +24,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.0",
+    "0.6.1",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -33,7 +33,7 @@ class NitterTweetsPlugin(Star):
         self.config = config
         self.nitter = NitterClient(config)
         self.media = MediaService(config)
-        self.sender = TweetSender()
+        self.sender = TweetSender(config)
         self.translator = TweetTranslator(context, config)
         self.enricher = TweetEnricher(context, config)
         self.scheduler = NitterTweetScheduler(
@@ -58,7 +58,9 @@ class NitterTweetsPlugin(Star):
         logger.info(
             "Nitter tweets plugin loaded: "
             f"{len(self.nitter.instances)} instances, "
-            f"media={'on' if self.media.enabled else 'off'}, "
+            "media="
+            f"image:{'on' if self.media.send_image_attachments else 'off'},"
+            f"video:{'on' if self.media.send_video_attachments else 'off'}, "
             f"translate={'on' if self.translator.enabled else 'off'}, "
             f"ai_enrich={'on' if self.enricher.enabled else 'off'}, "
             f"merge_updates={'on' if self.config.get('merge_scheduled_updates', False) else 'off'}"
@@ -119,11 +121,29 @@ class NitterTweetsPlugin(Star):
         )
         notices = enrich_report.visible_notices()
         if not await self.sender.send(event, username, instance, tweets, notices=notices):
-            await event.send(
-                event.plain_result(
-                    self.sender.format_plain(username, instance, tweets, notices=notices)
-                )
+            fallback_text = self.sender.format_plain(
+                username, instance, tweets, notices=notices
             )
+            try:
+                await event.send(MessageChain([Plain(fallback_text)]))
+            except Exception as exc:
+                logger.warning(f"Failed to send manual tweet fallback: {exc}")
+                try:
+                    await event.send(
+                        MessageChain(
+                            [
+                                Plain(
+                                    f"已获取 @{username} 的推文，但发送失败。"
+                                    "请查看插件日志或稍后重试。"
+                                )
+                            ]
+                        )
+                    )
+                except Exception as notice_exc:
+                    logger.warning(
+                        "Failed to send manual tweet failure notice: "
+                        f"{notice_exc}"
+                    )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文状态", alias={"nitter_status", "tweets_status"})

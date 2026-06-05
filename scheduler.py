@@ -576,8 +576,14 @@ class NitterTweetScheduler:
         success = 0
         for target_index, umo in enumerate(result.targets):
             try:
-                await self.context.send_message(umo, MessageChain([Plain(text)]))
-                success += 1
+                if await self.context.send_message(umo, MessageChain([Plain(text)])):
+                    success += 1
+                else:
+                    logger.warning(
+                        "[NitterTweets] no-update notice to "
+                        f"{umo} failed: target platform not found or proactive send "
+                        "is unsupported"
+                    )
             except Exception as exc:
                 logger.warning(
                     f"[NitterTweets] no-update notice to {umo} failed: {exc}"
@@ -602,7 +608,7 @@ class NitterTweetScheduler:
                 )
                 if outcome.success:
                     success += 1
-                    if outcome.mode != "full_forward":
+                    if outcome.mode not in {"full_forward", "direct_message"}:
                         if outcome.omitted_videos:
                             warning = (
                                 f"{umo} 合并推送已降级：mode={outcome.mode}，"
@@ -729,25 +735,77 @@ class NitterTweetScheduler:
         configured = (self.config.get("platform_id", "") or "").strip()
         if configured:
             return configured
+
+        platform_id = self._detect_context_platform_id()
+        if platform_id:
+            return platform_id
+
+        return "aiocqhttp"
+
+    def _detect_context_platform_id(self) -> str:
         try:
-            all_platforms = self.context.get_all_platforms()
-            if not all_platforms:
-                return "aiocqhttp"
-            if isinstance(all_platforms, dict):
-                return next(iter(all_platforms.keys()))
-            first = all_platforms[0]
-            for attr in ("platform_name", "name"):
-                value = getattr(first, attr, None)
-                if isinstance(value, str) and value:
-                    return value
-            meta = getattr(first, "meta", None)
-            if callable(meta):
-                value = getattr(meta(), "name", None)
-                if isinstance(value, str) and value:
-                    return value
+            get_all_platforms = getattr(self.context, "get_all_platforms", None)
+            if callable(get_all_platforms):
+                platform_id = self._first_platform_id(get_all_platforms())
+                if platform_id:
+                    return platform_id
         except Exception as exc:
             logger.debug(f"[NitterTweets] platform auto-detect failed: {exc}")
-        return "aiocqhttp"
+
+        try:
+            manager = getattr(self.context, "platform_manager", None)
+            platform_id = self._first_platform_id(
+                getattr(manager, "platform_insts", []) or []
+            )
+            if platform_id:
+                return platform_id
+        except Exception as exc:
+            logger.debug(f"[NitterTweets] platform manager lookup failed: {exc}")
+
+        return ""
+
+    @classmethod
+    def _first_platform_id(cls, platforms) -> str:
+        if not platforms:
+            return ""
+
+        if isinstance(platforms, dict):
+            for key in platforms:
+                platform_id = str(key).strip()
+                if platform_id and platform_id != "webchat":
+                    return platform_id
+            return ""
+
+        for platform in platforms:
+            platform_id = cls._platform_id(platform)
+            if platform_id and platform_id != "webchat":
+                return platform_id
+        return ""
+
+    @staticmethod
+    def _platform_id(platform) -> str:
+        for attr in ("platform_id", "platform_name", "id", "name"):
+            value = getattr(platform, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        meta = getattr(platform, "meta", None)
+        if callable(meta):
+            try:
+                metadata = meta()
+            except Exception:
+                metadata = None
+            for attr in ("id", "name"):
+                value = getattr(metadata, attr, None)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+        config = getattr(platform, "config", None)
+        if isinstance(config, dict):
+            value = config.get("id") or config.get("type")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     @staticmethod
     def _parse_target_to_umo(target: str, default_platform: str) -> str | None:

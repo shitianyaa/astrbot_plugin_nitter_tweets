@@ -7,7 +7,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
@@ -16,12 +16,12 @@ from astrbot.api import logger
 try:
     from .utils import (
         TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
-        generate_file_name, load_instances,
+        generate_file_name, load_instances, normalize_external_links,
     )
 except ImportError:
     from utils import (
         TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
-        generate_file_name, load_instances,
+        generate_file_name, load_instances, normalize_external_links,
     )
 
 
@@ -88,9 +88,17 @@ class XdownMediaParser(HTMLParser):
 
 class MediaService:
     def __init__(self, config):
-        self.enabled = bool(config.get("download_media", True))
-        self.include_images = bool(config.get("download_images", True))
-        self.include_videos = bool(config.get("download_videos", True))
+        image_config = config.get("send_image_attachments", None)
+        if image_config is None:
+            image_config = bool(config.get("download_media", True)) and bool(
+                config.get("download_images", True)
+            )
+        self.send_image_attachments = bool(
+            image_config
+        )
+        self.send_video_attachments = bool(
+            config.get("send_video_attachments", False)
+        )
         self.max_per_tweet = clamp_int(config.get("max_media_per_tweet", 4), 0, 12)
         self.timeout = clamp_float(config.get("media_timeout", 25.0), 5.0, 120.0)
         self.max_bytes = clamp_float(config.get("media_max_size_mb", 25.0), 1.0, 200.0)
@@ -113,9 +121,16 @@ class MediaService:
         self.cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def enabled(self) -> bool:
+        return self.send_image_attachments or self.send_video_attachments
+
     async def attach_media(self, tweets: list[TweetItem]) -> None:
         await asyncio.to_thread(self.cleanup_cache)
-        if not self.enabled or self.max_per_tweet <= 0:
+        if (
+            not self.send_image_attachments
+            and not self.send_video_attachments
+        ) or self.max_per_tweet <= 0:
             return
         for tweet in tweets:
             try:
@@ -141,11 +156,12 @@ class MediaService:
                         f"视频/GIF 超过单条媒体上限 {self.max_per_tweet}，已保留原文链接",
                     )
                 break
-            if media.is_image and not self.include_images:
+            if media.is_image and not self.send_image_attachments:
                 continue
-            if media.is_video and not self.include_videos:
+            if media.is_video and not self.send_video_attachments:
                 self._add_media_warning(
-                    tweet, "视频/GIF 已按配置跳过，已保留原文链接"
+                    tweet,
+                    "视频/GIF 附件发送功能仍在优化，当前按配置不发送，已保留原文链接",
                 )
                 continue
             try:
@@ -196,6 +212,10 @@ class MediaService:
         parser.feed(str(html))
 
         base_url = "https://xdown.app"
+        cover_url = urljoin(base_url, parser.cover_url) if parser.cover_url else ""
+        has_video_candidate = any(
+            kind in {"video", "dynamic"} for kind, _ in parser.items
+        )
         result: list[TweetMedia] = []
         for kind, url in parser.items:
             full_url = urljoin(base_url, url)
@@ -205,8 +225,42 @@ class MediaService:
             if not kind:
                 logger.info(f"[NitterTweets] skipping unclassified media: {full_url}")
                 continue
+            if (
+                kind == "image"
+                and has_video_candidate
+                and cover_url
+                and self._same_media_url(full_url, cover_url)
+            ):
+                logger.info(
+                    "[NitterTweets] skipping video/GIF cover image: "
+                    f"{full_url}"
+                )
+                continue
             result.append(TweetMedia(kind, full_url))
         return result
+
+    @staticmethod
+    def _same_media_url(left: str, right: str) -> bool:
+        left = (left or "").strip()
+        right = (right or "").strip()
+        if not left or not right:
+            return False
+        if left.rstrip("/") == right.rstrip("/"):
+            return True
+
+        left_parsed = urlparse(left)
+        right_parsed = urlparse(right)
+        if left_parsed.netloc and right_parsed.netloc:
+            if left_parsed.netloc.lower() != right_parsed.netloc.lower():
+                return False
+
+        left_path = left_parsed.path.rstrip("/")
+        right_path = right_parsed.path.rstrip("/")
+        if left_path != right_path:
+            return False
+
+        suffix = Path(left_path).suffix.lower()
+        return suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"}
 
     def _download(self, media: TweetMedia) -> Path:
         default_suffix = ".mp4" if media.is_video else ".jpg"
@@ -303,7 +357,26 @@ class NitterClient:
             if tweets:
                 return instance, tweets
             errors.append(f"{instance}: empty feed")
-        raise RuntimeError("; ".join(errors[-3:]) or "no instance available")
+        raise RuntimeError(self._format_fetch_errors(errors))
+
+    def _format_fetch_errors(self, errors: list[str]) -> str:
+        if not errors:
+            return "no Nitter instance configured"
+
+        shown_errors = errors[-3:]
+        hidden_count = len(errors) - len(shown_errors)
+        total_count = len(self.instances)
+        summary = (
+            f"tried {len(errors)}/{total_count} Nitter instances; no usable feed"
+        )
+        if hidden_count > 0:
+            summary += (
+                f"; showing last {len(shown_errors)} errors "
+                f"({hidden_count} earlier omitted)"
+            )
+        else:
+            summary += "; errors"
+        return f"{summary}: {'; '.join(shown_errors)}"
 
     def _fetch_from_instance(self, instance: str, username: str, limit: int) -> list[TweetItem]:
         rss_url = f"{instance.rstrip('/')}/{quote(username)}/rss"
@@ -332,7 +405,7 @@ class NitterClient:
         for item in channel.findall("item"):
             title = self._node_text(item, "title")
             description = self._node_text(item, "description")
-            text = clean_text(description or title)
+            text = normalize_external_links(clean_text(description or title))
             link = self._normalize_link(self._node_text(item, "link"), instance)
             published = self._format_pub_date(self._node_text(item, "pubDate"))
             if not text and not link:

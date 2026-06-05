@@ -71,6 +71,20 @@ DEFAULT_INSTANCES = [
     "https://nitter.poast.org",
 ]
 
+URL_LIKE_RE = re.compile(
+    r"(?i)(?<![@\w])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}"
+    r"(?:/[^\s<>()]*)?"
+)
+PIPED_WATCH_RE = re.compile(
+    r"(?i)\b(?:https?://)?(?:www\.)?piped\.video/watch\?v=([A-Za-z0-9_-]+)"
+    r"(?:[^\s<>()]*)?"
+)
+PIPED_SHORT_RE = re.compile(
+    r"(?i)\b(?:https?://)?(?:www\.)?piped\.video/([A-Za-z0-9_-]+)"
+    r"(?:[^\s<>()]*)?"
+)
+TRAILING_URL_PUNCT = ".,;:!?)）】』」\"'"
+
 
 def clamp_int(value, minimum: int, maximum: int) -> int:
     try:
@@ -97,12 +111,43 @@ def clean_text(raw: str) -> str:
     return text.strip()
 
 
+def normalize_external_links(text: str) -> str:
+    text = PIPED_WATCH_RE.sub(r"https://youtu.be/\1", text or "")
+    text = PIPED_SHORT_RE.sub(r"https://youtu.be/\1", text)
+    return text
+
+
+def extract_external_links(text: str) -> list[str]:
+    links: list[str] = []
+    seen: set[str] = set()
+    for match in URL_LIKE_RE.finditer(normalize_external_links(text or "")):
+        link = match.group(0).rstrip(TRAILING_URL_PUNCT)
+        if not link.startswith(("http://", "https://")):
+            link = f"https://{link}"
+        if link not in seen:
+            links.append(link)
+            seen.add(link)
+    return links
+
+
+def strip_external_links(text: str) -> str:
+    stripped = URL_LIKE_RE.sub("", normalize_external_links(text or ""))
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in stripped.splitlines()]
+    cleaned: list[str] = []
+    for line in lines:
+        if line or (cleaned and cleaned[-1]):
+            cleaned.append(line)
+    while cleaned and not cleaned[-1]:
+        cleaned.pop()
+    return "\n".join(cleaned).strip()
+
+
 def file_uri(path: Path) -> str:
     if not path.is_absolute():
         path = path.resolve()
     posix_path = path.as_posix()
     if posix_path.startswith("/"):
-        return f"file:////{posix_path.lstrip('/')}"
+        return f"file:///{posix_path.lstrip('/')}"
     return path.as_uri()
 
 
