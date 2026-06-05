@@ -576,7 +576,8 @@ class NitterTweetScheduler:
         success = 0
         for target_index, umo in enumerate(result.targets):
             try:
-                if await self.context.send_message(umo, MessageChain([Plain(text)])):
+                sent = await self.context.send_message(umo, MessageChain([Plain(text)]))
+                if sent is not False:
                     success += 1
                 else:
                     logger.warning(

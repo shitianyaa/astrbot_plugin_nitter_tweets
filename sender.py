@@ -369,7 +369,7 @@ class TweetSender:
             logger.warning(f"Failed to send {label} to {umo}: {error}")
             return False, error
 
-        if not sent:
+        if sent is False:
             error = "target platform not found or proactive send is unsupported"
             logger.warning(f"Failed to send {label} to {umo}: {error}")
             return False, error
