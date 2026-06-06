@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from astrbot.api import logger
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover - optional dependency in some AstrBot envs
+    httpx = None
+
+try:
+    from aiocqhttp.exceptions import ActionFailed, NetworkError as OneBotNetworkError
+except ImportError:  # pragma: no cover - non-OneBot envs
+    ActionFailed = None
+    OneBotNetworkError = None
 
 try:
     from astrbot.api.all import MessageChain
@@ -31,11 +43,28 @@ TweetBatch = tuple[str, str, list[TweetItem]]
 
 
 @dataclass(slots=True)
+class SendAttempt:
+    success: bool
+    retryable: bool = False
+    uncertain: bool = False
+    error: str = ""
+    warning: str = ""
+
+
+@dataclass(slots=True)
+class SendOutcome:
+    success: bool
+    error: str = ""
+    warning: str = ""
+
+
+@dataclass(slots=True)
 class MergedSendOutcome:
     success: bool
     mode: str
     omitted_videos: int = 0
     error: str = ""
+    warning: str = ""
 
 
 class TweetSender:
@@ -74,6 +103,11 @@ class TweetSender:
             await event.send(event.chain_result([nodes]))
             return True
         except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual forwarded tweets", self._event_target(event), exc
+                )
+                return True
             logger.warning(f"Failed to send forwarded tweet nodes: {exc}")
 
         # 去掉视频后重试
@@ -87,6 +121,11 @@ class TweetSender:
                 logger.info("Sent forwarded tweets without videos after initial failure")
                 return True
             except Exception as exc:
+                if self._is_uncertain_delivery_error(exc):
+                    self._log_uncertain_delivery(
+                        "manual tweets without videos", self._event_target(event), exc
+                    )
+                    return True
                 logger.warning(
                     f"Failed to send forwarded tweet nodes without videos: {exc}"
                 )
@@ -94,6 +133,11 @@ class TweetSender:
         try:
             return await self._send_onebot_forward(event, raw_nodes)
         except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual OneBot forward fallback", self._event_target(event), exc
+                )
+                return True
             logger.warning(f"Failed to send OneBot forward message: {exc}")
             return False
 
@@ -105,42 +149,71 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
     ) -> bool:
+        return (
+            await self.send_to_umo_with_outcome(context, umo, username, instance, tweets)
+        ).success
+
+    async def send_to_umo_with_outcome(
+        self,
+        context,
+        umo: str,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+    ) -> SendOutcome:
         if not self._should_use_forward_for_umo(context, umo):
             return await self._send_direct_to_umo(
                 context, umo, username, instance, tweets
             )
 
         nodes = self._build_nodes_for_uin(10000, username, instance, tweets)
-        success, _ = await self._send_context_message(
+        attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "scheduled forwarded tweets"
         )
-        if success:
-            return True
+        if attempt.success:
+            return SendOutcome(success=True)
+        if not attempt.retryable:
+            return SendOutcome(
+                success=attempt.uncertain,
+                error=attempt.error,
+                warning=attempt.warning,
+            )
 
         # 去掉视频后重试
         if any(m.is_video for t in tweets for m in t.media if m.path):
             nodes_nv = self._build_nodes_for_uin(
                 10000, username, instance, tweets, exclude_videos=True
             )
-            success, _ = await self._send_context_message(
+            attempt_nv = await self._send_context_message(
                 context,
                 umo,
                 MessageChain([nodes_nv]),
                 "scheduled tweets without videos",
             )
-            if success:
+            if attempt_nv.success:
                 logger.info(
                     f"Sent scheduled tweets to {umo} without videos after initial failure"
                 )
-                return True
+                return SendOutcome(success=True, error=attempt.error)
+            if not attempt_nv.retryable:
+                return SendOutcome(
+                    success=attempt_nv.uncertain,
+                    error=attempt_nv.error or attempt.error,
+                    warning=attempt_nv.warning,
+                )
+            attempt = attempt_nv
 
-        success, _ = await self._send_context_message(
+        fallback = await self._send_context_message(
             context,
             umo,
             MessageChain([Plain(self.format_plain(username, instance, tweets))]),
             "scheduled tweet fallback",
         )
-        return success
+        return SendOutcome(
+            success=fallback.success or fallback.uncertain,
+            error=fallback.error or attempt.error,
+            warning=fallback.warning,
+        )
 
     async def send_merged_to_umo(
         self,
@@ -153,23 +226,31 @@ class TweetSender:
 
         omitted_videos = self._count_attached_videos(batches)
         nodes = self._build_merged_nodes_for_uin(10000, batches)
-        success, error = await self._send_context_message(
+        attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "merged scheduled tweets"
         )
-        if success:
+        if attempt.success:
             return MergedSendOutcome(success=True, mode="full_forward")
+        if not attempt.retryable:
+            return MergedSendOutcome(
+                success=attempt.uncertain,
+                mode="uncertain_delivery" if attempt.uncertain else "failed",
+                omitted_videos=omitted_videos,
+                error=attempt.error,
+                warning=attempt.warning,
+            )
 
         if omitted_videos:
             nodes_nv = self._build_merged_nodes_for_uin(
                 10000, batches, exclude_videos=True
             )
-            success, retry_error = await self._send_context_message(
+            retry_attempt = await self._send_context_message(
                 context,
                 umo,
                 MessageChain([nodes_nv]),
                 "merged tweets without videos",
             )
-            if success:
+            if retry_attempt.success:
                 logger.warning(
                     f"Sent merged tweets to {umo} without {omitted_videos} "
                     "video/GIF attachments after initial failure"
@@ -178,28 +259,39 @@ class TweetSender:
                     success=True,
                     mode="forward_without_videos",
                     omitted_videos=omitted_videos,
-                    error=error,
+                    error=attempt.error,
                 )
-            error = retry_error or error
+            if not retry_attempt.retryable:
+                return MergedSendOutcome(
+                    success=retry_attempt.uncertain,
+                    mode=(
+                        "uncertain_delivery" if retry_attempt.uncertain else "failed"
+                    ),
+                    omitted_videos=omitted_videos,
+                    error=retry_attempt.error or attempt.error,
+                    warning=retry_attempt.warning,
+                )
+            attempt = retry_attempt
 
-        success, fallback_error = await self._send_context_message(
+        fallback = await self._send_context_message(
             context,
             umo,
             MessageChain([Plain(self.format_merged_plain(batches))]),
             "merged scheduled tweet fallback",
         )
-        if success:
+        if fallback.success or fallback.uncertain:
             return MergedSendOutcome(
                 success=True,
-                mode="plain_fallback",
+                mode="uncertain_delivery" if fallback.uncertain else "plain_fallback",
                 omitted_videos=omitted_videos,
-                error=error,
+                error=attempt.error,
+                warning=fallback.warning,
             )
         return MergedSendOutcome(
             success=False,
             mode="failed",
             omitted_videos=omitted_videos,
-            error=fallback_error or error,
+            error=fallback.error or attempt.error,
         )
 
     async def _send_direct_event(
@@ -220,6 +312,11 @@ class TweetSender:
             )
             return True
         except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual direct tweets", self._event_target(event), exc
+                )
+                return True
             logger.warning(f"Failed to send direct tweets: {exc}")
 
         if self._has_attached_videos(tweets):
@@ -237,6 +334,13 @@ class TweetSender:
                 )
                 return True
             except Exception as exc:
+                if self._is_uncertain_delivery_error(exc):
+                    self._log_uncertain_delivery(
+                        "manual direct tweets without videos",
+                        self._event_target(event),
+                        exc,
+                    )
+                    return True
                 logger.warning(
                     f"Failed to send direct tweets without videos: {exc}"
                 )
@@ -249,6 +353,11 @@ class TweetSender:
             )
             return True
         except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual direct tweet fallback", self._event_target(event), exc
+                )
+                return True
             logger.warning(f"Failed to send direct tweet fallback: {exc}")
             return False
 
@@ -259,18 +368,24 @@ class TweetSender:
         username: str,
         instance: str,
         tweets: list[TweetItem],
-    ) -> bool:
-        success, _ = await self._send_context_message(
+    ) -> SendOutcome:
+        attempt = await self._send_context_message(
             context,
             umo,
             MessageChain(self._build_direct_components(username, instance, tweets)),
             "direct scheduled tweets",
         )
-        if success:
-            return True
+        if attempt.success:
+            return SendOutcome(success=True)
+        if not attempt.retryable:
+            return SendOutcome(
+                success=attempt.uncertain,
+                error=attempt.error,
+                warning=attempt.warning,
+            )
 
         if self._has_attached_videos(tweets):
-            success, _ = await self._send_context_message(
+            retry_attempt = await self._send_context_message(
                 context,
                 umo,
                 MessageChain(
@@ -280,20 +395,31 @@ class TweetSender:
                 ),
                 "direct scheduled tweets without videos",
             )
-            if success:
+            if retry_attempt.success:
                 logger.info(
                     f"Sent direct scheduled tweets to {umo} without videos "
                     "after initial failure"
                 )
-                return True
+                return SendOutcome(success=True, error=attempt.error)
+            if not retry_attempt.retryable:
+                return SendOutcome(
+                    success=retry_attempt.uncertain,
+                    error=retry_attempt.error or attempt.error,
+                    warning=retry_attempt.warning,
+                )
+            attempt = retry_attempt
 
-        success, _ = await self._send_context_message(
+        fallback = await self._send_context_message(
             context,
             umo,
             MessageChain([Plain(self.format_plain(username, instance, tweets))]),
             "direct scheduled fallback",
         )
-        return success
+        return SendOutcome(
+            success=fallback.success or fallback.uncertain,
+            error=fallback.error or attempt.error,
+            warning=fallback.warning,
+        )
 
     async def _send_merged_direct_to_umo(
         self,
@@ -302,17 +428,25 @@ class TweetSender:
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
-        success, error = await self._send_context_message(
+        attempt = await self._send_context_message(
             context,
             umo,
             MessageChain(self._build_merged_direct_components(batches)),
             "direct merged tweets",
         )
-        if success:
+        if attempt.success:
             return MergedSendOutcome(success=True, mode="direct_message")
+        if not attempt.retryable:
+            return MergedSendOutcome(
+                success=attempt.uncertain,
+                mode="uncertain_delivery" if attempt.uncertain else "failed",
+                omitted_videos=omitted_videos,
+                error=attempt.error,
+                warning=attempt.warning,
+            )
 
         if omitted_videos:
-            success, retry_error = await self._send_context_message(
+            retry_attempt = await self._send_context_message(
                 context,
                 umo,
                 MessageChain(
@@ -322,7 +456,7 @@ class TweetSender:
                 ),
                 "direct merged tweets without videos",
             )
-            if success:
+            if retry_attempt.success:
                 logger.warning(
                     f"Sent direct merged tweets to {umo} without {omitted_videos} "
                     "video/GIF attachments after initial failure"
@@ -331,28 +465,39 @@ class TweetSender:
                     success=True,
                     mode="direct_without_videos",
                     omitted_videos=omitted_videos,
-                    error=error,
+                    error=attempt.error,
                 )
-            error = retry_error or error
+            if not retry_attempt.retryable:
+                return MergedSendOutcome(
+                    success=retry_attempt.uncertain,
+                    mode=(
+                        "uncertain_delivery" if retry_attempt.uncertain else "failed"
+                    ),
+                    omitted_videos=omitted_videos,
+                    error=retry_attempt.error or attempt.error,
+                    warning=retry_attempt.warning,
+                )
+            attempt = retry_attempt
 
-        success, fallback_error = await self._send_context_message(
+        fallback = await self._send_context_message(
             context,
             umo,
             MessageChain([Plain(self.format_merged_plain(batches))]),
             "direct merged fallback",
         )
-        if success:
+        if fallback.success or fallback.uncertain:
             return MergedSendOutcome(
                 success=True,
-                mode="plain_fallback",
+                mode="uncertain_delivery" if fallback.uncertain else "plain_fallback",
                 omitted_videos=omitted_videos,
-                error=error,
+                error=attempt.error,
+                warning=fallback.warning,
             )
         return MergedSendOutcome(
             success=False,
             mode="failed",
             omitted_videos=omitted_videos,
-            error=fallback_error or error,
+            error=fallback.error or attempt.error,
         )
 
     async def _send_context_message(
@@ -361,20 +506,97 @@ class TweetSender:
         umo: str,
         chain: MessageChain,
         label: str,
-    ) -> tuple[bool, str]:
+    ) -> SendAttempt:
         try:
             sent = await context.send_message(umo, chain)
         except Exception as exc:
             error = str(exc)
+            if self._is_uncertain_delivery_error(exc):
+                warning = (
+                    f"{label} 到 {umo} 的发送状态不确定：{error}。"
+                    "已按可能送达处理，跳过降级重试。"
+                )
+                logger.warning(f"[NitterTweets] {warning}")
+                return SendAttempt(
+                    success=False,
+                    retryable=False,
+                    uncertain=True,
+                    error=error,
+                    warning=warning,
+                )
             logger.warning(f"Failed to send {label} to {umo}: {error}")
-            return False, error
+            return SendAttempt(success=False, retryable=True, error=error)
 
         if sent is False:
             error = "target platform not found or proactive send is unsupported"
             logger.warning(f"Failed to send {label} to {umo}: {error}")
-            return False, error
+            return SendAttempt(success=False, retryable=True, error=error)
 
-        return True, ""
+        return SendAttempt(success=True)
+
+    @classmethod
+    def _log_uncertain_delivery(cls, label: str, target: str, exc: Exception) -> None:
+        logger.warning(
+            "[NitterTweets] "
+            f"{label} 到 {target} 的发送状态不确定：{exc}。"
+            "已按可能送达处理，跳过降级重试。"
+        )
+
+    @classmethod
+    def _is_uncertain_delivery_error(cls, exc: Exception) -> bool:
+        if ActionFailed is not None and isinstance(exc, ActionFailed):
+            return False
+
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+            return True
+
+        if httpx is not None and isinstance(exc, httpx.TimeoutException):
+            return True
+
+        if OneBotNetworkError is not None and isinstance(exc, OneBotNetworkError):
+            return cls._error_chain_contains_timeout(exc)
+
+        return cls._error_chain_contains_timeout(exc)
+
+    @staticmethod
+    def _error_chain_contains_timeout(exc: BaseException) -> bool:
+        timeout_markers = (
+            "timeout",
+            "timed out",
+            "readtimeout",
+            "websocket api call timeout",
+        )
+        current: BaseException | None = exc
+        seen: set[int] = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            text = (
+                f"{type(current).__module__}.{type(current).__name__}: {current}"
+            ).lower()
+            if any(marker in text for marker in timeout_markers):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
+    @classmethod
+    def _event_target(cls, event) -> str:
+        try:
+            umo = getattr(event, "unified_msg_origin", "")
+        except Exception:
+            umo = ""
+        if umo:
+            return str(umo)
+
+        group_id = safe_call(event, "get_group_id")
+        if group_id:
+            return f"group:{group_id}"
+
+        sender_id = safe_call(event, "get_sender_id")
+        if sender_id:
+            return f"private:{sender_id}"
+
+        platform = cls._event_platform(event)
+        return platform or "unknown"
 
     def _build_nodes(
         self, event, username: str, instance: str, tweets: list[TweetItem],

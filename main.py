@@ -24,7 +24,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.1",
+    "0.6.2",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -69,6 +69,7 @@ class NitterTweetsPlugin(Star):
 
     @filter.on_astrbot_loaded()
     async def on_loaded(self):
+        """AstrBot 加载完成后启动 Nitter 定时推文调度器。"""
         self.scheduler.start(reason="on_astrbot_loaded")
 
     async def terminate(self):
@@ -78,7 +79,7 @@ class NitterTweetsPlugin(Star):
     async def cmd_tweets(
         self, event: AstrMessageEvent, username: str = "", limit: int = 0
     ):
-        """Fetch recent tweets for a public X/Twitter user."""
+        """获取指定公开 X/Twitter 用户的最近推文。"""
         event.stop_event()
 
         username = normalize_username(username)
@@ -148,7 +149,7 @@ class NitterTweetsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文状态", alias={"nitter_status", "tweets_status"})
     async def cmd_tweets_status(self, event: AstrMessageEvent):
-        """Show scheduled tweet check status."""
+        """查看定时推文检查状态。"""
         event.stop_event()
         self.scheduler.start(reason="status_command")
         await event.send(event.plain_result(await self.scheduler.status_summary()))
@@ -156,7 +157,7 @@ class NitterTweetsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文检查", alias={"nitter_check", "tweets_check"})
     async def cmd_tweets_check(self, event: AstrMessageEvent):
-        """Run one scheduled tweet check immediately."""
+        """立即执行一次定时推文检查。"""
         event.stop_event()
         self.scheduler.start(reason="manual_check")
         await event.send(event.plain_result("正在执行 Nitter 定时检查..."))
@@ -169,7 +170,7 @@ class NitterTweetsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文订阅列表", alias={"nitter_list", "tweets_list", "推文关注列表"})
     async def cmd_tweets_list(self, event: AstrMessageEvent):
-        """Show configured scheduled watch users."""
+        """查看已配置的定时订阅账号列表。"""
         event.stop_event()
         info = self.scheduler.watch_users_info()
 
@@ -195,7 +196,7 @@ class NitterTweetsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文订阅去重", alias={"nitter_dedup", "tweets_dedup", "推文关注去重"})
     async def cmd_tweets_dedup(self, event: AstrMessageEvent):
-        """Normalize and deduplicate scheduled watch users."""
+        """规范化并去重定时订阅账号列表。"""
         event.stop_event()
         info = self.scheduler.deduplicate_watch_users()
 

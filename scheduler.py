@@ -156,6 +156,7 @@ class ScheduledCheckResult:
             reason_text = {
                 "no_watch_users": "未配置 watch_users",
                 "no_push_targets": "未配置有效 push_targets",
+                "check_already_running": "已有一次检查正在运行",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
 
@@ -223,6 +224,7 @@ class NitterTweetScheduler:
         self._daily_slots: set[str] = set()
         self._startup_schedule_seeded = False
         self._last_enabled_state: bool | None = None
+        self._check_lock = asyncio.Lock()
 
     def start(self, reason: str = "") -> None:
         if self._task is not None and not self._task.done():
@@ -352,15 +354,33 @@ class NitterTweetScheduler:
         reason: str = "manual",
         notify_no_updates: bool | None = None,
     ) -> ScheduledCheckResult:
+        if self._check_lock.locked():
+            result = self._new_check_result(reason)
+            result.skipped_reason = "check_already_running"
+            logger.warning(result.format_log_summary())
+            return result
+
+        async with self._check_lock:
+            return await self._run_check_unlocked(reason, notify_no_updates)
+
+    def _new_check_result(self, reason: str) -> ScheduledCheckResult:
         users = self._watch_users()
         target_info = self._parse_push_targets()
-        targets = target_info.targets
-        result = ScheduledCheckResult(
+        return ScheduledCheckResult(
             reason=reason,
             users=users,
-            targets=targets,
+            targets=target_info.targets,
             invalid_targets=target_info.invalid_targets,
         )
+
+    async def _run_check_unlocked(
+        self,
+        reason: str,
+        notify_no_updates: bool | None,
+    ) -> ScheduledCheckResult:
+        result = self._new_check_result(reason)
+        users = result.users
+        targets = result.targets
         merge_updates = bool(self.config.get("merge_scheduled_updates", False))
         result.push_mode = "merged" if merge_updates else "per_user"
         merged_batches = []
@@ -386,7 +406,7 @@ class NitterTweetScheduler:
         logger.info(
             "[NitterTweets] scheduled check started: "
             f"reason={reason}, users={len(users)}, targets={len(targets)}, "
-            f"invalid_targets={len(target_info.invalid_targets)}, "
+            f"invalid_targets={len(result.invalid_targets)}, "
             f"fetch_limit={fetch_limit}, push_mode={result.push_mode}"
         )
 
@@ -455,10 +475,13 @@ class NitterTweetScheduler:
                     success = 0
                     for target_index, umo in enumerate(targets):
                         try:
-                            if await self.sender.send_to_umo(
+                            outcome = await self.sender.send_to_umo_with_outcome(
                                 self.context, umo, username, instance, new_tweets
-                            ):
+                            )
+                            if outcome.success:
                                 success += 1
+                            if outcome.warning:
+                                result.delivery_warnings.append(outcome.warning)
                         except Exception as exc:
                             logger.warning(
                                 f"[NitterTweets] scheduled push @{username} to {umo} failed: {exc}"
@@ -491,6 +514,8 @@ class NitterTweetScheduler:
             await self._send_merged_updates(merged_batches, result, target_interval)
 
         logger.info(result.format_log_summary())
+        if result.delivery_warnings:
+            await self._send_delivery_warning_notice(result, target_interval)
         if self._should_notify_no_updates(result, notify_no_updates):
             await self._send_no_update_notice(result, target_interval)
         return result
@@ -595,6 +620,47 @@ class NitterTweetScheduler:
             f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
         )
 
+    async def _send_delivery_warning_notice(
+        self, result: ScheduledCheckResult, target_interval: float
+    ) -> None:
+        text = self._format_delivery_warning_notice(result)
+        success = 0
+        for target_index, umo in enumerate(result.targets):
+            try:
+                sent = await self.context.send_message(umo, MessageChain([Plain(text)]))
+                if sent is not False:
+                    success += 1
+                else:
+                    logger.warning(
+                        "[NitterTweets] delivery warning notice to "
+                        f"{umo} failed: target platform not found or proactive send "
+                        "is unsupported"
+                    )
+            except Exception as exc:
+                logger.warning(
+                    f"[NitterTweets] delivery warning notice to {umo} failed: {exc}"
+                )
+            if target_index < len(result.targets) - 1 and target_interval > 0:
+                await asyncio.sleep(target_interval)
+        logger.info(
+            "[NitterTweets] delivery warning notice sent to "
+            f"{success}/{len(result.targets)} targets"
+        )
+
+    @staticmethod
+    def _format_delivery_warning_notice(result: ScheduledCheckResult) -> str:
+        unique_warnings = list(dict.fromkeys(result.delivery_warnings))
+        visible_warnings = unique_warnings[:5]
+        lines = [
+            "Nitter 推送发送提示",
+            "部分消息发送状态不确定，已按可能送达处理并跳过降级重试。",
+        ]
+        lines.extend(f"- {warning}" for warning in visible_warnings)
+        remaining = len(unique_warnings) - len(visible_warnings)
+        if remaining > 0:
+            lines.append(f"- ... 还有 {remaining} 条")
+        return "\n".join(lines)
+
     async def _send_merged_updates(
         self,
         batches,
@@ -609,7 +675,13 @@ class NitterTweetScheduler:
                 )
                 if outcome.success:
                     success += 1
-                    if outcome.mode not in {"full_forward", "direct_message"}:
+                    if outcome.warning:
+                        result.delivery_warnings.append(outcome.warning)
+                    if outcome.mode not in {
+                        "full_forward",
+                        "direct_message",
+                        "uncertain_delivery",
+                    }:
                         if outcome.omitted_videos:
                             warning = (
                                 f"{umo} 合并推送已降级：mode={outcome.mode}，"
