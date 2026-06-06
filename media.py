@@ -145,6 +145,7 @@ class MediaService:
 
         downloaded: list[TweetMedia] = []
         seen: set[str] = set()
+        video_disabled_warned = False
         for index, media in enumerate(media_urls):
             if media.url in seen:
                 continue
@@ -159,10 +160,12 @@ class MediaService:
             if media.is_image and not self.send_image_attachments:
                 continue
             if media.is_video and not self.send_video_attachments:
-                self._add_media_warning(
-                    tweet,
-                    "视频/GIF 附件发送功能仍在优化，当前按配置不发送，已保留原文链接",
-                )
+                if not video_disabled_warned:
+                    self._add_media_warning(
+                        tweet,
+                        "视频/GIF 附件发送功能仍在优化，当前按配置不发送，已保留原文链接",
+                    )
+                    video_disabled_warned = True
                 continue
             try:
                 media.path = await asyncio.to_thread(self._download, media)
