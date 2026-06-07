@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -68,7 +69,10 @@ class MergedSendOutcome:
 
 
 class TweetSender:
+    # AstrBot 的 Node/Nodes 合并转发主要由 OneBot v11 实现。
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
+    LARK_PLATFORM_NAMES = {"lark", "feishu"}
+    LARK_TEXT_CHUNK_SIZE = 28000
 
     def __init__(self, config=None):
         config = config or {}
@@ -90,6 +94,11 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
     ) -> bool:
+        if self._should_use_lark_for_event(event):
+            return await self._send_lark_event(
+                event, username, instance, tweets, notices=notices
+            )
+
         if not self._should_use_forward_for_event(event):
             return await self._send_direct_event(
                 event, username, instance, tweets, notices=notices
@@ -161,6 +170,11 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
     ) -> SendOutcome:
+        if self._should_use_lark_for_umo(context, umo):
+            return await self._send_lark_to_umo(
+                context, umo, username, instance, tweets
+            )
+
         if not self._should_use_forward_for_umo(context, umo):
             return await self._send_direct_to_umo(
                 context, umo, username, instance, tweets
@@ -221,6 +235,9 @@ class TweetSender:
         umo: str,
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
+        if self._should_use_lark_for_umo(context, umo):
+            return await self._send_lark_merged_to_umo(context, umo, batches)
+
         if not self._should_use_forward_for_umo(context, umo):
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
@@ -500,6 +517,168 @@ class TweetSender:
             error=fallback.error or attempt.error,
         )
 
+    async def _send_lark_event(
+        self,
+        event,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+    ) -> bool:
+        components = self._build_direct_components(
+            username, instance, tweets, notices=notices
+        )
+        client = self._lark_client_from_event(event)
+        if client is None:
+            logger.warning("[NitterTweets] Lark client not found; using generic send")
+            return await self._send_direct_event(
+                event, username, instance, tweets, notices=notices
+            )
+
+        text = self._plain_text_from_components(components)
+        reply_message_id = self._lark_reply_message_id(event)
+        receive_id_type, receive_id = self._lark_event_target(event)
+        text_attempt = await self._send_lark_text(
+            client,
+            text,
+            "manual Lark tweet text",
+            reply_message_id=reply_message_id,
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if (
+            not (text_attempt.success or text_attempt.uncertain)
+            and reply_message_id
+            and receive_id
+            and receive_id_type
+        ):
+            logger.warning(
+                "[NitterTweets] Lark reply text failed; retrying current session "
+                f"send: {text_attempt.error}"
+            )
+            text_attempt = await self._send_lark_text(
+                client,
+                text,
+                "manual Lark tweet text fallback",
+                receive_id=receive_id,
+                receive_id_type=receive_id_type,
+            )
+        if not (text_attempt.success or text_attempt.uncertain):
+            return False
+
+        media_attempt = await self._send_lark_event_media_with_retry(
+            event, self._media_components(components), "manual Lark tweet media"
+        )
+        if not (media_attempt.success or media_attempt.uncertain):
+            logger.warning(
+                "[NitterTweets] Lark tweet text sent but media failed: "
+                f"{media_attempt.error}"
+            )
+        return True
+
+    async def _send_lark_to_umo(
+        self,
+        context,
+        umo: str,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+    ) -> SendOutcome:
+        components = self._build_direct_components(username, instance, tweets)
+        text = self._plain_text_from_components(components)
+        client, receive_id_type, receive_id = self._lark_client_and_target(
+            context, umo
+        )
+        if client is None or not receive_id_type or not receive_id:
+            logger.warning(
+                f"[NitterTweets] Lark client or target not found for {umo}; "
+                "using generic send"
+            )
+            return await self._send_direct_to_umo(
+                context, umo, username, instance, tweets
+            )
+
+        text_attempt = await self._send_lark_text(
+            client,
+            text,
+            "scheduled Lark tweet text",
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if not (text_attempt.success or text_attempt.uncertain):
+            return SendOutcome(success=False, error=text_attempt.error)
+
+        media_attempt = await self._send_lark_umo_media_with_retry(
+            context,
+            umo,
+            self._media_components(components),
+            "scheduled Lark tweet media",
+        )
+        warning = text_attempt.warning or media_attempt.warning
+        if not (media_attempt.success or media_attempt.uncertain):
+            warning = media_attempt.error
+            logger.warning(
+                f"[NitterTweets] Lark tweet text sent to {umo} but media failed: "
+                f"{media_attempt.error}"
+            )
+        return SendOutcome(success=True, warning=warning)
+
+    async def _send_lark_merged_to_umo(
+        self,
+        context,
+        umo: str,
+        batches: list[TweetBatch],
+    ) -> MergedSendOutcome:
+        components = self._build_merged_direct_components(batches)
+        omitted_videos = self._count_attached_videos(batches)
+        text = self._plain_text_from_components(components)
+        client, receive_id_type, receive_id = self._lark_client_and_target(
+            context, umo
+        )
+        if client is None or not receive_id_type or not receive_id:
+            logger.warning(
+                f"[NitterTweets] Lark client or target not found for {umo}; "
+                "using generic send"
+            )
+            return await self._send_merged_direct_to_umo(context, umo, batches)
+
+        text_attempt = await self._send_lark_text(
+            client,
+            text,
+            "merged scheduled Lark tweet text",
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if not (text_attempt.success or text_attempt.uncertain):
+            return MergedSendOutcome(
+                success=False,
+                mode="failed",
+                omitted_videos=omitted_videos,
+                error=text_attempt.error,
+            )
+
+        media_attempt = await self._send_lark_umo_media_with_retry(
+            context,
+            umo,
+            self._media_components(components),
+            "merged scheduled Lark tweet media",
+        )
+        warning = text_attempt.warning or media_attempt.warning
+        if not (media_attempt.success or media_attempt.uncertain):
+            warning = media_attempt.error
+            logger.warning(
+                f"[NitterTweets] merged Lark tweet text sent to {umo} but media "
+                f"failed: {media_attempt.error}"
+            )
+        return MergedSendOutcome(
+            success=True,
+            mode=(
+                "uncertain_delivery" if text_attempt.uncertain else "lark_text_media"
+            ),
+            omitted_videos=omitted_videos,
+            warning=warning,
+        )
+
     async def _send_context_message(
         self,
         context,
@@ -530,6 +709,200 @@ class TweetSender:
         if sent is False:
             error = "target platform not found or proactive send is unsupported"
             logger.warning(f"Failed to send {label} to {umo}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        return SendAttempt(success=True)
+
+    async def _send_lark_event_media_with_retry(
+        self,
+        event,
+        media_components: list,
+        label: str,
+    ) -> SendAttempt:
+        if not media_components:
+            return SendAttempt(success=True)
+
+        attempt = await self._send_event_chain(
+            event, MessageChain(media_components), label
+        )
+        if attempt.success or not attempt.retryable:
+            return attempt
+
+        without_videos = [
+            component for component in media_components if not isinstance(component, Video)
+        ]
+        if len(without_videos) == len(media_components):
+            return attempt
+        if not without_videos:
+            return SendAttempt(success=True, error=attempt.error)
+
+        retry_attempt = await self._send_event_chain(
+            event, MessageChain(without_videos), f"{label} without videos"
+        )
+        if retry_attempt.success:
+            logger.warning(
+                "[NitterTweets] sent Lark media without video/GIF attachments "
+                "after initial failure"
+            )
+            return SendAttempt(success=True, error=attempt.error)
+        return retry_attempt
+
+    async def _send_lark_umo_media_with_retry(
+        self,
+        context,
+        umo: str,
+        media_components: list,
+        label: str,
+    ) -> SendAttempt:
+        if not media_components:
+            return SendAttempt(success=True)
+
+        attempt = await self._send_context_message(
+            context, umo, MessageChain(media_components), label
+        )
+        if attempt.success or not attempt.retryable:
+            return attempt
+
+        without_videos = [
+            component for component in media_components if not isinstance(component, Video)
+        ]
+        if len(without_videos) == len(media_components):
+            return attempt
+        if not without_videos:
+            return SendAttempt(success=True, error=attempt.error)
+
+        retry_attempt = await self._send_context_message(
+            context,
+            umo,
+            MessageChain(without_videos),
+            f"{label} without videos",
+        )
+        if retry_attempt.success:
+            logger.warning(
+                f"[NitterTweets] sent Lark media to {umo} without video/GIF "
+                "attachments after initial failure"
+            )
+            return SendAttempt(success=True, error=attempt.error)
+        return retry_attempt
+
+    async def _send_event_chain(
+        self,
+        event,
+        chain: MessageChain,
+        label: str,
+    ) -> SendAttempt:
+        try:
+            await event.send(chain)
+        except Exception as exc:
+            error = str(exc)
+            if self._is_uncertain_delivery_error(exc):
+                warning = (
+                    f"{label} 到 {self._event_target(event)} 的发送状态不确定："
+                    f"{error}。已按可能送达处理，跳过降级重试。"
+                )
+                logger.warning(f"[NitterTweets] {warning}")
+                return SendAttempt(
+                    success=False,
+                    retryable=False,
+                    uncertain=True,
+                    error=error,
+                    warning=warning,
+                )
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+        return SendAttempt(success=True)
+
+    async def _send_lark_text(
+        self,
+        client,
+        text: str,
+        label: str,
+        reply_message_id: str | None = None,
+        receive_id: str | None = None,
+        receive_id_type: str | None = None,
+    ) -> SendAttempt:
+        text = (text or "").strip()
+        if not text:
+            return SendAttempt(success=True)
+        if client is None or getattr(client, "im", None) is None:
+            error = "Lark API client is unavailable"
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        try:
+            from lark_oapi.api.im.v1 import (
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+                ReplyMessageRequest,
+                ReplyMessageRequestBody,
+            )
+        except Exception as exc:
+            error = f"lark_oapi is unavailable: {exc}"
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        try:
+            for chunk in self._split_lark_text(text):
+                content = json.dumps({"text": chunk}, ensure_ascii=False)
+                if reply_message_id:
+                    request = (
+                        ReplyMessageRequest.builder()
+                        .message_id(reply_message_id)
+                        .request_body(
+                            ReplyMessageRequestBody.builder()
+                            .content(content)
+                            .msg_type("text")
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await client.im.v1.message.areply(request)
+                else:
+                    if not receive_id or not receive_id_type:
+                        error = "Lark receive_id or receive_id_type is missing"
+                        logger.warning(f"Failed to send {label}: {error}")
+                        return SendAttempt(
+                            success=False, retryable=True, error=error
+                        )
+                    request = (
+                        CreateMessageRequest.builder()
+                        .receive_id_type(receive_id_type)
+                        .request_body(
+                            CreateMessageRequestBody.builder()
+                            .receive_id(receive_id)
+                            .msg_type("text")
+                            .content(content)
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await client.im.v1.message.acreate(request)
+
+                if not response.success():
+                    error = (
+                        f"Lark API returned {getattr(response, 'code', '')}: "
+                        f"{getattr(response, 'msg', '')}"
+                    )
+                    logger.warning(f"Failed to send {label}: {error}")
+                    return SendAttempt(
+                        success=False, retryable=True, error=error
+                    )
+        except Exception as exc:
+            error = str(exc)
+            if self._is_uncertain_delivery_error(exc):
+                warning = (
+                    f"{label} 的飞书文本发送状态不确定：{error}。"
+                    "已按可能送达处理，跳过降级重试。"
+                )
+                logger.warning(f"[NitterTweets] {warning}")
+                return SendAttempt(
+                    success=False,
+                    retryable=False,
+                    uncertain=True,
+                    error=error,
+                    warning=warning,
+                )
+            logger.warning(f"Failed to send {label}: {error}")
             return SendAttempt(success=False, retryable=True, error=error)
 
         return SendAttempt(success=True)
@@ -738,6 +1111,21 @@ class TweetSender:
         )
 
     @classmethod
+    def _should_use_lark_for_umo(cls, context, umo: str) -> bool:
+        platform = cls._platform_from_umo(umo)
+        if cls._is_lark_platform(platform):
+            return True
+        return cls._is_lark_platform(cls._platform_type_from_context(context, platform))
+
+    @classmethod
+    def _should_use_lark_for_event(cls, event) -> bool:
+        return cls._is_lark_platform(cls._event_platform(event))
+
+    @classmethod
+    def _is_lark_platform(cls, platform: str) -> bool:
+        return platform.strip().lower() in cls.LARK_PLATFORM_NAMES
+
+    @classmethod
     def _should_use_forward_for_umo(cls, context, umo: str) -> bool:
         platform = cls._platform_from_umo(umo)
         if cls._is_forward_platform(platform):
@@ -757,28 +1145,32 @@ class TweetSender:
         return str(umo or "").split(":", 1)[0].strip()
 
     @classmethod
-    def _platform_type_from_context(cls, context, platform_id: str) -> str:
+    def _platform_inst_from_context(cls, context, platform_id: str):
         if not platform_id:
-            return ""
+            return None
 
-        platform = None
         get_platform_inst = getattr(context, "get_platform_inst", None)
         if callable(get_platform_inst):
             try:
                 platform = get_platform_inst(platform_id)
+                if platform is not None:
+                    return platform
             except Exception as exc:
                 logger.debug(
                     f"[NitterTweets] platform lookup failed for {platform_id}: {exc}"
                 )
 
-        if platform is None:
-            manager = getattr(context, "platform_manager", None)
-            for candidate in getattr(manager, "platform_insts", []) or []:
-                meta = cls._safe_platform_meta(candidate)
-                if str(getattr(meta, "id", "") or "") == platform_id:
-                    platform = candidate
-                    break
+        manager = getattr(context, "platform_manager", None)
+        for candidate in getattr(manager, "platform_insts", []) or []:
+            meta = cls._safe_platform_meta(candidate)
+            if str(getattr(meta, "id", "") or "") == platform_id:
+                return candidate
 
+        return None
+
+    @classmethod
+    def _platform_type_from_context(cls, context, platform_id: str) -> str:
+        platform = cls._platform_inst_from_context(context, platform_id)
         if platform is None:
             return ""
 
@@ -821,6 +1213,134 @@ class TweetSender:
         except Exception:
             umo = ""
         return cls._platform_from_umo(str(umo))
+
+    @classmethod
+    def _lark_client_and_target(cls, context, umo: str):
+        platform_id, message_type, session_id = cls._parse_umo(umo)
+        platform = cls._platform_inst_from_context(context, platform_id)
+        client = cls._lark_client_from_platform(platform)
+        receive_id_type = cls._lark_receive_id_type(message_type)
+        receive_id = cls._lark_receive_id(message_type, session_id)
+        return client, receive_id_type, receive_id
+
+    @classmethod
+    def _lark_client_from_event(cls, event):
+        client = getattr(event, "bot", None)
+        if cls._is_lark_client(client):
+            return client
+
+        platform = getattr(event, "platform", None) or getattr(
+            event, "platform_inst", None
+        )
+        client = cls._lark_client_from_platform(platform)
+        if client is not None:
+            return client
+
+        context = getattr(event, "context", None)
+        try:
+            umo = getattr(event, "unified_msg_origin", "")
+        except Exception:
+            umo = ""
+        if context and umo:
+            client, _, _ = cls._lark_client_and_target(context, str(umo))
+            return client
+        return None
+
+    @classmethod
+    def _lark_client_from_platform(cls, platform):
+        if platform is None:
+            return None
+        for attr in ("lark_api", "client", "_client", "bot"):
+            client = getattr(platform, attr, None)
+            if cls._is_lark_client(client):
+                return client
+        if cls._is_lark_client(platform):
+            return platform
+        return None
+
+    @staticmethod
+    def _is_lark_client(client) -> bool:
+        return bool(client is not None and getattr(client, "im", None) is not None)
+
+    @staticmethod
+    def _parse_umo(umo: str) -> tuple[str, str, str]:
+        parts = str(umo or "").split(":", 2)
+        if len(parts) != 3:
+            return "", "", ""
+        return parts[0].strip(), parts[1].strip(), parts[2].strip()
+
+    @classmethod
+    def _lark_receive_id_type(cls, message_type: str) -> str:
+        message_type = message_type.strip().lower()
+        if message_type in {"groupmessage", "group", "group_message"}:
+            return "chat_id"
+        if message_type in {"friendmessage", "private", "private_message"}:
+            return "open_id"
+        return ""
+
+    @classmethod
+    def _lark_receive_id(cls, message_type: str, session_id: str) -> str:
+        if cls._lark_receive_id_type(message_type) == "chat_id" and "%" in session_id:
+            return session_id.split("%", 1)[1]
+        return session_id
+
+    @staticmethod
+    def _lark_reply_message_id(event) -> str:
+        message_obj = getattr(event, "message_obj", None)
+        for source in (message_obj, event):
+            for attr in ("message_id", "id"):
+                value = getattr(source, attr, None)
+                if value:
+                    return str(value)
+        return ""
+
+    @classmethod
+    def _lark_event_target(cls, event) -> tuple[str, str]:
+        try:
+            umo = getattr(event, "unified_msg_origin", "")
+        except Exception:
+            umo = ""
+        _, message_type, session_id = cls._parse_umo(str(umo))
+        receive_id_type = cls._lark_receive_id_type(message_type)
+        receive_id = cls._lark_receive_id(message_type, session_id)
+        return receive_id_type, receive_id
+
+    @staticmethod
+    def _plain_text_from_components(components) -> str:
+        parts = [
+            component.text
+            for component in components
+            if isinstance(component, Plain) and component.text
+        ]
+        return "\n".join(part.strip() for part in parts if part.strip())
+
+    @staticmethod
+    def _media_components(components) -> list:
+        return [
+            component
+            for component in components
+            if isinstance(component, (Image, Video))
+        ]
+
+    @classmethod
+    def _split_lark_text(cls, text: str) -> list[str]:
+        text = text or ""
+        if len(text) <= cls.LARK_TEXT_CHUNK_SIZE:
+            return [text]
+
+        chunks = []
+        remaining = text
+        while len(remaining) > cls.LARK_TEXT_CHUNK_SIZE:
+            split_at = remaining.rfind("\n\n", 0, cls.LARK_TEXT_CHUNK_SIZE)
+            if split_at <= 0:
+                split_at = remaining.rfind("\n", 0, cls.LARK_TEXT_CHUNK_SIZE)
+            if split_at <= 0:
+                split_at = cls.LARK_TEXT_CHUNK_SIZE
+            chunks.append(remaining[:split_at].strip())
+            remaining = remaining[split_at:].strip()
+        if remaining:
+            chunks.append(remaining)
+        return [chunk for chunk in chunks if chunk]
 
     def _build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",

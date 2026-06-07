@@ -224,7 +224,7 @@
     "description": "定时推送目标列表",
     "type": "list",
     "default": [],
-    "hint": "每行一个。在目标群聊或私聊发送 /sid，复制返回的 UMO 填入，例如 aiocqhttp:GroupMessage:123456、telegram:FriendMessage:123456789。"
+    "hint": "每行一个。在目标群聊或私聊发送 /sid，复制返回的 UMO 填入，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx、telegram:FriendMessage:123456789。"
   },
   "interval_check_enabled": {
     "description": "启用间隔检查",
