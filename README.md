@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.9-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.10-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -90,7 +90,7 @@ telegram:FriendMessage:123456789
 | `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
 | `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量 `1`。 |
 | `/推文状态` | 查看调度器状态、关注账号、推送目标、无效目标和已记录账号数。 |
-| `/推文检查` | 立即执行一次定时检查；新推文本体发送到 `push_targets`，命令会话收到检查摘要。 |
+| `/推文检查 [分组名]` | 立即执行一次定时检查；当前版本默认检查全局分组，支持 `全局`、`默认`、`default` 别名。 |
 | `/推文订阅列表` | 查看当前 `watch_users` 的有效作者、重复项和无效项。 |
 | `/推文订阅去重` | 规范化并去重 `watch_users`，移除重复作者和无效条目后保存配置。 |
 
@@ -157,6 +157,7 @@ telegram:FriendMessage:123456789
 ## 行为说明
 
 - 首次启用某个账号时，只记录当前 RSS 中已有的推文 ID，不推送历史内容。
+- 当前版本会把现有定时配置作为 `global` 全局分组运行；已见推文 ID 按分组存储，旧的按账号已见记录会自动兼容到全局分组。
 - 没有新推文时默认只写日志，不往目标会话发送消息。
 - 公共 Nitter 实例不稳定，长期使用建议自建实例。
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。

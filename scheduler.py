@@ -20,25 +20,23 @@ except ImportError:
 try:
     from .scheduler_config import (
         PushTargetParseResult,
+        ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from .seen_store import SeenStore
+    from .seen_store import GLOBAL_GROUP_ID, SeenStore
     from .utils import (
-        clamp_float,
-        clamp_int,
         configured_merge_tweet_threshold,
     )
 except ImportError:
     from scheduler_config import (
         PushTargetParseResult,
+        ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from seen_store import SeenStore
+    from seen_store import GLOBAL_GROUP_ID, SeenStore
     from utils import (
-        clamp_float,
-        clamp_int,
         configured_merge_tweet_threshold,
     )
 
@@ -72,9 +70,12 @@ class PendingTweetBatch:
 @dataclass(slots=True)
 class ScheduledCheckResult:
     reason: str
+    group_id: str = GLOBAL_GROUP_ID
+    group_name: str = "全局分组"
     users: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     invalid_targets: list[str] = field(default_factory=list)
+    available_groups: list[str] = field(default_factory=list)
     seen_users: int = 0
     fetch_limit: int = 0
     skipped_reason: str = ""
@@ -138,7 +139,8 @@ class ScheduledCheckResult:
         if self.skipped_reason:
             return (
                 "[NitterTweets] scheduled check skipped: "
-                f"reason={self.skipped_reason}, users={len(self.users)}, "
+                f"group={self.group_id}, reason={self.skipped_reason}, "
+                f"users={len(self.users)}, "
                 f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
             )
 
@@ -148,7 +150,8 @@ class ScheduledCheckResult:
         )
         return (
             "[NitterTweets] scheduled check finished: "
-            f"reason={self.reason}, users={len(self.users)}, targets={len(self.targets)}, "
+            f"group={self.group_id}, reason={self.reason}, "
+            f"users={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
@@ -161,6 +164,7 @@ class ScheduledCheckResult:
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [
             title,
+            f"分组: {self.group_name} ({self.group_id})",
             f"触发原因: {self.reason}",
             f"关注账号: {len(self.users)} 个",
             f"推送目标: {len(self.targets)} 个",
@@ -178,8 +182,11 @@ class ScheduledCheckResult:
                 "no_watch_users": "未配置 watch_users",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
+                "unknown_group": "未找到指定分组",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
+            if self.available_groups:
+                lines.append("可用分组: " + ", ".join(self.available_groups))
 
         if self.initialized_users:
             items = [
@@ -241,9 +248,9 @@ class NitterTweetScheduler:
         self.config_reader = SchedulerConfigReader(config, context)
         self.seen_store = SeenStore(owner)
         self._task: asyncio.Task | None = None
-        self._last_interval_slot: int | None = None
-        self._daily_slots: set[str] = set()
-        self._startup_schedule_seeded = False
+        self._last_interval_slots: dict[str, int] = {}
+        self._daily_slots: dict[str, set[str]] = {}
+        self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
 
@@ -260,6 +267,7 @@ class NitterTweetScheduler:
             logger.info(
                 "[NitterTweets] scheduler started "
                 f"({reason}); enabled={self.schedule_enabled}, "
+                f"groups={len(self._schedule_groups(log_invalid_targets=False))}, "
                 f"watch_users={len(self._watch_users())}, "
                 f"push_targets={len(self._parse_push_targets(log_invalid=False).targets)}"
             )
@@ -303,7 +311,10 @@ class NitterTweetScheduler:
 
     @property
     def schedule_enabled(self) -> bool:
-        return bool(self.config.get("schedule_enabled", False))
+        return any(
+            group.enabled
+            for group in self._schedule_groups(log_invalid_targets=False)
+        )
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -316,90 +327,115 @@ class NitterTweetScheduler:
 
     async def _tick(self) -> None:
         now = dt.datetime.now(CN_TZ)
-        reasons: list[str] = []
+        for group in self._schedule_groups(log_invalid_targets=False):
+            if not group.enabled:
+                continue
+            reasons = self._scheduled_reasons(group, now)
+            if not reasons:
+                continue
+            logger.info(
+                "[NitterTweets] scheduled check triggered: "
+                f"group={group.group_id}, reasons={', '.join(reasons)}"
+            )
+            await self.run_check(
+                reason=", ".join(reasons),
+                group_name=group.group_id,
+            )
 
-        if not self._startup_schedule_seeded:
-            self._startup_schedule_seeded = True
-            if not self.config.get("check_on_startup", False):
-                self._seed_schedule_slots(now)
+    def _scheduled_reasons(
+        self, group: ScheduleGroup, now: dt.datetime
+    ) -> list[str]:
+        reasons: list[str] = []
+        group_id = group.group_id
+
+        if group_id not in self._startup_schedule_seeded:
+            self._startup_schedule_seeded.add(group_id)
+            if not group.check_on_startup:
+                self._seed_schedule_slots(group, now)
                 logger.info(
                     "[NitterTweets] startup scheduled check skipped: "
-                    "check_on_startup=false"
+                    f"group={group_id}, check_on_startup=false"
                 )
-                return
+                return reasons
 
-        if self.config.get("interval_check_enabled", True):
-            interval_minutes = clamp_int(
-                self.config.get("check_interval_minutes", 30), 1, 1440
-            )
+        if group.interval_check_enabled:
+            interval_minutes = group.check_interval_minutes
             slot = int(now.timestamp() // (interval_minutes * 60))
-            if slot != self._last_interval_slot:
-                self._last_interval_slot = slot
+            if slot != self._last_interval_slots.get(group_id):
+                self._last_interval_slots[group_id] = slot
                 reasons.append(f"interval:{interval_minutes}m")
 
-        if self.config.get("daily_check_enabled", False):
-            for hhmm in self._parse_daily_times():
-                hour, minute = hhmm
+        if group.daily_check_enabled:
+            daily_slots = self._daily_slots.setdefault(group_id, set())
+            for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
                     slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
-                    if slot_key not in self._daily_slots:
-                        self._daily_slots.add(slot_key)
+                    if slot_key not in daily_slots:
+                        daily_slots.add(slot_key)
                         reasons.append(f"daily:{hour:02d}:{minute:02d}")
 
-            if len(self._daily_slots) > 256:
+            if len(daily_slots) > 256:
                 today = now.date().isoformat()
-                self._daily_slots = {
-                    slot for slot in self._daily_slots if slot.startswith(today)
+                self._daily_slots[group_id] = {
+                    slot for slot in daily_slots if slot.startswith(today)
                 }
 
-        if reasons:
-            logger.info(f"[NitterTweets] scheduled check triggered: {', '.join(reasons)}")
-            await self.run_check(reason=", ".join(reasons))
+        return reasons
 
-    def _seed_schedule_slots(self, now: dt.datetime) -> None:
-        if self.config.get("interval_check_enabled", True):
-            interval_minutes = clamp_int(
-                self.config.get("check_interval_minutes", 30), 1, 1440
+    def _seed_schedule_slots(self, group: ScheduleGroup, now: dt.datetime) -> None:
+        group_id = group.group_id
+        if group.interval_check_enabled:
+            interval_minutes = group.check_interval_minutes
+            self._last_interval_slots[group_id] = int(
+                now.timestamp() // (interval_minutes * 60)
             )
-            self._last_interval_slot = int(now.timestamp() // (interval_minutes * 60))
 
-        if self.config.get("daily_check_enabled", False):
-            for hour, minute in self._parse_daily_times():
+        if group.daily_check_enabled:
+            daily_slots = self._daily_slots.setdefault(group_id, set())
+            for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
-                    self._daily_slots.add(
-                        f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
-                    )
+                    daily_slots.add(f"{now.date().isoformat()}:{hour:02d}:{minute:02d}")
 
     async def run_check(
         self,
         reason: str = "manual",
         notify_no_updates: bool | None = None,
+        group_name: str = GLOBAL_GROUP_ID,
     ) -> ScheduledCheckResult:
+        group = self._schedule_group(group_name)
+        if group is None:
+            result = self._unknown_group_result(reason, group_name)
+            logger.warning(result.format_log_summary())
+            return result
+
         if self._check_lock.locked():
-            result = self._new_check_result(reason)
+            result = self._new_check_result(reason, group)
             result.skipped_reason = "check_already_running"
             logger.warning(result.format_log_summary())
             return result
 
         async with self._check_lock:
-            return await self._run_check_unlocked(reason, notify_no_updates)
+            return await self._run_check_unlocked(group, reason, notify_no_updates)
 
-    def _new_check_result(self, reason: str) -> ScheduledCheckResult:
-        users = self._watch_users()
-        target_info = self._parse_push_targets()
+    def _new_check_result(
+        self, reason: str, group: ScheduleGroup
+    ) -> ScheduledCheckResult:
         return ScheduledCheckResult(
             reason=reason,
-            users=users,
-            targets=target_info.targets,
-            invalid_targets=target_info.invalid_targets,
+            group_id=group.group_id,
+            group_name=group.name,
+            users=group.users,
+            targets=group.targets,
+            invalid_targets=group.invalid_targets,
         )
 
     async def _run_check_unlocked(
         self,
+        group: ScheduleGroup,
         reason: str,
         notify_no_updates: bool | None,
     ) -> ScheduledCheckResult:
-        result = self._new_check_result(reason)
+        result = self._new_check_result(reason, group)
         users = result.users
         targets = result.targets
         merge_threshold = self._merge_tweet_threshold()
@@ -414,19 +450,16 @@ class NitterTweetScheduler:
             logger.info(result.format_log_summary())
             return result
 
-        seen_map = await self._get_seen_map()
+        seen_map = await self._get_seen_map(group.group_id)
         result.seen_users = len(seen_map)
-        fetch_limit = clamp_int(self.config.get("scheduled_fetch_limit", 5), 1, 20)
+        fetch_limit = group.scheduled_fetch_limit
         result.fetch_limit = fetch_limit
-        target_interval = clamp_float(
-            self.config.get("send_target_interval", 1.5), 0.0, 60.0
-        )
-        user_interval = clamp_float(
-            self.config.get("send_user_interval", 2.0), 0.0, 60.0
-        )
+        target_interval = group.send_target_interval
+        user_interval = group.send_user_interval
         logger.info(
             "[NitterTweets] scheduled check started: "
-            f"reason={reason}, users={len(users)}, targets={len(targets)}, "
+            f"group={group.group_id}, reason={reason}, "
+            f"users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
             f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}"
         )
@@ -452,10 +485,12 @@ class NitterTweetScheduler:
 
             if not isinstance(seen_ids, list):
                 seen_map[username] = self.seen_store.initial_seen_ids(fetched_ids)
-                await self._put_seen_map(seen_map)
+                await self._put_seen_map(group.group_id, seen_map)
                 result.initialized_users[username] = len(fetched_ids)
                 logger.info(
-                    f"[NitterTweets] initialized @{username} with {len(fetched_ids)} seen tweets"
+                    "[NitterTweets] initialized "
+                    f"group={group.group_id} @{username} with "
+                    f"{len(fetched_ids)} seen tweets"
                 )
                 continue
 
@@ -493,12 +528,15 @@ class NitterTweetScheduler:
                 )
             else:
                 result.no_new_users.append(username)
-                logger.info(f"[NitterTweets] scheduled check @{username}: no new tweets")
+                logger.info(
+                    f"[NitterTweets] scheduled check group={group.group_id} "
+                    f"@{username}: no new tweets"
+                )
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
-                await self._put_seen_map(seen_map)
+                await self._put_seen_map(group.group_id, seen_map)
 
         if pending_batches:
-            await self._store_pending_seen_ids(pending_batches, seen_map)
+            await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
 
         if self._should_merge_batches(pending_batches, merge_threshold):
             merge_targets, ordinary_targets = self._split_merge_targets(targets)
@@ -545,28 +583,30 @@ class NitterTweetScheduler:
             logger.warning(
                 f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
             )
-        if self._should_notify_no_updates(result, notify_no_updates):
+        if self._should_notify_no_updates(result, notify_no_updates, group):
             await self._send_no_update_notice(result, target_interval)
         return result
 
     async def status_summary(self) -> str:
-        watch_info = self._watch_users_info()
-        users = watch_info.users
-        target_info = self._parse_push_targets(log_invalid=False)
-        seen_map = await self._get_seen_map()
-        interval_minutes = clamp_int(
-            self.config.get("check_interval_minutes", 30), 1, 1440
-        )
-        daily_times = self._parse_daily_times()
+        group = self._schedule_group(GLOBAL_GROUP_ID, log_invalid_targets=False)
+        if group is None:
+            return "Nitter 定时检查状态\n全局分组不可用。"
+
+        watch_info = group.users_info
+        users = group.users
+        target_info = group.target_info
+        seen_map = await self._get_seen_map(group.group_id)
+        daily_times = group.daily_check_times
 
         lines = [
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
-            f"启动立即检查: {'已启用' if self.config.get('check_on_startup', False) else '已关闭'}",
-            f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
-            f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
-            f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
+            f"分组: {group.name} ({group.group_id})",
+            f"启动立即检查: {'已启用' if group.check_on_startup else '已关闭'}",
+            f"间隔检查: {'已启用' if group.interval_check_enabled else '已关闭'} / {group.check_interval_minutes} 分钟",
+            f"每日定点: {'已启用' if group.daily_check_enabled else '已关闭'}",
+            f"无更新提示: {'已启用' if group.notify_no_updates else '已关闭'}",
             f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
             f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
             f"推送目标: {len(target_info.targets)} 个",
@@ -618,9 +658,10 @@ class NitterTweetScheduler:
         self,
         result: ScheduledCheckResult,
         notify_no_updates: bool | None,
+        group: ScheduleGroup,
     ) -> bool:
         if notify_no_updates is None:
-            notify_no_updates = bool(self.config.get("notify_no_updates", False))
+            notify_no_updates = group.notify_no_updates
         return bool(notify_no_updates and result.has_visible_no_update())
 
     async def _send_no_update_notice(
@@ -761,13 +802,16 @@ class NitterTweetScheduler:
         return [(batch.username, batch.instance, batch.tweets) for batch in batches]
 
     async def _store_pending_seen_ids(
-        self, batches: list[PendingTweetBatch], seen_map: dict[str, list[str]]
+        self,
+        group_id: str,
+        batches: list[PendingTweetBatch],
+        seen_map: dict[str, list[str]],
     ) -> None:
         for batch in batches:
             seen_map[batch.username] = self._merge_seen_ids(
                 batch.fetched_ids, batch.seen_ids
             )
-        await self._put_seen_map(seen_map)
+        await self._put_seen_map(group_id, seen_map)
 
     @staticmethod
     def _format_merge_threshold(threshold: int) -> str:
@@ -775,11 +819,15 @@ class NitterTweetScheduler:
             return "已关闭"
         return f"{threshold} 条及以上"
 
-    async def _get_seen_map(self) -> dict[str, list[str]]:
-        return await self.seen_store.get_seen_map()
+    async def _get_seen_map(
+        self, group_id: str = GLOBAL_GROUP_ID
+    ) -> dict[str, list[str]]:
+        return await self.seen_store.get_group_seen_map(group_id)
 
-    async def _put_seen_map(self, seen_map: dict[str, list[str]]) -> None:
-        await self.seen_store.put_seen_map(seen_map)
+    async def _put_seen_map(
+        self, group_id: str, seen_map: dict[str, list[str]]
+    ) -> None:
+        await self.seen_store.put_group_seen_map(group_id, seen_map)
 
     def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
         return self.seen_store.merge_seen_ids(new_ids, old_ids)
@@ -801,3 +849,33 @@ class NitterTweetScheduler:
 
     def _parse_daily_times(self) -> list[tuple[int, int]]:
         return self.config_reader.parse_daily_times()
+
+    def _schedule_groups(
+        self, log_invalid_targets: bool = True
+    ) -> list[ScheduleGroup]:
+        return self.config_reader.schedule_groups(
+            log_invalid_targets=log_invalid_targets
+        )
+
+    def _schedule_group(
+        self, group_name: str = GLOBAL_GROUP_ID, log_invalid_targets: bool = True
+    ) -> ScheduleGroup | None:
+        return self.config_reader.schedule_group(
+            group_name, log_invalid_targets=log_invalid_targets
+        )
+
+    def _unknown_group_result(
+        self, reason: str, group_name: str
+    ) -> ScheduledCheckResult:
+        requested = str(group_name or "").strip() or GLOBAL_GROUP_ID
+        return ScheduledCheckResult(
+            reason=reason,
+            group_id=requested,
+            group_name=requested,
+            skipped_reason="unknown_group",
+            available_groups=[
+                f"{group.name} ({group.group_id})"
+                for group in self._schedule_groups(log_invalid_targets=False)
+            ],
+            merge_tweet_threshold=self._merge_tweet_threshold(),
+        )

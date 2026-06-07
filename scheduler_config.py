@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from .utils import normalize_username
+    from .seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from .utils import clamp_float, clamp_int, normalize_username
 except ImportError:
-    from utils import normalize_username
+    from seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from utils import clamp_float, clamp_int, normalize_username
 
 
 @dataclass(slots=True)
@@ -28,10 +30,87 @@ class WatchUsersInfo:
     save_error: str = ""
 
 
+@dataclass(slots=True)
+class ScheduleGroup:
+    group_id: str
+    name: str
+    enabled: bool
+    check_on_startup: bool
+    interval_check_enabled: bool
+    check_interval_minutes: int
+    daily_check_enabled: bool
+    daily_check_times: list[tuple[int, int]]
+    scheduled_fetch_limit: int
+    send_target_interval: float
+    send_user_interval: float
+    notify_no_updates: bool
+    users_info: WatchUsersInfo
+    target_info: PushTargetParseResult
+    aliases: list[str] = field(default_factory=list)
+
+    @property
+    def users(self) -> list[str]:
+        return self.users_info.users
+
+    @property
+    def targets(self) -> list[str]:
+        return self.target_info.targets
+
+    @property
+    def invalid_targets(self) -> list[str]:
+        return self.target_info.invalid_targets
+
+
 class SchedulerConfigReader:
     def __init__(self, config, context):
         self.config = config
         self.context = context
+
+    def global_group(self, log_invalid_targets: bool = True) -> ScheduleGroup:
+        return ScheduleGroup(
+            group_id=GLOBAL_GROUP_ID,
+            name="全局分组",
+            enabled=bool(self.config.get("schedule_enabled", False)),
+            check_on_startup=bool(self.config.get("check_on_startup", False)),
+            interval_check_enabled=bool(
+                self.config.get("interval_check_enabled", True)
+            ),
+            check_interval_minutes=clamp_int(
+                self.config.get("check_interval_minutes", 30), 1, 1440
+            ),
+            daily_check_enabled=bool(self.config.get("daily_check_enabled", False)),
+            daily_check_times=self.parse_daily_times(),
+            scheduled_fetch_limit=clamp_int(
+                self.config.get("scheduled_fetch_limit", 5), 1, 20
+            ),
+            send_target_interval=clamp_float(
+                self.config.get("send_target_interval", 1.5), 0.0, 60.0
+            ),
+            send_user_interval=clamp_float(
+                self.config.get("send_user_interval", 2.0), 0.0, 60.0
+            ),
+            notify_no_updates=bool(self.config.get("notify_no_updates", False)),
+            users_info=self.watch_users_info(),
+            target_info=self.parse_push_targets(log_invalid=log_invalid_targets),
+            aliases=["全局", "默认", "default"],
+        )
+
+    def schedule_groups(self, log_invalid_targets: bool = True) -> list[ScheduleGroup]:
+        return [self.global_group(log_invalid_targets=log_invalid_targets)]
+
+    def schedule_group(
+        self, group_name: str = "", log_invalid_targets: bool = True
+    ) -> ScheduleGroup | None:
+        normalized = normalize_group_id(group_name)
+        for group in self.schedule_groups(log_invalid_targets=log_invalid_targets):
+            identifiers = {
+                normalize_group_id(group.group_id),
+                normalize_group_id(group.name),
+                *(normalize_group_id(alias) for alias in group.aliases),
+            }
+            if normalized in identifiers:
+                return group
+        return None
 
     def watch_users(self) -> list[str]:
         return self.watch_users_info().users
