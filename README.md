@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.2-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.3-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -20,7 +20,7 @@
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
 - 支持多个 Nitter 实例按顺序重试。
-- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，其他平台使用普通消息链。
+- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，飞书优先使用原生 `text` 消息发送正文，其他平台使用普通消息链。
 
 ## 快速开始
 
