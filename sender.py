@@ -691,7 +691,7 @@ class TweetSender:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
                 warning = self.UNCERTAIN_DELIVERY_WARNING
-                self._log_uncertain_delivery()
+                self._log_uncertain_delivery(label, umo, exc)
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -715,33 +715,15 @@ class TweetSender:
         media_components: list,
         label: str,
     ) -> SendAttempt:
-        if not media_components:
-            return SendAttempt(success=True)
+        async def send_chain(chain: MessageChain, send_label: str) -> SendAttempt:
+            return await self._send_event_chain(event, chain, send_label)
 
-        attempt = await self._send_event_chain(
-            event, MessageChain(media_components), label
+        return await self._send_media_with_video_retry(
+            media_components,
+            label,
+            send_chain,
+            "[NitterTweets] sent media without video/GIF attachments after initial failure",
         )
-        if attempt.success or not attempt.retryable:
-            return attempt
-
-        without_videos = [
-            component for component in media_components if not isinstance(component, Video)
-        ]
-        if len(without_videos) == len(media_components):
-            return attempt
-        if not without_videos:
-            return SendAttempt(success=True, error=attempt.error)
-
-        retry_attempt = await self._send_event_chain(
-            event, MessageChain(without_videos), f"{label} without videos"
-        )
-        if retry_attempt.success:
-            logger.warning(
-                "[NitterTweets] sent Lark media without video/GIF attachments "
-                "after initial failure"
-            )
-            return SendAttempt(success=True, error=attempt.error)
-        return retry_attempt
 
     async def _send_lark_umo_media_with_retry(
         self,
@@ -750,12 +732,28 @@ class TweetSender:
         media_components: list,
         label: str,
     ) -> SendAttempt:
+        async def send_chain(chain: MessageChain, send_label: str) -> SendAttempt:
+            return await self._send_context_message(context, umo, chain, send_label)
+
+        return await self._send_media_with_video_retry(
+            media_components,
+            label,
+            send_chain,
+            f"[NitterTweets] sent media to {umo} without video/GIF attachments "
+            "after initial failure",
+        )
+
+    async def _send_media_with_video_retry(
+        self,
+        media_components: list,
+        label: str,
+        send_chain,
+        retry_success_log: str,
+    ) -> SendAttempt:
         if not media_components:
             return SendAttempt(success=True)
 
-        attempt = await self._send_context_message(
-            context, umo, MessageChain(media_components), label
-        )
+        attempt = await send_chain(MessageChain(media_components), label)
         if attempt.success or not attempt.retryable:
             return attempt
 
@@ -765,19 +763,22 @@ class TweetSender:
         if len(without_videos) == len(media_components):
             return attempt
         if not without_videos:
-            return SendAttempt(success=True, error=attempt.error)
+            logger.warning(
+                "[NitterTweets] 媒体附件发送失败，全部为视频/GIF，标记为不确定"
+            )
+            return SendAttempt(
+                success=False,
+                retryable=False,
+                uncertain=True,
+                error=attempt.error,
+                warning="视频/GIF 附件发送状态不确定，已跳过降级重试。",
+            )
 
-        retry_attempt = await self._send_context_message(
-            context,
-            umo,
-            MessageChain(without_videos),
-            f"{label} without videos",
+        retry_attempt = await send_chain(
+            MessageChain(without_videos), f"{label} without videos"
         )
         if retry_attempt.success:
-            logger.warning(
-                f"[NitterTweets] sent Lark media to {umo} without video/GIF "
-                "attachments after initial failure"
-            )
+            logger.warning(retry_success_log)
             return SendAttempt(success=True, error=attempt.error)
         return retry_attempt
 
@@ -793,7 +794,7 @@ class TweetSender:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
                 warning = self.UNCERTAIN_DELIVERY_WARNING
-                self._log_uncertain_delivery()
+                self._log_uncertain_delivery(label, self._event_target(event), exc)
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -820,7 +821,7 @@ class TweetSender:
         if client is None or getattr(client, "im", None) is None:
             error = "Lark API client is unavailable"
             logger.warning(f"Failed to send {label}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
+            return SendAttempt(success=False, retryable=False, error=error)
 
         try:
             from lark_oapi.api.im.v1 import (
@@ -884,7 +885,8 @@ class TweetSender:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
                 warning = self.UNCERTAIN_DELIVERY_WARNING
-                self._log_uncertain_delivery()
+                target = receive_id or reply_message_id or receive_id_type or "unknown"
+                self._log_uncertain_delivery(label, target, exc)
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -899,11 +901,16 @@ class TweetSender:
 
     @staticmethod
     def _log_uncertain_delivery(
-        _label: str = "",
-        _target: str = "",
-        _exc: Exception | None = None,
+        label: str = "",
+        target: str = "",
+        exc: Exception | None = None,
     ) -> None:
         logger.warning("[NitterTweets] 发送状态不确定，跳过降级重试")
+        if label or target or exc is not None:
+            logger.debug(
+                "[NitterTweets] uncertain delivery detail: "
+                f"label={label}, target={target}, error={exc}"
+            )
 
     @classmethod
     def _is_uncertain_delivery_error(cls, exc: Exception) -> bool:
@@ -1113,7 +1120,7 @@ class TweetSender:
 
     @classmethod
     def _is_lark_platform(cls, platform: str) -> bool:
-        return platform.strip().lower() in cls.LARK_PLATFORM_NAMES
+        return str(platform or "").strip().lower() in cls.LARK_PLATFORM_NAMES
 
     @classmethod
     def _should_use_forward_for_umo(cls, context, umo: str) -> bool:
@@ -1128,7 +1135,7 @@ class TweetSender:
 
     @classmethod
     def _is_forward_platform(cls, platform: str) -> bool:
-        return platform.strip().lower() in cls.FORWARD_MESSAGE_PLATFORMS
+        return str(platform or "").strip().lower() in cls.FORWARD_MESSAGE_PLATFORMS
 
     @staticmethod
     def _platform_from_umo(umo: str) -> str:
