@@ -497,6 +497,9 @@ class NitterTweetScheduler:
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
                 await self._put_seen_map(seen_map)
 
+        if pending_batches:
+            await self._store_pending_seen_ids(pending_batches, seen_map)
+
         if self._should_merge_batches(pending_batches, merge_threshold):
             result.push_mode = "merged"
             for batch in pending_batches:
@@ -516,8 +519,6 @@ class NitterTweetScheduler:
             await self._send_per_user_updates(
                 pending_batches, result, targets, target_interval, user_interval
             )
-        if pending_batches:
-            await self._store_pending_seen_ids(pending_batches, seen_map)
 
         logger.info(result.format_log_summary())
         if result.delivery_warnings:
