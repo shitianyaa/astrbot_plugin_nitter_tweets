@@ -102,6 +102,13 @@ def clamp_float(value, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, number))
 
 
+def configured_merge_tweet_threshold(config) -> int:
+    value = config.get("merge_tweet_threshold", None)
+    if value is None:
+        value = 1 if config.get("merge_scheduled_updates", False) else 2
+    return clamp_int(value, 0, 20)
+
+
 def clean_text(raw: str) -> str:
     text = re.sub(r"(?i)<br\s*/?>", "\n", raw)
     text = re.sub(r"(?s)<[^>]+>", "", text)

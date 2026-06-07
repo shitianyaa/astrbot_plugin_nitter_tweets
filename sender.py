@@ -30,13 +30,13 @@ except ImportError:
 
 try:
     from .utils import (
-        TweetItem, TweetMedia, file_uri, node_uin, normalize_external_links,
-        safe_call, strip_external_links,
+        TweetItem, TweetMedia, configured_merge_tweet_threshold, file_uri, node_uin,
+        normalize_external_links, safe_call, strip_external_links,
     )
 except ImportError:
     from utils import (
-        TweetItem, TweetMedia, file_uri, node_uin, normalize_external_links,
-        safe_call, strip_external_links,
+        TweetItem, TweetMedia, configured_merge_tweet_threshold, file_uri, node_uin,
+        normalize_external_links, safe_call, strip_external_links,
     )
 
 
@@ -86,6 +86,7 @@ class TweetSender:
         self.send_video_attachments = bool(
             config.get("send_video_attachments", False)
         )
+        self.merge_tweet_threshold = configured_merge_tweet_threshold(config)
 
     async def send(
         self,
@@ -100,7 +101,9 @@ class TweetSender:
                 event, username, instance, tweets, notices=notices
             )
 
-        if not self._should_use_forward_for_event(event):
+        if not self._should_use_forward_for_event(
+            event
+        ) or not self._should_use_merge_for_count(len(tweets)):
             return await self._send_direct_event(
                 event, username, instance, tweets, notices=notices
             )
@@ -176,7 +179,9 @@ class TweetSender:
                 context, umo, username, instance, tweets
             )
 
-        if not self._should_use_forward_for_umo(context, umo):
+        if not self._should_use_forward_for_umo(
+            context, umo
+        ) or not self._should_use_merge_for_count(len(tweets)):
             return await self._send_direct_to_umo(
                 context, umo, username, instance, tweets
             )
@@ -239,7 +244,9 @@ class TweetSender:
         if self._should_use_lark_for_umo(context, umo):
             return await self._send_lark_merged_to_umo(context, umo, batches)
 
-        if not self._should_use_forward_for_umo(context, umo):
+        if not self._should_use_forward_for_umo(
+            context, umo
+        ) or not self._should_use_merge_for_count(self._count_batch_tweets(batches)):
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
         omitted_videos = self._count_attached_videos(batches)
@@ -1102,9 +1109,19 @@ class TweetSender:
         )
 
     @staticmethod
+    def _count_batch_tweets(batches: list[TweetBatch]) -> int:
+        return sum(len(tweets) for _, _, tweets in batches)
+
+    @staticmethod
     def _has_attached_videos(tweets: list[TweetItem]) -> bool:
         return any(
             media.is_video for tweet in tweets for media in tweet.media if media.path
+        )
+
+    def _should_use_merge_for_count(self, tweet_count: int) -> bool:
+        return (
+            self.merge_tweet_threshold > 0
+            and tweet_count >= self.merge_tweet_threshold
         )
 
     @classmethod

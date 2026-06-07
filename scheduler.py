@@ -19,9 +19,19 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .utils import clamp_float, clamp_int, normalize_username
+    from .utils import (
+        clamp_float,
+        clamp_int,
+        configured_merge_tweet_threshold,
+        normalize_username,
+    )
 except ImportError:
-    from utils import clamp_float, clamp_int, normalize_username
+    from utils import (
+        clamp_float,
+        clamp_int,
+        configured_merge_tweet_threshold,
+        normalize_username,
+    )
 
 
 try:
@@ -61,6 +71,15 @@ class ScheduledPushResult:
 
 
 @dataclass(slots=True)
+class PendingTweetBatch:
+    username: str
+    instance: str
+    tweets: list
+    fetched_ids: list[str]
+    seen_ids: list[str]
+
+
+@dataclass(slots=True)
 class ScheduledCheckResult:
     reason: str
     users: list[str] = field(default_factory=list)
@@ -75,6 +94,7 @@ class ScheduledCheckResult:
     failed_users: dict[str, str] = field(default_factory=dict)
     pushes: list[ScheduledPushResult] = field(default_factory=list)
     push_mode: str = "per_user"
+    merge_tweet_threshold: int = 0
     merged_push_success_targets: int = 0
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
@@ -137,6 +157,7 @@ class ScheduledCheckResult:
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
             f"push_mode={self.push_mode}, "
+            f"merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
         )
@@ -151,6 +172,10 @@ class ScheduledCheckResult:
         ]
         if self.fetch_limit:
             lines.append(f"每账号拉取: {self.fetch_limit} 条")
+        if self.merge_tweet_threshold > 0:
+            lines.append(f"合并阈值: {self.merge_tweet_threshold} 条及以上")
+        else:
+            lines.append("合并阈值: 已关闭")
 
         if self.skipped_reason:
             reason_text = {
@@ -377,9 +402,9 @@ class NitterTweetScheduler:
         result = self._new_check_result(reason)
         users = result.users
         targets = result.targets
-        merge_updates = bool(self.config.get("merge_scheduled_updates", False))
-        result.push_mode = "merged" if merge_updates else "per_user"
-        merged_batches = []
+        merge_threshold = self._merge_tweet_threshold()
+        result.merge_tweet_threshold = merge_threshold
+        pending_batches = []
         if not users:
             result.skipped_reason = "no_watch_users"
             logger.info(result.format_log_summary())
@@ -403,10 +428,10 @@ class NitterTweetScheduler:
             "[NitterTweets] scheduled check started: "
             f"reason={reason}, users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
-            f"fetch_limit={fetch_limit}, push_mode={result.push_mode}"
+            f"fetch_limit={fetch_limit}, merge_threshold={merge_threshold}"
         )
 
-        for user_index, username in enumerate(users):
+        for username in users:
             try:
                 instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
             except Exception as exc:
@@ -453,61 +478,46 @@ class NitterTweetScheduler:
                     )
                     continue
 
-                if merge_updates:
-                    merged_batches.append((username, instance, new_tweets))
-                    result.pushes.append(
-                        ScheduledPushResult(
-                            username=username,
-                            new_count=len(new_tweets),
-                            success_targets=0,
-                            total_targets=0,
-                        )
+                pending_batches.append(
+                    PendingTweetBatch(
+                        username=username,
+                        instance=instance,
+                        tweets=new_tweets,
+                        fetched_ids=fetched_ids,
+                        seen_ids=seen_ids,
                     )
-                    logger.info(
-                        f"[NitterTweets] queued @{username} {len(new_tweets)} "
-                        "new tweets for merged push"
-                    )
-                else:
-                    success = 0
-                    for target_index, umo in enumerate(targets):
-                        try:
-                            outcome = await self.sender.send_to_umo_with_outcome(
-                                self.context, umo, username, instance, new_tweets
-                            )
-                            if outcome.success:
-                                success += 1
-                            if outcome.warning:
-                                result.delivery_warnings.append(outcome.warning)
-                        except Exception as exc:
-                            logger.warning(
-                                f"[NitterTweets] scheduled push @{username} to {umo} failed: {exc}"
-                            )
-                        if target_index < len(targets) - 1 and target_interval > 0:
-                            await asyncio.sleep(target_interval)
-                    result.pushes.append(
-                        ScheduledPushResult(
-                            username=username,
-                            new_count=len(new_tweets),
-                            success_targets=success,
-                            total_targets=len(targets),
-                        )
-                    )
-                    logger.info(
-                        f"[NitterTweets] pushed @{username} {len(new_tweets)} new tweets "
-                        f"to {success}/{len(targets)} targets"
-                    )
+                )
+                logger.info(
+                    f"[NitterTweets] prepared @{username} {len(new_tweets)} "
+                    "new tweets for scheduled push"
+                )
             else:
                 result.no_new_users.append(username)
                 logger.info(f"[NitterTweets] scheduled check @{username}: no new tweets")
+                seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
+                await self._put_seen_map(seen_map)
 
-            seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
-            await self._put_seen_map(seen_map)
-
-            if user_index < len(users) - 1 and user_interval > 0:
-                await asyncio.sleep(user_interval)
-
-        if merge_updates and merged_batches:
-            await self._send_merged_updates(merged_batches, result, target_interval)
+        if self._should_merge_batches(pending_batches, merge_threshold):
+            result.push_mode = "merged"
+            for batch in pending_batches:
+                result.pushes.append(
+                    ScheduledPushResult(
+                        username=batch.username,
+                        new_count=len(batch.tweets),
+                        success_targets=0,
+                        total_targets=0,
+                    )
+                )
+            await self._send_merged_updates(
+                self._tweet_batches(pending_batches), result, target_interval
+            )
+        else:
+            result.push_mode = "per_user"
+            await self._send_per_user_updates(
+                pending_batches, result, targets, target_interval, user_interval
+            )
+        if pending_batches:
+            await self._store_pending_seen_ids(pending_batches, seen_map)
 
         logger.info(result.format_log_summary())
         if result.delivery_warnings:
@@ -537,7 +547,7 @@ class NitterTweetScheduler:
             f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
             f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
             f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
-            f"合并本轮更新: {'已启用' if self.config.get('merge_scheduled_updates', False) else '已关闭'}",
+            f"合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
             f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
             f"推送目标: {len(target_info.targets)} 个",
             f"无效目标: {len(target_info.invalid_targets)} 个",
@@ -619,6 +629,50 @@ class NitterTweetScheduler:
             f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
         )
 
+    async def _send_per_user_updates(
+        self,
+        batches,
+        result: ScheduledCheckResult,
+        targets: list[str],
+        target_interval: float,
+        user_interval: float,
+    ) -> None:
+        for batch_index, batch in enumerate(batches):
+            success = 0
+            for target_index, umo in enumerate(targets):
+                try:
+                    outcome = await self.sender.send_to_umo_with_outcome(
+                        self.context,
+                        umo,
+                        batch.username,
+                        batch.instance,
+                        batch.tweets,
+                    )
+                    if outcome.success:
+                        success += 1
+                    if outcome.warning:
+                        result.delivery_warnings.append(outcome.warning)
+                except Exception as exc:
+                    logger.warning(
+                        f"[NitterTweets] scheduled push @{batch.username} to {umo} failed: {exc}"
+                    )
+                if target_index < len(targets) - 1 and target_interval > 0:
+                    await asyncio.sleep(target_interval)
+            result.pushes.append(
+                ScheduledPushResult(
+                    username=batch.username,
+                    new_count=len(batch.tweets),
+                    success_targets=success,
+                    total_targets=len(targets),
+                )
+            )
+            logger.info(
+                f"[NitterTweets] pushed @{batch.username} {len(batch.tweets)} new tweets "
+                f"to {success}/{len(targets)} targets"
+            )
+            if batch_index < len(batches) - 1 and user_interval > 0:
+                await asyncio.sleep(user_interval)
+
     async def _send_merged_updates(
         self,
         batches,
@@ -661,6 +715,34 @@ class NitterTweetScheduler:
             f"[NitterTweets] pushed {result.new_tweet_count} merged new tweets "
             f"from {len(batches)} users to {success}/{len(result.targets)} targets"
         )
+
+    def _merge_tweet_threshold(self) -> int:
+        return configured_merge_tweet_threshold(self.config)
+
+    @staticmethod
+    def _should_merge_batches(batches: list[PendingTweetBatch], threshold: int) -> bool:
+        if threshold <= 0:
+            return False
+        return sum(len(batch.tweets) for batch in batches) >= threshold
+
+    @staticmethod
+    def _tweet_batches(batches: list[PendingTweetBatch]) -> list[tuple[str, str, list]]:
+        return [(batch.username, batch.instance, batch.tweets) for batch in batches]
+
+    async def _store_pending_seen_ids(
+        self, batches: list[PendingTweetBatch], seen_map: dict[str, list[str]]
+    ) -> None:
+        for batch in batches:
+            seen_map[batch.username] = self._merge_seen_ids(
+                batch.fetched_ids, batch.seen_ids
+            )
+        await self._put_seen_map(seen_map)
+
+    @staticmethod
+    def _format_merge_threshold(threshold: int) -> str:
+        if threshold <= 0:
+            return "已关闭"
+        return f"{threshold} 条及以上"
 
     async def _get_seen_map(self) -> dict[str, list[str]]:
         value = await self.owner.get_kv_data(KV_KEY_SEEN, {})
