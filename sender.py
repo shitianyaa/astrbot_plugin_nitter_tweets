@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
-from uuid import uuid4
 
 from astrbot.api import logger
 
@@ -75,8 +73,6 @@ class TweetSender:
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
     LARK_PLATFORM_NAMES = {"lark", "feishu"}
     LARK_TEXT_CHUNK_SIZE = 28000
-    LARK_CHAT_ID_RE = re.compile(r"oc_[A-Za-z0-9_-]+")
-    LARK_OPEN_ID_RE = re.compile(r"ou_[A-Za-z0-9_-]+")
 
     def __init__(self, config=None):
         config = config or {}
@@ -89,15 +85,6 @@ class TweetSender:
         self.send_video_attachments = bool(
             config.get("send_video_attachments", False)
         )
-        self.forward_message_min_tweets = self._int_config(
-            config.get("forward_message_min_tweets", 2), default=2, minimum=0
-        )
-        self.lark_merge_forward_enabled = bool(
-            config.get("lark_merge_forward_enabled", False)
-        )
-        self.lark_merge_forward_source_chat_id = str(
-            config.get("lark_merge_forward_source_chat_id", "") or ""
-        ).strip()
 
     async def send(
         self,
@@ -112,9 +99,7 @@ class TweetSender:
                 event, username, instance, tweets, notices=notices
             )
 
-        if not self._should_use_forward_for_event(event) or (
-            not self._should_use_forward_for_count(len(tweets))
-        ):
+        if not self._should_use_forward_for_event(event):
             return await self._send_direct_event(
                 event, username, instance, tweets, notices=notices
             )
@@ -190,9 +175,7 @@ class TweetSender:
                 context, umo, username, instance, tweets
             )
 
-        if not self._should_use_forward_for_umo(context, umo) or (
-            not self._should_use_forward_for_count(len(tweets))
-        ):
+        if not self._should_use_forward_for_umo(context, umo):
             return await self._send_direct_to_umo(
                 context, umo, username, instance, tweets
             )
@@ -255,10 +238,7 @@ class TweetSender:
         if self._should_use_lark_for_umo(context, umo):
             return await self._send_lark_merged_to_umo(context, umo, batches)
 
-        tweet_count = self._merged_tweet_count(batches)
-        if not self._should_use_forward_for_umo(context, umo) or (
-            not self._should_use_forward_for_count(tweet_count)
-        ):
+        if not self._should_use_forward_for_umo(context, umo):
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
         omitted_videos = self._count_attached_videos(batches)
@@ -555,36 +535,9 @@ class TweetSender:
                 event, username, instance, tweets, notices=notices
             )
 
-        receive_id_type, receive_id = self._lark_event_target(event)
-        if self._should_use_lark_native_merge_forward(len(tweets)):
-            merge_attempt = await self._send_lark_native_merge_forward(
-                client,
-                receive_id_type,
-                receive_id,
-                self._build_lark_merge_source_texts(
-                    username, instance, tweets, notices=notices
-                ),
-                "manual Lark merge forward",
-            )
-            if merge_attempt.success or merge_attempt.uncertain:
-                media_attempt = await self._send_lark_event_media_with_retry(
-                    event,
-                    self._media_components(components),
-                    "manual Lark merge forward media",
-                )
-                if not (media_attempt.success or media_attempt.uncertain):
-                    logger.warning(
-                        "[NitterTweets] Lark merge forward sent but media failed: "
-                        f"{media_attempt.error}"
-                    )
-                return True
-            logger.warning(
-                "[NitterTweets] Lark merge forward failed; falling back to text "
-                f"send: {merge_attempt.error}"
-            )
-
         text = self._plain_text_from_components(components)
         reply_message_id = self._lark_reply_message_id(event)
+        receive_id_type, receive_id = self._lark_event_target(event)
         text_attempt = await self._send_lark_text(
             client,
             text,
@@ -645,34 +598,6 @@ class TweetSender:
                 context, umo, username, instance, tweets
             )
 
-        if self._should_use_lark_native_merge_forward(len(tweets)):
-            merge_attempt = await self._send_lark_native_merge_forward(
-                client,
-                receive_id_type,
-                receive_id,
-                self._build_lark_merge_source_texts(username, instance, tweets),
-                "scheduled Lark merge forward",
-            )
-            if merge_attempt.success or merge_attempt.uncertain:
-                media_attempt = await self._send_lark_umo_media_with_retry(
-                    context,
-                    umo,
-                    self._media_components(components),
-                    "scheduled Lark merge forward media",
-                )
-                warning = merge_attempt.warning or media_attempt.warning
-                if not (media_attempt.success or media_attempt.uncertain):
-                    warning = media_attempt.error
-                    logger.warning(
-                        f"[NitterTweets] Lark merge forward sent to {umo} but "
-                        f"media failed: {media_attempt.error}"
-                    )
-                return SendOutcome(success=True, warning=warning)
-            logger.warning(
-                f"[NitterTweets] Lark merge forward to {umo} failed; falling "
-                f"back to text send: {merge_attempt.error}"
-            )
-
         text_attempt = await self._send_lark_text(
             client,
             text,
@@ -716,44 +641,6 @@ class TweetSender:
                 "using generic send"
             )
             return await self._send_merged_direct_to_umo(context, umo, batches)
-
-        tweet_count = self._merged_tweet_count(batches)
-        if self._should_use_lark_native_merge_forward(tweet_count):
-            merge_attempt = await self._send_lark_native_merge_forward(
-                client,
-                receive_id_type,
-                receive_id,
-                self._build_lark_merged_source_texts(batches),
-                "merged scheduled Lark merge forward",
-            )
-            if merge_attempt.success or merge_attempt.uncertain:
-                media_attempt = await self._send_lark_umo_media_with_retry(
-                    context,
-                    umo,
-                    self._media_components(components),
-                    "merged scheduled Lark merge forward media",
-                )
-                warning = merge_attempt.warning or media_attempt.warning
-                if not (media_attempt.success or media_attempt.uncertain):
-                    warning = media_attempt.error
-                    logger.warning(
-                        f"[NitterTweets] merged Lark merge forward sent to {umo} "
-                        f"but media failed: {media_attempt.error}"
-                    )
-                return MergedSendOutcome(
-                    success=True,
-                    mode=(
-                        "uncertain_delivery"
-                        if merge_attempt.uncertain
-                        else "lark_merge_forward"
-                    ),
-                    omitted_videos=omitted_videos,
-                    warning=warning,
-                )
-            logger.warning(
-                f"[NitterTweets] merged Lark merge forward to {umo} failed; "
-                f"falling back to text send: {merge_attempt.error}"
-            )
 
         text_attempt = await self._send_lark_text(
             client,
@@ -822,243 +709,6 @@ class TweetSender:
         if sent is False:
             error = "target platform not found or proactive send is unsupported"
             logger.warning(f"Failed to send {label} to {umo}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
-
-        return SendAttempt(success=True)
-
-    async def _send_lark_native_merge_forward(
-        self,
-        client,
-        receive_id_type: str,
-        receive_id: str,
-        source_texts: list[str],
-        label: str,
-    ) -> SendAttempt:
-        source_chat_id = self.lark_merge_forward_source_chat_id
-        if not source_chat_id:
-            return SendAttempt(
-                success=False,
-                retryable=True,
-                error="Lark merge-forward source chat is not configured",
-            )
-        if not receive_id or not receive_id_type:
-            return SendAttempt(
-                success=False,
-                retryable=True,
-                error="Lark merge-forward target is missing",
-            )
-        if receive_id_type == "chat_id" and receive_id == source_chat_id:
-            return SendAttempt(
-                success=False,
-                retryable=True,
-                error=(
-                    "Lark merge-forward source chat matches target chat; "
-                    "refusing to avoid duplicate messages"
-                ),
-            )
-
-        source_attempt, message_ids = await self._create_lark_merge_source_messages(
-            client, source_chat_id, source_texts, f"{label} source messages"
-        )
-        if not source_attempt.success:
-            if source_attempt.uncertain:
-                return SendAttempt(
-                    success=False,
-                    retryable=True,
-                    error=source_attempt.error,
-                    warning=source_attempt.warning,
-                )
-            return source_attempt
-        if not message_ids:
-            return SendAttempt(
-                success=False,
-                retryable=True,
-                error="Lark merge-forward source message IDs are empty",
-            )
-
-        return await self._merge_forward_lark_messages(
-            client,
-            receive_id_type,
-            receive_id,
-            message_ids,
-            label,
-        )
-
-    async def _create_lark_merge_source_messages(
-        self,
-        client,
-        source_chat_id: str,
-        source_texts: list[str],
-        label: str,
-    ) -> tuple[SendAttempt, list[str]]:
-        clean_texts = [text.strip() for text in source_texts if text and text.strip()]
-        if not clean_texts:
-            return (
-                SendAttempt(
-                    success=False,
-                    retryable=True,
-                    error="Lark merge-forward source texts are empty",
-                ),
-                [],
-            )
-        if client is None or getattr(client, "im", None) is None:
-            return (
-                SendAttempt(
-                    success=False,
-                    retryable=True,
-                    error="Lark API client is unavailable",
-                ),
-                [],
-            )
-
-        try:
-            from lark_oapi.api.im.v1 import (
-                CreateMessageRequest,
-                CreateMessageRequestBody,
-            )
-        except Exception as exc:
-            return (
-                SendAttempt(
-                    success=False,
-                    retryable=True,
-                    error=f"lark_oapi is unavailable: {exc}",
-                ),
-                [],
-            )
-
-        message_ids: list[str] = []
-        try:
-            for text in clean_texts:
-                for chunk in self._split_lark_text(text):
-                    request = (
-                        CreateMessageRequest.builder()
-                        .receive_id_type("chat_id")
-                        .request_body(
-                            CreateMessageRequestBody.builder()
-                            .receive_id(source_chat_id)
-                            .msg_type("text")
-                            .content(
-                                json.dumps({"text": chunk}, ensure_ascii=False)
-                            )
-                            .build()
-                        )
-                        .build()
-                    )
-                    response = await client.im.v1.message.acreate(request)
-                    if not response.success():
-                        error = self._lark_response_error(response)
-                        logger.warning(f"Failed to send {label}: {error}")
-                        return (
-                            SendAttempt(
-                                success=False,
-                                retryable=True,
-                                error=error,
-                            ),
-                            message_ids,
-                        )
-
-                    data = getattr(response, "data", None)
-                    message_id = str(getattr(data, "message_id", "") or "")
-                    if not message_id:
-                        error = "Lark create message response has no message_id"
-                        logger.warning(f"Failed to send {label}: {error}")
-                        return (
-                            SendAttempt(
-                                success=False,
-                                retryable=True,
-                                error=error,
-                            ),
-                            message_ids,
-                        )
-                    message_ids.append(message_id)
-        except Exception as exc:
-            error = str(exc)
-            if self._is_uncertain_delivery_error(exc):
-                warning = (
-                    f"{label} 的飞书中转消息发送状态不确定：{error}。"
-                    "已停止合并转发并回退。"
-                )
-                logger.warning(f"[NitterTweets] {warning}")
-                return (
-                    SendAttempt(
-                        success=False,
-                        retryable=False,
-                        uncertain=True,
-                        error=error,
-                        warning=warning,
-                    ),
-                    message_ids,
-                )
-            logger.warning(f"Failed to send {label}: {error}")
-            return (
-                SendAttempt(success=False, retryable=True, error=error),
-                message_ids,
-            )
-
-        return SendAttempt(success=True), message_ids
-
-    async def _merge_forward_lark_messages(
-        self,
-        client,
-        receive_id_type: str,
-        receive_id: str,
-        message_ids: list[str],
-        label: str,
-    ) -> SendAttempt:
-        try:
-            from lark_oapi.api.im.v1 import (
-                MergeForwardMessageRequest,
-                MergeForwardMessageRequestBody,
-            )
-        except Exception as exc:
-            error = f"lark_oapi is unavailable: {exc}"
-            logger.warning(f"Failed to send {label}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
-
-        try:
-            request = (
-                MergeForwardMessageRequest.builder()
-                .receive_id_type(receive_id_type)
-                .uuid(str(uuid4()))
-                .request_body(
-                    MergeForwardMessageRequestBody.builder()
-                    .receive_id(receive_id)
-                    .message_id_list(message_ids)
-                    .build()
-                )
-                .build()
-            )
-            response = await client.im.v1.message.amerge_forward(request)
-            if not response.success():
-                error = self._lark_response_error(response)
-                logger.warning(f"Failed to send {label}: {error}")
-                return SendAttempt(success=False, retryable=True, error=error)
-
-            data = getattr(response, "data", None)
-            invalid_ids = getattr(data, "invalid_message_id_list", None) or []
-            if invalid_ids:
-                warning = (
-                    "飞书合并转发成功，但部分中转消息无效："
-                    + ", ".join(str(item) for item in invalid_ids)
-                )
-                logger.warning(f"[NitterTweets] {warning}")
-                return SendAttempt(success=True, warning=warning)
-        except Exception as exc:
-            error = str(exc)
-            if self._is_uncertain_delivery_error(exc):
-                warning = (
-                    f"{label} 的飞书合并转发状态不确定：{error}。"
-                    "已按可能送达处理，跳过降级重试。"
-                )
-                logger.warning(f"[NitterTweets] {warning}")
-                return SendAttempt(
-                    success=False,
-                    retryable=False,
-                    uncertain=True,
-                    error=error,
-                    warning=warning,
-                )
-            logger.warning(f"Failed to send {label}: {error}")
             return SendAttempt(success=False, retryable=True, error=error)
 
         return SendAttempt(success=True)
@@ -1475,19 +1125,6 @@ class TweetSender:
     def _is_lark_platform(cls, platform: str) -> bool:
         return platform.strip().lower() in cls.LARK_PLATFORM_NAMES
 
-    def _should_use_forward_for_count(self, tweet_count: int) -> bool:
-        return (
-            self.forward_message_min_tweets > 0
-            and tweet_count >= self.forward_message_min_tweets
-        )
-
-    def _should_use_lark_native_merge_forward(self, tweet_count: int) -> bool:
-        return (
-            self.lark_merge_forward_enabled
-            and bool(self.lark_merge_forward_source_chat_id)
-            and self._should_use_forward_for_count(tweet_count)
-        )
-
     @classmethod
     def _should_use_forward_for_umo(cls, context, umo: str) -> bool:
         platform = cls._platform_from_umo(umo)
@@ -1637,57 +1274,15 @@ class TweetSender:
         message_type = message_type.strip().lower()
         if message_type in {"groupmessage", "group", "group_message"}:
             return "chat_id"
-        if "group" in message_type:
-            return "chat_id"
         if message_type in {"friendmessage", "private", "private_message"}:
-            return "open_id"
-        if "friend" in message_type or "private" in message_type:
             return "open_id"
         return ""
 
     @classmethod
     def _lark_receive_id(cls, message_type: str, session_id: str) -> str:
-        return cls._lark_normalize_receive_id(
-            cls._lark_receive_id_type(message_type), session_id
-        )
-
-    @classmethod
-    def _lark_normalize_receive_id(cls, receive_id_type: str, value) -> str:
-        text = cls._string_value(value)
-        if not text:
-            return ""
-
-        if receive_id_type == "chat_id":
-            match = cls.LARK_CHAT_ID_RE.search(text)
-            if match:
-                return match.group(0)
-            if "%" in text:
-                text = text.rsplit("%", 1)[1].strip()
-            for separator in ("!", ":"):
-                if separator in text:
-                    text = text.rsplit(separator, 1)[1].strip()
-            return text.split("#", 1)[0].strip()
-
-        if receive_id_type == "open_id":
-            match = cls.LARK_OPEN_ID_RE.search(text)
-            if match:
-                return match.group(0)
-            if "%" in text:
-                text = text.split("%", 1)[0].strip()
-            for separator in ("!", ":"):
-                if separator in text:
-                    text = text.rsplit(separator, 1)[1].strip()
-            return text.split("#", 1)[0].strip()
-
-        return text
-
-    @classmethod
-    def _first_lark_receive_id(cls, receive_id_type: str, values) -> str:
-        for value in values:
-            receive_id = cls._lark_normalize_receive_id(receive_id_type, value)
-            if receive_id:
-                return receive_id
-        return ""
+        if cls._lark_receive_id_type(message_type) == "chat_id" and "%" in session_id:
+            return session_id.split("%", 1)[1]
+        return session_id
 
     @staticmethod
     def _lark_reply_message_id(event) -> str:
@@ -1706,143 +1301,9 @@ class TweetSender:
         except Exception:
             umo = ""
         _, message_type, session_id = cls._parse_umo(str(umo))
-        if not message_type:
-            message_type = cls._lark_event_message_type(event)
         receive_id_type = cls._lark_receive_id_type(message_type)
-        if receive_id_type == "chat_id":
-            return "chat_id", cls._lark_group_receive_id_from_event(
-                event, session_id
-            )
-        if receive_id_type == "open_id":
-            return "open_id", cls._lark_private_receive_id_from_event(
-                event, session_id
-            )
-
-        group_id = cls._lark_group_receive_id_from_event(
-            event, include_session=False
-        )
-        if group_id:
-            return "chat_id", group_id
-
-        open_id = cls._lark_private_receive_id_from_event(event, session_id)
-        if open_id:
-            return "open_id", open_id
-
-        return "", cls._lark_receive_id(message_type, session_id)
-
-    @classmethod
-    def _lark_event_message_type(cls, event) -> str:
-        message_obj = cls._safe_attr(event, "message_obj")
-        candidates = (
-            safe_call(event, "get_message_type"),
-            cls._safe_attr(message_obj, "type"),
-            cls._safe_path_value(event, ("session", "message_type")),
-        )
-        for candidate in candidates:
-            text = cls._message_type_text(candidate)
-            if text:
-                return text
-        return ""
-
-    @classmethod
-    def _lark_group_receive_id_from_event(
-        cls, event, session_id: str = "", include_session: bool = True
-    ) -> str:
-        message_obj = cls._safe_attr(event, "message_obj")
-        raw_message = cls._safe_attr(message_obj, "raw_message")
-        event_raw_message = cls._safe_attr(event, "raw_message")
-        session_values = (
-            (
-                session_id,
-                safe_call(event, "get_session_id"),
-                cls._safe_attr(message_obj, "session_id"),
-                cls._safe_path_value(event, ("session", "session_id")),
-                cls._safe_attr(event, "session_id"),
-            )
-            if include_session
-            else ()
-        )
-
-        return cls._first_lark_receive_id(
-            "chat_id",
-            (
-                safe_call(event, "get_group_id"),
-                cls._safe_path_value(message_obj, ("group", "group_id")),
-                cls._safe_attr(message_obj, "group_id"),
-                cls._safe_attr(raw_message, "chat_id"),
-                cls._safe_path_value(raw_message, ("message", "chat_id")),
-                cls._safe_attr(event_raw_message, "chat_id"),
-                cls._safe_path_value(event_raw_message, ("message", "chat_id")),
-                cls._safe_path_value(
-                    event_raw_message, ("event", "message", "chat_id")
-                ),
-            )
-            + session_values,
-        )
-
-    @classmethod
-    def _lark_private_receive_id_from_event(cls, event, session_id: str = "") -> str:
-        message_obj = cls._safe_attr(event, "message_obj")
-        raw_message = cls._safe_attr(message_obj, "raw_message")
-        event_raw_message = cls._safe_attr(event, "raw_message")
-
-        return cls._first_lark_receive_id(
-            "open_id",
-            (
-                safe_call(event, "get_sender_id"),
-                cls._safe_path_value(message_obj, ("sender", "user_id")),
-                cls._safe_attr(message_obj, "sender_id"),
-                cls._safe_path_value(raw_message, ("sender", "sender_id", "open_id")),
-                cls._safe_path_value(
-                    event_raw_message, ("sender", "sender_id", "open_id")
-                ),
-                cls._safe_path_value(
-                    event_raw_message, ("event", "sender", "sender_id", "open_id")
-                ),
-                session_id,
-                safe_call(event, "get_session_id"),
-                cls._safe_attr(message_obj, "session_id"),
-                cls._safe_path_value(event, ("session", "session_id")),
-                cls._safe_attr(event, "session_id"),
-            ),
-        )
-
-    @classmethod
-    def _safe_path_value(cls, obj, attrs: tuple[str, ...]) -> str:
-        current = obj
-        for attr in attrs:
-            current = cls._safe_attr(current, attr)
-            if current is None:
-                return ""
-        return cls._string_value(current)
-
-    @staticmethod
-    def _safe_attr(obj, attr: str):
-        if obj is None:
-            return None
-        if isinstance(obj, dict):
-            return obj.get(attr)
-        try:
-            return getattr(obj, attr, None)
-        except Exception:
-            return None
-
-    @classmethod
-    def _message_type_text(cls, value) -> str:
-        enum_value = cls._safe_attr(value, "value")
-        if enum_value:
-            return cls._string_value(enum_value)
-        return cls._string_value(value)
-
-    @staticmethod
-    def _string_value(value) -> str:
-        if value is None:
-            return ""
-        try:
-            text = str(value).strip()
-        except Exception:
-            return ""
-        return "" if text.lower() in {"none", "null"} else text
+        receive_id = cls._lark_receive_id(message_type, session_id)
+        return receive_id_type, receive_id
 
     @staticmethod
     def _plain_text_from_components(components) -> str:
@@ -1860,13 +1321,6 @@ class TweetSender:
             for component in components
             if isinstance(component, (Image, Video))
         ]
-
-    @staticmethod
-    def _lark_response_error(response) -> str:
-        return (
-            f"Lark API returned {getattr(response, 'code', '')}: "
-            f"{getattr(response, 'msg', '')}"
-        ).strip()
 
     @classmethod
     def _split_lark_text(cls, text: str) -> list[str]:
@@ -1887,45 +1341,6 @@ class TweetSender:
         if remaining:
             chunks.append(remaining)
         return [chunk for chunk in chunks if chunk]
-
-    @staticmethod
-    def _int_config(value, default: int, minimum: int = 0) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = default
-        return max(minimum, parsed)
-
-    @staticmethod
-    def _merged_tweet_count(batches: list[TweetBatch]) -> int:
-        return sum(len(tweets) for _, _, tweets in batches)
-
-    def _build_lark_merge_source_texts(
-        self,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        notices: list[str] | None = None,
-    ) -> list[str]:
-        texts = [self._format_header(username, instance, len(tweets), notices)]
-        texts.extend(
-            self.format_tweet(index, username, tweet)
-            for index, tweet in enumerate(tweets, 1)
-        )
-        return texts
-
-    def _build_lark_merged_source_texts(
-        self, batches: list[TweetBatch]
-    ) -> list[str]:
-        texts = [self.format_merged_header(batches)]
-        index = 1
-        for username, instance, tweets in batches:
-            for tweet in tweets:
-                texts.append(
-                    self.format_tweet_with_source(index, username, tweet, instance)
-                )
-                index += 1
-        return texts
 
     def _build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",

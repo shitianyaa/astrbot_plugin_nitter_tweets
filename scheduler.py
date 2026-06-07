@@ -194,10 +194,6 @@ class ScheduledCheckResult:
             items = [f"@{user}: {error}" for user, error in self.failed_users.items()]
             lines.append("失败: " + "; ".join(items))
 
-        if self.delivery_warnings:
-            lines.append("发送提示:")
-            lines.extend(f"- {warning}" for warning in self.delivery_warnings)
-
         if self.invalid_targets:
             lines.append("无效推送目标: " + ", ".join(self.invalid_targets))
 
@@ -515,7 +511,10 @@ class NitterTweetScheduler:
 
         logger.info(result.format_log_summary())
         if result.delivery_warnings:
-            await self._send_delivery_warning_notice(result, target_interval)
+            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
+            logger.warning(
+                f"[NitterTweets] send warnings: {unique_warning_count}"
+            )
         if self._should_notify_no_updates(result, notify_no_updates):
             await self._send_no_update_notice(result, target_interval)
         return result
@@ -620,47 +619,6 @@ class NitterTweetScheduler:
             f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
         )
 
-    async def _send_delivery_warning_notice(
-        self, result: ScheduledCheckResult, target_interval: float
-    ) -> None:
-        text = self._format_delivery_warning_notice(result)
-        success = 0
-        for target_index, umo in enumerate(result.targets):
-            try:
-                sent = await self.context.send_message(umo, MessageChain([Plain(text)]))
-                if sent is not False:
-                    success += 1
-                else:
-                    logger.warning(
-                        "[NitterTweets] delivery warning notice to "
-                        f"{umo} failed: target platform not found or proactive send "
-                        "is unsupported"
-                    )
-            except Exception as exc:
-                logger.warning(
-                    f"[NitterTweets] delivery warning notice to {umo} failed: {exc}"
-                )
-            if target_index < len(result.targets) - 1 and target_interval > 0:
-                await asyncio.sleep(target_interval)
-        logger.info(
-            "[NitterTweets] delivery warning notice sent to "
-            f"{success}/{len(result.targets)} targets"
-        )
-
-    @staticmethod
-    def _format_delivery_warning_notice(result: ScheduledCheckResult) -> str:
-        unique_warnings = list(dict.fromkeys(result.delivery_warnings))
-        visible_warnings = unique_warnings[:5]
-        lines = [
-            "Nitter 推送发送提示",
-            "部分消息发送状态不确定，已按可能送达处理并跳过降级重试。",
-        ]
-        lines.extend(f"- {warning}" for warning in visible_warnings)
-        remaining = len(unique_warnings) - len(visible_warnings)
-        if remaining > 0:
-            lines.append(f"- ... 还有 {remaining} 条")
-        return "\n".join(lines)
-
     async def _send_merged_updates(
         self,
         batches,
@@ -682,19 +640,9 @@ class NitterTweetScheduler:
                         "direct_message",
                         "uncertain_delivery",
                     }:
-                        if outcome.omitted_videos:
-                            warning = (
-                                f"{umo} 合并推送已降级：mode={outcome.mode}，"
-                                f"{outcome.omitted_videos} 个视频/GIF 未作为附件发送，"
-                                "消息中已包含原文链接。"
-                            )
-                        else:
-                            warning = (
-                                f"{umo} 合并推送已降级：mode={outcome.mode}，"
-                                "已改用普通文本发送。"
-                            )
-                        result.delivery_warnings.append(warning)
-                        logger.warning(f"[NitterTweets] {warning}")
+                        logger.warning(
+                            f"[NitterTweets] merged push fallback: mode={outcome.mode}"
+                        )
                 else:
                     logger.warning(
                         f"[NitterTweets] merged scheduled push to {umo} failed: "
