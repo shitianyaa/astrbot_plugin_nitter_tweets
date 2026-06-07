@@ -8,6 +8,7 @@ repo: https://github.com/shitianyaa/astrbot_plugin_nitter_tweets
 platform_support:
   - aiocqhttp
   - lark
+  - feishu
   - weixin
   - telegram
 keywords:
