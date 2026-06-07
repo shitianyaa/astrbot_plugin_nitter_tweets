@@ -25,7 +25,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.8",
+    "0.6.9",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -64,7 +64,7 @@ class NitterTweetsPlugin(Star):
             f"video:{'on' if self.media.send_video_attachments else 'off'}, "
             f"translate={'on' if self.translator.enabled else 'off'}, "
             f"ai_enrich={'on' if self.enricher.enabled else 'off'}, "
-            f"merge_threshold={self.sender.merge_tweet_threshold}"
+            f"qq_merge_threshold={self.sender.merge_tweet_threshold}"
         )
         self.scheduler.start(reason="initialize")
 
@@ -194,7 +194,7 @@ class NitterTweetsPlugin(Star):
         )
         notices = enrich_report.visible_notices()
         if not await self.sender.send(event, username, instance, tweets, notices=notices):
-            fallback_text = self.sender.format_plain(
+            fallback_text = self.sender.renderer.format_plain(
                 username, instance, tweets, notices=notices
             )
             try:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import re
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,18 +18,28 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
+    from .scheduler_config import (
+        PushTargetParseResult,
+        SchedulerConfigReader,
+        WatchUsersInfo,
+    )
+    from .seen_store import SeenStore
     from .utils import (
         clamp_float,
         clamp_int,
         configured_merge_tweet_threshold,
-        normalize_username,
     )
 except ImportError:
+    from scheduler_config import (
+        PushTargetParseResult,
+        SchedulerConfigReader,
+        WatchUsersInfo,
+    )
+    from seen_store import SeenStore
     from utils import (
         clamp_float,
         clamp_int,
         configured_merge_tweet_threshold,
-        normalize_username,
     )
 
 
@@ -40,26 +49,7 @@ except ZoneInfoNotFoundError:
     CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 
-KV_KEY_SEEN = "nitter_seen_status_ids"
 POLL_SECONDS = 30
-SEEN_LIMIT_PER_USER = 100
-
-
-@dataclass(slots=True)
-class PushTargetParseResult:
-    targets: list[str] = field(default_factory=list)
-    invalid_targets: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class WatchUsersInfo:
-    raw_count: int
-    users: list[str] = field(default_factory=list)
-    duplicates: list[str] = field(default_factory=list)
-    invalid_entries: list[str] = field(default_factory=list)
-    changed: bool = False
-    saved: bool = False
-    save_error: str = ""
 
 
 @dataclass(slots=True)
@@ -105,15 +95,21 @@ class ScheduledCheckResult:
 
     @property
     def pushed_target_successes(self) -> int:
+        per_user_successes = sum(push.success_targets for push in self.pushes)
         if self.push_mode == "merged":
             return self.merged_push_success_targets
-        return sum(push.success_targets for push in self.pushes)
+        if self.push_mode == "mixed":
+            return per_user_successes + self.merged_push_success_targets
+        return per_user_successes
 
     @property
     def pushed_target_attempts(self) -> int:
+        per_user_attempts = sum(push.total_targets for push in self.pushes)
         if self.push_mode == "merged":
             return self.merged_push_total_targets
-        return sum(push.total_targets for push in self.pushes)
+        if self.push_mode == "mixed":
+            return per_user_attempts + self.merged_push_total_targets
+        return per_user_attempts
 
     @property
     def checked_user_count(self) -> int:
@@ -157,7 +153,7 @@ class ScheduledCheckResult:
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
             f"push_mode={self.push_mode}, "
-            f"merge_threshold={self.merge_tweet_threshold}, "
+            f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
         )
@@ -173,9 +169,9 @@ class ScheduledCheckResult:
         if self.fetch_limit:
             lines.append(f"每账号拉取: {self.fetch_limit} 条")
         if self.merge_tweet_threshold > 0:
-            lines.append(f"合并阈值: {self.merge_tweet_threshold} 条及以上")
+            lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:
-            lines.append("合并阈值: 已关闭")
+            lines.append("QQ 合并阈值: 已关闭")
 
         if self.skipped_reason:
             reason_text = {
@@ -198,16 +194,18 @@ class ScheduledCheckResult:
                 for item in self.pushes
             ]
             lines.append("新推文: " + "; ".join(items))
-            lines.append(
-                "合并推送: "
-                f"{self.merged_push_success_targets}/{self.merged_push_total_targets}"
-            )
         elif self.pushes:
             items = [
                 f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
                 for item in self.pushes
             ]
             lines.append("新推文: " + "; ".join(items))
+
+        if self.merged_push_total_targets:
+            lines.append(
+                "QQ 合并推送: "
+                f"{self.merged_push_success_targets}/{self.merged_push_total_targets}"
+            )
 
         if self.no_new_users:
             lines.append("无新推文: " + ", ".join(f"@{user}" for user in self.no_new_users))
@@ -240,6 +238,8 @@ class NitterTweetScheduler:
         self.sender = sender
         self.translator = translator
         self.enricher = enricher
+        self.config_reader = SchedulerConfigReader(config, context)
+        self.seen_store = SeenStore(owner)
         self._task: asyncio.Task | None = None
         self._last_interval_slot: int | None = None
         self._daily_slots: set[str] = set()
@@ -428,7 +428,7 @@ class NitterTweetScheduler:
             "[NitterTweets] scheduled check started: "
             f"reason={reason}, users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
-            f"fetch_limit={fetch_limit}, merge_threshold={merge_threshold}"
+            f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}"
         )
 
         for username in users:
@@ -451,7 +451,7 @@ class NitterTweetScheduler:
             seen_ids = seen_map.get(username)
 
             if not isinstance(seen_ids, list):
-                seen_map[username] = fetched_ids[:SEEN_LIMIT_PER_USER]
+                seen_map[username] = self.seen_store.initial_seen_ids(fetched_ids)
                 await self._put_seen_map(seen_map)
                 result.initialized_users[username] = len(fetched_ids)
                 logger.info(
@@ -501,23 +501,42 @@ class NitterTweetScheduler:
             await self._store_pending_seen_ids(pending_batches, seen_map)
 
         if self._should_merge_batches(pending_batches, merge_threshold):
-            result.push_mode = "merged"
-            for batch in pending_batches:
-                result.pushes.append(
-                    ScheduledPushResult(
-                        username=batch.username,
-                        new_count=len(batch.tweets),
-                        success_targets=0,
-                        total_targets=0,
-                    )
+            merge_targets, ordinary_targets = self._split_merge_targets(targets)
+        else:
+            merge_targets, ordinary_targets = [], targets
+
+        if merge_targets:
+            result.push_mode = "mixed" if ordinary_targets else "merged"
+            if ordinary_targets:
+                await self._send_per_user_updates(
+                    pending_batches,
+                    result,
+                    ordinary_targets,
+                    target_interval,
+                    user_interval,
                 )
+                if target_interval > 0:
+                    await asyncio.sleep(target_interval)
+            else:
+                for batch in pending_batches:
+                    result.pushes.append(
+                        ScheduledPushResult(
+                            username=batch.username,
+                            new_count=len(batch.tweets),
+                            success_targets=0,
+                            total_targets=0,
+                        )
+                    )
             await self._send_merged_updates(
-                self._tweet_batches(pending_batches), result, target_interval
+                self._tweet_batches(pending_batches),
+                result,
+                merge_targets,
+                target_interval,
             )
         else:
             result.push_mode = "per_user"
             await self._send_per_user_updates(
-                pending_batches, result, targets, target_interval, user_interval
+                pending_batches, result, ordinary_targets, target_interval, user_interval
             )
 
         logger.info(result.format_log_summary())
@@ -548,7 +567,7 @@ class NitterTweetScheduler:
             f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
             f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
             f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
-            f"合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
+            f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
             f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
             f"推送目标: {len(target_info.targets)} 个",
             f"无效目标: {len(target_info.invalid_targets)} 个",
@@ -678,10 +697,11 @@ class NitterTweetScheduler:
         self,
         batches,
         result: ScheduledCheckResult,
+        targets: list[str],
         target_interval: float,
     ) -> None:
         success = 0
-        for target_index, umo in enumerate(result.targets):
+        for target_index, umo in enumerate(targets):
             try:
                 outcome = await self.sender.send_merged_to_umo(
                     self.context, umo, batches
@@ -692,12 +712,11 @@ class NitterTweetScheduler:
                         result.delivery_warnings.append(outcome.warning)
                     if outcome.mode not in {
                         "full_forward",
-                        "lark_post",
-                        "direct_message",
+                        "forward_without_videos",
                         "uncertain_delivery",
                     }:
                         logger.info(
-                            f"[NitterTweets] 合并推送使用普通发送路径：mode={outcome.mode}"
+                            f"[NitterTweets] QQ 合并推送使用普通发送路径：mode={outcome.mode}"
                         )
                 else:
                     logger.warning(
@@ -708,14 +727,14 @@ class NitterTweetScheduler:
                 logger.warning(
                     f"[NitterTweets] merged scheduled push to {umo} failed: {exc}"
                 )
-            if target_index < len(result.targets) - 1 and target_interval > 0:
+            if target_index < len(targets) - 1 and target_interval > 0:
                 await asyncio.sleep(target_interval)
 
         result.merged_push_success_targets = success
-        result.merged_push_total_targets = len(result.targets)
+        result.merged_push_total_targets = len(targets)
         logger.info(
             f"[NitterTweets] pushed {result.new_tweet_count} merged new tweets "
-            f"from {len(batches)} users to {success}/{len(result.targets)} targets"
+            f"from {len(batches)} users to {success}/{len(targets)} QQ targets"
         )
 
     def _merge_tweet_threshold(self) -> int:
@@ -726,6 +745,16 @@ class NitterTweetScheduler:
         if threshold <= 0:
             return False
         return sum(len(batch.tweets) for batch in batches) >= threshold
+
+    def _split_merge_targets(self, targets: list[str]) -> tuple[list[str], list[str]]:
+        merge_targets = []
+        ordinary_targets = []
+        for umo in targets:
+            if self.sender.supports_merged_forward_for_umo(self.context, umo):
+                merge_targets.append(umo)
+            else:
+                ordinary_targets.append(umo)
+        return merge_targets, ordinary_targets
 
     @staticmethod
     def _tweet_batches(batches: list[PendingTweetBatch]) -> list[tuple[str, str, list]]:
@@ -747,223 +776,28 @@ class NitterTweetScheduler:
         return f"{threshold} 条及以上"
 
     async def _get_seen_map(self) -> dict[str, list[str]]:
-        value = await self.owner.get_kv_data(KV_KEY_SEEN, {})
-        if not isinstance(value, dict):
-            return {}
-        result: dict[str, list[str]] = {}
-        for key, ids in value.items():
-            username = normalize_username(str(key))
-            if not username or not isinstance(ids, list):
-                continue
-            result[username] = [str(item) for item in ids if item]
-        return result
+        return await self.seen_store.get_seen_map()
 
     async def _put_seen_map(self, seen_map: dict[str, list[str]]) -> None:
-        await self.owner.put_kv_data(KV_KEY_SEEN, seen_map)
+        await self.seen_store.put_seen_map(seen_map)
 
-    @staticmethod
-    def _merge_seen_ids(new_ids: list[str], old_ids: list[str]) -> list[str]:
-        merged: list[str] = []
-        seen: set[str] = set()
-        for status_id in [*new_ids, *[str(item) for item in old_ids]]:
-            if not status_id or status_id in seen:
-                continue
-            seen.add(status_id)
-            merged.append(status_id)
-            if len(merged) >= SEEN_LIMIT_PER_USER:
-                break
-        return merged
+    def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
+        return self.seen_store.merge_seen_ids(new_ids, old_ids)
 
     def _watch_users(self) -> list[str]:
-        return self._watch_users_info().users
+        return self.config_reader.watch_users()
 
     def _watch_users_info(self) -> WatchUsersInfo:
-        raw_users = self.config.get("watch_users", []) or []
-        if isinstance(raw_users, str):
-            raw_users = re.split(r"[\n,，]+", raw_users)
-        elif not isinstance(raw_users, list):
-            raw_users = [raw_users]
-        raw_entries = [str(raw).strip() for raw in raw_users if str(raw).strip()]
-        users: list[str] = []
-        seen: set[str] = set()
-        duplicates: list[str] = []
-        invalid_entries: list[str] = []
-        for raw in raw_entries:
-            username = normalize_username(raw)
-            if not username:
-                invalid_entries.append(raw)
-                continue
-            username_key = username.lower()
-            if username_key in seen:
-                duplicates.append(raw)
-                continue
-            seen.add(username_key)
-            users.append(username)
-        return WatchUsersInfo(
-            raw_count=len(raw_entries),
-            users=users,
-            duplicates=duplicates,
-            invalid_entries=invalid_entries,
-            changed=raw_entries != users,
-        )
+        return self.config_reader.watch_users_info()
 
     def _push_targets(self) -> list[str]:
-        return self._parse_push_targets().targets
+        return self.config_reader.push_targets()
 
     def _parse_push_targets(self, log_invalid: bool = True) -> PushTargetParseResult:
-        default_platform = self._get_platform()
-        raw_targets = self.config.get("push_targets", []) or []
-        result = PushTargetParseResult()
-        seen: set[str] = set()
-        for raw in raw_targets:
-            if not isinstance(raw, str):
-                invalid = repr(raw)
-                result.invalid_targets.append(invalid)
-                if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {invalid}")
-                continue
-            target = raw.strip().replace("：", ":")
-            if not target:
-                continue
-            umo = self._parse_target_to_umo(target, default_platform)
-            if umo is None:
-                result.invalid_targets.append(raw)
-                if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {raw!r}")
-                continue
-            if umo not in seen:
-                seen.add(umo)
-                result.targets.append(umo)
-        return result
+        return self.config_reader.parse_push_targets(log_invalid=log_invalid)
 
     def _get_platform(self) -> str:
-        configured = (self.config.get("platform_id", "") or "").strip()
-        if configured:
-            return configured
-
-        platform_id = self._detect_context_platform_id()
-        if platform_id:
-            return platform_id
-
-        return "aiocqhttp"
-
-    def _detect_context_platform_id(self) -> str:
-        try:
-            get_all_platforms = getattr(self.context, "get_all_platforms", None)
-            if callable(get_all_platforms):
-                platform_id = self._first_platform_id(get_all_platforms())
-                if platform_id:
-                    return platform_id
-        except Exception as exc:
-            logger.debug(f"[NitterTweets] platform auto-detect failed: {exc}")
-
-        try:
-            manager = getattr(self.context, "platform_manager", None)
-            platform_id = self._first_platform_id(
-                getattr(manager, "platform_insts", []) or []
-            )
-            if platform_id:
-                return platform_id
-        except Exception as exc:
-            logger.debug(f"[NitterTweets] platform manager lookup failed: {exc}")
-
-        return ""
-
-    @classmethod
-    def _first_platform_id(cls, platforms) -> str:
-        if not platforms:
-            return ""
-
-        if isinstance(platforms, dict):
-            for key in platforms:
-                platform_id = str(key).strip()
-                if platform_id and platform_id != "webchat":
-                    return platform_id
-            return ""
-
-        for platform in platforms:
-            platform_id = cls._platform_id(platform)
-            if platform_id and platform_id != "webchat":
-                return platform_id
-        return ""
-
-    @staticmethod
-    def _platform_id(platform) -> str:
-        for attr in ("platform_id", "platform_name", "id", "name"):
-            value = getattr(platform, attr, None)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        meta = getattr(platform, "meta", None)
-        if callable(meta):
-            try:
-                metadata = meta()
-            except Exception:
-                metadata = None
-            for attr in ("id", "name"):
-                value = getattr(metadata, attr, None)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-
-        config = getattr(platform, "config", None)
-        if isinstance(config, dict):
-            value = config.get("id") or config.get("type")
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
-
-    @staticmethod
-    def _parse_target_to_umo(target: str, default_platform: str) -> str | None:
-        if ":GroupMessage:" in target or ":FriendMessage:" in target:
-            return target
-
-        parts = target.split(":")
-        if len(parts) == 2:
-            kind, ident = parts[0].strip().lower(), parts[1].strip()
-            if not ident:
-                return None
-            if kind == "group":
-                return f"{default_platform}:GroupMessage:{ident}"
-            if kind == "private":
-                return f"{default_platform}:FriendMessage:{ident}"
-            return None
-
-        if len(parts) == 3:
-            platform, kind, ident = (
-                parts[0].strip(),
-                parts[1].strip().lower(),
-                parts[2].strip(),
-            )
-            if not platform or not ident:
-                return None
-            if kind == "group":
-                return f"{platform}:GroupMessage:{ident}"
-            if kind == "private":
-                return f"{platform}:FriendMessage:{ident}"
-            return None
-
-        if len(parts) == 1 and target.isdigit():
-            return f"{default_platform}:GroupMessage:{target}"
-        return None
+        return self.config_reader.platform()
 
     def _parse_daily_times(self) -> list[tuple[int, int]]:
-        raw_times = self.config.get("daily_check_times", []) or []
-        if isinstance(raw_times, str):
-            raw_times = re.split(r"[\n,，]+", raw_times)
-
-        times: list[tuple[int, int]] = []
-        for raw in raw_times:
-            value = str(raw).strip().replace("：", ":")
-            if not value:
-                continue
-            try:
-                hour_s, minute_s = value.split(":", 1)
-                hour, minute = int(hour_s), int(minute_s)
-            except (TypeError, ValueError):
-                logger.warning(f"[NitterTweets] invalid daily_check_times entry: {raw!r}")
-                continue
-            if 0 <= hour < 24 and 0 <= minute < 60:
-                times.append((hour, minute))
-            else:
-                logger.warning(f"[NitterTweets] daily_check_times out of range: {raw!r}")
-        return times
+        return self.config_reader.parse_daily_times()

@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.8-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.9-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -20,7 +20,7 @@
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
 - 支持多个 Nitter 实例按顺序重试。
-- 支持按新推文数量阈值合并发送；OneBot v11 达到阈值时使用 `Node/Nodes` 合并转发，飞书达到阈值时使用原生 `post` 富文本合并正文，其他平台使用普通消息链。
+- 支持为 QQ/`aiocqhttp` 按新推文数量阈值启用 OneBot v11 `Node/Nodes` 合并转发；飞书/Lark、Telegram 和微信 OC 始终走普通逐账号发送，其中飞书会优先把单个账号的正文和图片放入同一条原生 `post` 消息。
 
 ## 快速开始
 
@@ -77,7 +77,7 @@ telegram:FriendMessage:123456789
 | 平台 | 适配器类型 | 特殊要求/说明 |
 | --- | --- | --- |
 | QQ | `aiocqhttp` | 支持文本、图片和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会降级重试。 |
-| Feishu / Lark | `lark` | 未达到合并阈值时优先使用飞书原生 `text` 消息发送正文；达到阈值时使用飞书原生 `post` 富文本发送合并正文，再发送图片/视频附件。 |
+| Feishu / Lark | `lark` | 普通逐账号发送；优先使用飞书原生 `post` 将正文和本地图片放在同一条消息中，失败时降级为 `text` 正文加普通媒体附件；暂不支持 QQ 式合并转发。 |
 | Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
 | 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 
@@ -122,7 +122,7 @@ telegram:FriendMessage:123456789
 | `scheduled_fetch_limit` | 定时检查时每个账号拉取最近多少条用于对比。 |
 | `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
 | `check_on_startup` | 插件启动后是否立即检查一次。 |
-| `merge_tweet_threshold` | 新推文总数达到多少条时启用合并发送；`0` 关闭，默认 `2`。 |
+| `merge_tweet_threshold` | QQ/`aiocqhttp` 新推文总数达到多少条时启用合并转发；`0` 关闭，默认 `2`。 |
 | `send_target_interval` | 多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 
@@ -162,7 +162,7 @@ telegram:FriendMessage:123456789
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`；翻译只处理去除 URL 后的正文，避免重复链接。
-- 合并发送由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发，飞书/Lark 使用原生 `post` 富文本发送合并正文，再发送图片/视频附件，其他平台会自动改用普通消息链发送。
+- QQ 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终逐账号普通发送；飞书逐账号发送时会优先用原生 `post` 同框发送正文和图片。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
