@@ -24,7 +24,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.4",
+    "0.6.5",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -77,7 +77,7 @@ class NitterTweetsPlugin(Star):
 
     @filter.command("推文", alias={"tweets", "tweet", "twitter", "x推文"})
     async def cmd_tweets(
-        self, event: AstrMessageEvent, username: str = "", limit: int = 0
+        self, event: AstrMessageEvent, username: str = "", limit: str = ""
     ):
         """获取指定公开 X/Twitter 用户的最近推文。"""
         event.stop_event()
@@ -96,7 +96,16 @@ class NitterTweetsPlugin(Star):
             await event.send(event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。"))
             return
 
-        limit = clamp_int(limit or self.default_limit, 1, self.max_limit)
+        limit_text = str(limit or "").strip()
+        if limit_text:
+            try:
+                requested_limit = int(limit_text)
+            except ValueError:
+                await event.send(event.plain_result("数量需要是整数，例如：/推文 nasa 5"))
+                return
+        else:
+            requested_limit = self.default_limit
+        limit = clamp_int(requested_limit, 1, self.max_limit)
         self._mark_cooldown(event)
         await event.send(event.plain_result(f"正在获取 @{username} 最近 {limit} 条推文..."))
 
