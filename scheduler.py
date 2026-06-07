@@ -513,7 +513,7 @@ class NitterTweetScheduler:
         if result.delivery_warnings:
             unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
             logger.warning(
-                f"[NitterTweets] send warnings: {unique_warning_count}"
+                f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
             )
         if self._should_notify_no_updates(result, notify_no_updates):
             await self._send_no_update_notice(result, target_interval)
@@ -640,8 +640,8 @@ class NitterTweetScheduler:
                         "direct_message",
                         "uncertain_delivery",
                     }:
-                        logger.warning(
-                            f"[NitterTweets] merged push fallback: mode={outcome.mode}"
+                        logger.info(
+                            f"[NitterTweets] 合并推送使用普通发送路径：mode={outcome.mode}"
                         )
                 else:
                     logger.warning(

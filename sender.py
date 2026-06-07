@@ -73,6 +73,7 @@ class TweetSender:
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
     LARK_PLATFORM_NAMES = {"lark", "feishu"}
     LARK_TEXT_CHUNK_SIZE = 28000
+    UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
     def __init__(self, config=None):
         config = config or {}
@@ -672,9 +673,7 @@ class TweetSender:
             )
         return MergedSendOutcome(
             success=True,
-            mode=(
-                "uncertain_delivery" if text_attempt.uncertain else "lark_text_media"
-            ),
+            mode=("uncertain_delivery" if text_attempt.uncertain else "text_media"),
             omitted_videos=omitted_videos,
             warning=warning,
         )
@@ -691,11 +690,8 @@ class TweetSender:
         except Exception as exc:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
-                warning = (
-                    f"{label} 到 {umo} 的发送状态不确定：{error}。"
-                    "已按可能送达处理，跳过降级重试。"
-                )
-                logger.warning(f"[NitterTweets] {warning}")
+                warning = self.UNCERTAIN_DELIVERY_WARNING
+                self._log_uncertain_delivery()
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -796,11 +792,8 @@ class TweetSender:
         except Exception as exc:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
-                warning = (
-                    f"{label} 到 {self._event_target(event)} 的发送状态不确定："
-                    f"{error}。已按可能送达处理，跳过降级重试。"
-                )
-                logger.warning(f"[NitterTweets] {warning}")
+                warning = self.UNCERTAIN_DELIVERY_WARNING
+                self._log_uncertain_delivery()
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -890,11 +883,8 @@ class TweetSender:
         except Exception as exc:
             error = str(exc)
             if self._is_uncertain_delivery_error(exc):
-                warning = (
-                    f"{label} 的飞书文本发送状态不确定：{error}。"
-                    "已按可能送达处理，跳过降级重试。"
-                )
-                logger.warning(f"[NitterTweets] {warning}")
+                warning = self.UNCERTAIN_DELIVERY_WARNING
+                self._log_uncertain_delivery()
                 return SendAttempt(
                     success=False,
                     retryable=False,
@@ -907,13 +897,13 @@ class TweetSender:
 
         return SendAttempt(success=True)
 
-    @classmethod
-    def _log_uncertain_delivery(cls, label: str, target: str, exc: Exception) -> None:
-        logger.warning(
-            "[NitterTweets] "
-            f"{label} 到 {target} 的发送状态不确定：{exc}。"
-            "已按可能送达处理，跳过降级重试。"
-        )
+    @staticmethod
+    def _log_uncertain_delivery(
+        _label: str = "",
+        _target: str = "",
+        _exc: Exception | None = None,
+    ) -> None:
+        logger.warning("[NitterTweets] 发送状态不确定，跳过降级重试")
 
     @classmethod
     def _is_uncertain_delivery_error(cls, exc: Exception) -> bool:
