@@ -2,6 +2,12 @@
 
 所有重要变更都会记录在这里。
 
+## [0.6.5] - 2026-06-07
+
+### Fixed
+
+- 修复飞书/Lark 手动发送时部分环境 `event.get_group_id()` 为空导致无法取得群 `chat_id` 的问题；现在会按 QQ 发送兜底思路依次尝试事件方法、`message_obj.group_id`、原始消息 `chat_id`、事件 `session_id` 和 UMO，并支持 `ou_xxx%oc_xxx`、`lark!ou_xxx!oc_xxx` 等复合会话 ID。
+
 ## [0.6.4] - 2026-06-07
 
 ### Added

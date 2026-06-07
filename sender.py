@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -74,6 +75,8 @@ class TweetSender:
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
     LARK_PLATFORM_NAMES = {"lark", "feishu"}
     LARK_TEXT_CHUNK_SIZE = 28000
+    LARK_CHAT_ID_RE = re.compile(r"oc_[A-Za-z0-9_-]+")
+    LARK_OPEN_ID_RE = re.compile(r"ou_[A-Za-z0-9_-]+")
 
     def __init__(self, config=None):
         config = config or {}
@@ -1634,15 +1637,57 @@ class TweetSender:
         message_type = message_type.strip().lower()
         if message_type in {"groupmessage", "group", "group_message"}:
             return "chat_id"
+        if "group" in message_type:
+            return "chat_id"
         if message_type in {"friendmessage", "private", "private_message"}:
+            return "open_id"
+        if "friend" in message_type or "private" in message_type:
             return "open_id"
         return ""
 
     @classmethod
     def _lark_receive_id(cls, message_type: str, session_id: str) -> str:
-        if cls._lark_receive_id_type(message_type) == "chat_id" and "%" in session_id:
-            return session_id.split("%", 1)[1]
-        return session_id
+        return cls._lark_normalize_receive_id(
+            cls._lark_receive_id_type(message_type), session_id
+        )
+
+    @classmethod
+    def _lark_normalize_receive_id(cls, receive_id_type: str, value) -> str:
+        text = cls._string_value(value)
+        if not text:
+            return ""
+
+        if receive_id_type == "chat_id":
+            match = cls.LARK_CHAT_ID_RE.search(text)
+            if match:
+                return match.group(0)
+            if "%" in text:
+                text = text.rsplit("%", 1)[1].strip()
+            for separator in ("!", ":"):
+                if separator in text:
+                    text = text.rsplit(separator, 1)[1].strip()
+            return text.split("#", 1)[0].strip()
+
+        if receive_id_type == "open_id":
+            match = cls.LARK_OPEN_ID_RE.search(text)
+            if match:
+                return match.group(0)
+            if "%" in text:
+                text = text.split("%", 1)[0].strip()
+            for separator in ("!", ":"):
+                if separator in text:
+                    text = text.rsplit(separator, 1)[1].strip()
+            return text.split("#", 1)[0].strip()
+
+        return text
+
+    @classmethod
+    def _first_lark_receive_id(cls, receive_id_type: str, values) -> str:
+        for value in values:
+            receive_id = cls._lark_normalize_receive_id(receive_id_type, value)
+            if receive_id:
+                return receive_id
+        return ""
 
     @staticmethod
     def _lark_reply_message_id(event) -> str:
@@ -1661,9 +1706,143 @@ class TweetSender:
         except Exception:
             umo = ""
         _, message_type, session_id = cls._parse_umo(str(umo))
+        if not message_type:
+            message_type = cls._lark_event_message_type(event)
         receive_id_type = cls._lark_receive_id_type(message_type)
-        receive_id = cls._lark_receive_id(message_type, session_id)
-        return receive_id_type, receive_id
+        if receive_id_type == "chat_id":
+            return "chat_id", cls._lark_group_receive_id_from_event(
+                event, session_id
+            )
+        if receive_id_type == "open_id":
+            return "open_id", cls._lark_private_receive_id_from_event(
+                event, session_id
+            )
+
+        group_id = cls._lark_group_receive_id_from_event(
+            event, include_session=False
+        )
+        if group_id:
+            return "chat_id", group_id
+
+        open_id = cls._lark_private_receive_id_from_event(event, session_id)
+        if open_id:
+            return "open_id", open_id
+
+        return "", cls._lark_receive_id(message_type, session_id)
+
+    @classmethod
+    def _lark_event_message_type(cls, event) -> str:
+        message_obj = cls._safe_attr(event, "message_obj")
+        candidates = (
+            safe_call(event, "get_message_type"),
+            cls._safe_attr(message_obj, "type"),
+            cls._safe_path_value(event, ("session", "message_type")),
+        )
+        for candidate in candidates:
+            text = cls._message_type_text(candidate)
+            if text:
+                return text
+        return ""
+
+    @classmethod
+    def _lark_group_receive_id_from_event(
+        cls, event, session_id: str = "", include_session: bool = True
+    ) -> str:
+        message_obj = cls._safe_attr(event, "message_obj")
+        raw_message = cls._safe_attr(message_obj, "raw_message")
+        event_raw_message = cls._safe_attr(event, "raw_message")
+        session_values = (
+            (
+                session_id,
+                safe_call(event, "get_session_id"),
+                cls._safe_attr(message_obj, "session_id"),
+                cls._safe_path_value(event, ("session", "session_id")),
+                cls._safe_attr(event, "session_id"),
+            )
+            if include_session
+            else ()
+        )
+
+        return cls._first_lark_receive_id(
+            "chat_id",
+            (
+                safe_call(event, "get_group_id"),
+                cls._safe_path_value(message_obj, ("group", "group_id")),
+                cls._safe_attr(message_obj, "group_id"),
+                cls._safe_attr(raw_message, "chat_id"),
+                cls._safe_path_value(raw_message, ("message", "chat_id")),
+                cls._safe_attr(event_raw_message, "chat_id"),
+                cls._safe_path_value(event_raw_message, ("message", "chat_id")),
+                cls._safe_path_value(
+                    event_raw_message, ("event", "message", "chat_id")
+                ),
+            )
+            + session_values,
+        )
+
+    @classmethod
+    def _lark_private_receive_id_from_event(cls, event, session_id: str = "") -> str:
+        message_obj = cls._safe_attr(event, "message_obj")
+        raw_message = cls._safe_attr(message_obj, "raw_message")
+        event_raw_message = cls._safe_attr(event, "raw_message")
+
+        return cls._first_lark_receive_id(
+            "open_id",
+            (
+                safe_call(event, "get_sender_id"),
+                cls._safe_path_value(message_obj, ("sender", "user_id")),
+                cls._safe_attr(message_obj, "sender_id"),
+                cls._safe_path_value(raw_message, ("sender", "sender_id", "open_id")),
+                cls._safe_path_value(
+                    event_raw_message, ("sender", "sender_id", "open_id")
+                ),
+                cls._safe_path_value(
+                    event_raw_message, ("event", "sender", "sender_id", "open_id")
+                ),
+                session_id,
+                safe_call(event, "get_session_id"),
+                cls._safe_attr(message_obj, "session_id"),
+                cls._safe_path_value(event, ("session", "session_id")),
+                cls._safe_attr(event, "session_id"),
+            ),
+        )
+
+    @classmethod
+    def _safe_path_value(cls, obj, attrs: tuple[str, ...]) -> str:
+        current = obj
+        for attr in attrs:
+            current = cls._safe_attr(current, attr)
+            if current is None:
+                return ""
+        return cls._string_value(current)
+
+    @staticmethod
+    def _safe_attr(obj, attr: str):
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return obj.get(attr)
+        try:
+            return getattr(obj, attr, None)
+        except Exception:
+            return None
+
+    @classmethod
+    def _message_type_text(cls, value) -> str:
+        enum_value = cls._safe_attr(value, "value")
+        if enum_value:
+            return cls._string_value(enum_value)
+        return cls._string_value(value)
+
+    @staticmethod
+    def _string_value(value) -> str:
+        if value is None:
+            return ""
+        try:
+            text = str(value).strip()
+        except Exception:
+            return ""
+        return "" if text.lower() in {"none", "null"} else text
 
     @staticmethod
     def _plain_text_from_components(components) -> str:
