@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.6-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.7-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -14,7 +14,7 @@
 
 ## 功能
 
-- 手动查询指定用户最近公开推文。
+- 手动查询指定用户最近公开推文，可临时指定 Nitter 镜像站测试。
 - 定时检查 `watch_users`，发现新推文后推送到 `push_targets`。
 - 支持图片附件发送；视频/GIF 可选发送，默认仅保留原帖链接。
 - 支持非中文推文翻译。
@@ -29,9 +29,13 @@
 ```text
 /推文 nasa
 /推文 nasa 5
+/推文 nasa 1 nitter.top
+/推文 nasa nitter.top
 /tweets nasa 5
 /推文 https://twitter.com/nasa 5
 ```
+
+第三个参数可临时指定 Nitter 实例，只影响本次查询，不会写入 `instances` 配置。省略数量但传入实例时使用 `default_limit`。
 
 ### 定时推送
 
@@ -103,7 +107,7 @@ telegram:FriendMessage:123456789
 | --- | --- |
 | `instances` | Nitter 实例列表，建议把自建实例放在第一位。 |
 | `request_timeout` | 单个 Nitter 实例超时秒数，超时后尝试下一个实例。 |
-| `default_limit` | 手动查询默认获取条数。 |
+| `default_limit` | 手动查询默认获取条数；`/推文 用户名 镜像站` 也会使用该默认值。 |
 | `max_limit` | 手动查询最大获取条数。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 

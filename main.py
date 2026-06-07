@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from astrbot.api.all import AstrBotConfig, Context, MessageChain, Plain, Star, logger
+from astrbot.api.all import At, AstrBotConfig, Context, MessageChain, Plain, Star, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 
@@ -24,7 +24,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.6",
+    "0.6.7",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -77,7 +77,11 @@ class NitterTweetsPlugin(Star):
 
     @filter.command("推文", alias={"tweets", "tweet", "twitter", "x推文"})
     async def cmd_tweets(
-        self, event: AstrMessageEvent, username: str = "", limit: str = ""
+        self,
+        event: AstrMessageEvent,
+        username: str = "",
+        limit: str = "",
+        instance: str = "",
     ):
         """获取指定公开 X/Twitter 用户的最近推文。"""
         event.stop_event()
@@ -96,7 +100,12 @@ class NitterTweetsPlugin(Star):
             await event.send(event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。"))
             return
 
-        limit_text = str(limit or "").strip()
+        limit_text = self._strip_self_at_argument(event, limit)
+        instance_text = self._strip_self_at_argument(event, instance)
+        if not instance_text and self._looks_like_instance(limit_text):
+            instance_text = limit_text
+            limit_text = ""
+
         if limit_text:
             try:
                 requested_limit = int(limit_text)
@@ -107,15 +116,24 @@ class NitterTweetsPlugin(Star):
             requested_limit = self.default_limit
         limit = clamp_int(requested_limit, 1, self.max_limit)
         self._mark_cooldown(event)
-        await event.send(event.plain_result(f"正在获取 @{username} 最近 {limit} 条推文..."))
+        source = f"从 {instance_text} " if instance_text else ""
+        await event.send(
+            event.plain_result(f"正在{source}获取 @{username} 最近 {limit} 条推文...")
+        )
 
         try:
-            instance, tweets = await self.nitter.fetch_tweets(username, limit)
+            if instance_text:
+                instance, tweets = await self.nitter.fetch_tweets_from_instance(
+                    instance_text, username, limit
+                )
+            else:
+                instance, tweets = await self.nitter.fetch_tweets(username, limit)
         except Exception as exc:
             logger.warning(f"Failed to fetch tweets for @{username}: {exc}")
+            target = f"通过 {instance_text} " if instance_text else ""
             await event.send(
                 event.plain_result(
-                    f"获取 @{username} 推文失败：公共 Nitter 实例暂时不可用或该用户无公开 RSS。"
+                    f"{target}获取 @{username} 推文失败：Nitter 实例暂时不可用或该用户无公开 RSS。"
                 )
             )
             return
@@ -154,6 +172,39 @@ class NitterTweetsPlugin(Star):
                         "Failed to send manual tweet failure notice: "
                         f"{notice_exc}"
                     )
+
+    def _strip_self_at_argument(self, event: AstrMessageEvent, value: str) -> str:
+        value = str(value or "").strip()
+        return "" if self._is_self_at_argument(event, value) else value
+
+    def _is_self_at_argument(self, event: AstrMessageEvent, value: str) -> bool:
+        value = str(value or "").strip()
+        if not value.startswith("@"):
+            return False
+
+        self_id = str(safe_call(event, "get_self_id") or "").strip()
+        if not self_id:
+            return False
+
+        for component in safe_call(event, "get_messages") or []:
+            if not isinstance(component, At):
+                continue
+            at_id = str(getattr(component, "qq", "") or "").strip()
+            at_name = str(getattr(component, "name", "") or "").strip()
+            if self_id not in {at_id, at_name}:
+                continue
+            if value in {f"@{at_id}", f"@{at_name}"}:
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_instance(value: str) -> bool:
+        value = str(value or "").strip().lower()
+        if not value or value.startswith("@") or " " in value:
+            return False
+        if value.startswith(("http://", "https://")):
+            return "." in value or "localhost" in value
+        return "." in value or value.startswith(("localhost", "127.0.0.1"))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文状态", alias={"nitter_status", "tweets_status"})
