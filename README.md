@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.2-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.3-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -20,7 +20,7 @@
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
 - 支持多个 Nitter 实例按顺序重试。
-- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，其他平台使用普通消息链。
+- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，飞书优先使用原生 `text` 消息发送正文，其他平台使用普通消息链。
 
 ## 快速开始
 
@@ -52,11 +52,22 @@ push_targets = aiocqhttp:GroupMessage:123456
 ```text
 aiocqhttp:GroupMessage:123456
 aiocqhttp:FriendMessage:123456
+lark:GroupMessage:oc_xxxxxxxxxxxxx
+lark:FriendMessage:ou_xxxxxxxxxxxxx
 telegram:GroupMessage:-1001234567890
 telegram:FriendMessage:123456789
 ```
 
 `push_targets` 每行填写一个 UMO。不同平台的前缀以 `/sid` 实际返回为准，不需要手动猜平台 ID。
+
+## 平台支持与要求
+
+| 平台 | 适配器类型 | 特殊要求/说明 |
+| --- | --- | --- |
+| QQ | `aiocqhttp` | 支持文本、图片和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会降级重试。 |
+| Feishu / Lark | `lark` | 手动查询和定时推送会优先使用飞书原生 `text` 消息发送正文，再发送图片/视频附件；当前回退版不包含飞书原生合并转发。 |
+| Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
+| 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 
 ## 命令
 
@@ -150,8 +161,8 @@ telegram:FriendMessage:123456789
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`；翻译只处理去除 URL 后的正文，避免重复链接。
-- 合并转发节点仅 OneBot v11/`aiocqhttp` 使用；其他平台会自动改用普通消息链发送。
-- OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送会额外发送告警摘要。
+- 合并转发节点仅 OneBot v11/`aiocqhttp` 使用；飞书会优先用飞书原生 `text` 消息发送正文，再发送图片/视频附件；其他平台会自动改用普通消息链发送。
+- OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
 
@@ -180,7 +191,6 @@ telegram:FriendMessage:123456789
 - [xdown.app](https://xdown.app/)：提供 Twitter/X 媒体解析接口。
 - [count.getloli.com](https://count.getloli.com/)：提供 README 访问计数图片。
 - [AstrBot](https://github.com/Soulter/AstrBot)、OneBot/aiocqhttp 生态：提供插件运行、消息组件与合并转发能力。
-- AI 工具：辅助完成部分代码实现、问题排查与文档整理；最终设计、配置和发布由维护者确认。
 
 ## 更新日志
 
