@@ -96,7 +96,104 @@ class SchedulerConfigReader:
         )
 
     def schedule_groups(self, log_invalid_targets: bool = True) -> list[ScheduleGroup]:
-        return [self.global_group(log_invalid_targets=log_invalid_targets)]
+        groups = [self.global_group(log_invalid_targets=log_invalid_targets)]
+        seen_group_ids = {normalize_group_id(GLOBAL_GROUP_ID)}
+
+        raw_groups = self.config.get("tweet_groups", []) or []
+        if isinstance(raw_groups, dict):
+            raw_groups = [raw_groups]
+        elif not isinstance(raw_groups, list):
+            logger.warning(
+                "[NitterTweets] tweet_groups must be a list, "
+                f"got {type(raw_groups).__name__}"
+            )
+            return groups
+
+        for index, raw_group in enumerate(raw_groups, 1):
+            group = self.parse_schedule_group(
+                raw_group,
+                index,
+                log_invalid_targets=log_invalid_targets,
+            )
+            if group is None:
+                continue
+
+            normalized_group_id = normalize_group_id(group.group_id)
+            if normalized_group_id in seen_group_ids:
+                logger.warning(
+                    "[NitterTweets] duplicate tweet group ignored: "
+                    f"{group.name} ({group.group_id})"
+                )
+                continue
+
+            seen_group_ids.add(normalized_group_id)
+            groups.append(group)
+        return groups
+
+    def parse_schedule_group(
+        self,
+        raw_group,
+        index: int,
+        log_invalid_targets: bool = True,
+    ) -> ScheduleGroup | None:
+        if not isinstance(raw_group, dict):
+            logger.warning(
+                "[NitterTweets] invalid tweet_groups item ignored: "
+                f"{raw_group!r}"
+            )
+            return None
+
+        name = str(raw_group.get("name") or "").strip()
+        raw_group_id = str(raw_group.get("group_id") or "").strip()
+        group_id = normalize_group_id(raw_group_id or name or f"group_{index}")
+        if group_id == GLOBAL_GROUP_ID:
+            logger.warning(
+                "[NitterTweets] tweet group id 'global' is reserved; "
+                f"ignored group {name or index!r}"
+            )
+            return None
+        if not name:
+            name = group_id
+
+        return ScheduleGroup(
+            group_id=group_id,
+            name=name,
+            enabled=self.parse_bool(raw_group.get("enabled", True), True),
+            check_on_startup=self.parse_bool(
+                raw_group.get("check_on_startup", False), False
+            ),
+            interval_check_enabled=self.parse_bool(
+                raw_group.get("interval_check_enabled", True), True
+            ),
+            check_interval_minutes=clamp_int(
+                raw_group.get("check_interval_minutes", 30), 1, 1440
+            ),
+            daily_check_enabled=self.parse_bool(
+                raw_group.get("daily_check_enabled", False), False
+            ),
+            daily_check_times=self.parse_daily_times(
+                raw_group.get("daily_check_times", [])
+            ),
+            scheduled_fetch_limit=clamp_int(
+                raw_group.get("scheduled_fetch_limit", 5), 1, 20
+            ),
+            send_target_interval=clamp_float(
+                raw_group.get("send_target_interval", 1.5), 0.0, 60.0
+            ),
+            send_user_interval=clamp_float(
+                raw_group.get("send_user_interval", 2.0), 0.0, 60.0
+            ),
+            notify_no_updates=self.parse_bool(
+                raw_group.get("notify_no_updates", False), False
+            ),
+            users_info=self.parse_watch_users(raw_group.get("watch_users", [])),
+            target_info=self.parse_push_targets(
+                raw_group.get("push_targets", []),
+                log_invalid=log_invalid_targets,
+                group_id=group_id,
+            ),
+            aliases=self.config_list(raw_group.get("aliases")),
+        )
 
     def schedule_group(
         self, group_name: str = "", log_invalid_targets: bool = True
@@ -116,7 +213,9 @@ class SchedulerConfigReader:
         return self.watch_users_info().users
 
     def watch_users_info(self) -> WatchUsersInfo:
-        raw_users = self.config.get("watch_users", []) or []
+        return self.parse_watch_users(self.config.get("watch_users", []))
+
+    def parse_watch_users(self, raw_users) -> WatchUsersInfo:
         if isinstance(raw_users, str):
             raw_users = re.split(r"[\n,，]+", raw_users)
         elif not isinstance(raw_users, list):
@@ -150,9 +249,19 @@ class SchedulerConfigReader:
     def push_targets(self) -> list[str]:
         return self.parse_push_targets().targets
 
-    def parse_push_targets(self, log_invalid: bool = True) -> PushTargetParseResult:
+    def parse_push_targets(
+        self,
+        raw_targets=None,
+        log_invalid: bool = True,
+        group_id: str = GLOBAL_GROUP_ID,
+    ) -> PushTargetParseResult:
         default_platform = self.platform()
-        raw_targets = self.config.get("push_targets", []) or []
+        if raw_targets is None:
+            raw_targets = self.config.get("push_targets", []) or []
+        if isinstance(raw_targets, str):
+            raw_targets = re.split(r"[\n,，]+", raw_targets)
+        elif not isinstance(raw_targets, list):
+            raw_targets = [raw_targets]
         result = PushTargetParseResult()
         seen: set[str] = set()
         for raw in raw_targets:
@@ -160,7 +269,10 @@ class SchedulerConfigReader:
                 invalid = repr(raw)
                 result.invalid_targets.append(invalid)
                 if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {invalid}")
+                    logger.warning(
+                        "[NitterTweets] invalid push target: "
+                        f"group={group_id}, target={invalid}"
+                    )
                 continue
 
             target = raw.strip().replace("：", ":")
@@ -170,7 +282,10 @@ class SchedulerConfigReader:
             if umo is None:
                 result.invalid_targets.append(raw)
                 if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {raw!r}")
+                    logger.warning(
+                        "[NitterTweets] invalid push target: "
+                        f"group={group_id}, target={raw!r}"
+                    )
                 continue
             if umo not in seen:
                 seen.add(umo)
@@ -287,10 +402,13 @@ class SchedulerConfigReader:
             return f"{default_platform}:GroupMessage:{target}"
         return None
 
-    def parse_daily_times(self) -> list[tuple[int, int]]:
-        raw_times = self.config.get("daily_check_times", []) or []
+    def parse_daily_times(self, raw_times=None) -> list[tuple[int, int]]:
+        if raw_times is None:
+            raw_times = self.config.get("daily_check_times", []) or []
         if isinstance(raw_times, str):
             raw_times = re.split(r"[\n,，]+", raw_times)
+        elif not isinstance(raw_times, list):
+            raw_times = [raw_times]
 
         times: list[tuple[int, int]] = []
         for raw in raw_times:
@@ -308,3 +426,30 @@ class SchedulerConfigReader:
             else:
                 logger.warning(f"[NitterTweets] daily_check_times out of range: {raw!r}")
         return times
+
+    @staticmethod
+    def config_list(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw_items = re.split(r"[\n,，]+", value)
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = [value]
+        return [str(item).strip() for item in raw_items if str(item).strip()]
+
+    @staticmethod
+    def parse_bool(value, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "enable", "enabled", "是", "开", "开启"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "disable", "disabled", "否", "关", "关闭"}:
+                return False
+            return default
+        return bool(value)

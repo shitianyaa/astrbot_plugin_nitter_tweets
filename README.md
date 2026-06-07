@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.10-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.11-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -15,7 +15,7 @@
 ## 功能
 
 - 手动查询指定用户最近公开推文，并提供独立的 Nitter 镜像站测试命令。
-- 定时检查 `watch_users`，发现新推文后推送到 `push_targets`。
+- 定时检查 `watch_users`，发现新推文后推送到 `push_targets`；也可在插件配置里通过 `tweet_groups` 配置多个独立推文分组。
 - 支持图片附件发送；视频/GIF 可选发送，默认仅保留原帖链接。
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
@@ -57,6 +57,8 @@ push_targets = aiocqhttp:GroupMessage:123456
 
 `push_targets` 是新推文本体的发送目标。执行 `/推文检查` 的会话只会收到检查摘要；如果当前会话不在 `push_targets` 中，不会收到新推文本体。
 
+自定义分组可在插件配置的 `tweet_groups` 中添加。每个分组都有独立的关注账号、推送目标、间隔检查、每日定点、拉取条数和发送间隔；不填写 `tweet_groups` 时只使用上面的全局定时配置。
+
 ## 推送目标格式
 
 在要接收推送的群聊或私聊里发送 `/sid`，复制返回的 UMO，填入 `push_targets`。
@@ -89,8 +91,8 @@ telegram:FriendMessage:123456789
 | --- | --- |
 | `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
 | `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量 `1`。 |
-| `/推文状态` | 查看调度器状态、关注账号、推送目标、无效目标和已记录账号数。 |
-| `/推文检查 [分组名]` | 立即执行一次定时检查；当前版本默认检查全局分组，支持 `全局`、`默认`、`default` 别名。 |
+| `/推文状态` | 查看调度器状态、全局分组、自定义分组、关注账号、推送目标、无效目标和已记录账号数。 |
+| `/推文检查 [分组名]` | 立即执行一次定时检查；不填时检查全局分组，也可填写自定义分组名称、分组 ID 或别名。 |
 | `/推文订阅列表` | 查看当前 `watch_users` 的有效作者、重复项和无效项。 |
 | `/推文订阅去重` | 规范化并去重 `watch_users`，移除重复作者和无效条目后保存配置。 |
 
@@ -115,6 +117,7 @@ telegram:FriendMessage:123456789
 | `schedule_enabled` | 是否启用定时检查。 |
 | `watch_users` | 关注账号列表，支持 `NASA`、`@NASA`、`https://x.com/NASA`。 |
 | `push_targets` | 新推文本体发送目标；在目标会话发送 `/sid` 获取 UMO 后填入。 |
+| `tweet_groups` | 自定义推文分组列表；每组可单独配置 `watch_users`、`push_targets`、间隔检查、每日定点、拉取条数和发送间隔。 |
 | `interval_check_enabled` | 是否启用间隔检查。 |
 | `check_interval_minutes` | 每 N 分钟检查一次。 |
 | `daily_check_enabled` | 是否启用每日固定时间检查。 |
@@ -157,7 +160,7 @@ telegram:FriendMessage:123456789
 ## 行为说明
 
 - 首次启用某个账号时，只记录当前 RSS 中已有的推文 ID，不推送历史内容。
-- 当前版本会把现有定时配置作为 `global` 全局分组运行；已见推文 ID 按分组存储，旧的按账号已见记录会自动兼容到全局分组。
+- 现有顶层定时配置会作为 `global` 全局分组运行；`tweet_groups` 中的自定义分组会独立运行，并拥有独立的已见推文 ID。旧的按账号已见记录会自动兼容到全局分组。
 - 没有新推文时默认只写日志，不往目标会话发送消息。
 - 公共 Nitter 实例不稳定，长期使用建议自建实例。
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。

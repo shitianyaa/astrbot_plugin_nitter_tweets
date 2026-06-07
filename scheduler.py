@@ -264,12 +264,14 @@ class NitterTweetScheduler:
         try:
             loop = asyncio.get_running_loop()
             self._task = loop.create_task(self._loop())
+            groups = self._schedule_groups(log_invalid_targets=False)
             logger.info(
                 "[NitterTweets] scheduler started "
                 f"({reason}); enabled={self.schedule_enabled}, "
-                f"groups={len(self._schedule_groups(log_invalid_targets=False))}, "
-                f"watch_users={len(self._watch_users())}, "
-                f"push_targets={len(self._parse_push_targets(log_invalid=False).targets)}"
+                f"groups={len(groups)}, "
+                f"enabled_groups={sum(1 for group in groups if group.enabled)}, "
+                f"watch_users={sum(len(group.users) for group in groups)}, "
+                f"push_targets={sum(len(group.targets) for group in groups)}"
             )
         except RuntimeError:
             logger.info(
@@ -588,20 +590,26 @@ class NitterTweetScheduler:
         return result
 
     async def status_summary(self) -> str:
-        group = self._schedule_group(GLOBAL_GROUP_ID, log_invalid_targets=False)
+        groups = self._schedule_groups(log_invalid_targets=False)
+        group = next(
+            (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
+            groups[0] if groups else None,
+        )
         if group is None:
-            return "Nitter 定时检查状态\n全局分组不可用。"
+            return "Nitter 定时检查状态\n没有可用分组。"
 
         watch_info = group.users_info
         users = group.users
         target_info = group.target_info
         seen_map = await self._get_seen_map(group.group_id)
         daily_times = group.daily_check_times
+        enabled_groups = [item for item in groups if item.enabled]
 
         lines = [
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
+            f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
             f"分组: {group.name} ({group.group_id})",
             f"启动立即检查: {'已启用' if group.check_on_startup else '已关闭'}",
             f"间隔检查: {'已启用' if group.interval_check_enabled else '已关闭'} / {group.check_interval_minutes} 分钟",
@@ -630,6 +638,16 @@ class NitterTweetScheduler:
                 lines.append(f"- ... 还有 {len(target_info.targets) - 8} 个")
         if target_info.invalid_targets:
             lines.append("无效目标: " + ", ".join(target_info.invalid_targets))
+        if len(groups) > 1:
+            lines.append("分组列表:")
+            for item in groups:
+                lines.append(
+                    "- "
+                    f"{item.name} ({item.group_id}): "
+                    f"{'启用' if item.enabled else '关闭'}，"
+                    f"账号 {len(item.users)}，目标 {len(item.targets)}，"
+                    f"{self._format_group_schedule(item)}"
+                )
         return "\n".join(lines)
 
     def deduplicate_watch_users(self) -> WatchUsersInfo:
@@ -818,6 +836,22 @@ class NitterTweetScheduler:
         if threshold <= 0:
             return "已关闭"
         return f"{threshold} 条及以上"
+
+    @staticmethod
+    def _format_group_schedule(group: ScheduleGroup) -> str:
+        parts = []
+        if group.interval_check_enabled:
+            parts.append(f"间隔 {group.check_interval_minutes} 分钟")
+        if group.daily_check_enabled:
+            if group.daily_check_times:
+                times = ", ".join(
+                    f"{hour:02d}:{minute:02d}"
+                    for hour, minute in group.daily_check_times
+                )
+                parts.append(f"每日 {times}")
+            else:
+                parts.append("每日定点未配置时间")
+        return " / ".join(parts) if parts else "未配置定时规则"
 
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
