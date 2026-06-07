@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.7-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.8-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -14,7 +14,7 @@
 
 ## 功能
 
-- 手动查询指定用户最近公开推文，可临时指定 Nitter 镜像站测试。
+- 手动查询指定用户最近公开推文，并提供独立的 Nitter 镜像站测试命令。
 - 定时检查 `watch_users`，发现新推文后推送到 `push_targets`。
 - 支持图片附件发送；视频/GIF 可选发送，默认仅保留原帖链接。
 - 支持非中文推文翻译。
@@ -29,13 +29,21 @@
 ```text
 /推文 nasa
 /推文 nasa 5
-/推文 nasa 1 nitter.top
-/推文 nasa nitter.top
-/tweets nasa 5
 /推文 https://twitter.com/nasa 5
 ```
 
-第三个参数可临时指定 Nitter 实例，只影响本次查询，不会写入 `instances` 配置。省略数量但传入实例时使用 `default_limit`。
+省略数量时使用 `default_limit`，数量会被限制在 `1` 到 `max_limit` 之间。
+
+### 镜像测试
+
+```text
+/镜像测试 nitter.top
+/镜像测试 3 nitter.top
+/镜像测试 nasa nitter.top
+/镜像测试 nasa 3 nitter.top
+```
+
+`/镜像测试` 默认测试 `nasa`，默认获取 `1` 条；用户名和数量都可以省略，镜像站只影响本次测试，不会写入 `instances` 配置。
 
 ### 定时推送
 
@@ -75,27 +83,16 @@ telegram:FriendMessage:123456789
 
 ## 命令
 
-管理员命令：
+常用命令：
 
 | 命令 | 说明 |
 | --- | --- |
+| `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
+| `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量 `1`。 |
 | `/推文状态` | 查看调度器状态、关注账号、推送目标、无效目标和已记录账号数。 |
 | `/推文检查` | 立即执行一次定时检查；新推文本体发送到 `push_targets`，命令会话收到检查摘要。 |
 | `/推文订阅列表` | 查看当前 `watch_users` 的有效作者、重复项和无效项。 |
 | `/推文订阅去重` | 规范化并去重 `watch_users`，移除重复作者和无效条目后保存配置。 |
-
-命令别名：
-
-```text
-/nitter_status
-/tweets_status
-/nitter_check
-/tweets_check
-/nitter_list
-/tweets_list
-/nitter_dedup
-/tweets_dedup
-```
 
 ## 配置参考
 
@@ -107,7 +104,7 @@ telegram:FriendMessage:123456789
 | --- | --- |
 | `instances` | Nitter 实例列表，建议把自建实例放在第一位。 |
 | `request_timeout` | 单个 Nitter 实例超时秒数，超时后尝试下一个实例。 |
-| `default_limit` | 手动查询默认获取条数；`/推文 用户名 镜像站` 也会使用该默认值。 |
+| `default_limit` | 手动 `/推文` 查询默认获取条数。 |
 | `max_limit` | 手动查询最大获取条数。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 
