@@ -97,6 +97,10 @@ class TweetSender:
         notices: list[str] | None = None,
     ) -> bool:
         if self._should_use_lark_for_event(event):
+            if self._should_use_merge_for_count(len(tweets)):
+                return await self._send_lark_merged_event(
+                    event, username, instance, tweets, notices=notices
+                )
             return await self._send_lark_event(
                 event, username, instance, tweets, notices=notices
             )
@@ -175,6 +179,10 @@ class TweetSender:
         tweets: list[TweetItem],
     ) -> SendOutcome:
         if self._should_use_lark_for_umo(context, umo):
+            if self._should_use_merge_for_count(len(tweets)):
+                return await self._send_lark_single_post_to_umo(
+                    context, umo, username, instance, tweets
+                )
             return await self._send_lark_to_umo(
                 context, umo, username, instance, tweets
             )
@@ -241,12 +249,16 @@ class TweetSender:
         umo: str,
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
+        tweet_count = self._count_batch_tweets(batches)
+        if not self._should_use_merge_for_count(tweet_count):
+            return await self._send_merged_direct_to_umo(context, umo, batches)
+
         if self._should_use_lark_for_umo(context, umo):
             return await self._send_lark_merged_to_umo(context, umo, batches)
 
         if not self._should_use_forward_for_umo(
             context, umo
-        ) or not self._should_use_merge_for_count(self._count_batch_tweets(batches)):
+        ):
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
         omitted_videos = self._count_attached_videos(batches)
@@ -584,6 +596,75 @@ class TweetSender:
             )
         return True
 
+    async def _send_lark_merged_event(
+        self,
+        event,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+    ) -> bool:
+        components = self._build_direct_components(
+            username, instance, tweets, notices=notices
+        )
+        client = self._lark_client_from_event(event)
+        if client is None:
+            logger.warning("[NitterTweets] Lark client not found; using generic send")
+            return await self._send_direct_event(
+                event, username, instance, tweets, notices=notices
+            )
+
+        text = self._plain_text_from_components(components)
+        reply_message_id = self._lark_reply_message_id(event)
+        receive_id_type, receive_id = self._lark_event_target(event)
+        post_attempt = await self._send_lark_post(
+            client,
+            text,
+            "manual merged Lark tweet post",
+            title=f"Nitter @{username}",
+            reply_message_id=reply_message_id,
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if (
+            not (post_attempt.success or post_attempt.uncertain)
+            and reply_message_id
+            and receive_id
+            and receive_id_type
+        ):
+            logger.warning(
+                "[NitterTweets] Lark reply post failed; retrying current session "
+                f"send: {post_attempt.error}"
+            )
+            post_attempt = await self._send_lark_post(
+                client,
+                text,
+                "manual merged Lark tweet post fallback",
+                title=f"Nitter @{username}",
+                receive_id=receive_id,
+                receive_id_type=receive_id_type,
+            )
+        if not (post_attempt.success or post_attempt.uncertain):
+            logger.warning(
+                "[NitterTweets] Lark post failed; falling back to text send: "
+                f"{post_attempt.error}"
+            )
+            return await self._send_lark_event(
+                event, username, instance, tweets, notices=notices
+            )
+
+        media_attempt = await self._send_lark_event_media_with_retry(
+            event,
+            self._media_components(components),
+            "manual merged Lark tweet media",
+        )
+        if not (media_attempt.success or media_attempt.uncertain):
+            logger.warning(
+                "[NitterTweets] Lark post sent but media failed: "
+                f"{media_attempt.error}"
+            )
+        return True
+
     async def _send_lark_to_umo(
         self,
         context,
@@ -631,6 +712,60 @@ class TweetSender:
             )
         return SendOutcome(success=True, warning=warning)
 
+    async def _send_lark_single_post_to_umo(
+        self,
+        context,
+        umo: str,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+    ) -> SendOutcome:
+        components = self._build_direct_components(username, instance, tweets)
+        text = self._plain_text_from_components(components)
+        client, receive_id_type, receive_id = self._lark_client_and_target(
+            context, umo
+        )
+        if client is None or not receive_id_type or not receive_id:
+            logger.warning(
+                f"[NitterTweets] Lark client or target not found for {umo}; "
+                "using generic send"
+            )
+            return await self._send_direct_to_umo(
+                context, umo, username, instance, tweets
+            )
+
+        post_attempt = await self._send_lark_post(
+            client,
+            text,
+            "scheduled merged Lark tweet post",
+            title=f"Nitter @{username}",
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if not (post_attempt.success or post_attempt.uncertain):
+            logger.warning(
+                "[NitterTweets] Lark post failed; falling back to text send: "
+                f"{post_attempt.error}"
+            )
+            return await self._send_lark_to_umo(
+                context, umo, username, instance, tweets
+            )
+
+        media_attempt = await self._send_lark_umo_media_with_retry(
+            context,
+            umo,
+            self._media_components(components),
+            "scheduled merged Lark tweet media",
+        )
+        warning = post_attempt.warning or media_attempt.warning
+        if not (media_attempt.success or media_attempt.uncertain):
+            warning = media_attempt.error
+            logger.warning(
+                f"[NitterTweets] Lark post sent to {umo} but media failed: "
+                f"{media_attempt.error}"
+            )
+        return SendOutcome(success=True, warning=warning)
+
     async def _send_lark_merged_to_umo(
         self,
         context,
@@ -650,13 +785,29 @@ class TweetSender:
             )
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
-        text_attempt = await self._send_lark_text(
+        title = f"Nitter {self._count_batch_tweets(batches)} new tweets"
+        text_attempt = await self._send_lark_post(
             client,
             text,
-            "merged scheduled Lark tweet text",
+            "merged scheduled Lark tweet post",
+            title=title,
             receive_id=receive_id,
             receive_id_type=receive_id_type,
         )
+        mode = "lark_post"
+        if not (text_attempt.success or text_attempt.uncertain):
+            logger.warning(
+                "[NitterTweets] Lark post failed; falling back to text send: "
+                f"{text_attempt.error}"
+            )
+            text_attempt = await self._send_lark_text(
+                client,
+                text,
+                "merged scheduled Lark tweet text fallback",
+                receive_id=receive_id,
+                receive_id_type=receive_id_type,
+            )
+            mode = "text_media"
         if not (text_attempt.success or text_attempt.uncertain):
             return MergedSendOutcome(
                 success=False,
@@ -680,7 +831,7 @@ class TweetSender:
             )
         return MergedSendOutcome(
             success=True,
-            mode=("uncertain_delivery" if text_attempt.uncertain else "text_media"),
+            mode=("uncertain_delivery" if text_attempt.uncertain else mode),
             omitted_videos=omitted_videos,
             warning=warning,
         )
@@ -872,6 +1023,108 @@ class TweetSender:
                             CreateMessageRequestBody.builder()
                             .receive_id(receive_id)
                             .msg_type("text")
+                            .content(content)
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await client.im.v1.message.acreate(request)
+
+                if not response.success():
+                    error = (
+                        f"Lark API returned {getattr(response, 'code', '')}: "
+                        f"{getattr(response, 'msg', '')}"
+                    )
+                    logger.warning(f"Failed to send {label}: {error}")
+                    return SendAttempt(
+                        success=False, retryable=True, error=error
+                    )
+        except Exception as exc:
+            error = str(exc)
+            if self._is_uncertain_delivery_error(exc):
+                warning = self.UNCERTAIN_DELIVERY_WARNING
+                target = receive_id or reply_message_id or receive_id_type or "unknown"
+                self._log_uncertain_delivery(label, target, exc)
+                return SendAttempt(
+                    success=False,
+                    retryable=False,
+                    uncertain=True,
+                    error=error,
+                    warning=warning,
+                )
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        return SendAttempt(success=True)
+
+    async def _send_lark_post(
+        self,
+        client,
+        text: str,
+        label: str,
+        title: str = "",
+        reply_message_id: str | None = None,
+        receive_id: str | None = None,
+        receive_id_type: str | None = None,
+    ) -> SendAttempt:
+        text = (text or "").strip()
+        if not text:
+            return SendAttempt(success=True)
+        if client is None or getattr(client, "im", None) is None:
+            error = "Lark API client is unavailable"
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=False, error=error)
+
+        try:
+            from lark_oapi.api.im.v1 import (
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+                ReplyMessageRequest,
+                ReplyMessageRequestBody,
+            )
+        except Exception as exc:
+            error = f"lark_oapi is unavailable: {exc}"
+            logger.warning(f"Failed to send {label}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        try:
+            for chunk in self._split_lark_text(text):
+                content = json.dumps(
+                    {
+                        "zh_cn": {
+                            "title": title or "",
+                            "content": [[{"tag": "md", "text": chunk}]],
+                        }
+                    },
+                    ensure_ascii=False,
+                )
+                if reply_message_id:
+                    request = (
+                        ReplyMessageRequest.builder()
+                        .message_id(reply_message_id)
+                        .request_body(
+                            ReplyMessageRequestBody.builder()
+                            .content(content)
+                            .msg_type("post")
+                            .build()
+                        )
+                        .build()
+                    )
+                    response = await client.im.v1.message.areply(request)
+                else:
+                    if not receive_id or not receive_id_type:
+                        error = "Lark receive_id or receive_id_type is missing"
+                        logger.warning(f"Failed to send {label}: {error}")
+                        return SendAttempt(
+                            success=False, retryable=True, error=error
+                        )
+                    request = (
+                        CreateMessageRequest.builder()
+                        .receive_id_type(receive_id_type)
+                        .request_body(
+                            CreateMessageRequestBody.builder()
+                            .receive_id(receive_id)
+                            .msg_type("post")
                             .content(content)
                             .build()
                         )

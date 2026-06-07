@@ -692,6 +692,7 @@ class NitterTweetScheduler:
                         result.delivery_warnings.append(outcome.warning)
                     if outcome.mode not in {
                         "full_forward",
+                        "lark_post",
                         "direct_message",
                         "uncertain_delivery",
                     }:
