@@ -212,7 +212,25 @@
     "description": "合并本轮新推文为一轮推送",
     "type": "bool",
     "default": false,
-    "hint": "开启后，定时检查中所有关注账号的新推文会合并后发送到每个 push_targets。OneBot v11/aiocqhttp 使用合并转发；飞书优先使用原生 text 消息发送正文；其他平台使用普通消息链。关闭时仍按账号分别发送。"
+    "hint": "开启后，定时检查中所有关注账号的新推文会合并后发送到每个 push_targets。是否使用平台合并转发由 forward_message_min_tweets 和平台能力决定；关闭时仍按账号分别发送。"
+  },
+  "forward_message_min_tweets": {
+    "description": "启用合并转发的最少推文数",
+    "type": "int",
+    "default": 2,
+    "hint": "单次发送达到多少条推文才使用合并转发。0 表示禁用合并转发；1 表示保持旧行为，有推文就使用；默认 2 表示 2 条及以上才使用。OneBot 使用 Node/Nodes；飞书需额外开启实验配置。"
+  },
+  "lark_merge_forward_enabled": {
+    "description": "启用飞书原生合并转发（实验）",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，飞书/Lark 在达到 forward_message_min_tweets 且配置了中转群时，会调用飞书原生 merge_forward。失败时回退到原生 text + 附件发送。"
+  },
+  "lark_merge_forward_source_chat_id": {
+    "description": "飞书合并转发中转群 chat_id",
+    "type": "string",
+    "default": "",
+    "hint": "飞书原生合并转发必须先有同一会话内的源消息。请配置一个只给机器人使用的中转群 chat_id，例如 oc_xxx；不要填写目标群，否则会造成重复刷屏，插件也会拒绝发送。"
   },
   "watch_users": {
     "description": "关注账号列表",

@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.3-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.4-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -20,7 +20,7 @@
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
 - 支持多个 Nitter 实例按顺序重试。
-- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，飞书优先使用原生 `text` 消息发送正文，其他平台使用普通消息链。
+- 支持多账号更新合并为一轮推送；OneBot v11 可按条数阈值使用合并转发，飞书可实验性使用中转群原生合并转发，其他平台使用普通消息链。
 
 ## 快速开始
 
@@ -113,6 +113,9 @@ telegram:FriendMessage:123456789
 | `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
 | `check_on_startup` | 插件启动后是否立即检查一次。 |
 | `merge_scheduled_updates` | 是否把本轮所有账号的新推文合并为一轮推送。 |
+| `forward_message_min_tweets` | 单次发送达到多少条推文才启用合并转发；`0` 表示禁用，默认 `2`。 |
+| `lark_merge_forward_enabled` | 是否启用飞书/Lark 实验性原生合并转发。 |
+| `lark_merge_forward_source_chat_id` | 飞书/Lark 合并转发中转群 `chat_id`，启用原生合并转发时必填。 |
 | `send_target_interval` | 多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 
@@ -152,7 +155,9 @@ telegram:FriendMessage:123456789
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`；翻译只处理去除 URL 后的正文，避免重复链接。
-- 合并转发节点仅 OneBot v11/`aiocqhttp` 使用；飞书会优先用飞书原生 `text` 消息发送正文，再发送图片/视频附件；其他平台会自动改用普通消息链发送。
+- OneBot v11/`aiocqhttp` 达到 `forward_message_min_tweets` 时使用 `Node/Nodes` 合并转发；低于阈值或阈值为 `0` 时使用普通消息链。
+- 飞书/Lark 默认使用原生 `text` 消息发送正文，再发送图片/视频附件；开启 `lark_merge_forward_enabled` 且配置 `lark_merge_forward_source_chat_id` 后，达到阈值时会先把正文发到中转群，再调用飞书原生合并转发发送到目标，失败时回退到原生 `text`。
+- 飞书/Lark 原生合并转发当前只合并正文消息，图片/视频附件仍会在目标会话单独发送；请不要把中转群配置为目标群，插件会拒绝这种配置以避免刷屏。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送会额外发送告警摘要。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。

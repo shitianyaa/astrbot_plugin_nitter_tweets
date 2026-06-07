@@ -2,6 +2,17 @@
 
 所有重要变更都会记录在这里。
 
+## [0.6.4] - 2026-06-07
+
+### Added
+
+- 新增 `forward_message_min_tweets`，可控制单次发送达到多少条推文才启用合并转发，`0` 表示禁用。
+- 新增飞书/Lark 实验性原生合并转发：配置 `lark_merge_forward_enabled` 和 `lark_merge_forward_source_chat_id` 后，达到阈值时会使用中转群消息调用飞书 `merge_forward`。
+
+### Changed
+
+- 手动 `/推文`、定时单账号推送和定时合并推送统一使用合并转发阈值判断；飞书原生合并转发失败时回退到原生 `text` + 附件发送。
+
 ## [0.6.3] - 2026-06-07
 
 ### Fixed
