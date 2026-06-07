@@ -171,6 +171,10 @@ def _lark_post_title(title: str) -> str:
     return title[:120]
 
 
+def lark_tweet_post_title(username: str, tweet_count: int) -> str:
+    return _lark_post_title(f"@{username} 最近 {tweet_count} 条推文")
+
+
 def _lark_post_append_text_line(content: list[list[dict]], line: str) -> None:
     content.append([{"tag": "text", "text": line if line else " "}])
 

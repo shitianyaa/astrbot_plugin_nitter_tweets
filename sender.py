@@ -33,6 +33,7 @@ try:
         lark_client_from_event,
         lark_event_target,
         lark_reply_message_id,
+        lark_tweet_post_title,
         media_components,
         plain_text_from_components,
         send_lark_event_media_with_retry,
@@ -54,6 +55,7 @@ except ImportError:
         lark_client_from_event,
         lark_event_target,
         lark_reply_message_id,
+        lark_tweet_post_title,
         media_components,
         plain_text_from_components,
         send_lark_event_media_with_retry,
@@ -588,7 +590,7 @@ class TweetSender:
         receive_id_type, receive_id = lark_event_target(event)
         post_attempt = await send_lark_post(
             client,
-            self._lark_post_title(username, tweets),
+            lark_tweet_post_title(username, len(tweets)),
             components,
             "manual Lark tweet post",
             is_uncertain_delivery_error=self._is_uncertain_delivery_error,
@@ -610,7 +612,7 @@ class TweetSender:
             )
             post_attempt = await send_lark_post(
                 client,
-                self._lark_post_title(username, tweets),
+                lark_tweet_post_title(username, len(tweets)),
                 components,
                 "manual Lark tweet post fallback",
                 is_uncertain_delivery_error=self._is_uncertain_delivery_error,
@@ -710,7 +712,7 @@ class TweetSender:
 
         post_attempt = await send_lark_post(
             client,
-            self._lark_post_title(username, tweets),
+            lark_tweet_post_title(username, len(tweets)),
             components,
             "scheduled Lark tweet post",
             is_uncertain_delivery_error=self._is_uncertain_delivery_error,
@@ -914,10 +916,6 @@ class TweetSender:
         return any(
             media.is_video for tweet in tweets for media in tweet.media if media.path
         )
-
-    @staticmethod
-    def _lark_post_title(username: str, tweets: list[TweetItem]) -> str:
-        return f"@{username} 最近 {len(tweets)} 条推文"
 
     def _should_use_merge_for_count(self, tweet_count: int) -> bool:
         return (
