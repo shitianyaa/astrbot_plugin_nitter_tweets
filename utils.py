@@ -59,16 +59,7 @@ class TweetItem:
 
 
 DEFAULT_INSTANCES = [
-    "https://nitter.catsarch.com",
-    "https://nitter.tiekoetter.com",
-    "https://nuku.trabun.org",
-    "https://nitter.privacyredirect.com",
-    "https://xcancel.com",
     "https://nitter.net",
-    "https://nitter.space",
-    "https://lightbrd.com",
-    "https://nitter.kareem.one",
-    "https://nitter.poast.org",
 ]
 
 URL_LIKE_RE = re.compile(
@@ -100,6 +91,13 @@ def clamp_float(value, minimum: float, maximum: float) -> float:
     except (TypeError, ValueError):
         number = minimum
     return max(minimum, min(maximum, number))
+
+
+def configured_merge_tweet_threshold(config) -> int:
+    value = config.get("merge_tweet_threshold", None)
+    if value is None:
+        value = 1 if config.get("merge_scheduled_updates", False) else 2
+    return clamp_int(value, 0, 20)
 
 
 def clean_text(raw: str) -> str:

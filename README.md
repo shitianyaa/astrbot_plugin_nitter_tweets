@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.3-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.9-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -14,13 +14,13 @@
 
 ## 功能
 
-- 手动查询指定用户最近公开推文。
+- 手动查询指定用户最近公开推文，并提供独立的 Nitter 镜像站测试命令。
 - 定时检查 `watch_users`，发现新推文后推送到 `push_targets`。
 - 支持图片附件发送；视频/GIF 可选发送，默认仅保留原帖链接。
 - 支持非中文推文翻译。
 - 支持按概率追加 AI 评论和 AI 识图描述。
 - 支持多个 Nitter 实例按顺序重试。
-- 支持多账号更新合并为一轮推送；OneBot v11 使用合并转发，飞书优先使用原生 `text` 消息发送正文，其他平台使用普通消息链。
+- 支持为 QQ/`aiocqhttp` 按新推文数量阈值启用 OneBot v11 `Node/Nodes` 合并转发；飞书/Lark、Telegram 和微信 OC 始终走普通逐账号发送，其中飞书会优先把单个账号的正文和图片放入同一条原生 `post` 消息。
 
 ## 快速开始
 
@@ -29,9 +29,21 @@
 ```text
 /推文 nasa
 /推文 nasa 5
-/tweets nasa 5
 /推文 https://twitter.com/nasa 5
 ```
+
+省略数量时使用 `default_limit`，数量会被限制在 `1` 到 `max_limit` 之间。
+
+### 镜像测试
+
+```text
+/镜像测试 nitter.top
+/镜像测试 3 nitter.top
+/镜像测试 nasa nitter.top
+/镜像测试 nasa 3 nitter.top
+```
+
+`/镜像测试` 默认测试 `nasa`，默认获取 `1` 条；用户名和数量都可以省略，镜像站只影响本次测试，不会写入 `instances` 配置。
 
 ### 定时推送
 
@@ -65,33 +77,22 @@ telegram:FriendMessage:123456789
 | 平台 | 适配器类型 | 特殊要求/说明 |
 | --- | --- | --- |
 | QQ | `aiocqhttp` | 支持文本、图片和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会降级重试。 |
-| Feishu / Lark | `lark` | 手动查询和定时推送会优先使用飞书原生 `text` 消息发送正文，再发送图片/视频附件；当前回退版不包含飞书原生合并转发。 |
+| Feishu / Lark | `lark` | 普通逐账号发送；优先使用飞书原生 `post` 将正文和本地图片放在同一条消息中，失败时降级为 `text` 正文加普通媒体附件；暂不支持 QQ 式合并转发。 |
 | Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
 | 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 
 ## 命令
 
-管理员命令：
+常用命令：
 
 | 命令 | 说明 |
 | --- | --- |
+| `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
+| `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量 `1`。 |
 | `/推文状态` | 查看调度器状态、关注账号、推送目标、无效目标和已记录账号数。 |
 | `/推文检查` | 立即执行一次定时检查；新推文本体发送到 `push_targets`，命令会话收到检查摘要。 |
 | `/推文订阅列表` | 查看当前 `watch_users` 的有效作者、重复项和无效项。 |
 | `/推文订阅去重` | 规范化并去重 `watch_users`，移除重复作者和无效条目后保存配置。 |
-
-命令别名：
-
-```text
-/nitter_status
-/tweets_status
-/nitter_check
-/tweets_check
-/nitter_list
-/tweets_list
-/nitter_dedup
-/tweets_dedup
-```
 
 ## 配置参考
 
@@ -103,7 +104,7 @@ telegram:FriendMessage:123456789
 | --- | --- |
 | `instances` | Nitter 实例列表，建议把自建实例放在第一位。 |
 | `request_timeout` | 单个 Nitter 实例超时秒数，超时后尝试下一个实例。 |
-| `default_limit` | 手动查询默认获取条数。 |
+| `default_limit` | 手动 `/推文` 查询默认获取条数。 |
 | `max_limit` | 手动查询最大获取条数。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 
@@ -121,7 +122,7 @@ telegram:FriendMessage:123456789
 | `scheduled_fetch_limit` | 定时检查时每个账号拉取最近多少条用于对比。 |
 | `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
 | `check_on_startup` | 插件启动后是否立即检查一次。 |
-| `merge_scheduled_updates` | 是否把本轮所有账号的新推文合并为一轮推送。 |
+| `merge_tweet_threshold` | QQ/`aiocqhttp` 新推文总数达到多少条时启用合并转发；`0` 关闭，默认 `2`。 |
 | `send_target_interval` | 多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 
@@ -161,7 +162,7 @@ telegram:FriendMessage:123456789
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`；翻译只处理去除 URL 后的正文，避免重复链接。
-- 合并转发节点仅 OneBot v11/`aiocqhttp` 使用；飞书会优先用飞书原生 `text` 消息发送正文，再发送图片/视频附件；其他平台会自动改用普通消息链发送。
+- QQ 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终逐账号普通发送；飞书逐账号发送时会优先用原生 `post` 同框发送正文和图片。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。

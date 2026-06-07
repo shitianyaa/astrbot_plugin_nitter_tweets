@@ -3,16 +3,7 @@
     "description": "Nitter 实例列表",
     "type": "list",
     "default": [
-      "https://nitter.catsarch.com",
-      "https://nitter.tiekoetter.com",
-      "https://nuku.trabun.org",
-      "https://nitter.privacyredirect.com",
-      "https://xcancel.com",
-      "https://nitter.net",
-      "https://nitter.space",
-      "https://lightbrd.com",
-      "https://nitter.kareem.one",
-      "https://nitter.poast.org"
+      "https://nitter.net"
     ],
     "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
   },
@@ -208,11 +199,11 @@
     "default": false,
     "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。"
   },
-  "merge_scheduled_updates": {
-    "description": "合并本轮新推文为一轮推送",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后，定时检查中所有关注账号的新推文会合并后发送到每个 push_targets。OneBot v11/aiocqhttp 使用合并转发；飞书优先使用原生 text 消息发送正文；其他平台使用普通消息链。关闭时仍按账号分别发送。"
+  "merge_tweet_threshold": {
+    "description": "QQ 合并推送触发条数",
+    "type": "int",
+    "default": 2,
+    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。"
   },
   "watch_users": {
     "description": "关注账号列表",
