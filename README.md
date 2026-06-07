@@ -67,7 +67,7 @@ telegram:FriendMessage:123456789
 | QQ | `aiocqhttp` | 支持文本、图片和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会降级重试。 |
 | Feishu / Lark | `lark` | 手动查询和定时推送会优先使用飞书原生 `text` 消息发送正文，再发送图片/视频附件；当前回退版不包含飞书原生合并转发。 |
 | Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
-| 微信客服 / 公众号 / 企业微信 | `weixin_oc` / `weixin_official_account` / `wecom` / `wecom_ai_bot` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于对应微信适配器的上传能力、会话 token 和平台限制。 |
+| 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 
 ## 命令
 

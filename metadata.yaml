@@ -1,6 +1,6 @@
 name: astrbot_plugin_nitter_tweets
 display_name: Nitter 推文记录
-desc: "[多平台接入开发中] Nitter 推文记录 - 支持 QQ (aiocqhttp)、Telegram、Feishu (Lark) 以及微信相关适配器；通过 Nitter RSS 获取公开推文和媒体，支持手动查询与定时推送。"
+desc: "[多平台接入开发中] Nitter 推文记录 - 支持 QQ (aiocqhttp)、Telegram、Feishu (Lark) 以及微信 OC (weixin_oc)；通过 Nitter RSS 获取公开推文和媒体，支持手动查询与定时推送。"
 version: 0.6.3
 description: 通过可配置的 Nitter 实例轮询指定用户 RSS，将最近公开推文发送到聊天会话；OneBot v11 可使用合并转发，飞书/Lark 优先使用原生 text 消息发送正文，其他平台使用普通消息链。可通过 xdown 解析并发送图片附件，视频/GIF 附件默认关闭并保留原帖链接；支持按间隔或每日定点检查关注账号并推送新推文，可合并本轮更新并清理重复订阅作者；可调用 AstrBot 已配置大模型翻译非中文推文，并按概率追加 AI 评论与识图描述。
 author: shitianyaa
@@ -11,9 +11,6 @@ support_platforms:
   - telegram
   - lark
   - weixin_oc
-  - weixin_official_account
-  - wecom
-  - wecom_ai_bot
 keywords:
   - twitter
   - x
