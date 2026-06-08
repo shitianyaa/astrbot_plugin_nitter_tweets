@@ -10,7 +10,7 @@ except ImportError:
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
 GLOBAL_GROUP_ID = "global"
-SEEN_LIMIT_PER_USER = 100
+SEEN_LIMIT_PER_USER = 300
 
 
 @dataclass(slots=True)

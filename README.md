@@ -105,6 +105,7 @@ telegram:FriendMessage:123456789
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | Nitter 实例列表，建议把自建实例放在第一位。 |
+| `storage_backend` | 存储后端；默认 `sqlite` 使用本地 SQLite 数据库，`kv_legacy` 可作为紧急回退。 |
 | `request_timeout` | 单个 Nitter 实例超时秒数，超时后尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 查询默认获取条数。 |
 | `max_limit` | 手动查询最大获取条数。 |
@@ -128,6 +129,8 @@ telegram:FriendMessage:123456789
 | `merge_tweet_threshold` | QQ/`aiocqhttp` 新推文总数达到多少条时启用合并转发；`0` 关闭，默认 `2`。 |
 | `send_target_interval` | 多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
+
+SQLite 模式会把数据库文件保存到 AstrBot 插件数据目录的 `nitter_tweets.db`，用于存储分组配置和定时推送的 seen ID。seen ID 按 `group_id + username` 独立保留最近 300 条；手动 `/推文 用户名 数量` 查询不会写入 seen。取消订阅账号后不会立即删除其 seen 记录，超过 30 天仍未重新订阅的孤儿 seen 记录会在配置同步时清理。
 
 ### 媒体
 

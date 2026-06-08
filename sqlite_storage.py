@@ -20,6 +20,7 @@ except ImportError:
 
 
 SCHEMA_VERSION = 1
+ORPHAN_SEEN_RETENTION_DAYS = 30
 
 
 class SQLiteStorage:
@@ -472,6 +473,25 @@ class SQLiteStorage:
 
         return seen_map
 
+    def cleanup_orphan_seen_tweets(self) -> int:
+        """清理长期不在订阅配置中的 seen 记录."""
+        assert self.conn is not None
+
+        cutoff = int(time.time()) - ORPHAN_SEEN_RETENTION_DAYS * 86400
+        cursor = self.conn.execute(
+            """
+            DELETE FROM seen_tweets
+            WHERE seen_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM group_users
+                  WHERE group_users.group_id = seen_tweets.group_id
+                    AND group_users.username = seen_tweets.username
+              )
+            """,
+            (cutoff,),
+        )
+        return int(cursor.rowcount or 0)
+
     def migrate_kv_seen_data(
         self,
         grouped_seen_map: dict[str, dict[str, list[str]]],
@@ -594,6 +614,12 @@ class SQLiteStorage:
 
             # 同步推送目标
             self.set_group_targets(group.group_id, group.targets)
+
+        deleted_seen = self.cleanup_orphan_seen_tweets()
+        if deleted_seen:
+            logger.info(
+                f"[NitterTweets] Cleaned {deleted_seen} orphan seen tweet records"
+            )
 
         # 更新指纹
         self.set_meta("config_groups_fingerprint", config_fingerprint)
