@@ -610,57 +610,57 @@ class NitterTweetScheduler:
 
     async def status_summary(self) -> str:
         groups = self._schedule_groups(log_invalid_targets=False)
-        group = next(
+        default_group = next(
             (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
             groups[0] if groups else None,
         )
-        if group is None:
+        if default_group is None:
             return "Nitter 定时检查状态\n没有可用分组。"
 
-        watch_info = group.users_info
-        users = group.users
-        target_info = group.target_info
-        seen_map = await self._get_seen_map(group.group_id)
-        daily_times = group.daily_check_times
         enabled_groups = [item for item in groups if item.enabled]
+        total_users = sum(len(item.users) for item in groups)
+        total_raw_users = sum(item.users_info.raw_count for item in groups)
+        total_duplicates = sum(len(item.users_info.duplicates) for item in groups)
+        total_invalid_users = sum(
+            len(item.users_info.invalid_entries) for item in groups
+        )
+        total_targets = sum(len(item.targets) for item in groups)
+        total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
+        group_seen_counts: dict[str, int] = {}
+        for item in groups:
+            group_seen_counts[item.group_id] = len(
+                await self._get_seen_map(item.group_id)
+            )
+        total_seen_users = sum(group_seen_counts.values())
 
         lines = [
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
             f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
-            f"分组: {group.name} ({group.group_id})",
-            f"启动立即检查: {'已启用' if group.check_on_startup else '已关闭'}",
-            f"间隔检查: {'已启用' if group.interval_check_enabled else '已关闭'} / {group.check_interval_minutes} 分钟",
-            f"每日定点: {'已启用' if group.daily_check_enabled else '已关闭'}",
-            f"无更新提示: {'已启用' if group.notify_no_updates else '已关闭'}",
             f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
-            f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
-            f"推送目标: {len(target_info.targets)} 个",
-            f"无效目标: {len(target_info.invalid_targets)} 个",
-            f"已记录账号: {len(seen_map)} 个",
+            "全部分组订阅账号项: "
+            f"{total_users} 个（配置 {total_raw_users} 项，"
+            f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
+            f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
+            f"全部分组已记录账号项: {total_seen_users} 个",
         ]
-        if daily_times:
-            formatted_times = ", ".join(f"{hour:02d}:{minute:02d}" for hour, minute in daily_times)
-            lines.append(f"每日时间: {formatted_times}")
-        if users:
-            lines.append("账号列表: " + ", ".join(f"@{user}" for user in users))
-        if watch_info.duplicates:
-            lines.append("重复订阅: " + ", ".join(watch_info.duplicates[:8]))
-        if watch_info.invalid_entries:
-            lines.append("无效订阅: " + ", ".join(watch_info.invalid_entries[:8]))
-        if target_info.targets:
-            lines.append("解析目标:")
-            for umo in target_info.targets[:8]:
-                lines.append(f"- {umo}")
-            if len(target_info.targets) > 8:
-                lines.append(f"- ... 还有 {len(target_info.targets) - 8} 个")
-        if target_info.invalid_targets:
-            lines.append("无效目标: " + ", ".join(target_info.invalid_targets))
+        lines.append("默认分组详情:")
+        self._append_group_status(
+            lines,
+            default_group,
+            seen_count=group_seen_counts.get(default_group.group_id, 0),
+        )
         if len(groups) > 1:
-            lines.append("分组列表:")
+            lines.append("其他分组详情:")
             for item in groups:
-                self._append_group_status(lines, item)
+                if item.group_id == default_group.group_id:
+                    continue
+                self._append_group_status(
+                    lines,
+                    item,
+                    seen_count=group_seen_counts.get(item.group_id, 0),
+                )
         return "\n".join(lines)
 
     def deduplicate_watch_users(self) -> WatchUsersInfo:
@@ -866,7 +866,12 @@ class NitterTweetScheduler:
                 parts.append("每日定点未配置时间")
         return " / ".join(parts) if parts else "未配置定时规则"
 
-    def _append_group_status(self, lines: list[str], group: ScheduleGroup) -> None:
+    def _append_group_status(
+        self,
+        lines: list[str],
+        group: ScheduleGroup,
+        seen_count: int | None = None,
+    ) -> None:
         lines.append(
             "- "
             f"{group.name} ({group.group_id}): "
@@ -876,6 +881,32 @@ class NitterTweetScheduler:
         )
         if group.aliases:
             lines.append("  别名: " + self._format_limited_values(group.aliases))
+        lines.append(
+            "  关注账号: "
+            f"{len(group.users)} 个（配置 {group.users_info.raw_count} 项，"
+            f"重复 {len(group.users_info.duplicates)} 项，"
+            f"无效 {len(group.users_info.invalid_entries)} 项）"
+        )
+        lines.append(
+            f"  推送目标: {len(group.targets)} 个"
+            f"（无效 {len(group.invalid_targets)} 个）"
+        )
+        if seen_count is not None:
+            lines.append(f"  已记录账号: {seen_count} 个")
+        daily_times = group.daily_check_times
+        if daily_times:
+            formatted_times = ", ".join(
+                f"{hour:02d}:{minute:02d}" for hour, minute in daily_times
+            )
+            lines.append(f"  每日时间: {formatted_times}")
+        lines.append(
+            "  启动立即检查: "
+            f"{'已启用' if group.check_on_startup else '已关闭'}"
+        )
+        lines.append(
+            "  无更新提示: "
+            f"{'已启用' if group.notify_no_updates else '已关闭'}"
+        )
         if group.users:
             usernames = [f"@{username}" for username in group.users]
             lines.append("  订阅账号: " + self._format_limited_values(usernames))
