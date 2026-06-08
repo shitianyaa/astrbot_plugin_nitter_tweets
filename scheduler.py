@@ -641,13 +641,7 @@ class NitterTweetScheduler:
         if len(groups) > 1:
             lines.append("分组列表:")
             for item in groups:
-                lines.append(
-                    "- "
-                    f"{item.name} ({item.group_id}): "
-                    f"{'启用' if item.enabled else '关闭'}，"
-                    f"账号 {len(item.users)}，目标 {len(item.targets)}，"
-                    f"{self._format_group_schedule(item)}"
-                )
+                self._append_group_status(lines, item)
         return "\n".join(lines)
 
     def deduplicate_watch_users(self) -> WatchUsersInfo:
@@ -852,6 +846,47 @@ class NitterTweetScheduler:
             else:
                 parts.append("每日定点未配置时间")
         return " / ".join(parts) if parts else "未配置定时规则"
+
+    def _append_group_status(self, lines: list[str], group: ScheduleGroup) -> None:
+        lines.append(
+            "- "
+            f"{group.name} ({group.group_id}): "
+            f"{'启用' if group.enabled else '关闭'}，"
+            f"账号 {len(group.users)}，目标 {len(group.targets)}，"
+            f"{self._format_group_schedule(group)}"
+        )
+        if group.aliases:
+            lines.append("  别名: " + self._format_limited_values(group.aliases))
+        if group.users:
+            usernames = [f"@{username}" for username in group.users]
+            lines.append("  订阅账号: " + self._format_limited_values(usernames))
+        if group.users_info.duplicates:
+            lines.append(
+                "  重复订阅: "
+                + self._format_limited_values(group.users_info.duplicates)
+            )
+        if group.users_info.invalid_entries:
+            lines.append(
+                "  无效订阅: "
+                + self._format_limited_values(group.users_info.invalid_entries)
+            )
+        if group.targets:
+            lines.append("  推送目标:")
+            for umo in group.targets[:8]:
+                lines.append(f"  - {umo}")
+            if len(group.targets) > 8:
+                lines.append(f"  - ... 还有 {len(group.targets) - 8} 个")
+        if group.invalid_targets:
+            lines.append(
+                "  无效目标: " + self._format_limited_values(group.invalid_targets)
+            )
+
+    @staticmethod
+    def _format_limited_values(values: list[str], limit: int = 8) -> str:
+        shown = [str(item) for item in values[:limit]]
+        if len(values) > limit:
+            shown.append(f"... 还有 {len(values) - limit} 个")
+        return ", ".join(shown)
 
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
