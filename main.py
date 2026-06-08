@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 
@@ -193,35 +194,40 @@ class NitterTweetsPlugin(Star):
         tweets,
     ) -> None:
         await self.translator.attach_translations(tweets, event.unified_msg_origin)
-        await self.media.attach_media(tweets)
-        enrich_report = await self.enricher.attach_enrichments(
-            tweets, event.unified_msg_origin
-        )
-        notices = enrich_report.visible_notices()
-        if not await self.sender.send(event, username, instance, tweets, notices=notices):
-            fallback_text = self.sender.renderer.format_plain(
-                username, instance, tweets, notices=notices
+        try:
+            await self.media.attach_media(tweets)
+            enrich_report = await self.enricher.attach_enrichments(
+                tweets, event.unified_msg_origin
             )
-            try:
-                await event.send(MessageChain([Plain(fallback_text)]))
-            except Exception as exc:
-                logger.warning(f"Failed to send manual tweet fallback: {exc}")
+            notices = enrich_report.visible_notices()
+            if not await self.sender.send(
+                event, username, instance, tweets, notices=notices
+            ):
+                fallback_text = self.sender.renderer.format_plain(
+                    username, instance, tweets, notices=notices
+                )
                 try:
-                    await event.send(
-                        MessageChain(
-                            [
-                                Plain(
-                                    f"已获取 @{username} 的推文，但发送失败。"
-                                    "请查看插件日志或稍后重试。"
-                                )
-                            ]
+                    await event.send(MessageChain([Plain(fallback_text)]))
+                except Exception as exc:
+                    logger.warning(f"Failed to send manual tweet fallback: {exc}")
+                    try:
+                        await event.send(
+                            MessageChain(
+                                [
+                                    Plain(
+                                        f"已获取 @{username} 的推文，但发送失败。"
+                                        "请查看插件日志或稍后重试。"
+                                    )
+                                ]
+                            )
                         )
-                    )
-                except Exception as notice_exc:
-                    logger.warning(
-                        "Failed to send manual tweet failure notice: "
-                        f"{notice_exc}"
-                    )
+                    except Exception as notice_exc:
+                        logger.warning(
+                            "Failed to send manual tweet failure notice: "
+                            f"{notice_exc}"
+                        )
+        finally:
+            await asyncio.to_thread(self.media.cleanup_after_send, tweets)
 
     def _parse_mirror_probe_args(
         self,

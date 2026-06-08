@@ -141,7 +141,7 @@ SQLite 模式会把数据库文件保存到 AstrBot 插件数据目录的 `nitte
 | `send_video_attachments` | 是否发送视频/GIF 附件；默认关闭，当前仍在优化，建议先只保留原帖链接。 |
 | `max_media_per_tweet` | 单条推文最多发送多少个媒体。 |
 | `media_max_size_mb` | 单个媒体大小上限。 |
-| `media_cache_retention_days` | 媒体缓存保留天数；设为 `0` 可关闭自动清理。 |
+| `media_cache_retention_days` | 媒体缓存保留天数；设为 `0` 时，本次下载的图片/视频会在发送流程结束后立即删除。 |
 | `xdown_api_url` | Twitter/X 媒体解析 API。 |
 
 ### AI
@@ -173,6 +173,7 @@ SQLite 模式会把数据库文件保存到 AstrBot 插件数据目录的 `nitte
 - QQ 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发，单次推文较多时会按每批最多 8 条自动分批，避免大合并包漏节点。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终逐账号普通发送；飞书逐账号发送时会优先用原生 `post` 同框发送正文和图片。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
+- `media_cache_retention_days` 设为 `0` 时，媒体文件会在本轮手动查询或定时推送发送流程结束后删除；如果同一轮要发送到多个目标，会等所有目标都处理完再删除。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
 
 ## 常见问题

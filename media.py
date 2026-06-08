@@ -164,6 +164,7 @@ class MediaService:
                     self._add_media_warning(
                         tweet,
                         "视频/GIF 附件发送功能仍在优化，当前按配置不发送，已保留原文链接",
+                        log_warning=False,
                     )
                     video_disabled_warned = True
                 continue
@@ -180,10 +181,45 @@ class MediaService:
         return downloaded
 
     @staticmethod
-    def _add_media_warning(tweet: TweetItem, message: str) -> None:
+    def _add_media_warning(
+        tweet: TweetItem, message: str, log_warning: bool = True
+    ) -> None:
         if message not in tweet.media_warnings:
             tweet.media_warnings.append(message)
-        logger.warning(f"[NitterTweets] {message}: {tweet.x_url}")
+        log = logger.warning if log_warning else logger.info
+        log(f"[NitterTweets] {message}: {tweet.x_url}")
+
+    def cleanup_after_send(self, tweets: list[TweetItem]) -> None:
+        if self.cache_retention_days > 0:
+            return
+
+        removed = 0
+        failed = 0
+        seen_paths: set[Path] = set()
+        for tweet in tweets:
+            for media in tweet.media:
+                path = media.path
+                if path is None:
+                    continue
+                if path in seen_paths:
+                    media.path = None
+                    continue
+                seen_paths.add(path)
+                try:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                    media.path = None
+                except OSError as exc:
+                    failed += 1
+                    logger.warning(
+                        f"[NitterTweets] failed to delete media file {path}: {exc}"
+                    )
+
+        if removed or failed:
+            logger.info(
+                "[NitterTweets] media cleanup after send finished: "
+                f"removed={removed}, failed={failed}"
+            )
 
     def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
         data = urlencode({"q": tweet.x_url, "lang": "zh-cn"}).encode("utf-8")
