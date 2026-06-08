@@ -313,7 +313,8 @@ class NitterTweetScheduler:
 
     @property
     def schedule_enabled(self) -> bool:
-        return any(
+        config_enabled = bool(self.config.get("schedule_enabled", False))
+        return config_enabled and any(
             group.enabled
             for group in self._schedule_groups(log_invalid_targets=False)
         )
