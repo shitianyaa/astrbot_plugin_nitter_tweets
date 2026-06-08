@@ -8,7 +8,7 @@
 
 - 新增 SQLite 存储后端，替代 KV 存储用于分组配置和已见推文 ID 跟踪，支持 500+ 博主订阅。
 - 新增配置项 `storage_backend`，可选 `sqlite`（默认）或 `kv_legacy`（紧急回退）。
-- 新增 `/订阅导入` 管理命令，可用逗号、中文逗号或换行批量追加全局 `watch_users`；只接受 `用户名` 或 `@用户名`，单次最多 50 个。
+- 新增 `/订阅导入` 管理命令，可用逗号、中文逗号、空格或换行批量追加订阅账号；不带分组时写入全局 `watch_users`，也可在账号列表后追加分组名称、分组 ID 或别名写入对应自定义分组；只接受 `用户名` 或 `@用户名`，单次最多 50 个。
 - 数据库文件存放在 AstrBot 插件数据目录：`data/nitter_tweets.db`。
 - SQLite 表结构：`meta`（schema version、迁移标记）、`groups`（分组配置）、`group_users`（订阅账号）、`group_targets`（推送目标）、`seen_tweets`（已见推文）、`pending_tweets`（待推队列，首版仅建表）。
 - 自动从 KV 存储迁移已见推文数据到 SQLite，迁移使用事务保证原子性，失败可重试。
@@ -23,6 +23,7 @@
 - 取消订阅的账号不会立即删除 seen 记录；超过 30 天仍未重新订阅的孤儿 seen 记录会在配置同步时清理。
 - `/推文状态` 改为先显示全部分组项合计，再分别显示默认分组和自定义分组详情，避免把 `global` 分组误读为总数。
 - `/推文状态` 和 `/推文检查` 的账号、目标等长列表最多显示 10 项，并追加“还有 N 个”提示。
+- SQLite 连接允许跨 `asyncio.to_thread()` 线程串行访问，避免 AstrBot 调度器启动和 `/推文状态` 查询时触发 `SQLite objects created in a thread can only be used in that same thread`。
 - 调度器初始化时执行迁移和配置同步，失败时记录错误并在 5 分钟后重试。
 
 ### Fixed

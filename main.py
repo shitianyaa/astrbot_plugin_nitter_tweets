@@ -12,12 +12,16 @@ try:
     from .enricher import TweetEnricher, TweetTranslator
     from .media import MediaService, NitterClient
     from .scheduler import NitterTweetScheduler
+    from .scheduler_config import ScheduleGroup
+    from .seen_store import GLOBAL_GROUP_ID, normalize_group_id
     from .sender import TweetSender
     from .utils import clamp_float, clamp_int, normalize_username, safe_call
 except ImportError:
     from enricher import TweetEnricher, TweetTranslator
     from media import MediaService, NitterClient
     from scheduler import NitterTweetScheduler
+    from scheduler_config import ScheduleGroup
+    from seen_store import GLOBAL_GROUP_ID, normalize_group_id
     from sender import TweetSender
     from utils import clamp_float, clamp_int, normalize_username, safe_call
 
@@ -409,14 +413,25 @@ class NitterTweetsPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("订阅导入", alias={"推文订阅导入", "关注导入", "推文关注导入"})
     async def cmd_tweets_import(self, event: AstrMessageEvent, args=GreedyStr):
-        """批量导入全局定时订阅账号。"""
+        """批量导入定时订阅账号，可指定分组。"""
         event.stop_event()
 
-        raw_entries = self._parse_subscription_import_args(args)
+        raw_entries, group, group_error = self._parse_subscription_import_args(args)
         if not raw_entries:
             await event.send(
                 event.plain_result(
-                    "用法：/订阅导入 nasa,@BBCWorld,SpaceX"
+                    "用法：/订阅导入 nasa,@BBCWorld,SpaceX\n"
+                    "指定分组：/订阅导入 nasa,@BBCWorld 科技"
+                )
+            )
+            return
+        if group_error:
+            await event.send(
+                event.plain_result(
+                    "未找到分组："
+                    f"{group_error}\n"
+                    "可用分组: "
+                    + self._format_limited_values(self._available_group_labels())
                 )
             )
             return
@@ -429,7 +444,7 @@ class NitterTweetsPlugin(Star):
             )
             return
 
-        existing_users = self.scheduler.watch_users_info().users
+        existing_users = group.users if group else self.scheduler.watch_users_info().users
         seen = {user.lower() for user in existing_users}
         added: list[str] = []
         duplicates: list[str] = []
@@ -448,9 +463,14 @@ class NitterTweetsPlugin(Star):
             added.append(username)
 
         if added:
-            self.config["watch_users"] = [*existing_users, *added]
+            try:
+                self._set_import_group_users(group, [*existing_users, *added])
+            except RuntimeError as exc:
+                await event.send(event.plain_result(str(exc)))
+                return
 
         save_error = ""
+        sync_error = ""
         if added:
             save_config = getattr(self.config, "save_config", None)
             if callable(save_config):
@@ -463,14 +483,18 @@ class NitterTweetsPlugin(Star):
                     )
             else:
                 save_error = "当前配置对象不支持 save_config()"
+            sync_error = await self._sync_import_config_groups()
 
+        group_label = self._import_group_label(group)
+        config_target = self._import_config_target(group)
         lines = [
             "Nitter 订阅导入",
+            f"导入分组: {group_label}",
             f"输入项: {len(raw_entries)} 个",
             f"新增: {len(added)} 个",
             f"重复: {len(duplicates)} 个",
             f"无效: {len(invalid_entries)} 个",
-            f"当前全局关注: {len(existing_users) + len(added)} 个",
+            f"当前分组关注: {len(existing_users) + len(added)} 个",
         ]
         if added:
             lines.append(
@@ -480,7 +504,9 @@ class NitterTweetsPlugin(Star):
             if save_error:
                 lines.append(f"保存结果: 已更新运行时配置，但保存失败：{save_error}")
             else:
-                lines.append("保存结果: 已写入 watch_users。")
+                lines.append(f"保存结果: 已写入 {config_target}。")
+            if sync_error:
+                lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
         else:
             lines.append("保存结果: 没有新增账号。")
         if duplicates:
@@ -490,13 +516,101 @@ class NitterTweetsPlugin(Star):
 
         await event.send(event.plain_result("\n".join(lines)))
 
-    @staticmethod
-    def _parse_subscription_import_args(args: str) -> list[str]:
-        return [
+    def _parse_subscription_import_args(
+        self, args: str
+    ) -> tuple[list[str], ScheduleGroup | None, str]:
+        raw_text = str(args or "").strip()
+        group: ScheduleGroup | None = None
+        group_error = ""
+
+        entries_text = raw_text
+        match = re.match(r"(?s)^(.+?)\s+([^\s,，]+)$", raw_text)
+        if match:
+            candidate = match.group(2).strip()
+            group = self._resolve_import_group(candidate)
+            if group is not None:
+                entries_text = match.group(1).strip()
+            elif (
+                re.search(r"[\n,，]", match.group(1))
+                and not self._normalize_import_username(candidate)
+            ):
+                group_error = candidate
+
+        entries = [
             item.strip()
-            for item in re.split(r"[\n,，]+", str(args or ""))
+            for item in re.split(r"[\s,，]+", entries_text)
             if item.strip()
         ]
+        return entries, group, group_error
+
+    def _resolve_import_group(self, group_name: str) -> ScheduleGroup | None:
+        group_name = str(group_name or "").strip()
+        if not group_name:
+            return None
+        return self.scheduler.config_reader.schedule_group(
+            group_name, log_invalid_targets=False
+        )
+
+    def _available_group_labels(self) -> list[str]:
+        groups = self.scheduler.config_reader.schedule_groups(
+            log_invalid_targets=False
+        )
+        return [f"{group.name} ({group.group_id})" for group in groups]
+
+    @staticmethod
+    def _import_group_label(group: ScheduleGroup | None) -> str:
+        if group is None or group.group_id == GLOBAL_GROUP_ID:
+            return "全局分组 (global)"
+        return f"{group.name} ({group.group_id})"
+
+    @staticmethod
+    def _import_config_target(group: ScheduleGroup | None) -> str:
+        if group is None or group.group_id == GLOBAL_GROUP_ID:
+            return "watch_users"
+        return f"tweet_groups[{group.group_id}].watch_users"
+
+    def _set_import_group_users(
+        self, group: ScheduleGroup | None, users: list[str]
+    ) -> None:
+        if group is None or group.group_id == GLOBAL_GROUP_ID:
+            self.config["watch_users"] = users
+            return
+
+        raw_groups = self.config.get("tweet_groups", []) or []
+        if isinstance(raw_groups, dict):
+            group_items = [raw_groups]
+        elif isinstance(raw_groups, list):
+            group_items = raw_groups
+        else:
+            group_items = []
+
+        target_group_id = normalize_group_id(group.group_id)
+        for index, raw_group in enumerate(group_items, 1):
+            parsed = self.scheduler.config_reader.parse_schedule_group(
+                raw_group,
+                index,
+                log_invalid_targets=False,
+            )
+            if parsed is None:
+                continue
+            if normalize_group_id(parsed.group_id) != target_group_id:
+                continue
+            raw_group["watch_users"] = users
+            self.config["tweet_groups"] = raw_groups
+            return
+
+        raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
+
+    async def _sync_import_config_groups(self) -> str:
+        try:
+            schedule_groups = self.scheduler.config_reader.schedule_groups(
+                log_invalid_targets=False
+            )
+            await self.scheduler.storage.migrate_and_sync(schedule_groups)
+        except Exception as exc:
+            logger.warning(f"Failed to sync imported watch_users: {exc}")
+            return str(exc)
+        return ""
 
     @staticmethod
     def _normalize_import_username(value: str) -> str:

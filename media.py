@@ -392,8 +392,60 @@ class NitterClient:
             summary += "; errors"
         return f"{summary}: {'; '.join(shown_errors)}"
 
-    def _fetch_from_instance(self, instance: str, username: str, limit: int) -> list[TweetItem]:
-        rss_url = f"{instance.rstrip('/')}/{quote(username)}/rss"
+    def _fetch_from_instance(
+        self, instance: str, username: str, limit: int,
+    ) -> list[TweetItem]:
+        if limit <= 0:
+            return []
+
+        tweets: list[TweetItem] = []
+        seen: set[str] = set()
+        seen_cursors: set[str] = set()
+        cursor = ""
+
+        while len(tweets) < limit:
+            try:
+                page_tweets, next_cursor = self._fetch_page_from_instance(
+                    instance, username, cursor, limit,
+                )
+            except Exception:
+                if not tweets:
+                    raise
+                logger.warning(
+                    "[NitterTweets] paged RSS fetch failed after partial results: "
+                    f"instance={instance}, username={username}, fetched={len(tweets)}"
+                )
+                break
+
+            if not page_tweets:
+                break
+
+            added = 0
+            for tweet in page_tweets:
+                key = self._tweet_identity(tweet)
+                if key in seen:
+                    continue
+                seen.add(key)
+                tweets.append(tweet)
+                added += 1
+                if len(tweets) >= limit:
+                    break
+
+            if len(tweets) >= limit:
+                break
+            if not next_cursor or next_cursor in seen_cursors:
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+            if added == 0:
+                break
+
+        return tweets
+
+    def _fetch_page_from_instance(
+        self, instance: str, username: str, cursor: str, limit: int,
+    ) -> tuple[list[TweetItem], str]:
+        rss_url = self._rss_url(instance, username, cursor)
         request = Request(
             rss_url,
             headers={
@@ -404,11 +456,33 @@ class NitterClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 data = response.read(2_000_000)
+                next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:
             raise RuntimeError(f"HTTP {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(str(getattr(exc, "reason", exc))) from exc
-        return self._parse_rss(data, instance, limit)
+        return self._parse_rss(data, instance, limit), next_cursor
+
+    @staticmethod
+    def _rss_url(instance: str, username: str, cursor: str = "") -> str:
+        rss_url = f"{instance.rstrip('/')}/{quote(username)}/rss"
+        if cursor:
+            rss_url = f"{rss_url}?{urlencode({'cursor': cursor})}"
+        return rss_url
+
+    @staticmethod
+    def _header_value(headers, name: str) -> str:
+        value = headers.get(name) if hasattr(headers, "get") else ""
+        if value:
+            return str(value).strip()
+        for key in getattr(headers, "keys", lambda: [])():
+            if str(key).lower() == name.lower():
+                return str(headers[key]).strip()
+        return ""
+
+    @staticmethod
+    def _tweet_identity(tweet: TweetItem) -> str:
+        return tweet.status_id or tweet.link or f"{tweet.published}:{tweet.text}"
 
     def _parse_rss(self, data: bytes, instance: str, limit: int) -> list[TweetItem]:
         root = ET.fromstring(data)

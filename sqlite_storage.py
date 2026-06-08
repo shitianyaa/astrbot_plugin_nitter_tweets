@@ -5,7 +5,9 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import threading
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,26 @@ SCHEMA_VERSION = 1
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
 
+def _locked_sqlite_method(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._conn_lock:
+            try:
+                result = method(self, *args, **kwargs)
+                if self.conn is not None:
+                    self.conn.commit()
+                return result
+            except Exception:
+                if self.conn is not None:
+                    try:
+                        self.conn.rollback()
+                    except sqlite3.Error:
+                        pass
+                raise
+
+    return wrapper
+
+
 class SQLiteStorage:
     """SQLite storage backend."""
 
@@ -30,6 +52,7 @@ class SQLiteStorage:
         self.db_path = db_path
         self.conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
+        self._conn_lock = threading.RLock()
 
     async def connect(self) -> None:
         """打开数据库连接并初始化表结构."""
@@ -40,142 +63,147 @@ class SQLiteStorage:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self.conn = sqlite3.connect(
                 str(self.db_path),
-                check_same_thread=True,
+                check_same_thread=False,
             )
             self.conn.row_factory = sqlite3.Row
             await asyncio.to_thread(self._init_schema)
 
     def close(self) -> None:
         """关闭数据库连接."""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+        with self._conn_lock:
+            if self.conn:
+                self.conn.close()
+                self.conn = None
 
     def _init_schema(self) -> None:
         """初始化数据库表结构."""
-        assert self.conn is not None
+        with self._conn_lock:
+            assert self.conn is not None
 
-        cursor = self.conn.cursor()
+            cursor = self.conn.cursor()
 
-        # 检查数据库完整性
-        result = cursor.execute("PRAGMA integrity_check").fetchone()
-        if result[0] != "ok":
-            logger.error(f"[NitterTweets] Database integrity check failed: {result[0]}")
-            raise RuntimeError("Database corruption detected")
-
-        # meta 表：schema version、迁移标记、配置导入指纹
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-        """)
-
-        # 检查 schema version
-        row = cursor.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()
-
-        if row is None:
-            # 首次初始化
-            cursor.execute(
-                "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)",
-                ("schema_version", str(SCHEMA_VERSION), int(time.time())),
-            )
-        else:
-            stored_version = int(row[0])
-            if stored_version != SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"Database schema version mismatch: "
-                    f"expected {SCHEMA_VERSION}, got {stored_version}"
+            # 检查数据库完整性
+            result = cursor.execute("PRAGMA integrity_check").fetchone()
+            if result[0] != "ok":
+                logger.error(
+                    f"[NitterTweets] Database integrity check failed: {result[0]}"
                 )
+                raise RuntimeError("Database corruption detected")
 
-        # groups 表：分组配置快照
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS groups (
-                group_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                enabled INTEGER NOT NULL,
-                check_on_startup INTEGER NOT NULL,
-                interval_check_enabled INTEGER NOT NULL,
-                check_interval_minutes INTEGER NOT NULL,
-                daily_check_enabled INTEGER NOT NULL,
-                daily_check_times TEXT NOT NULL,
-                scheduled_fetch_limit INTEGER NOT NULL,
-                send_target_interval REAL NOT NULL,
-                send_user_interval REAL NOT NULL,
-                notify_no_updates INTEGER NOT NULL,
-                aliases TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )
-        """)
+            # meta 表：schema version、迁移标记、配置导入指纹
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+            """)
 
-        # group_users 表：分组订阅账号
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS group_users (
-                group_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                added_at INTEGER NOT NULL,
-                PRIMARY KEY (group_id, username)
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_group_users_group_id
-            ON group_users(group_id)
-        """)
+            # 检查 schema version
+            row = cursor.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
 
-        # group_targets 表：分组推送目标 UMO
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS group_targets (
-                group_id TEXT NOT NULL,
-                target_umo TEXT NOT NULL,
-                added_at INTEGER NOT NULL,
-                PRIMARY KEY (group_id, target_umo)
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_group_targets_group_id
-            ON group_targets(group_id)
-        """)
+            if row is None:
+                # 首次初始化
+                cursor.execute(
+                    "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION), int(time.time())),
+                )
+            else:
+                stored_version = int(row[0])
+                if stored_version != SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"Database schema version mismatch: "
+                        f"expected {SCHEMA_VERSION}, got {stored_version}"
+                    )
 
-        # seen_tweets 表：已见推文 ID
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS seen_tweets (
-                group_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                status_id TEXT NOT NULL,
-                seen_at INTEGER NOT NULL,
-                PRIMARY KEY (group_id, username, status_id)
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_seen_tweets_group_user
-            ON seen_tweets(group_id, username)
-        """)
+            # groups 表：分组配置快照
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS groups (
+                    group_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    check_on_startup INTEGER NOT NULL,
+                    interval_check_enabled INTEGER NOT NULL,
+                    check_interval_minutes INTEGER NOT NULL,
+                    daily_check_enabled INTEGER NOT NULL,
+                    daily_check_times TEXT NOT NULL,
+                    scheduled_fetch_limit INTEGER NOT NULL,
+                    send_target_interval REAL NOT NULL,
+                    send_user_interval REAL NOT NULL,
+                    notify_no_updates INTEGER NOT NULL,
+                    aliases TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+            """)
 
-        # pending_tweets 表：待推/发送队列（首版仅建表）
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS pending_tweets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id TEXT NOT NULL,
-                username TEXT NOT NULL,
-                status_id TEXT NOT NULL,
-                tweet_data TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                scheduled_at INTEGER,
-                sent_at INTEGER
-            )
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_pending_tweets_schedule
-            ON pending_tweets(group_id, scheduled_at)
-            WHERE sent_at IS NULL
-        """)
+            # group_users 表：分组订阅账号
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_users (
+                    group_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    added_at INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, username)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_group_users_group_id
+                ON group_users(group_id)
+            """)
 
-        cursor.close()
-        logger.info(f"[NitterTweets] SQLite storage initialized: {self.db_path}")
+            # group_targets 表：分组推送目标 UMO
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS group_targets (
+                    group_id TEXT NOT NULL,
+                    target_umo TEXT NOT NULL,
+                    added_at INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, target_umo)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_group_targets_group_id
+                ON group_targets(group_id)
+            """)
+
+            # seen_tweets 表：已见推文 ID
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS seen_tweets (
+                    group_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    status_id TEXT NOT NULL,
+                    seen_at INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, username, status_id)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_seen_tweets_group_user
+                ON seen_tweets(group_id, username)
+            """)
+
+            # pending_tweets 表：待推/发送队列（首版仅建表）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pending_tweets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    status_id TEXT NOT NULL,
+                    tweet_data TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    scheduled_at INTEGER,
+                    sent_at INTEGER
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_tweets_schedule
+                ON pending_tweets(group_id, scheduled_at)
+                WHERE sent_at IS NULL
+            """)
+
+            self.conn.commit()
+            cursor.close()
+            logger.info(f"[NitterTweets] SQLite storage initialized: {self.db_path}")
 
     def set_meta(self, key: str, value: str) -> None:
         """设置 meta 键值."""
@@ -625,3 +653,26 @@ class SQLiteStorage:
         self.set_meta("config_groups_fingerprint", config_fingerprint)
 
         logger.info(f"[NitterTweets] Synced {len(schedule_groups)} groups to database")
+
+
+for _method_name in (
+    "set_meta",
+    "get_meta",
+    "upsert_group",
+    "set_group_users",
+    "get_group_users",
+    "set_group_targets",
+    "get_group_targets",
+    "get_all_groups",
+    "get_seen_ids",
+    "add_seen_ids",
+    "get_group_seen_map",
+    "cleanup_orphan_seen_tweets",
+    "migrate_kv_seen_data",
+    "sync_config_groups",
+):
+    setattr(
+        SQLiteStorage,
+        _method_name,
+        _locked_sqlite_method(getattr(SQLiteStorage, _method_name)),
+    )
