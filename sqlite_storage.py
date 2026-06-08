@@ -416,10 +416,10 @@ class SQLiteStorage:
 
         now = int(time.time())
 
-        # 批量插入，忽略重复
+        # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）
         self.conn.executemany(
             """
-            INSERT OR IGNORE INTO seen_tweets (group_id, username, status_id, seen_at)
+            REPLACE INTO seen_tweets (group_id, username, status_id, seen_at)
             VALUES (?, ?, ?, ?)
             """,
             [

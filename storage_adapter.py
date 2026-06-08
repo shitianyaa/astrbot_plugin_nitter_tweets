@@ -72,8 +72,12 @@ class StorageAdapter:
     async def put_group_seen_map(self, group_id: str, seen_map: dict[str, list[str]]) -> None:
         """保存分组的 seen map."""
         if self.sqlite:
-            # SQLite 模式下不需要整体写入，由 add_seen_ids 处理
-            pass
+            # SQLite 模式：逐个用户更新 seen IDs
+            for username, status_ids in seen_map.items():
+                if status_ids:  # 只保存非空列表
+                    await asyncio.to_thread(
+                        self.sqlite.add_seen_ids, group_id, username, status_ids
+                    )
         else:
             await self.seen_store.put_group_seen_map(group_id, seen_map)
 
