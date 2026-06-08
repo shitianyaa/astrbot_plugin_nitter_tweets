@@ -25,7 +25,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.6.9",
+    "0.7.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -316,14 +316,21 @@ class NitterTweetsPlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文检查")
-    async def cmd_tweets_check(self, event: AstrMessageEvent):
+    async def cmd_tweets_check(
+        self,
+        event: AstrMessageEvent,
+        group_name: str = "",
+    ):
         """立即执行一次定时推文检查。"""
         event.stop_event()
+        group_name = self._strip_self_at_argument(event, group_name)
         self.scheduler.start(reason="manual_check")
-        await event.send(event.plain_result("正在执行 Nitter 定时检查..."))
+        group_label = group_name or "全局分组"
+        await event.send(event.plain_result(f"正在执行 Nitter 定时检查：{group_label}..."))
         result = await self.scheduler.run_check(
             reason="manual_command",
             notify_no_updates=False,
+            group_name=group_name,
         )
         await event.send(event.plain_result(result.format_message()))
 
