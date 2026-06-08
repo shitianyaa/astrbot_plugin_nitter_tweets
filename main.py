@@ -416,7 +416,15 @@ class NitterTweetsPlugin(Star):
         if not raw_entries:
             await event.send(
                 event.plain_result(
-                    "用法：/订阅导入 nasa,@BBCWorld,https://x.com/SpaceX"
+                    "用法：/订阅导入 nasa,@BBCWorld,SpaceX"
+                )
+            )
+            return
+        if len(raw_entries) > 50:
+            await event.send(
+                event.plain_result(
+                    f"单次最多导入 50 个账号，本次输入 {len(raw_entries)} 个；"
+                    "请分批导入。"
                 )
             )
             return
@@ -428,7 +436,7 @@ class NitterTweetsPlugin(Star):
         invalid_entries: list[str] = []
 
         for raw in raw_entries:
-            username = normalize_username(raw)
+            username = self._normalize_import_username(raw)
             if not username:
                 invalid_entries.append(raw)
                 continue
@@ -489,6 +497,15 @@ class NitterTweetsPlugin(Star):
             for item in re.split(r"[\n,，]+", str(args or ""))
             if item.strip()
         ]
+
+    @staticmethod
+    def _normalize_import_username(value: str) -> str:
+        value = str(value or "").strip()
+        if value.startswith("@"):
+            value = value[1:].strip()
+        if value.startswith(("http://", "https://")) or "/" in value:
+            return ""
+        return normalize_username(value)
 
     @staticmethod
     def _format_limited_values(values: list[str], limit: int = 10) -> str:
