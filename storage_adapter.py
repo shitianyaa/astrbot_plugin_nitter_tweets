@@ -7,10 +7,10 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .seen_store import GLOBAL_GROUP_ID, SEEN_LIMIT_PER_USER, SeenStore
+    from .seen_store import SeenStore
     from .sqlite_storage import SQLiteStorage
 except ImportError:
-    from seen_store import GLOBAL_GROUP_ID, SEEN_LIMIT_PER_USER, SeenStore
+    from seen_store import SeenStore
     from sqlite_storage import SQLiteStorage
 
 

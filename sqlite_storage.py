@@ -12,10 +12,10 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from .seen_store import GLOBAL_GROUP_ID, SEEN_LIMIT_PER_USER, normalize_group_id
+    from .seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
     from .utils import normalize_username
 except ImportError:
-    from seen_store import GLOBAL_GROUP_ID, SEEN_LIMIT_PER_USER, normalize_group_id
+    from seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
     from utils import normalize_username
 
 
