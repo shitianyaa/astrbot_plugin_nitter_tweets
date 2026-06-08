@@ -157,12 +157,12 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
     ) -> bool:
-        for chunk in self._tweet_chunks(tweets):
-            if not await self._send_event_forward_chunk(
+        return await self._send_chunked_bool(
+            self._tweet_chunks(tweets),
+            lambda chunk: self._send_event_forward_chunk(
                 event, username, instance, chunk, notices=notices
-            ):
-                return False
-        return True
+            ),
+        )
 
     async def _send_event_forward_chunk(
         self,
@@ -269,26 +269,19 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
     ) -> SendOutcome:
-        errors = []
-        warnings = []
-        for chunk in self._tweet_chunks(tweets):
-            outcome = await self._send_forward_chunk_to_umo(
+        return await self._send_chunked_outcomes(
+            self._tweet_chunks(tweets),
+            lambda chunk: self._send_forward_chunk_to_umo(
                 context, umo, username, instance, chunk
-            )
-            if outcome.error:
-                errors.append(outcome.error)
-            if outcome.warning:
-                warnings.append(outcome.warning)
-            if not outcome.success:
-                return SendOutcome(
-                    success=False,
-                    error="; ".join(errors) or outcome.error,
-                    warning="; ".join(warnings),
-                )
-        return SendOutcome(
-            success=True,
-            error="; ".join(errors),
-            warning="; ".join(warnings),
+            ),
+            lambda error, warning: SendOutcome(
+                success=True, error=error, warning=warning
+            ),
+            lambda outcome, error, warning: SendOutcome(
+                success=False,
+                error=error or outcome.error,
+                warning=warning,
+            ),
         )
 
     async def _send_forward_chunk_to_umo(
@@ -377,31 +370,31 @@ class TweetSender:
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
         omitted_videos = 0
-        errors = []
-        warnings = []
-        for chunk in self._batch_chunks(batches):
-            outcome = await self._send_merged_forward_chunk_to_umo(
-                context, umo, chunk
-            )
+
+        def track_omitted_videos(outcome: MergedSendOutcome) -> None:
+            nonlocal omitted_videos
             omitted_videos += outcome.omitted_videos
-            if outcome.error:
-                errors.append(outcome.error)
-            if outcome.warning:
-                warnings.append(outcome.warning)
-            if not outcome.success:
-                return MergedSendOutcome(
-                    success=False,
-                    mode=outcome.mode,
-                    omitted_videos=omitted_videos,
-                    error="; ".join(errors) or outcome.error,
-                    warning="; ".join(warnings),
-                )
-        return MergedSendOutcome(
-            success=True,
-            mode="chunked_forward",
-            omitted_videos=omitted_videos,
-            error="; ".join(errors),
-            warning="; ".join(warnings),
+
+        return await self._send_chunked_outcomes(
+            self._batch_chunks(batches),
+            lambda chunk: self._send_merged_forward_chunk_to_umo(
+                context, umo, chunk
+            ),
+            lambda error, warning: MergedSendOutcome(
+                success=True,
+                mode="chunked_forward",
+                omitted_videos=omitted_videos,
+                error=error,
+                warning=warning,
+            ),
+            lambda outcome, error, warning: MergedSendOutcome(
+                success=False,
+                mode=outcome.mode,
+                omitted_videos=omitted_videos,
+                error=error or outcome.error,
+                warning=warning,
+            ),
+            after_outcome=track_omitted_videos,
         )
 
     async def _send_merged_forward_chunk_to_umo(
@@ -1052,6 +1045,39 @@ class TweetSender:
 
     def _should_chunk_forward_tweets(self, tweet_count: int) -> bool:
         return tweet_count > self.FORWARD_TWEET_CHUNK_SIZE
+
+    @staticmethod
+    async def _send_chunked_bool(chunks, send_chunk) -> bool:
+        for chunk in chunks:
+            if not await send_chunk(chunk):
+                return False
+        return True
+
+    @staticmethod
+    async def _send_chunked_outcomes(
+        chunks,
+        send_chunk,
+        success_factory,
+        failure_factory,
+        after_outcome=None,
+    ):
+        errors: list[str] = []
+        warnings: list[str] = []
+        for chunk in chunks:
+            outcome = await send_chunk(chunk)
+            if after_outcome is not None:
+                after_outcome(outcome)
+            if outcome.error:
+                errors.append(outcome.error)
+            if outcome.warning:
+                warnings.append(outcome.warning)
+            if not outcome.success:
+                return failure_factory(
+                    outcome,
+                    "; ".join(errors),
+                    "; ".join(warnings),
+                )
+        return success_factory("; ".join(errors), "; ".join(warnings))
 
     def _tweet_chunks(self, tweets: list[TweetItem]) -> list[list[TweetItem]]:
         size = self.FORWARD_TWEET_CHUNK_SIZE
