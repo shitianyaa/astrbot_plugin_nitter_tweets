@@ -52,6 +52,17 @@ except ZoneInfoNotFoundError:
 POLL_SECONDS = 30
 
 
+def _format_limited_values(
+    values: list[str],
+    limit: int = 10,
+    separator: str = ", ",
+) -> str:
+    shown = [str(item) for item in values[:limit]]
+    if len(values) > limit:
+        shown.append(f"... 还有 {len(values) - limit} 个")
+    return separator.join(shown)
+
+
 @dataclass(slots=True)
 class ScheduledPushResult:
     username: str
@@ -188,27 +199,30 @@ class ScheduledCheckResult:
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
             if self.available_groups:
-                lines.append("可用分组: " + ", ".join(self.available_groups))
+                lines.append(
+                    "可用分组: "
+                    + _format_limited_values(self.available_groups)
+                )
 
         if self.initialized_users:
             items = [
                 f"@{username}({count} 条)"
                 for username, count in self.initialized_users.items()
             ]
-            lines.append("首次记录: " + ", ".join(items))
+            lines.append("首次记录: " + _format_limited_values(items))
 
         if self.pushes and self.push_mode == "merged":
             items = [
                 f"@{item.username} {item.new_count} 条"
                 for item in self.pushes
             ]
-            lines.append("新推文: " + "; ".join(items))
+            lines.append("新推文: " + _format_limited_values(items, separator="; "))
         elif self.pushes:
             items = [
                 f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
                 for item in self.pushes
             ]
-            lines.append("新推文: " + "; ".join(items))
+            lines.append("新推文: " + _format_limited_values(items, separator="; "))
 
         if self.merged_push_total_targets:
             lines.append(
@@ -217,17 +231,30 @@ class ScheduledCheckResult:
             )
 
         if self.no_new_users:
-            lines.append("无新推文: " + ", ".join(f"@{user}" for user in self.no_new_users))
+            lines.append(
+                "无新推文: "
+                + _format_limited_values(
+                    [f"@{user}" for user in self.no_new_users]
+                )
+            )
 
         if self.empty_users:
-            lines.append("RSS 无有效推文 ID: " + ", ".join(f"@{user}" for user in self.empty_users))
+            lines.append(
+                "RSS 无有效推文 ID: "
+                + _format_limited_values(
+                    [f"@{user}" for user in self.empty_users]
+                )
+            )
 
         if self.failed_users:
             items = [f"@{user}: {error}" for user, error in self.failed_users.items()]
-            lines.append("失败: " + "; ".join(items))
+            lines.append("失败: " + _format_limited_values(items, separator="; "))
 
         if self.invalid_targets:
-            lines.append("无效推送目标: " + ", ".join(self.invalid_targets))
+            lines.append(
+                "无效推送目标: "
+                + _format_limited_values(self.invalid_targets)
+            )
 
         if not self.skipped_reason and self.new_tweet_count == 0:
             lines.append("本次没有发现需要推送的新推文。")
@@ -932,11 +959,8 @@ class NitterTweetScheduler:
             )
 
     @staticmethod
-    def _format_limited_values(values: list[str], limit: int = 8) -> str:
-        shown = [str(item) for item in values[:limit]]
-        if len(values) > limit:
-            shown.append(f"... 还有 {len(values) - limit} 个")
-        return ", ".join(shown)
+    def _format_limited_values(values: list[str], limit: int = 10) -> str:
+        return _format_limited_values(values, limit=limit)
 
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
