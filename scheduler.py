@@ -290,6 +290,7 @@ class NitterTweetScheduler:
             await self._task
         except asyncio.CancelledError:
             pass
+        self.storage.close()
         logger.info("[NitterTweets] scheduler stopped")
 
     async def _loop(self) -> None:
@@ -302,8 +303,12 @@ class NitterTweetScheduler:
                 schedule_groups = self._schedule_groups(log_invalid_targets=False)
                 await self.storage.migrate_and_sync(schedule_groups)
                 self._migration_done = True
+                logger.info("[NitterTweets] Migration and sync completed successfully")
             except Exception as exc:
                 logger.error(f"[NitterTweets] migration/sync failed: {exc}", exc_info=True)
+                logger.error("[NitterTweets] Scheduler will retry migration in 5 minutes")
+                await asyncio.sleep(300)
+                return  # Exit loop, will retry on next start() call
 
         while True:
             try:

@@ -2,6 +2,39 @@
 
 所有重要变更都会记录在这里。
 
+## [0.8.0] - 2026-06-08
+
+### Added
+
+- 新增 SQLite 存储后端，替代 KV 存储用于分组配置和已见推文 ID 跟踪，支持 500+ 博主订阅。
+- 新增配置项 `storage_backend`，可选 `sqlite`（默认）或 `kv_legacy`（紧急回退）。
+- 数据库文件存放在 AstrBot 插件数据目录：`data/nitter_tweets.db`。
+- SQLite 表结构：`meta`（schema version、迁移标记）、`groups`（分组配置）、`group_users`（订阅账号）、`group_targets`（推送目标）、`seen_tweets`（已见推文）、`pending_tweets`（待推队列，首版仅建表）。
+- 自动从 KV 存储迁移已见推文数据到 SQLite，迁移使用事务保证原子性，失败可重试。
+- 配置分组自动同步到数据库，使用指纹追踪避免重复更新。
+- 新增 `.gitignore` 规则，忽略 `*.db`、`*.db-wal`、`*.db-shm` 文件。
+
+### Changed
+
+- 存储层升级为主版本变更（0.7.0 → 0.8.0）。
+- 已见推文 ID 按 `group_id + username` 独立存储和查询，不再整组读写。
+- 每个账号只维护最近 100 条 seen ID（`SEEN_LIMIT_PER_USER`），自动清理旧记录。
+- 调度器初始化时执行迁移和配置同步，失败时记录错误并在 5 分钟后重试。
+
+### Fixed
+
+- 修复 SQLite 线程安全问题，使用 asyncio 锁保护数据库连接。
+- 修复 SQL DELETE 查询逻辑错误，正确保留最新的 N 条记录。
+- 修复配置指纹碰撞风险，从 64 位增加到 128 位。
+- 修复资源泄漏，调度器停止时正确关闭数据库连接。
+- 修复事务失效问题，移除 autocommit 模式以支持回滚。
+
+### Technical
+
+- 所有 SQLite 操作通过 `asyncio.to_thread()` 包装，避免阻塞事件循环。
+- 数据库初始化时执行完整性检查（`PRAGMA integrity_check`）。
+- 旧 KV 数据永不自动删除，作为回滚备份保留。
+
 ## [0.7.0] - 2026-06-08
 
 ### Added

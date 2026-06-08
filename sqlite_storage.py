@@ -1,6 +1,7 @@
 """SQLite storage backend for Nitter Tweets plugin."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -27,20 +28,21 @@ class SQLiteStorage:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.conn: sqlite3.Connection | None = None
+        self._lock = asyncio.Lock()
 
-    def connect(self) -> None:
+    async def connect(self) -> None:
         """打开数据库连接并初始化表结构."""
-        if self.conn is not None:
-            return
+        async with self._lock:
+            if self.conn is not None:
+                return
 
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(
-            str(self.db_path),
-            isolation_level=None,  # autocommit mode
-            check_same_thread=False,
-        )
-        self.conn.row_factory = sqlite3.Row
-        self._init_schema()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.conn = sqlite3.connect(
+                str(self.db_path),
+                check_same_thread=True,
+            )
+            self.conn.row_factory = sqlite3.Row
+            await asyncio.to_thread(self._init_schema)
 
     def close(self) -> None:
         """关闭数据库连接."""
@@ -53,6 +55,12 @@ class SQLiteStorage:
         assert self.conn is not None
 
         cursor = self.conn.cursor()
+
+        # 检查数据库完整性
+        result = cursor.execute("PRAGMA integrity_check").fetchone()
+        if result[0] != "ok":
+            logger.error(f"[NitterTweets] Database integrity check failed: {result[0]}")
+            raise RuntimeError("Database corruption detected")
 
         # meta 表：schema version、迁移标记、配置导入指纹
         cursor.execute("""
@@ -143,7 +151,7 @@ class SQLiteStorage:
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_seen_tweets_group_user
-            ON seen_tweets(group_id, username, seen_at DESC)
+            ON seen_tweets(group_id, username)
         """)
 
         # pending_tweets 表：待推/发送队列（首版仅建表）
@@ -425,14 +433,17 @@ class SQLiteStorage:
         self.conn.execute(
             """
             DELETE FROM seen_tweets
-            WHERE rowid IN (
-                SELECT rowid FROM seen_tweets
-                WHERE group_id = ? AND username = ?
-                ORDER BY seen_at DESC
-                LIMIT -1 OFFSET ?
-            )
+            WHERE group_id = ? AND username = ?
+              AND rowid NOT IN (
+                  SELECT rowid FROM seen_tweets
+                  WHERE group_id = ? AND username = ?
+                  ORDER BY seen_at DESC
+                  LIMIT ?
+              )
             """,
-            (normalized_group_id, normalized_username, SEEN_LIMIT_PER_USER),
+            (normalized_group_id, normalized_username,
+             normalized_group_id, normalized_username,
+             SEEN_LIMIT_PER_USER),
         )
 
     def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
@@ -550,7 +561,7 @@ class SQLiteStorage:
 
         config_fingerprint = hashlib.sha256(
             json.dumps(fingerprint_data, sort_keys=True).encode()
-        ).hexdigest()[:16]
+        ).hexdigest()[:32]  # 128 bits for lower collision risk
 
         stored_fingerprint = self.get_meta("config_groups_fingerprint")
 
