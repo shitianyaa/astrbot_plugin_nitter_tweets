@@ -524,21 +524,21 @@ class NitterTweetsPlugin(Star):
         group_error = ""
 
         entries_text = raw_text
-        match = re.match(r"(?s)^(.+?)\s+([^\s,，]+)$", raw_text)
+        match = re.match(r"(?s)^(.+?)\s+([^\s,]+)$", raw_text)
         if match:
             candidate = match.group(2).strip()
             group = self._resolve_import_group(candidate)
             if group is not None:
                 entries_text = match.group(1).strip()
             elif (
-                re.search(r"[\n,，]", match.group(1))
+                "," in match.group(1)
                 and not self._normalize_import_username(candidate)
             ):
                 group_error = candidate
 
         entries = [
             item.strip()
-            for item in re.split(r"[\s,，]+", entries_text)
+            for item in entries_text.split(",")
             if item.strip()
         ]
         return entries, group, group_error

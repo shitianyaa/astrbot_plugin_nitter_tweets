@@ -221,7 +221,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["watch_users"], ["NASA", "BBCWorld", "SpaceX"])
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
 
-    async def test_import_without_group_allows_comma_and_space_separators(self):
+    async def test_import_without_group_only_splits_accounts_on_commas(self):
         config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
         plugin = _plugin(config)
         event = _Event()
@@ -231,8 +231,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(config.saved)
         self.assertEqual(
             config["watch_users"],
-            ["NASA", "BBCWorld", "SpaceX", "OpenAI"],
+            ["NASA", "BBCWorld"],
         )
+        self.assertIn("无效: 1 个", event.messages[-1])
+        self.assertIn("无效项: @SpaceX @OpenAI", event.messages[-1])
 
     async def test_import_with_group_appends_that_group_watch_users(self):
         config = _Config(
