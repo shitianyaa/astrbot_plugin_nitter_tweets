@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -15,14 +16,41 @@ from astrbot.api import logger
 
 try:
     from .seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
-    from .utils import normalize_username
+    from .utils import TweetItem, TweetMedia, normalize_username
 except ImportError:
     from seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
-    from utils import normalize_username
+    from utils import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ORPHAN_SEEN_RETENTION_DAYS = 30
+
+
+@dataclass(slots=True)
+class PendingTweetRecord:
+    id: int
+    group_id: str
+    username: str
+    status_id: str
+    instance: str
+    tweet: TweetItem
+    created_at: int
+    scheduled_at: int | None = None
+    published_at: int | None = None
+    sent_at: int | None = None
+    failed_at: int | None = None
+    fail_count: int = 0
+    last_error: str = ""
+
+
+@dataclass(slots=True)
+class PendingQueueSummary:
+    group_id: str
+    pending_count: int = 0
+    failed_count: int = 0
+    media_count: int = 0
+    oldest_created_at: int | None = None
+    newest_created_at: int | None = None
 
 
 def _locked_sqlite_method(method):
@@ -112,11 +140,13 @@ class SQLiteStorage:
                 )
             else:
                 stored_version = int(row[0])
-                if stored_version != SCHEMA_VERSION:
+                if stored_version > SCHEMA_VERSION:
                     raise RuntimeError(
                         f"Database schema version mismatch: "
-                        f"expected {SCHEMA_VERSION}, got {stored_version}"
+                        f"expected <= {SCHEMA_VERSION}, got {stored_version}"
                     )
+                if stored_version < SCHEMA_VERSION:
+                    self._migrate_schema(cursor, stored_version)
 
             # groups 表：分组配置快照
             cursor.execute("""
@@ -182,28 +212,121 @@ class SQLiteStorage:
                 ON seen_tweets(group_id, username)
             """)
 
-            # pending_tweets 表：待推/发送队列（首版仅建表）
+            # pending_tweets 表：待推/发送队列
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pending_tweets (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_id TEXT NOT NULL,
                     username TEXT NOT NULL,
                     status_id TEXT NOT NULL,
+                    instance TEXT NOT NULL DEFAULT '',
                     tweet_data TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     scheduled_at INTEGER,
-                    sent_at INTEGER
+                    published_at INTEGER,
+                    sent_at INTEGER,
+                    failed_at INTEGER,
+                    fail_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT ''
                 )
+            """)
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tweets_unique
+                ON pending_tweets(group_id, username, status_id)
             """)
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_pending_tweets_schedule
                 ON pending_tweets(group_id, scheduled_at)
                 WHERE sent_at IS NULL
             """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_tweets_unsent
+                ON pending_tweets(group_id, created_at)
+                WHERE sent_at IS NULL
+            """)
+
+            # pending_media 表：暂存推文媒体，按推文 ID + 媒体索引绑定
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pending_media (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pending_tweet_id INTEGER NOT NULL,
+                    media_index INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    path TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY(pending_tweet_id)
+                        REFERENCES pending_tweets(id)
+                        ON DELETE CASCADE,
+                    UNIQUE(pending_tweet_id, media_index)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_media_tweet_id
+                ON pending_media(pending_tweet_id)
+            """)
 
             self.conn.commit()
             cursor.close()
             logger.info(f"[NitterTweets] SQLite storage initialized: {self.db_path}")
+
+    def _migrate_schema(self, cursor: sqlite3.Cursor, stored_version: int) -> None:
+        if stored_version < 2:
+            self._migrate_schema_v2(cursor)
+        cursor.execute(
+            """
+            INSERT INTO meta (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            ("schema_version", str(SCHEMA_VERSION), int(time.time())),
+        )
+
+    def _migrate_schema_v2(self, cursor: sqlite3.Cursor) -> None:
+        if not self._table_exists(cursor, "pending_tweets"):
+            return
+
+        columns = self._table_columns(cursor, "pending_tweets")
+        additions = {
+            "instance": "TEXT NOT NULL DEFAULT ''",
+            "published_at": "INTEGER",
+            "failed_at": "INTEGER",
+            "fail_count": "INTEGER NOT NULL DEFAULT 0",
+            "last_error": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                cursor.execute(
+                    f"ALTER TABLE pending_tweets ADD COLUMN {name} {definition}"
+                )
+        cursor.execute(
+            """
+            DELETE FROM pending_tweets
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM pending_tweets
+                GROUP BY group_id, username, status_id
+            )
+            """
+        )
+
+    @staticmethod
+    def _table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:
+        row = cursor.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = ?
+            """,
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    @staticmethod
+    def _table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
+        rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row[1]) for row in rows}
 
     def set_meta(self, key: str, value: str) -> None:
         """设置 meta 键值."""
@@ -501,6 +624,221 @@ class SQLiteStorage:
 
         return seen_map
 
+    def enqueue_pending_tweets(
+        self,
+        group_id: str,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        scheduled_at: int | None = None,
+    ) -> int:
+        """Add tweets to the pending publish queue."""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_group_id(group_id)
+        normalized_username = normalize_username(username)
+        if not normalized_username or not tweets:
+            return 0
+
+        now = int(time.time())
+        inserted = 0
+        for tweet in tweets:
+            status_id = str(tweet.status_id or "").strip()
+            if not status_id:
+                continue
+            cursor = self.conn.execute(
+                """
+                INSERT OR IGNORE INTO pending_tweets (
+                    group_id, username, status_id, instance, tweet_data,
+                    created_at, scheduled_at, published_at, sent_at,
+                    failed_at, fail_count, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, '')
+                """,
+                (
+                    normalized_group_id,
+                    normalized_username,
+                    status_id,
+                    instance or "",
+                    self._serialize_tweet(tweet),
+                    now,
+                    scheduled_at,
+                ),
+            )
+            if int(cursor.rowcount or 0) <= 0:
+                continue
+
+            pending_tweet_id = int(cursor.lastrowid)
+            media_rows = [
+                (
+                    pending_tweet_id,
+                    media_index,
+                    media.kind,
+                    media.url,
+                    str(media.path) if media.path else "",
+                    now,
+                )
+                for media_index, media in enumerate(tweet.media)
+            ]
+            if media_rows:
+                self.conn.executemany(
+                    """
+                    INSERT INTO pending_media (
+                        pending_tweet_id, media_index, kind, url, path, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    media_rows,
+                )
+            inserted += 1
+        return inserted
+
+    def get_pending_tweets(
+        self,
+        group_id: str,
+        limit: int,
+    ) -> list[PendingTweetRecord]:
+        """Get unsent pending tweets for a group."""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_group_id(group_id)
+        rows = self.conn.execute(
+            """
+            SELECT * FROM pending_tweets
+            WHERE group_id = ? AND sent_at IS NULL
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (normalized_group_id, max(1, int(limit))),
+        ).fetchall()
+        if not rows:
+            return []
+
+        pending_ids = [int(row["id"]) for row in rows]
+        media_map = self._pending_media_map(pending_ids)
+        return [self._pending_record_from_row(row, media_map) for row in rows]
+
+    def get_pending_queue_summary(self, group_id: str) -> PendingQueueSummary:
+        """Get pending queue counts for a group."""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_group_id(group_id)
+        row = self.conn.execute(
+            """
+            SELECT
+                COUNT(*) AS pending_count,
+                SUM(CASE WHEN failed_at IS NOT NULL THEN 1 ELSE 0 END)
+                    AS failed_count,
+                MIN(created_at) AS oldest_created_at,
+                MAX(created_at) AS newest_created_at
+            FROM pending_tweets
+            WHERE group_id = ? AND sent_at IS NULL
+            """,
+            (normalized_group_id,),
+        ).fetchone()
+        media_row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS media_count
+            FROM pending_media
+            WHERE pending_tweet_id IN (
+                SELECT id FROM pending_tweets
+                WHERE group_id = ? AND sent_at IS NULL
+            )
+            """,
+            (normalized_group_id,),
+        ).fetchone()
+        return PendingQueueSummary(
+            group_id=normalized_group_id,
+            pending_count=int(row["pending_count"] or 0),
+            failed_count=int(row["failed_count"] or 0),
+            media_count=int(media_row["media_count"] or 0),
+            oldest_created_at=row["oldest_created_at"],
+            newest_created_at=row["newest_created_at"],
+        )
+
+    def get_pending_media_paths(self) -> set[str]:
+        """Get staged media paths still referenced by unsent queue rows."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            """
+            SELECT pending_media.path
+            FROM pending_media
+            JOIN pending_tweets
+                ON pending_tweets.id = pending_media.pending_tweet_id
+            WHERE pending_tweets.sent_at IS NULL
+              AND pending_media.path != ''
+            """
+        ).fetchall()
+        return {str(row[0]) for row in rows if row[0]}
+
+    def mark_pending_tweets_published(self, pending_ids: list[int]) -> None:
+        """Mark pending tweets as sent."""
+        assert self.conn is not None
+        ids = [int(item) for item in pending_ids if int(item) > 0]
+        if not ids:
+            return
+        now = int(time.time())
+        self.conn.executemany(
+            """
+            UPDATE pending_tweets
+            SET published_at = COALESCE(published_at, ?),
+                sent_at = ?,
+                last_error = ''
+            WHERE id = ?
+            """,
+            [(now, now, pending_id) for pending_id in ids],
+        )
+
+    def mark_pending_tweets_failed(
+        self, pending_ids: list[int], error: str
+    ) -> None:
+        """Record a publish failure for pending tweets."""
+        assert self.conn is not None
+        ids = [int(item) for item in pending_ids if int(item) > 0]
+        if not ids:
+            return
+        now = int(time.time())
+        message = str(error or "")[:1000]
+        self.conn.executemany(
+            """
+            UPDATE pending_tweets
+            SET failed_at = ?,
+                fail_count = fail_count + 1,
+                last_error = ?
+            WHERE id = ? AND sent_at IS NULL
+            """,
+            [(now, message, pending_id) for pending_id in ids],
+        )
+
+    def delete_pending_tweets(self, pending_ids: list[int]) -> None:
+        """Delete pending tweets and their media rows."""
+        assert self.conn is not None
+        ids = [int(item) for item in pending_ids if int(item) > 0]
+        if not ids:
+            return
+        self.conn.executemany(
+            "DELETE FROM pending_media WHERE pending_tweet_id = ?",
+            [(pending_id,) for pending_id in ids],
+        )
+        self.conn.executemany(
+            "DELETE FROM pending_tweets WHERE id = ?",
+            [(pending_id,) for pending_id in ids],
+        )
+
+    def cleanup_sent_pending_tweets(self, older_than: int) -> int:
+        """Delete sent pending tweet rows at or before the timestamp."""
+        assert self.conn is not None
+        ids = [
+            int(row[0])
+            for row in self.conn.execute(
+                """
+                SELECT id FROM pending_tweets
+                WHERE sent_at IS NOT NULL AND sent_at <= ?
+                """,
+                (older_than,),
+            ).fetchall()
+        ]
+        self.delete_pending_tweets(ids)
+        return len(ids)
+
     def cleanup_orphan_seen_tweets(self) -> int:
         """清理长期不在订阅配置中的 seen 记录."""
         assert self.conn is not None
@@ -519,6 +857,92 @@ class SQLiteStorage:
             (cutoff,),
         )
         return int(cursor.rowcount or 0)
+
+    @staticmethod
+    def _serialize_tweet(tweet: TweetItem) -> str:
+        return json.dumps(
+            {
+                "text": tweet.text,
+                "link": tweet.link,
+                "published": tweet.published,
+                "media_warnings": tweet.media_warnings,
+                "translation": tweet.translation,
+                "image_caption": tweet.image_caption,
+                "ai_comment": tweet.ai_comment,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _deserialize_tweet(raw_data: str) -> TweetItem:
+        try:
+            data = json.loads(raw_data)
+        except (TypeError, ValueError):
+            data = {}
+        return TweetItem(
+            text=str(data.get("text") or ""),
+            link=str(data.get("link") or ""),
+            published=str(data.get("published") or ""),
+            media_warnings=[
+                str(item)
+                for item in data.get("media_warnings", [])
+                if str(item)
+            ],
+            translation=str(data.get("translation") or ""),
+            image_caption=str(data.get("image_caption") or ""),
+            ai_comment=str(data.get("ai_comment") or ""),
+        )
+
+    def _pending_media_map(
+        self, pending_ids: list[int]
+    ) -> dict[int, list[TweetMedia]]:
+        if not pending_ids:
+            return {}
+        placeholders = ",".join("?" for _ in pending_ids)
+        rows = self.conn.execute(
+            f"""
+            SELECT pending_tweet_id, kind, url, path
+            FROM pending_media
+            WHERE pending_tweet_id IN ({placeholders})
+            ORDER BY pending_tweet_id, media_index
+            """,
+            pending_ids,
+        ).fetchall()
+        media_map: dict[int, list[TweetMedia]] = {}
+        for row in rows:
+            media_path = str(row["path"] or "")
+            media_map.setdefault(int(row["pending_tweet_id"]), []).append(
+                TweetMedia(
+                    kind=str(row["kind"] or ""),
+                    url=str(row["url"] or ""),
+                    path=Path(media_path) if media_path else None,
+                )
+            )
+        return media_map
+
+    def _pending_record_from_row(
+        self,
+        row: sqlite3.Row,
+        media_map: dict[int, list[TweetMedia]],
+    ) -> PendingTweetRecord:
+        pending_id = int(row["id"])
+        tweet = self._deserialize_tweet(row["tweet_data"])
+        tweet.media = media_map.get(pending_id, [])
+        return PendingTweetRecord(
+            id=pending_id,
+            group_id=str(row["group_id"]),
+            username=str(row["username"]),
+            status_id=str(row["status_id"]),
+            instance=str(row["instance"] or ""),
+            tweet=tweet,
+            created_at=int(row["created_at"]),
+            scheduled_at=row["scheduled_at"],
+            published_at=row["published_at"],
+            sent_at=row["sent_at"],
+            failed_at=row["failed_at"],
+            fail_count=int(row["fail_count"] or 0),
+            last_error=str(row["last_error"] or ""),
+        )
 
     def migrate_kv_seen_data(
         self,
@@ -667,6 +1091,14 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "enqueue_pending_tweets",
+    "get_pending_tweets",
+    "get_pending_queue_summary",
+    "get_pending_media_paths",
+    "mark_pending_tweets_published",
+    "mark_pending_tweets_failed",
+    "delete_pending_tweets",
+    "cleanup_sent_pending_tweets",
     "cleanup_orphan_seen_tweets",
     "migrate_kv_seen_data",
     "sync_config_groups",

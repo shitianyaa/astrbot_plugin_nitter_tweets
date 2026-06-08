@@ -182,6 +182,19 @@ class _Event:
         self.messages.append(message)
 
 
+class _ManualNitter:
+    def __init__(self):
+        self.calls = []
+
+    async def fetch_tweets(self, username, limit):
+        self.calls.append(("fetch_tweets", username, limit))
+        return "https://nitter.test", []
+
+    async def fetch_tweets_from_instance(self, instance, username, limit):
+        self.calls.append(("fetch_tweets_from_instance", instance, username, limit))
+        return instance, []
+
+
 def _plugin(config):
     plugin = object.__new__(NitterTweetsPlugin)
     plugin.config = config
@@ -189,7 +202,82 @@ def _plugin(config):
     return plugin
 
 
+def _manual_plugin(config):
+    plugin = _plugin(config)
+    plugin.default_limit = NitterTweetsPlugin._parse_positive_limit(
+        config.get("default_limit", 5), 5
+    )
+    plugin.nitter = _ManualNitter()
+    plugin.translator = None
+    plugin.media = None
+    plugin.enricher = None
+    plugin.sender = None
+    plugin._cooldowns = {}
+    plugin.cooldown_seconds = 0
+    return plugin
+
+
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_tweets_uses_default_limit_without_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
+        event = _Event()
+
+        await plugin.cmd_tweets(event, "NASA", "")
+
+        self.assertEqual(plugin.nitter.calls, [("fetch_tweets", "NASA", 5)])
+        self.assertIn("最近 5 条", event.messages[0])
+
+    async def test_manual_tweets_does_not_clamp_requested_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
+        event = _Event()
+
+        await plugin.cmd_tweets(event, "NASA", "50")
+
+        self.assertEqual(plugin.nitter.calls, [("fetch_tweets", "NASA", 50)])
+        self.assertIn("最近 50 条", event.messages[0])
+
+    async def test_manual_tweets_rejects_non_positive_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5}))
+        event = _Event()
+
+        await plugin.cmd_tweets(event, "NASA", "0")
+
+        self.assertEqual(plugin.nitter.calls, [])
+        self.assertIn("数量需要大于 0", event.messages[-1])
+
+    async def test_mirror_probe_uses_default_limit_without_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
+        event = _Event()
+
+        await plugin.cmd_mirror_probe(event, "nitter.top")
+
+        self.assertEqual(
+            plugin.nitter.calls,
+            [("fetch_tweets_from_instance", "nitter.top", "nasa", 5)],
+        )
+        self.assertIn("最近 5 条", event.messages[0])
+
+    async def test_mirror_probe_does_not_clamp_requested_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
+        event = _Event()
+
+        await plugin.cmd_mirror_probe(event, "NASA 50 nitter.top")
+
+        self.assertEqual(
+            plugin.nitter.calls,
+            [("fetch_tweets_from_instance", "nitter.top", "NASA", 50)],
+        )
+        self.assertIn("最近 50 条", event.messages[0])
+
+    async def test_mirror_probe_rejects_non_positive_quantity(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5}))
+        event = _Event()
+
+        await plugin.cmd_mirror_probe(event, "0 nitter.top")
+
+        self.assertEqual(plugin.nitter.calls, [])
+        self.assertIn("数量需要大于 0", event.messages[-1])
+
     async def test_import_without_group_appends_global_watch_users(self):
         config = _Config(
             {

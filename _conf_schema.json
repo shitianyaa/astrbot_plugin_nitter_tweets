@@ -3,7 +3,7 @@
     "description": "存储后端",
     "type": "string",
     "default": "sqlite",
-    "hint": "sqlite 使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 博主订阅；kv_legacy 作为紧急回退，继续使用旧 KV 存储。"
+    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 博主订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
   },
   "instances": {
     "description": "Nitter 实例列表",
@@ -14,16 +14,10 @@
     "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
   },
   "default_limit": {
-    "description": "默认获取条数",
+    "description": "手动查询默认条数",
     "type": "int",
     "default": 5,
-    "hint": "用户未传数量时使用，范围 1-20。"
-  },
-  "max_limit": {
-    "description": "单次最大条数",
-    "type": "int",
-    "default": 10,
-    "hint": "为避免刷屏和公共实例压力，建议不要超过 10。代码会限制在 1-20。"
+    "hint": "用于 /推文 用户名 和 /镜像测试 镜像站 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。"
   },
   "request_timeout": {
     "description": "单个 Nitter 实例超时秒数",
@@ -199,6 +193,44 @@
     "default": false,
     "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。"
   },
+  "deferred_publish_enabled": {
+    "description": "启用暂存定时发布",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，定时检查发现的新推文会先写入 SQLite 暂存队列，不立即发送；到 deferred_publish_times 配置的时间再统一发布。"
+  },
+  "deferred_publish_times": {
+    "description": "暂存发布时间列表",
+    "type": "list",
+    "default": [
+      "08:00"
+    ],
+    "hint": "格式 HH:MM，每行一个。只有 deferred_publish_enabled 开启时生效。"
+  },
+  "deferred_publish_batch_limit": {
+    "description": "每次暂存发布上限",
+    "type": "int",
+    "default": 50,
+    "hint": "每次从暂存队列最多发布多少条推文，范围 1-500。"
+  },
+  "deferred_prefetch_media": {
+    "description": "暂存时预下载媒体",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，定时检查入队时就下载图片/视频到 cache/staged/；发布成功后删除。关闭时只暂存文本和已生成的翻译/评论。"
+  },
+  "deferred_media_retention_hours": {
+    "description": "暂存媒体保留小时数",
+    "type": "float",
+    "default": 72.0,
+    "hint": "用于清理长期未发布或失败重试遗留的 cache/staged/ 媒体文件，范围 1-8760。"
+  },
+  "deferred_media_download_interval_seconds": {
+    "description": "暂存媒体下载间隔秒数",
+    "type": "float",
+    "default": 0.5,
+    "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。"
+  },
   "check_on_startup": {
     "description": "启动后立即检查",
     "type": "bool",
@@ -278,6 +310,44 @@
             "description": "无新推文时发送检查结果提示",
             "type": "bool",
             "default": false
+          },
+          "deferred_publish_enabled": {
+            "description": "启用暂存定时发布",
+            "type": "bool",
+            "default": false,
+            "hint": "开启后，该分组检查发现的新推文会先暂存到 SQLite，按 deferred_publish_times 再统一发布。"
+          },
+          "deferred_publish_times": {
+            "description": "暂存发布时间列表",
+            "type": "list",
+            "default": [
+              "08:00"
+            ],
+            "hint": "格式 HH:MM，每行一个。"
+          },
+          "deferred_publish_batch_limit": {
+            "description": "每次暂存发布上限",
+            "type": "int",
+            "default": 50,
+            "hint": "每次最多发布多少条暂存推文，范围 1-500。"
+          },
+          "deferred_prefetch_media": {
+            "description": "暂存时预下载媒体",
+            "type": "bool",
+            "default": true,
+            "hint": "开启后，入队时就下载媒体到 cache/staged/，发布成功后删除。"
+          },
+          "deferred_media_retention_hours": {
+            "description": "暂存媒体保留小时数",
+            "type": "float",
+            "default": 72.0,
+            "hint": "清理长期未发布或失败重试遗留的暂存媒体，范围 1-8760。"
+          },
+          "deferred_media_download_interval_seconds": {
+            "description": "暂存媒体下载间隔秒数",
+            "type": "float",
+            "default": 0.5,
+            "hint": "暂存媒体预下载后的额外节流等待，范围 0-60。"
           },
           "interval_check_enabled": {
             "description": "启用间隔检查",

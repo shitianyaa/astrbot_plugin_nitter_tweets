@@ -44,6 +44,12 @@ class ScheduleGroup:
     send_target_interval: float
     send_user_interval: float
     notify_no_updates: bool
+    deferred_publish_enabled: bool
+    deferred_publish_times: list[tuple[int, int]]
+    deferred_publish_batch_limit: int
+    deferred_prefetch_media: bool
+    deferred_media_retention_hours: float
+    deferred_media_download_interval_seconds: float
     users_info: WatchUsersInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
@@ -90,6 +96,28 @@ class SchedulerConfigReader:
                 self.config.get("send_user_interval", 2.0), 0.0, 60.0
             ),
             notify_no_updates=bool(self.config.get("notify_no_updates", False)),
+            deferred_publish_enabled=bool(
+                self.config.get("deferred_publish_enabled", False)
+            ),
+            deferred_publish_times=self.parse_daily_times(
+                self.config.get("deferred_publish_times", [])
+            ),
+            deferred_publish_batch_limit=clamp_int(
+                self.config.get("deferred_publish_batch_limit", 50), 1, 500
+            ),
+            deferred_prefetch_media=bool(
+                self.config.get("deferred_prefetch_media", True)
+            ),
+            deferred_media_retention_hours=clamp_float(
+                self.config.get("deferred_media_retention_hours", 72.0),
+                1.0,
+                8760.0,
+            ),
+            deferred_media_download_interval_seconds=clamp_float(
+                self.config.get("deferred_media_download_interval_seconds", 0.5),
+                0.0,
+                60.0,
+            ),
             users_info=self.watch_users_info(),
             target_info=self.parse_push_targets(log_invalid=log_invalid_targets),
             aliases=["全局", "默认", "default"],
@@ -185,6 +213,52 @@ class SchedulerConfigReader:
             ),
             notify_no_updates=self.parse_bool(
                 raw_group.get("notify_no_updates", False), False
+            ),
+            deferred_publish_enabled=self.parse_bool(
+                raw_group.get(
+                    "deferred_publish_enabled",
+                    self.config.get("deferred_publish_enabled", False),
+                ),
+                False,
+            ),
+            deferred_publish_times=self.parse_daily_times(
+                raw_group.get(
+                    "deferred_publish_times",
+                    self.config.get("deferred_publish_times", []),
+                )
+            ),
+            deferred_publish_batch_limit=clamp_int(
+                raw_group.get(
+                    "deferred_publish_batch_limit",
+                    self.config.get("deferred_publish_batch_limit", 50),
+                ),
+                1,
+                500,
+            ),
+            deferred_prefetch_media=self.parse_bool(
+                raw_group.get(
+                    "deferred_prefetch_media",
+                    self.config.get("deferred_prefetch_media", True),
+                ),
+                True,
+            ),
+            deferred_media_retention_hours=clamp_float(
+                raw_group.get(
+                    "deferred_media_retention_hours",
+                    self.config.get("deferred_media_retention_hours", 72.0),
+                ),
+                1.0,
+                8760.0,
+            ),
+            deferred_media_download_interval_seconds=clamp_float(
+                raw_group.get(
+                    "deferred_media_download_interval_seconds",
+                    self.config.get(
+                        "deferred_media_download_interval_seconds", 0.5
+                    ),
+                ),
+                0.0,
+                60.0,
             ),
             users_info=self.parse_watch_users(raw_group.get("watch_users", [])),
             target_info=self.parse_push_targets(

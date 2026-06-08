@@ -32,7 +32,7 @@
 /推文 https://twitter.com/nasa 5
 ```
 
-省略数量时使用 `default_limit`，数量会被限制在 `1` 到 `max_limit` 之间。
+省略数量时使用 `default_limit`，填写数量时按用户输入获取，不额外截断；为避免刷屏和公共 Nitter 实例压力，日常不要一次请求过多。
 
 ### 镜像测试
 
@@ -43,7 +43,7 @@
 /镜像测试 nasa 3 nitter.top
 ```
 
-`/镜像测试` 默认测试 `nasa`，默认获取 `1` 条；用户名和数量都可以省略，镜像站只影响本次测试，不会写入 `instances` 配置。
+`/镜像测试` 默认测试 `nasa`，默认获取 `default_limit` 条；用户名和数量都可以省略，镜像站只影响本次测试，不会写入 `instances` 配置。
 
 ### 定时推送
 
@@ -90,9 +90,12 @@ telegram:FriendMessage:123456789
 | 命令 | 说明 |
 | --- | --- |
 | `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
-| `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量 `1`。 |
+| `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量使用 `default_limit`。 |
 | `/推文状态` | 查看调度器状态、全部分组项合计、默认分组和自定义分组的关注账号、推送目标、无效项和已记录账号数；长列表最多显示 10 项。 |
 | `/推文检查 [分组名]` | 立即执行一次定时检查；不填时检查全局分组，也可填写自定义分组名称、分组 ID 或别名；结果里的账号列表最多显示 10 项。 |
+| `/推文缓存清理` | 清理普通图片/视频缓存文件；只删除 `cache/` 根目录文件，保留暂存队列媒体目录。 |
+| `/推文队列 [分组名]` | 查看暂存发布队列数量、失败重试数量、暂存媒体数量和发布时间。 |
+| `/推文发布 [分组名]` | 立即发布暂存队列中的推文；不填时发布全局分组。 |
 | `/推文订阅列表` | 查看当前 `watch_users` 的有效作者、重复项和无效项。 |
 | `/订阅导入 账号1,账号2 [分组名]` | 批量追加订阅账号；账号之间只用英文逗号分隔。不填分组时写入全局 `watch_users`，最后一个空格后的参数匹配到分组名称、分组 ID 或别名时写入对应 `tweet_groups[*].watch_users`。只接受 `用户名` 或 `@用户名`，单次最多 50 个。 |
 | `/推文订阅去重` | 规范化并去重 `watch_users`，移除重复作者和无效条目后保存配置。 |
@@ -106,10 +109,9 @@ telegram:FriendMessage:123456789
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | Nitter 实例列表，建议把自建实例放在第一位。 |
-| `storage_backend` | 存储后端；默认 `sqlite` 使用本地 SQLite 数据库，`kv_legacy` 可作为紧急回退。 |
+| `storage_backend` | 存储后端；运行期固定使用本地 SQLite 数据库。旧 KV seen 数据只会在启动迁移时自动导入，不再作为运行后端。 |
 | `request_timeout` | 单个 Nitter 实例超时秒数，超时后尝试下一个实例。 |
-| `default_limit` | 手动 `/推文` 查询默认获取条数。 |
-| `max_limit` | 手动查询最大获取条数。 |
+| `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 
 ### 定时推送
@@ -131,7 +133,22 @@ telegram:FriendMessage:123456789
 | `send_target_interval` | 多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 
-SQLite 模式会把数据库文件保存到 AstrBot 插件数据目录的 `nitter_tweets.db`，用于存储分组配置和定时推送的 seen ID。seen ID 按 `group_id + username` 独立保留最近 300 条；手动 `/推文 用户名 数量` 查询不会写入 seen。取消订阅账号后不会立即删除其 seen 记录，超过 30 天仍未重新订阅的孤儿 seen 记录会在配置同步时清理。
+### 暂存定时发布
+
+| 配置 | 说明 |
+| --- | --- |
+| `deferred_publish_enabled` | 是否启用暂存发布；开启后检查发现的新推文先写入 SQLite，不立即发送。 |
+| `deferred_publish_times` | 暂存队列发布时间列表，格式 `HH:MM`。 |
+| `deferred_publish_batch_limit` | 每次最多发布多少条暂存推文，默认 `50`。 |
+| `deferred_prefetch_media` | 是否在暂存入队时预下载图片/视频到 `cache/staged/`。 |
+| `deferred_media_retention_hours` | 暂存媒体保留小时数，用于清理长期未发布或失败重试遗留的媒体文件。 |
+| `deferred_media_download_interval_seconds` | 暂存媒体预下载时每条推文之间的额外等待秒数，降低连续下载压力。 |
+
+全局配置和 `tweet_groups` 分组配置都支持这些字段。暂存发布开启后，检查时间仍由 `interval_check_enabled`、`check_interval_minutes`、`daily_check_enabled`、`daily_check_times` 控制；发布时间由 `deferred_publish_times` 控制。
+
+暂存媒体会放在 `cache/staged/<group_id>/<status_id>/`，发布成功后删除。`/推文缓存清理` 只清理普通缓存文件，不会删除 `cache/staged/` 中等待发布的媒体。
+
+插件会把数据库文件保存到 AstrBot 插件数据目录的 `nitter_tweets.db`，用于存储分组配置和定时推送的 seen ID。seen ID 按 `group_id + username` 独立保留最近 300 条；手动 `/推文 用户名 数量` 查询不会写入 seen。旧 KV seen 数据会在启动时自动导入 SQLite，运行期不再写入 KV。取消订阅账号后不会立即删除其 seen 记录，超过 30 天仍未重新订阅的孤儿 seen 记录会在配置同步时清理。
 
 ### 媒体
 
@@ -174,6 +191,7 @@ SQLite 模式会把数据库文件保存到 AstrBot 插件数据目录的 `nitte
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - `media_cache_retention_days` 设为 `0` 时，媒体文件会在本轮手动查询或定时推送发送流程结束后删除；如果同一轮要发送到多个目标，会等所有目标都处理完再删除。
+- 暂存发布开启时，新推文会先进入 SQLite 队列；入队成功后立即写入 seen，避免反复入队。发布失败会保留队列和 `cache/staged/` 媒体供下次重试，发布成功后删除暂存媒体。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
 
 ## 常见问题

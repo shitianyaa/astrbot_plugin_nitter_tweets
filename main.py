@@ -16,7 +16,7 @@ try:
     from .scheduler_config import ScheduleGroup
     from .seen_store import GLOBAL_GROUP_ID, normalize_group_id
     from .sender import TweetSender
-    from .utils import clamp_float, clamp_int, normalize_username, safe_call
+    from .utils import clamp_float, normalize_username, safe_call
 except ImportError:
     from enricher import TweetEnricher, TweetTranslator
     from media import MediaService, NitterClient
@@ -24,7 +24,7 @@ except ImportError:
     from scheduler_config import ScheduleGroup
     from seen_store import GLOBAL_GROUP_ID, normalize_group_id
     from sender import TweetSender
-    from utils import clamp_float, clamp_int, normalize_username, safe_call
+    from utils import clamp_float, normalize_username, safe_call
 
 
 @register(
@@ -53,8 +53,9 @@ class NitterTweetsPlugin(Star):
             self.translator,
             self.enricher,
         )
-        self.default_limit = clamp_int(config.get("default_limit", 5), 1, 20)
-        self.max_limit = clamp_int(config.get("max_limit", 10), 1, 20)
+        self.default_limit = self._parse_positive_limit(
+            config.get("default_limit", 5), 5
+        )
         self.cooldown_seconds = clamp_float(
             config.get("cooldown_seconds", 15.0), 0.0, 3600.0
         )
@@ -108,14 +109,14 @@ class NitterTweetsPlugin(Star):
 
         limit_text = self._strip_self_at_argument(event, limit)
         if limit_text:
-            try:
-                requested_limit = int(limit_text)
-            except ValueError:
-                await event.send(event.plain_result("数量需要是整数，例如：/推文 nasa 5"))
+            parsed_limit, limit_error = self._parse_command_limit(limit_text)
+            if limit_error:
+                await event.send(event.plain_result(limit_error))
                 return
+            requested_limit = parsed_limit
         else:
             requested_limit = self.default_limit
-        limit = clamp_int(requested_limit, 1, self.max_limit)
+        limit = requested_limit
         self._mark_cooldown(event)
         await event.send(
             event.plain_result(f"正在获取 @{username} 最近 {limit} 条推文...")
@@ -256,14 +257,17 @@ class NitterTweetsPlugin(Star):
             return "", 0, "", usage
 
         username = "nasa"
-        requested_limit = 1
+        requested_limit = self.default_limit
         seen_username = False
         seen_limit = False
         for token in extras:
-            if token.isdigit():
+            if self._looks_like_limit(token):
                 if seen_limit:
                     return "", 0, "", "数量只能填写一次，例如：/镜像测试 3 nitter.top"
-                requested_limit = int(token)
+                parsed_limit, limit_error = self._parse_command_limit(token)
+                if limit_error:
+                    return "", 0, "", limit_error
+                requested_limit = parsed_limit
                 seen_limit = True
                 continue
 
@@ -275,7 +279,29 @@ class NitterTweetsPlugin(Star):
             username = normalized
             seen_username = True
 
-        return username, clamp_int(requested_limit, 1, self.max_limit), instance_text, ""
+        return username, requested_limit, instance_text, ""
+
+    @staticmethod
+    def _parse_positive_limit(value, fallback: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        return number if number > 0 else fallback
+
+    @classmethod
+    def _parse_command_limit(cls, value: str) -> tuple[int, str]:
+        try:
+            number = int(str(value).strip())
+        except (TypeError, ValueError):
+            return 0, "数量需要是整数，例如：/推文 nasa 5"
+        if number <= 0:
+            return 0, "数量需要大于 0，例如：/推文 nasa 5"
+        return number, ""
+
+    @staticmethod
+    def _looks_like_limit(value: str) -> bool:
+        return bool(re.fullmatch(r"[+-]?\d+", str(value or "").strip()))
 
     def _command_tokens(self, event: AstrMessageEvent, args: str) -> list[str]:
         return [
@@ -344,6 +370,55 @@ class NitterTweetsPlugin(Star):
             group_name=group_name,
         )
         await event.send(event.plain_result(result.format_message()))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文缓存清理")
+    async def cmd_tweets_clear_cache(self, event: AstrMessageEvent):
+        """清理普通图片/视频缓存，保留暂存队列媒体。"""
+        event.stop_event()
+        result = await asyncio.to_thread(self.media.clear_non_staged_cache)
+        await event.send(
+            event.plain_result(
+                "Nitter 普通媒体缓存清理完成\n"
+                f"已删除文件: {result.removed}\n"
+                f"删除失败: {result.failed}\n"
+                f"已跳过目录: {result.skipped_dirs}"
+            )
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文队列")
+    async def cmd_tweets_queue(
+        self,
+        event: AstrMessageEvent,
+        group_name: str = "",
+    ):
+        """查看暂存发布队列。"""
+        event.stop_event()
+        group_name = self._strip_self_at_argument(event, group_name)
+        self.scheduler.start(reason="queue_command")
+        await event.send(
+            event.plain_result(await self.scheduler.pending_queue_summary(group_name))
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文发布")
+    async def cmd_tweets_publish(
+        self,
+        event: AstrMessageEvent,
+        group_name: str = "",
+    ):
+        """立即发布暂存队列中的推文。"""
+        event.stop_event()
+        group_name = self._strip_self_at_argument(event, group_name)
+        self.scheduler.start(reason="publish_command")
+        group_label = group_name or "全局分组"
+        await event.send(event.plain_result(f"正在发布 Nitter 暂存队列：{group_label}..."))
+        result = await self.scheduler.publish_pending(
+            group_name=group_name,
+            reason="manual_publish_command",
+        )
+        await event.send(event.plain_result(result.format_message("Nitter 暂存发布结果")))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文订阅列表", alias={"推文关注列表"})

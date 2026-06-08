@@ -7,13 +7,17 @@
 ### Added
 
 - 新增 SQLite 存储后端，替代 KV 存储用于分组配置和已见推文 ID 跟踪，支持 500+ 博主订阅。
-- 新增配置项 `storage_backend`，可选 `sqlite`（默认）或 `kv_legacy`（紧急回退）。
+- `storage_backend` 保留为兼容配置项，但运行期固定使用 `sqlite`；旧 KV 仅作为 seen 数据启动迁移来源。
 - 新增 `/订阅导入` 管理命令，账号之间只用英文逗号分隔；不带分组时写入全局 `watch_users`，也可在账号列表后用空格追加分组名称、分组 ID 或别名写入对应自定义分组；只接受 `用户名` 或 `@用户名`，单次最多 50 个。
 - 数据库文件存放在 AstrBot 插件数据目录：`data/nitter_tweets.db`。
-- SQLite 表结构：`meta`（schema version、迁移标记）、`groups`（分组配置）、`group_users`（订阅账号）、`group_targets`（推送目标）、`seen_tweets`（已见推文）、`pending_tweets`（待推队列，首版仅建表）。
+- SQLite 表结构：`meta`（schema version、迁移标记）、`groups`（分组配置）、`group_users`（订阅账号）、`group_targets`（推送目标）、`seen_tweets`（已见推文）、`pending_tweets`（待推队列）、`pending_media`（暂存媒体）。
 - 自动从 KV 存储迁移已见推文数据到 SQLite，迁移使用事务保证原子性，失败可重试。
 - 配置分组自动同步到数据库，使用指纹追踪避免重复更新。
 - 新增 `.gitignore` 规则，忽略 `*.db`、`*.db-wal`、`*.db-shm` 文件。
+- 新增管理员命令 `/推文缓存清理`，用于一键清理普通图片/视频缓存文件，并保留暂存队列媒体目录。
+- 新增暂存定时发布功能：可按分组把检查到的新推文写入 SQLite 队列，到配置时间统一发布。
+- 新增管理员命令 `/推文队列` 和 `/推文发布`，用于查看暂存队列和手动立即发布。
+- 新增 `cache/staged/` 暂存媒体目录，暂存入队时可预下载图片/视频，发布成功后自动删除。
 
 ### Changed
 
@@ -25,6 +29,8 @@
 - `/推文状态` 和 `/推文检查` 的账号、目标等长列表最多显示 10 项，并追加“还有 N 个”提示。
 - SQLite 连接允许跨 `asyncio.to_thread()` 线程串行访问，避免 AstrBot 调度器启动和 `/推文状态` 查询时触发 `SQLite objects created in a thread can only be used in that same thread`。
 - 调度器初始化时执行迁移和配置同步，失败时记录错误并在 5 分钟后重试。
+- 存储运行后端固定为 SQLite；即使旧配置仍写着 `kv_legacy`，也会改用 SQLite 并只从旧 KV 导入 seen 数据。
+- `pending_tweets` 从占位表升级为实际发送队列，并新增 `pending_media` 记录暂存媒体索引和路径。
 
 ### Fixed
 
@@ -40,7 +46,7 @@
 
 - 所有 SQLite 操作通过 `asyncio.to_thread()` 包装，避免阻塞事件循环。
 - 数据库初始化时执行完整性检查（`PRAGMA integrity_check`）。
-- 旧 KV 数据永不自动删除，作为回滚备份保留。
+- 旧 KV 数据永不自动删除，仅作为 SQLite 启动迁移来源保留。
 
 ## [0.7.0] - 2026-06-08
 
