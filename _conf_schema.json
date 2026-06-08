@@ -1,4 +1,10 @@
 {
+  "storage_backend": {
+    "description": "存储后端",
+    "type": "string",
+    "default": "sqlite",
+    "hint": "sqlite 使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 博主订阅；kv_legacy 作为紧急回退，继续使用旧 KV 存储。"
+  },
   "instances": {
     "description": "Nitter 实例列表",
     "type": "list",

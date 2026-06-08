@@ -24,7 +24,8 @@ try:
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from .seen_store import GLOBAL_GROUP_ID, SeenStore
+    from .seen_store import GLOBAL_GROUP_ID
+    from .storage_adapter import StorageAdapter
     from .utils import (
         configured_merge_tweet_threshold,
     )
@@ -35,7 +36,8 @@ except ImportError:
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from seen_store import GLOBAL_GROUP_ID, SeenStore
+    from seen_store import GLOBAL_GROUP_ID
+    from storage_adapter import StorageAdapter
     from utils import (
         configured_merge_tweet_threshold,
     )
@@ -246,13 +248,14 @@ class NitterTweetScheduler:
         self.translator = translator
         self.enricher = enricher
         self.config_reader = SchedulerConfigReader(config, context)
-        self.seen_store = SeenStore(owner)
+        self.storage = StorageAdapter(owner, config, context)
         self._task: asyncio.Task | None = None
         self._last_interval_slots: dict[str, int] = {}
         self._daily_slots: dict[str, set[str]] = {}
         self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
+        self._migration_done = False
 
     def start(self, reason: str = "") -> None:
         if self._task is not None and not self._task.done():
@@ -292,6 +295,16 @@ class NitterTweetScheduler:
     async def _loop(self) -> None:
         logger.info("[NitterTweets] scheduler loop entered")
         await asyncio.sleep(2)
+
+        # 执行一次性迁移和配置同步
+        if not self._migration_done:
+            try:
+                schedule_groups = self._schedule_groups(log_invalid_targets=False)
+                await self.storage.migrate_and_sync(schedule_groups)
+                self._migration_done = True
+            except Exception as exc:
+                logger.error(f"[NitterTweets] migration/sync failed: {exc}", exc_info=True)
+
         while True:
             try:
                 if self.schedule_enabled:
@@ -486,7 +499,7 @@ class NitterTweetScheduler:
             seen_ids = seen_map.get(username)
 
             if not isinstance(seen_ids, list):
-                seen_map[username] = self.seen_store.initial_seen_ids(fetched_ids)
+                seen_map[username] = self.storage.initial_seen_ids(fetched_ids)
                 await self._put_seen_map(group.group_id, seen_map)
                 result.initialized_users[username] = len(fetched_ids)
                 logger.info(
@@ -891,15 +904,15 @@ class NitterTweetScheduler:
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
     ) -> dict[str, list[str]]:
-        return await self.seen_store.get_group_seen_map(group_id)
+        return await self.storage.get_group_seen_map(group_id)
 
     async def _put_seen_map(
         self, group_id: str, seen_map: dict[str, list[str]]
     ) -> None:
-        await self.seen_store.put_group_seen_map(group_id, seen_map)
+        await self.storage.put_group_seen_map(group_id, seen_map)
 
     def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
-        return self.seen_store.merge_seen_ids(new_ids, old_ids)
+        return self.storage.merge_seen_ids(new_ids, old_ids)
 
     def _watch_users(self) -> list[str]:
         return self.config_reader.watch_users()
