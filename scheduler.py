@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-import re
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -19,18 +18,26 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
+    from .scheduler_config import (
+        PushTargetParseResult,
+        ScheduleGroup,
+        SchedulerConfigReader,
+        WatchUsersInfo,
+    )
+    from .seen_store import GLOBAL_GROUP_ID, SeenStore
     from .utils import (
-        clamp_float,
-        clamp_int,
         configured_merge_tweet_threshold,
-        normalize_username,
     )
 except ImportError:
+    from scheduler_config import (
+        PushTargetParseResult,
+        ScheduleGroup,
+        SchedulerConfigReader,
+        WatchUsersInfo,
+    )
+    from seen_store import GLOBAL_GROUP_ID, SeenStore
     from utils import (
-        clamp_float,
-        clamp_int,
         configured_merge_tweet_threshold,
-        normalize_username,
     )
 
 
@@ -40,26 +47,7 @@ except ZoneInfoNotFoundError:
     CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 
-KV_KEY_SEEN = "nitter_seen_status_ids"
 POLL_SECONDS = 30
-SEEN_LIMIT_PER_USER = 100
-
-
-@dataclass(slots=True)
-class PushTargetParseResult:
-    targets: list[str] = field(default_factory=list)
-    invalid_targets: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class WatchUsersInfo:
-    raw_count: int
-    users: list[str] = field(default_factory=list)
-    duplicates: list[str] = field(default_factory=list)
-    invalid_entries: list[str] = field(default_factory=list)
-    changed: bool = False
-    saved: bool = False
-    save_error: str = ""
 
 
 @dataclass(slots=True)
@@ -82,9 +70,12 @@ class PendingTweetBatch:
 @dataclass(slots=True)
 class ScheduledCheckResult:
     reason: str
+    group_id: str = GLOBAL_GROUP_ID
+    group_name: str = "全局分组"
     users: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     invalid_targets: list[str] = field(default_factory=list)
+    available_groups: list[str] = field(default_factory=list)
     seen_users: int = 0
     fetch_limit: int = 0
     skipped_reason: str = ""
@@ -105,15 +96,21 @@ class ScheduledCheckResult:
 
     @property
     def pushed_target_successes(self) -> int:
+        per_user_successes = sum(push.success_targets for push in self.pushes)
         if self.push_mode == "merged":
             return self.merged_push_success_targets
-        return sum(push.success_targets for push in self.pushes)
+        if self.push_mode == "mixed":
+            return per_user_successes + self.merged_push_success_targets
+        return per_user_successes
 
     @property
     def pushed_target_attempts(self) -> int:
+        per_user_attempts = sum(push.total_targets for push in self.pushes)
         if self.push_mode == "merged":
             return self.merged_push_total_targets
-        return sum(push.total_targets for push in self.pushes)
+        if self.push_mode == "mixed":
+            return per_user_attempts + self.merged_push_total_targets
+        return per_user_attempts
 
     @property
     def checked_user_count(self) -> int:
@@ -142,7 +139,8 @@ class ScheduledCheckResult:
         if self.skipped_reason:
             return (
                 "[NitterTweets] scheduled check skipped: "
-                f"reason={self.skipped_reason}, users={len(self.users)}, "
+                f"group={self.group_id}, reason={self.skipped_reason}, "
+                f"users={len(self.users)}, "
                 f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
             )
 
@@ -152,12 +150,13 @@ class ScheduledCheckResult:
         )
         return (
             "[NitterTweets] scheduled check finished: "
-            f"reason={self.reason}, users={len(self.users)}, targets={len(self.targets)}, "
+            f"group={self.group_id}, reason={self.reason}, "
+            f"users={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
             f"push_mode={self.push_mode}, "
-            f"merge_threshold={self.merge_tweet_threshold}, "
+            f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
         )
@@ -165,6 +164,7 @@ class ScheduledCheckResult:
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [
             title,
+            f"分组: {self.group_name} ({self.group_id})",
             f"触发原因: {self.reason}",
             f"关注账号: {len(self.users)} 个",
             f"推送目标: {len(self.targets)} 个",
@@ -173,17 +173,20 @@ class ScheduledCheckResult:
         if self.fetch_limit:
             lines.append(f"每账号拉取: {self.fetch_limit} 条")
         if self.merge_tweet_threshold > 0:
-            lines.append(f"合并阈值: {self.merge_tweet_threshold} 条及以上")
+            lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:
-            lines.append("合并阈值: 已关闭")
+            lines.append("QQ 合并阈值: 已关闭")
 
         if self.skipped_reason:
             reason_text = {
                 "no_watch_users": "未配置 watch_users",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
+                "unknown_group": "未找到指定分组",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
+            if self.available_groups:
+                lines.append("可用分组: " + ", ".join(self.available_groups))
 
         if self.initialized_users:
             items = [
@@ -198,16 +201,18 @@ class ScheduledCheckResult:
                 for item in self.pushes
             ]
             lines.append("新推文: " + "; ".join(items))
-            lines.append(
-                "合并推送: "
-                f"{self.merged_push_success_targets}/{self.merged_push_total_targets}"
-            )
         elif self.pushes:
             items = [
                 f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
                 for item in self.pushes
             ]
             lines.append("新推文: " + "; ".join(items))
+
+        if self.merged_push_total_targets:
+            lines.append(
+                "QQ 合并推送: "
+                f"{self.merged_push_success_targets}/{self.merged_push_total_targets}"
+            )
 
         if self.no_new_users:
             lines.append("无新推文: " + ", ".join(f"@{user}" for user in self.no_new_users))
@@ -240,10 +245,12 @@ class NitterTweetScheduler:
         self.sender = sender
         self.translator = translator
         self.enricher = enricher
+        self.config_reader = SchedulerConfigReader(config, context)
+        self.seen_store = SeenStore(owner)
         self._task: asyncio.Task | None = None
-        self._last_interval_slot: int | None = None
-        self._daily_slots: set[str] = set()
-        self._startup_schedule_seeded = False
+        self._last_interval_slots: dict[str, int] = {}
+        self._daily_slots: dict[str, set[str]] = {}
+        self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
 
@@ -257,11 +264,14 @@ class NitterTweetScheduler:
         try:
             loop = asyncio.get_running_loop()
             self._task = loop.create_task(self._loop())
+            groups = self._schedule_groups(log_invalid_targets=False)
             logger.info(
                 "[NitterTweets] scheduler started "
                 f"({reason}); enabled={self.schedule_enabled}, "
-                f"watch_users={len(self._watch_users())}, "
-                f"push_targets={len(self._parse_push_targets(log_invalid=False).targets)}"
+                f"groups={len(groups)}, "
+                f"enabled_groups={sum(1 for group in groups if group.enabled)}, "
+                f"watch_users={sum(len(group.users) for group in groups)}, "
+                f"push_targets={sum(len(group.targets) for group in groups)}"
             )
         except RuntimeError:
             logger.info(
@@ -303,7 +313,11 @@ class NitterTweetScheduler:
 
     @property
     def schedule_enabled(self) -> bool:
-        return bool(self.config.get("schedule_enabled", False))
+        config_enabled = bool(self.config.get("schedule_enabled", False))
+        return config_enabled and any(
+            group.enabled
+            for group in self._schedule_groups(log_invalid_targets=False)
+        )
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -316,90 +330,115 @@ class NitterTweetScheduler:
 
     async def _tick(self) -> None:
         now = dt.datetime.now(CN_TZ)
-        reasons: list[str] = []
+        for group in self._schedule_groups(log_invalid_targets=False):
+            if not group.enabled:
+                continue
+            reasons = self._scheduled_reasons(group, now)
+            if not reasons:
+                continue
+            logger.info(
+                "[NitterTweets] scheduled check triggered: "
+                f"group={group.group_id}, reasons={', '.join(reasons)}"
+            )
+            await self.run_check(
+                reason=", ".join(reasons),
+                group_name=group.group_id,
+            )
 
-        if not self._startup_schedule_seeded:
-            self._startup_schedule_seeded = True
-            if not self.config.get("check_on_startup", False):
-                self._seed_schedule_slots(now)
+    def _scheduled_reasons(
+        self, group: ScheduleGroup, now: dt.datetime
+    ) -> list[str]:
+        reasons: list[str] = []
+        group_id = group.group_id
+
+        if group_id not in self._startup_schedule_seeded:
+            self._startup_schedule_seeded.add(group_id)
+            if not group.check_on_startup:
+                self._seed_schedule_slots(group, now)
                 logger.info(
                     "[NitterTweets] startup scheduled check skipped: "
-                    "check_on_startup=false"
+                    f"group={group_id}, check_on_startup=false"
                 )
-                return
+                return reasons
 
-        if self.config.get("interval_check_enabled", True):
-            interval_minutes = clamp_int(
-                self.config.get("check_interval_minutes", 30), 1, 1440
-            )
+        if group.interval_check_enabled:
+            interval_minutes = group.check_interval_minutes
             slot = int(now.timestamp() // (interval_minutes * 60))
-            if slot != self._last_interval_slot:
-                self._last_interval_slot = slot
+            if slot != self._last_interval_slots.get(group_id):
+                self._last_interval_slots[group_id] = slot
                 reasons.append(f"interval:{interval_minutes}m")
 
-        if self.config.get("daily_check_enabled", False):
-            for hhmm in self._parse_daily_times():
-                hour, minute = hhmm
+        if group.daily_check_enabled:
+            daily_slots = self._daily_slots.setdefault(group_id, set())
+            for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
                     slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
-                    if slot_key not in self._daily_slots:
-                        self._daily_slots.add(slot_key)
+                    if slot_key not in daily_slots:
+                        daily_slots.add(slot_key)
                         reasons.append(f"daily:{hour:02d}:{minute:02d}")
 
-            if len(self._daily_slots) > 256:
+            if len(daily_slots) > 256:
                 today = now.date().isoformat()
-                self._daily_slots = {
-                    slot for slot in self._daily_slots if slot.startswith(today)
+                self._daily_slots[group_id] = {
+                    slot for slot in daily_slots if slot.startswith(today)
                 }
 
-        if reasons:
-            logger.info(f"[NitterTweets] scheduled check triggered: {', '.join(reasons)}")
-            await self.run_check(reason=", ".join(reasons))
+        return reasons
 
-    def _seed_schedule_slots(self, now: dt.datetime) -> None:
-        if self.config.get("interval_check_enabled", True):
-            interval_minutes = clamp_int(
-                self.config.get("check_interval_minutes", 30), 1, 1440
+    def _seed_schedule_slots(self, group: ScheduleGroup, now: dt.datetime) -> None:
+        group_id = group.group_id
+        if group.interval_check_enabled:
+            interval_minutes = group.check_interval_minutes
+            self._last_interval_slots[group_id] = int(
+                now.timestamp() // (interval_minutes * 60)
             )
-            self._last_interval_slot = int(now.timestamp() // (interval_minutes * 60))
 
-        if self.config.get("daily_check_enabled", False):
-            for hour, minute in self._parse_daily_times():
+        if group.daily_check_enabled:
+            daily_slots = self._daily_slots.setdefault(group_id, set())
+            for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
-                    self._daily_slots.add(
-                        f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
-                    )
+                    daily_slots.add(f"{now.date().isoformat()}:{hour:02d}:{minute:02d}")
 
     async def run_check(
         self,
         reason: str = "manual",
         notify_no_updates: bool | None = None,
+        group_name: str = GLOBAL_GROUP_ID,
     ) -> ScheduledCheckResult:
+        group = self._schedule_group(group_name)
+        if group is None:
+            result = self._unknown_group_result(reason, group_name)
+            logger.warning(result.format_log_summary())
+            return result
+
         if self._check_lock.locked():
-            result = self._new_check_result(reason)
+            result = self._new_check_result(reason, group)
             result.skipped_reason = "check_already_running"
             logger.warning(result.format_log_summary())
             return result
 
         async with self._check_lock:
-            return await self._run_check_unlocked(reason, notify_no_updates)
+            return await self._run_check_unlocked(group, reason, notify_no_updates)
 
-    def _new_check_result(self, reason: str) -> ScheduledCheckResult:
-        users = self._watch_users()
-        target_info = self._parse_push_targets()
+    def _new_check_result(
+        self, reason: str, group: ScheduleGroup
+    ) -> ScheduledCheckResult:
         return ScheduledCheckResult(
             reason=reason,
-            users=users,
-            targets=target_info.targets,
-            invalid_targets=target_info.invalid_targets,
+            group_id=group.group_id,
+            group_name=group.name,
+            users=group.users,
+            targets=group.targets,
+            invalid_targets=group.invalid_targets,
         )
 
     async def _run_check_unlocked(
         self,
+        group: ScheduleGroup,
         reason: str,
         notify_no_updates: bool | None,
     ) -> ScheduledCheckResult:
-        result = self._new_check_result(reason)
+        result = self._new_check_result(reason, group)
         users = result.users
         targets = result.targets
         merge_threshold = self._merge_tweet_threshold()
@@ -414,21 +453,18 @@ class NitterTweetScheduler:
             logger.info(result.format_log_summary())
             return result
 
-        seen_map = await self._get_seen_map()
+        seen_map = await self._get_seen_map(group.group_id)
         result.seen_users = len(seen_map)
-        fetch_limit = clamp_int(self.config.get("scheduled_fetch_limit", 5), 1, 20)
+        fetch_limit = group.scheduled_fetch_limit
         result.fetch_limit = fetch_limit
-        target_interval = clamp_float(
-            self.config.get("send_target_interval", 1.5), 0.0, 60.0
-        )
-        user_interval = clamp_float(
-            self.config.get("send_user_interval", 2.0), 0.0, 60.0
-        )
+        target_interval = group.send_target_interval
+        user_interval = group.send_user_interval
         logger.info(
             "[NitterTweets] scheduled check started: "
-            f"reason={reason}, users={len(users)}, targets={len(targets)}, "
+            f"group={group.group_id}, reason={reason}, "
+            f"users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
-            f"fetch_limit={fetch_limit}, merge_threshold={merge_threshold}"
+            f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}"
         )
 
         for username in users:
@@ -451,11 +487,13 @@ class NitterTweetScheduler:
             seen_ids = seen_map.get(username)
 
             if not isinstance(seen_ids, list):
-                seen_map[username] = fetched_ids[:SEEN_LIMIT_PER_USER]
-                await self._put_seen_map(seen_map)
+                seen_map[username] = self.seen_store.initial_seen_ids(fetched_ids)
+                await self._put_seen_map(group.group_id, seen_map)
                 result.initialized_users[username] = len(fetched_ids)
                 logger.info(
-                    f"[NitterTweets] initialized @{username} with {len(fetched_ids)} seen tweets"
+                    "[NitterTweets] initialized "
+                    f"group={group.group_id} @{username} with "
+                    f"{len(fetched_ids)} seen tweets"
                 )
                 continue
 
@@ -493,31 +531,53 @@ class NitterTweetScheduler:
                 )
             else:
                 result.no_new_users.append(username)
-                logger.info(f"[NitterTweets] scheduled check @{username}: no new tweets")
+                logger.info(
+                    f"[NitterTweets] scheduled check group={group.group_id} "
+                    f"@{username}: no new tweets"
+                )
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
-                await self._put_seen_map(seen_map)
+                await self._put_seen_map(group.group_id, seen_map)
 
         if pending_batches:
-            await self._store_pending_seen_ids(pending_batches, seen_map)
+            await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
 
         if self._should_merge_batches(pending_batches, merge_threshold):
-            result.push_mode = "merged"
-            for batch in pending_batches:
-                result.pushes.append(
-                    ScheduledPushResult(
-                        username=batch.username,
-                        new_count=len(batch.tweets),
-                        success_targets=0,
-                        total_targets=0,
-                    )
+            merge_targets, ordinary_targets = self._split_merge_targets(targets)
+        else:
+            merge_targets, ordinary_targets = [], targets
+
+        if merge_targets:
+            result.push_mode = "mixed" if ordinary_targets else "merged"
+            if ordinary_targets:
+                await self._send_per_user_updates(
+                    pending_batches,
+                    result,
+                    ordinary_targets,
+                    target_interval,
+                    user_interval,
                 )
+                if target_interval > 0:
+                    await asyncio.sleep(target_interval)
+            else:
+                for batch in pending_batches:
+                    result.pushes.append(
+                        ScheduledPushResult(
+                            username=batch.username,
+                            new_count=len(batch.tweets),
+                            success_targets=0,
+                            total_targets=0,
+                        )
+                    )
             await self._send_merged_updates(
-                self._tweet_batches(pending_batches), result, target_interval
+                self._tweet_batches(pending_batches),
+                result,
+                merge_targets,
+                target_interval,
             )
         else:
             result.push_mode = "per_user"
             await self._send_per_user_updates(
-                pending_batches, result, targets, target_interval, user_interval
+                pending_batches, result, ordinary_targets, target_interval, user_interval
             )
 
         logger.info(result.format_log_summary())
@@ -526,29 +586,37 @@ class NitterTweetScheduler:
             logger.warning(
                 f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
             )
-        if self._should_notify_no_updates(result, notify_no_updates):
+        if self._should_notify_no_updates(result, notify_no_updates, group):
             await self._send_no_update_notice(result, target_interval)
         return result
 
     async def status_summary(self) -> str:
-        watch_info = self._watch_users_info()
-        users = watch_info.users
-        target_info = self._parse_push_targets(log_invalid=False)
-        seen_map = await self._get_seen_map()
-        interval_minutes = clamp_int(
-            self.config.get("check_interval_minutes", 30), 1, 1440
+        groups = self._schedule_groups(log_invalid_targets=False)
+        group = next(
+            (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
+            groups[0] if groups else None,
         )
-        daily_times = self._parse_daily_times()
+        if group is None:
+            return "Nitter 定时检查状态\n没有可用分组。"
+
+        watch_info = group.users_info
+        users = group.users
+        target_info = group.target_info
+        seen_map = await self._get_seen_map(group.group_id)
+        daily_times = group.daily_check_times
+        enabled_groups = [item for item in groups if item.enabled]
 
         lines = [
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
-            f"启动立即检查: {'已启用' if self.config.get('check_on_startup', False) else '已关闭'}",
-            f"间隔检查: {'已启用' if self.config.get('interval_check_enabled', True) else '已关闭'} / {interval_minutes} 分钟",
-            f"每日定点: {'已启用' if self.config.get('daily_check_enabled', False) else '已关闭'}",
-            f"无更新提示: {'已启用' if self.config.get('notify_no_updates', False) else '已关闭'}",
-            f"合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
+            f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
+            f"分组: {group.name} ({group.group_id})",
+            f"启动立即检查: {'已启用' if group.check_on_startup else '已关闭'}",
+            f"间隔检查: {'已启用' if group.interval_check_enabled else '已关闭'} / {group.check_interval_minutes} 分钟",
+            f"每日定点: {'已启用' if group.daily_check_enabled else '已关闭'}",
+            f"无更新提示: {'已启用' if group.notify_no_updates else '已关闭'}",
+            f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
             f"关注账号: {len(users)} 个（配置 {watch_info.raw_count} 项，重复 {len(watch_info.duplicates)} 项，无效 {len(watch_info.invalid_entries)} 项）",
             f"推送目标: {len(target_info.targets)} 个",
             f"无效目标: {len(target_info.invalid_targets)} 个",
@@ -571,6 +639,10 @@ class NitterTweetScheduler:
                 lines.append(f"- ... 还有 {len(target_info.targets) - 8} 个")
         if target_info.invalid_targets:
             lines.append("无效目标: " + ", ".join(target_info.invalid_targets))
+        if len(groups) > 1:
+            lines.append("分组列表:")
+            for item in groups:
+                self._append_group_status(lines, item)
         return "\n".join(lines)
 
     def deduplicate_watch_users(self) -> WatchUsersInfo:
@@ -599,9 +671,10 @@ class NitterTweetScheduler:
         self,
         result: ScheduledCheckResult,
         notify_no_updates: bool | None,
+        group: ScheduleGroup,
     ) -> bool:
         if notify_no_updates is None:
-            notify_no_updates = bool(self.config.get("notify_no_updates", False))
+            notify_no_updates = group.notify_no_updates
         return bool(notify_no_updates and result.has_visible_no_update())
 
     async def _send_no_update_notice(
@@ -678,10 +751,11 @@ class NitterTweetScheduler:
         self,
         batches,
         result: ScheduledCheckResult,
+        targets: list[str],
         target_interval: float,
     ) -> None:
         success = 0
-        for target_index, umo in enumerate(result.targets):
+        for target_index, umo in enumerate(targets):
             try:
                 outcome = await self.sender.send_merged_to_umo(
                     self.context, umo, batches
@@ -692,11 +766,11 @@ class NitterTweetScheduler:
                         result.delivery_warnings.append(outcome.warning)
                     if outcome.mode not in {
                         "full_forward",
-                        "direct_message",
+                        "forward_without_videos",
                         "uncertain_delivery",
                     }:
                         logger.info(
-                            f"[NitterTweets] 合并推送使用普通发送路径：mode={outcome.mode}"
+                            f"[NitterTweets] QQ 合并推送使用普通发送路径：mode={outcome.mode}"
                         )
                 else:
                     logger.warning(
@@ -707,14 +781,14 @@ class NitterTweetScheduler:
                 logger.warning(
                     f"[NitterTweets] merged scheduled push to {umo} failed: {exc}"
                 )
-            if target_index < len(result.targets) - 1 and target_interval > 0:
+            if target_index < len(targets) - 1 and target_interval > 0:
                 await asyncio.sleep(target_interval)
 
         result.merged_push_success_targets = success
-        result.merged_push_total_targets = len(result.targets)
+        result.merged_push_total_targets = len(targets)
         logger.info(
             f"[NitterTweets] pushed {result.new_tweet_count} merged new tweets "
-            f"from {len(batches)} users to {success}/{len(result.targets)} targets"
+            f"from {len(batches)} users to {success}/{len(targets)} QQ targets"
         )
 
     def _merge_tweet_threshold(self) -> int:
@@ -726,18 +800,31 @@ class NitterTweetScheduler:
             return False
         return sum(len(batch.tweets) for batch in batches) >= threshold
 
+    def _split_merge_targets(self, targets: list[str]) -> tuple[list[str], list[str]]:
+        merge_targets = []
+        ordinary_targets = []
+        for umo in targets:
+            if self.sender.supports_merged_forward_for_umo(self.context, umo):
+                merge_targets.append(umo)
+            else:
+                ordinary_targets.append(umo)
+        return merge_targets, ordinary_targets
+
     @staticmethod
     def _tweet_batches(batches: list[PendingTweetBatch]) -> list[tuple[str, str, list]]:
         return [(batch.username, batch.instance, batch.tweets) for batch in batches]
 
     async def _store_pending_seen_ids(
-        self, batches: list[PendingTweetBatch], seen_map: dict[str, list[str]]
+        self,
+        group_id: str,
+        batches: list[PendingTweetBatch],
+        seen_map: dict[str, list[str]],
     ) -> None:
         for batch in batches:
             seen_map[batch.username] = self._merge_seen_ids(
                 batch.fetched_ids, batch.seen_ids
             )
-        await self._put_seen_map(seen_map)
+        await self._put_seen_map(group_id, seen_map)
 
     @staticmethod
     def _format_merge_threshold(threshold: int) -> str:
@@ -745,224 +832,120 @@ class NitterTweetScheduler:
             return "已关闭"
         return f"{threshold} 条及以上"
 
-    async def _get_seen_map(self) -> dict[str, list[str]]:
-        value = await self.owner.get_kv_data(KV_KEY_SEEN, {})
-        if not isinstance(value, dict):
-            return {}
-        result: dict[str, list[str]] = {}
-        for key, ids in value.items():
-            username = normalize_username(str(key))
-            if not username or not isinstance(ids, list):
-                continue
-            result[username] = [str(item) for item in ids if item]
-        return result
+    @staticmethod
+    def _format_group_schedule(group: ScheduleGroup) -> str:
+        parts = []
+        if group.interval_check_enabled:
+            parts.append(f"间隔 {group.check_interval_minutes} 分钟")
+        if group.daily_check_enabled:
+            if group.daily_check_times:
+                times = ", ".join(
+                    f"{hour:02d}:{minute:02d}"
+                    for hour, minute in group.daily_check_times
+                )
+                parts.append(f"每日 {times}")
+            else:
+                parts.append("每日定点未配置时间")
+        return " / ".join(parts) if parts else "未配置定时规则"
 
-    async def _put_seen_map(self, seen_map: dict[str, list[str]]) -> None:
-        await self.owner.put_kv_data(KV_KEY_SEEN, seen_map)
+    def _append_group_status(self, lines: list[str], group: ScheduleGroup) -> None:
+        lines.append(
+            "- "
+            f"{group.name} ({group.group_id}): "
+            f"{'启用' if group.enabled else '关闭'}，"
+            f"账号 {len(group.users)}，目标 {len(group.targets)}，"
+            f"{self._format_group_schedule(group)}"
+        )
+        if group.aliases:
+            lines.append("  别名: " + self._format_limited_values(group.aliases))
+        if group.users:
+            usernames = [f"@{username}" for username in group.users]
+            lines.append("  订阅账号: " + self._format_limited_values(usernames))
+        if group.users_info.duplicates:
+            lines.append(
+                "  重复订阅: "
+                + self._format_limited_values(group.users_info.duplicates)
+            )
+        if group.users_info.invalid_entries:
+            lines.append(
+                "  无效订阅: "
+                + self._format_limited_values(group.users_info.invalid_entries)
+            )
+        if group.targets:
+            lines.append("  推送目标:")
+            for umo in group.targets[:8]:
+                lines.append(f"  - {umo}")
+            if len(group.targets) > 8:
+                lines.append(f"  - ... 还有 {len(group.targets) - 8} 个")
+        if group.invalid_targets:
+            lines.append(
+                "  无效目标: " + self._format_limited_values(group.invalid_targets)
+            )
 
     @staticmethod
-    def _merge_seen_ids(new_ids: list[str], old_ids: list[str]) -> list[str]:
-        merged: list[str] = []
-        seen: set[str] = set()
-        for status_id in [*new_ids, *[str(item) for item in old_ids]]:
-            if not status_id or status_id in seen:
-                continue
-            seen.add(status_id)
-            merged.append(status_id)
-            if len(merged) >= SEEN_LIMIT_PER_USER:
-                break
-        return merged
+    def _format_limited_values(values: list[str], limit: int = 8) -> str:
+        shown = [str(item) for item in values[:limit]]
+        if len(values) > limit:
+            shown.append(f"... 还有 {len(values) - limit} 个")
+        return ", ".join(shown)
+
+    async def _get_seen_map(
+        self, group_id: str = GLOBAL_GROUP_ID
+    ) -> dict[str, list[str]]:
+        return await self.seen_store.get_group_seen_map(group_id)
+
+    async def _put_seen_map(
+        self, group_id: str, seen_map: dict[str, list[str]]
+    ) -> None:
+        await self.seen_store.put_group_seen_map(group_id, seen_map)
+
+    def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
+        return self.seen_store.merge_seen_ids(new_ids, old_ids)
 
     def _watch_users(self) -> list[str]:
-        return self._watch_users_info().users
+        return self.config_reader.watch_users()
 
     def _watch_users_info(self) -> WatchUsersInfo:
-        raw_users = self.config.get("watch_users", []) or []
-        if isinstance(raw_users, str):
-            raw_users = re.split(r"[\n,，]+", raw_users)
-        elif not isinstance(raw_users, list):
-            raw_users = [raw_users]
-        raw_entries = [str(raw).strip() for raw in raw_users if str(raw).strip()]
-        users: list[str] = []
-        seen: set[str] = set()
-        duplicates: list[str] = []
-        invalid_entries: list[str] = []
-        for raw in raw_entries:
-            username = normalize_username(raw)
-            if not username:
-                invalid_entries.append(raw)
-                continue
-            username_key = username.lower()
-            if username_key in seen:
-                duplicates.append(raw)
-                continue
-            seen.add(username_key)
-            users.append(username)
-        return WatchUsersInfo(
-            raw_count=len(raw_entries),
-            users=users,
-            duplicates=duplicates,
-            invalid_entries=invalid_entries,
-            changed=raw_entries != users,
-        )
+        return self.config_reader.watch_users_info()
 
     def _push_targets(self) -> list[str]:
-        return self._parse_push_targets().targets
+        return self.config_reader.push_targets()
 
     def _parse_push_targets(self, log_invalid: bool = True) -> PushTargetParseResult:
-        default_platform = self._get_platform()
-        raw_targets = self.config.get("push_targets", []) or []
-        result = PushTargetParseResult()
-        seen: set[str] = set()
-        for raw in raw_targets:
-            if not isinstance(raw, str):
-                invalid = repr(raw)
-                result.invalid_targets.append(invalid)
-                if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {invalid}")
-                continue
-            target = raw.strip().replace("：", ":")
-            if not target:
-                continue
-            umo = self._parse_target_to_umo(target, default_platform)
-            if umo is None:
-                result.invalid_targets.append(raw)
-                if log_invalid:
-                    logger.warning(f"[NitterTweets] invalid push target: {raw!r}")
-                continue
-            if umo not in seen:
-                seen.add(umo)
-                result.targets.append(umo)
-        return result
+        return self.config_reader.parse_push_targets(log_invalid=log_invalid)
 
     def _get_platform(self) -> str:
-        configured = (self.config.get("platform_id", "") or "").strip()
-        if configured:
-            return configured
-
-        platform_id = self._detect_context_platform_id()
-        if platform_id:
-            return platform_id
-
-        return "aiocqhttp"
-
-    def _detect_context_platform_id(self) -> str:
-        try:
-            get_all_platforms = getattr(self.context, "get_all_platforms", None)
-            if callable(get_all_platforms):
-                platform_id = self._first_platform_id(get_all_platforms())
-                if platform_id:
-                    return platform_id
-        except Exception as exc:
-            logger.debug(f"[NitterTweets] platform auto-detect failed: {exc}")
-
-        try:
-            manager = getattr(self.context, "platform_manager", None)
-            platform_id = self._first_platform_id(
-                getattr(manager, "platform_insts", []) or []
-            )
-            if platform_id:
-                return platform_id
-        except Exception as exc:
-            logger.debug(f"[NitterTweets] platform manager lookup failed: {exc}")
-
-        return ""
-
-    @classmethod
-    def _first_platform_id(cls, platforms) -> str:
-        if not platforms:
-            return ""
-
-        if isinstance(platforms, dict):
-            for key in platforms:
-                platform_id = str(key).strip()
-                if platform_id and platform_id != "webchat":
-                    return platform_id
-            return ""
-
-        for platform in platforms:
-            platform_id = cls._platform_id(platform)
-            if platform_id and platform_id != "webchat":
-                return platform_id
-        return ""
-
-    @staticmethod
-    def _platform_id(platform) -> str:
-        for attr in ("platform_id", "platform_name", "id", "name"):
-            value = getattr(platform, attr, None)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        meta = getattr(platform, "meta", None)
-        if callable(meta):
-            try:
-                metadata = meta()
-            except Exception:
-                metadata = None
-            for attr in ("id", "name"):
-                value = getattr(metadata, attr, None)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-
-        config = getattr(platform, "config", None)
-        if isinstance(config, dict):
-            value = config.get("id") or config.get("type")
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return ""
-
-    @staticmethod
-    def _parse_target_to_umo(target: str, default_platform: str) -> str | None:
-        if ":GroupMessage:" in target or ":FriendMessage:" in target:
-            return target
-
-        parts = target.split(":")
-        if len(parts) == 2:
-            kind, ident = parts[0].strip().lower(), parts[1].strip()
-            if not ident:
-                return None
-            if kind == "group":
-                return f"{default_platform}:GroupMessage:{ident}"
-            if kind == "private":
-                return f"{default_platform}:FriendMessage:{ident}"
-            return None
-
-        if len(parts) == 3:
-            platform, kind, ident = (
-                parts[0].strip(),
-                parts[1].strip().lower(),
-                parts[2].strip(),
-            )
-            if not platform or not ident:
-                return None
-            if kind == "group":
-                return f"{platform}:GroupMessage:{ident}"
-            if kind == "private":
-                return f"{platform}:FriendMessage:{ident}"
-            return None
-
-        if len(parts) == 1 and target.isdigit():
-            return f"{default_platform}:GroupMessage:{target}"
-        return None
+        return self.config_reader.platform()
 
     def _parse_daily_times(self) -> list[tuple[int, int]]:
-        raw_times = self.config.get("daily_check_times", []) or []
-        if isinstance(raw_times, str):
-            raw_times = re.split(r"[\n,，]+", raw_times)
+        return self.config_reader.parse_daily_times()
 
-        times: list[tuple[int, int]] = []
-        for raw in raw_times:
-            value = str(raw).strip().replace("：", ":")
-            if not value:
-                continue
-            try:
-                hour_s, minute_s = value.split(":", 1)
-                hour, minute = int(hour_s), int(minute_s)
-            except (TypeError, ValueError):
-                logger.warning(f"[NitterTweets] invalid daily_check_times entry: {raw!r}")
-                continue
-            if 0 <= hour < 24 and 0 <= minute < 60:
-                times.append((hour, minute))
-            else:
-                logger.warning(f"[NitterTweets] daily_check_times out of range: {raw!r}")
-        return times
+    def _schedule_groups(
+        self, log_invalid_targets: bool = True
+    ) -> list[ScheduleGroup]:
+        return self.config_reader.schedule_groups(
+            log_invalid_targets=log_invalid_targets
+        )
+
+    def _schedule_group(
+        self, group_name: str = GLOBAL_GROUP_ID, log_invalid_targets: bool = True
+    ) -> ScheduleGroup | None:
+        return self.config_reader.schedule_group(
+            group_name, log_invalid_targets=log_invalid_targets
+        )
+
+    def _unknown_group_result(
+        self, reason: str, group_name: str
+    ) -> ScheduledCheckResult:
+        requested = str(group_name or "").strip() or GLOBAL_GROUP_ID
+        return ScheduledCheckResult(
+            reason=reason,
+            group_id=requested,
+            group_name=requested,
+            skipped_reason="unknown_group",
+            available_groups=[
+                f"{group.name} ({group.group_id})"
+                for group in self._schedule_groups(log_invalid_targets=False)
+            ],
+            merge_tweet_threshold=self._merge_tweet_threshold(),
+        )

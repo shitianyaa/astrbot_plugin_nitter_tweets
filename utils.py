@@ -59,16 +59,7 @@ class TweetItem:
 
 
 DEFAULT_INSTANCES = [
-    "https://nitter.catsarch.com",
-    "https://nitter.tiekoetter.com",
-    "https://nuku.trabun.org",
-    "https://nitter.privacyredirect.com",
-    "https://xcancel.com",
     "https://nitter.net",
-    "https://nitter.space",
-    "https://lightbrd.com",
-    "https://nitter.kareem.one",
-    "https://nitter.poast.org",
 ]
 
 URL_LIKE_RE = re.compile(

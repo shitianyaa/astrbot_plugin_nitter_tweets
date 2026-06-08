@@ -362,6 +362,17 @@ class NitterClient:
             errors.append(f"{instance}: empty feed")
         raise RuntimeError(self._format_fetch_errors(errors))
 
+    async def fetch_tweets_from_instance(
+        self, instance: str, username: str, limit: int,
+    ) -> tuple[str, list[TweetItem]]:
+        normalized = load_instances([instance])[0]
+        tweets = await asyncio.to_thread(
+            self._fetch_from_instance, normalized, username, limit,
+        )
+        if not tweets:
+            raise RuntimeError(f"{normalized}: empty feed")
+        return normalized, tweets
+
     def _format_fetch_errors(self, errors: list[str]) -> str:
         if not errors:
             return "no Nitter instance configured"

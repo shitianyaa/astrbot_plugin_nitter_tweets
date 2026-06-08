@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from astrbot.api import logger
 
@@ -24,23 +22,54 @@ except ImportError:
     from astrbot.api.event import MessageChain
 
 try:
-    from astrbot.api.message_components import Image, Node, Nodes, Plain, Video
+    from astrbot.api.message_components import Plain
 except ImportError:
-    from astrbot.core.message.components import Image, Node, Nodes, Plain, Video
+    from astrbot.core.message.components import Plain
 
 try:
+    from .lark_delivery import (
+        is_lark_platform,
+        lark_client_and_target,
+        lark_client_from_event,
+        lark_event_target,
+        lark_reply_message_id,
+        lark_tweet_post_title,
+        media_components,
+        plain_text_from_components,
+        send_lark_event_media_with_retry,
+        send_lark_post,
+        send_lark_text,
+        send_lark_umo_media_with_retry,
+        video_components,
+    )
     from .utils import (
-        TweetItem, TweetMedia, configured_merge_tweet_threshold, file_uri, node_uin,
-        normalize_external_links, safe_call, strip_external_links,
+        TweetItem,
+        configured_merge_tweet_threshold,
+        safe_call,
     )
+    from .tweet_rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from utils import (
-        TweetItem, TweetMedia, configured_merge_tweet_threshold, file_uri, node_uin,
-        normalize_external_links, safe_call, strip_external_links,
+    from lark_delivery import (
+        is_lark_platform,
+        lark_client_and_target,
+        lark_client_from_event,
+        lark_event_target,
+        lark_reply_message_id,
+        lark_tweet_post_title,
+        media_components,
+        plain_text_from_components,
+        send_lark_event_media_with_retry,
+        send_lark_post,
+        send_lark_text,
+        send_lark_umo_media_with_retry,
+        video_components,
     )
-
-
-TweetBatch = tuple[str, str, list[TweetItem]]
+    from utils import (
+        TweetItem,
+        configured_merge_tweet_threshold,
+        safe_call,
+    )
+    from tweet_rendering import TweetBatch, TweetMessageRenderer
 
 
 @dataclass(slots=True)
@@ -72,8 +101,6 @@ class TweetSender:
     # AstrBot 的 Node/Nodes 合并转发主要由 OneBot v11 实现。
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
     FORWARD_TWEET_CHUNK_SIZE = 8
-    LARK_PLATFORM_NAMES = {"lark", "feishu"}
-    LARK_TEXT_CHUNK_SIZE = 28000
     UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
     def __init__(self, config=None):
@@ -88,6 +115,10 @@ class TweetSender:
             config.get("send_video_attachments", False)
         )
         self.merge_tweet_threshold = configured_merge_tweet_threshold(config)
+        self.renderer = TweetMessageRenderer(
+            send_image_attachments=self.send_image_attachments,
+            send_video_attachments=self.send_video_attachments,
+        )
 
     async def send(
         self,
@@ -141,8 +172,10 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
     ) -> bool:
-        nodes = self._build_nodes(event, username, instance, tweets, notices=notices)
-        raw_nodes = self._build_onebot_nodes(
+        nodes = self.renderer.build_nodes(
+            event, username, instance, tweets, notices=notices
+        )
+        raw_nodes = self.renderer.build_onebot_nodes(
             event, username, instance, tweets, notices=notices
         )
         try:
@@ -159,7 +192,7 @@ class TweetSender:
         # 去掉视频后重试
         if any(m.is_video for t in tweets for m in t.media if m.path):
             try:
-                nodes_nv = self._build_nodes(
+                nodes_nv = self.renderer.build_nodes(
                     event, username, instance, tweets,
                     exclude_videos=True, notices=notices
                 )
@@ -266,7 +299,7 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
     ) -> SendOutcome:
-        nodes = self._build_nodes_for_uin(10000, username, instance, tweets)
+        nodes = self.renderer.build_nodes_for_uin(10000, username, instance, tweets)
         attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "scheduled forwarded tweets"
         )
@@ -281,7 +314,7 @@ class TweetSender:
 
         # 去掉视频后重试
         if any(m.is_video for t in tweets for m in t.media if m.path):
-            nodes_nv = self._build_nodes_for_uin(
+            nodes_nv = self.renderer.build_nodes_for_uin(
                 10000, username, instance, tweets, exclude_videos=True
             )
             attempt_nv = await self._send_context_message(
@@ -306,7 +339,7 @@ class TweetSender:
         fallback = await self._send_context_message(
             context,
             umo,
-            MessageChain([Plain(self.format_plain(username, instance, tweets))]),
+            MessageChain([Plain(self.renderer.format_plain(username, instance, tweets))]),
             "scheduled tweet fallback",
         )
         return SendOutcome(
@@ -321,13 +354,13 @@ class TweetSender:
         umo: str,
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
-        if self._should_use_lark_for_umo(context, umo):
-            return await self._send_lark_merged_to_umo(context, umo, batches)
-
         tweet_count = self._count_batch_tweets(batches)
+        if not self._should_use_merge_for_count(tweet_count):
+            return await self._send_merged_direct_to_umo(context, umo, batches)
+
         if not self._should_use_forward_for_umo(
             context, umo
-        ) or not self._should_use_merge_for_count(tweet_count):
+        ):
             return await self._send_merged_direct_to_umo(context, umo, batches)
 
         if self._should_chunk_forward_tweets(tweet_count):
@@ -378,7 +411,7 @@ class TweetSender:
         batches: list[TweetBatch],
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
-        nodes = self._build_merged_nodes_for_uin(10000, batches)
+        nodes = self.renderer.build_merged_nodes_for_uin(10000, batches)
         attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "merged scheduled tweets"
         )
@@ -394,7 +427,7 @@ class TweetSender:
             )
 
         if omitted_videos:
-            nodes_nv = self._build_merged_nodes_for_uin(
+            nodes_nv = self.renderer.build_merged_nodes_for_uin(
                 10000, batches, exclude_videos=True
             )
             retry_attempt = await self._send_context_message(
@@ -429,7 +462,7 @@ class TweetSender:
         fallback = await self._send_context_message(
             context,
             umo,
-            MessageChain([Plain(self.format_merged_plain(batches))]),
+            MessageChain([Plain(self.renderer.format_merged_plain(batches))]),
             "merged scheduled tweet fallback",
         )
         if fallback.success or fallback.uncertain:
@@ -458,7 +491,7 @@ class TweetSender:
         try:
             await event.send(
                 MessageChain(
-                    self._build_direct_components(
+                    self.renderer.build_direct_components(
                         username, instance, tweets, notices=notices
                     )
                 )
@@ -476,7 +509,7 @@ class TweetSender:
             try:
                 await event.send(
                     MessageChain(
-                        self._build_direct_components(
+                        self.renderer.build_direct_components(
                             username, instance, tweets,
                             exclude_videos=True, notices=notices
                         )
@@ -501,7 +534,13 @@ class TweetSender:
         try:
             await event.send(
                 MessageChain(
-                    [Plain(self.format_plain(username, instance, tweets, notices=notices))]
+                    [
+                        Plain(
+                            self.renderer.format_plain(
+                                username, instance, tweets, notices=notices
+                            )
+                        )
+                    ]
                 )
             )
             return True
@@ -525,7 +564,9 @@ class TweetSender:
         attempt = await self._send_context_message(
             context,
             umo,
-            MessageChain(self._build_direct_components(username, instance, tweets)),
+            MessageChain(
+                self.renderer.build_direct_components(username, instance, tweets)
+            ),
             "direct scheduled tweets",
         )
         if attempt.success:
@@ -542,7 +583,7 @@ class TweetSender:
                 context,
                 umo,
                 MessageChain(
-                    self._build_direct_components(
+                    self.renderer.build_direct_components(
                         username, instance, tweets, exclude_videos=True
                     )
                 ),
@@ -565,7 +606,7 @@ class TweetSender:
         fallback = await self._send_context_message(
             context,
             umo,
-            MessageChain([Plain(self.format_plain(username, instance, tweets))]),
+            MessageChain([Plain(self.renderer.format_plain(username, instance, tweets))]),
             "direct scheduled fallback",
         )
         return SendOutcome(
@@ -584,7 +625,7 @@ class TweetSender:
         attempt = await self._send_context_message(
             context,
             umo,
-            MessageChain(self._build_merged_direct_components(batches)),
+            MessageChain(self.renderer.build_merged_direct_components(batches)),
             "direct merged tweets",
         )
         if attempt.success:
@@ -603,7 +644,7 @@ class TweetSender:
                 context,
                 umo,
                 MessageChain(
-                    self._build_merged_direct_components(
+                    self.renderer.build_merged_direct_components(
                         batches, exclude_videos=True
                     )
                 ),
@@ -635,7 +676,7 @@ class TweetSender:
         fallback = await self._send_context_message(
             context,
             umo,
-            MessageChain([Plain(self.format_merged_plain(batches))]),
+            MessageChain([Plain(self.renderer.format_merged_plain(batches))]),
             "direct merged fallback",
         )
         if fallback.success or fallback.uncertain:
@@ -661,23 +702,79 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
     ) -> bool:
-        components = self._build_direct_components(
+        components = self.renderer.build_direct_components(
             username, instance, tweets, notices=notices
         )
-        client = self._lark_client_from_event(event)
+        client = lark_client_from_event(event, self._platform_inst_from_context)
         if client is None:
             logger.warning("[NitterTweets] Lark client not found; using generic send")
             return await self._send_direct_event(
                 event, username, instance, tweets, notices=notices
             )
 
-        text = self._plain_text_from_components(components)
-        reply_message_id = self._lark_reply_message_id(event)
-        receive_id_type, receive_id = self._lark_event_target(event)
-        text_attempt = await self._send_lark_text(
+        text = plain_text_from_components(components)
+        reply_message_id = lark_reply_message_id(event)
+        receive_id_type, receive_id = lark_event_target(event)
+        post_attempt = await send_lark_post(
+            client,
+            lark_tweet_post_title(username, len(tweets)),
+            components,
+            "manual Lark tweet post",
+            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+            log_uncertain_delivery=self._log_uncertain_delivery,
+            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
+            reply_message_id=reply_message_id,
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if (
+            not (post_attempt.success or post_attempt.uncertain)
+            and reply_message_id
+            and receive_id
+            and receive_id_type
+        ):
+            logger.warning(
+                "[NitterTweets] Lark reply post failed; retrying current session "
+                f"send: {post_attempt.error}"
+            )
+            post_attempt = await send_lark_post(
+                client,
+                lark_tweet_post_title(username, len(tweets)),
+                components,
+                "manual Lark tweet post fallback",
+                is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+                log_uncertain_delivery=self._log_uncertain_delivery,
+                uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
+                receive_id=receive_id,
+                receive_id_type=receive_id_type,
+            )
+        if post_attempt.uncertain:
+            return True
+        if post_attempt.success:
+            video_attempt = await send_lark_event_media_with_retry(
+                event,
+                video_components(components),
+                "manual Lark tweet video media",
+                self._send_event_chain,
+            )
+            if not (video_attempt.success or video_attempt.uncertain):
+                logger.warning(
+                    "[NitterTweets] Lark post sent but video media failed: "
+                    f"{video_attempt.error}"
+                )
+            return True
+
+        logger.warning(
+            "[NitterTweets] Lark post failed; falling back to text/media: "
+            f"{post_attempt.error}"
+        )
+        text_attempt = await send_lark_text(
             client,
             text,
             "manual Lark tweet text",
+            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+            log_uncertain_delivery=self._log_uncertain_delivery,
+            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
             reply_message_id=reply_message_id,
             receive_id=receive_id,
             receive_id_type=receive_id_type,
@@ -692,18 +789,24 @@ class TweetSender:
                 "[NitterTweets] Lark reply text failed; retrying current session "
                 f"send: {text_attempt.error}"
             )
-            text_attempt = await self._send_lark_text(
+            text_attempt = await send_lark_text(
                 client,
                 text,
                 "manual Lark tweet text fallback",
+                is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+                log_uncertain_delivery=self._log_uncertain_delivery,
+                uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
                 receive_id=receive_id,
                 receive_id_type=receive_id_type,
             )
         if not (text_attempt.success or text_attempt.uncertain):
             return False
 
-        media_attempt = await self._send_lark_event_media_with_retry(
-            event, self._media_components(components), "manual Lark tweet media"
+        media_attempt = await send_lark_event_media_with_retry(
+            event,
+            media_components(components),
+            "manual Lark tweet media",
+            self._send_event_chain,
         )
         if not (media_attempt.success or media_attempt.uncertain):
             logger.warning(
@@ -720,10 +823,10 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
     ) -> SendOutcome:
-        components = self._build_direct_components(username, instance, tweets)
-        text = self._plain_text_from_components(components)
-        client, receive_id_type, receive_id = self._lark_client_and_target(
-            context, umo
+        components = self.renderer.build_direct_components(username, instance, tweets)
+        text = plain_text_from_components(components)
+        client, receive_id_type, receive_id = lark_client_and_target(
+            context, umo, self._platform_inst_from_context
         )
         if client is None or not receive_id_type or not receive_id:
             logger.warning(
@@ -734,21 +837,59 @@ class TweetSender:
                 context, umo, username, instance, tweets
             )
 
-        text_attempt = await self._send_lark_text(
+        post_attempt = await send_lark_post(
+            client,
+            lark_tweet_post_title(username, len(tweets)),
+            components,
+            "scheduled Lark tweet post",
+            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+            log_uncertain_delivery=self._log_uncertain_delivery,
+            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
+            receive_id=receive_id,
+            receive_id_type=receive_id_type,
+        )
+        if post_attempt.uncertain:
+            return SendOutcome(success=True, warning=post_attempt.warning)
+        if post_attempt.success:
+            video_attempt = await send_lark_umo_media_with_retry(
+                context,
+                umo,
+                video_components(components),
+                "scheduled Lark tweet video media",
+                self._send_context_message,
+            )
+            warning = post_attempt.warning or video_attempt.warning
+            if not (video_attempt.success or video_attempt.uncertain):
+                warning = video_attempt.error
+                logger.warning(
+                    f"[NitterTweets] Lark post sent to {umo} but video media failed: "
+                    f"{video_attempt.error}"
+                )
+            return SendOutcome(success=True, warning=warning)
+
+        logger.warning(
+            f"[NitterTweets] Lark post failed for {umo}; falling back to "
+            f"text/media: {post_attempt.error}"
+        )
+        text_attempt = await send_lark_text(
             client,
             text,
             "scheduled Lark tweet text",
+            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
+            log_uncertain_delivery=self._log_uncertain_delivery,
+            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
             receive_id=receive_id,
             receive_id_type=receive_id_type,
         )
         if not (text_attempt.success or text_attempt.uncertain):
             return SendOutcome(success=False, error=text_attempt.error)
 
-        media_attempt = await self._send_lark_umo_media_with_retry(
+        media_attempt = await send_lark_umo_media_with_retry(
             context,
             umo,
-            self._media_components(components),
+            media_components(components),
             "scheduled Lark tweet media",
+            self._send_context_message,
         )
         warning = text_attempt.warning or media_attempt.warning
         if not (media_attempt.success or media_attempt.uncertain):
@@ -758,60 +899,6 @@ class TweetSender:
                 f"{media_attempt.error}"
             )
         return SendOutcome(success=True, warning=warning)
-
-    async def _send_lark_merged_to_umo(
-        self,
-        context,
-        umo: str,
-        batches: list[TweetBatch],
-    ) -> MergedSendOutcome:
-        components = self._build_merged_direct_components(batches)
-        omitted_videos = self._count_attached_videos(batches)
-        text = self._plain_text_from_components(components)
-        client, receive_id_type, receive_id = self._lark_client_and_target(
-            context, umo
-        )
-        if client is None or not receive_id_type or not receive_id:
-            logger.warning(
-                f"[NitterTweets] Lark client or target not found for {umo}; "
-                "using generic send"
-            )
-            return await self._send_merged_direct_to_umo(context, umo, batches)
-
-        text_attempt = await self._send_lark_text(
-            client,
-            text,
-            "merged scheduled Lark tweet text",
-            receive_id=receive_id,
-            receive_id_type=receive_id_type,
-        )
-        if not (text_attempt.success or text_attempt.uncertain):
-            return MergedSendOutcome(
-                success=False,
-                mode="failed",
-                omitted_videos=omitted_videos,
-                error=text_attempt.error,
-            )
-
-        media_attempt = await self._send_lark_umo_media_with_retry(
-            context,
-            umo,
-            self._media_components(components),
-            "merged scheduled Lark tweet media",
-        )
-        warning = text_attempt.warning or media_attempt.warning
-        if not (media_attempt.success or media_attempt.uncertain):
-            warning = media_attempt.error
-            logger.warning(
-                f"[NitterTweets] merged Lark tweet text sent to {umo} but media "
-                f"failed: {media_attempt.error}"
-            )
-        return MergedSendOutcome(
-            success=True,
-            mode=("uncertain_delivery" if text_attempt.uncertain else "text_media"),
-            omitted_videos=omitted_videos,
-            warning=warning,
-        )
 
     async def _send_context_message(
         self,
@@ -844,79 +931,6 @@ class TweetSender:
 
         return SendAttempt(success=True)
 
-    async def _send_lark_event_media_with_retry(
-        self,
-        event,
-        media_components: list,
-        label: str,
-    ) -> SendAttempt:
-        async def send_chain(chain: MessageChain, send_label: str) -> SendAttempt:
-            return await self._send_event_chain(event, chain, send_label)
-
-        return await self._send_media_with_video_retry(
-            media_components,
-            label,
-            send_chain,
-            "[NitterTweets] sent media without video/GIF attachments after initial failure",
-        )
-
-    async def _send_lark_umo_media_with_retry(
-        self,
-        context,
-        umo: str,
-        media_components: list,
-        label: str,
-    ) -> SendAttempt:
-        async def send_chain(chain: MessageChain, send_label: str) -> SendAttempt:
-            return await self._send_context_message(context, umo, chain, send_label)
-
-        return await self._send_media_with_video_retry(
-            media_components,
-            label,
-            send_chain,
-            f"[NitterTweets] sent media to {umo} without video/GIF attachments "
-            "after initial failure",
-        )
-
-    async def _send_media_with_video_retry(
-        self,
-        media_components: list,
-        label: str,
-        send_chain,
-        retry_success_log: str,
-    ) -> SendAttempt:
-        if not media_components:
-            return SendAttempt(success=True)
-
-        attempt = await send_chain(MessageChain(media_components), label)
-        if attempt.success or not attempt.retryable:
-            return attempt
-
-        without_videos = [
-            component for component in media_components if not isinstance(component, Video)
-        ]
-        if len(without_videos) == len(media_components):
-            return attempt
-        if not without_videos:
-            logger.warning(
-                "[NitterTweets] 媒体附件发送失败，全部为视频/GIF，标记为不确定"
-            )
-            return SendAttempt(
-                success=False,
-                retryable=False,
-                uncertain=True,
-                error=attempt.error,
-                warning="视频/GIF 附件发送状态不确定，已跳过降级重试。",
-            )
-
-        retry_attempt = await send_chain(
-            MessageChain(without_videos), f"{label} without videos"
-        )
-        if retry_attempt.success:
-            logger.warning(retry_success_log)
-            return SendAttempt(success=True, error=attempt.error)
-        return retry_attempt
-
     async def _send_event_chain(
         self,
         event,
@@ -939,99 +953,6 @@ class TweetSender:
                 )
             logger.warning(f"Failed to send {label}: {error}")
             return SendAttempt(success=False, retryable=True, error=error)
-        return SendAttempt(success=True)
-
-    async def _send_lark_text(
-        self,
-        client,
-        text: str,
-        label: str,
-        reply_message_id: str | None = None,
-        receive_id: str | None = None,
-        receive_id_type: str | None = None,
-    ) -> SendAttempt:
-        text = (text or "").strip()
-        if not text:
-            return SendAttempt(success=True)
-        if client is None or getattr(client, "im", None) is None:
-            error = "Lark API client is unavailable"
-            logger.warning(f"Failed to send {label}: {error}")
-            return SendAttempt(success=False, retryable=False, error=error)
-
-        try:
-            from lark_oapi.api.im.v1 import (
-                CreateMessageRequest,
-                CreateMessageRequestBody,
-                ReplyMessageRequest,
-                ReplyMessageRequestBody,
-            )
-        except Exception as exc:
-            error = f"lark_oapi is unavailable: {exc}"
-            logger.warning(f"Failed to send {label}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
-
-        try:
-            for chunk in self._split_lark_text(text):
-                content = json.dumps({"text": chunk}, ensure_ascii=False)
-                if reply_message_id:
-                    request = (
-                        ReplyMessageRequest.builder()
-                        .message_id(reply_message_id)
-                        .request_body(
-                            ReplyMessageRequestBody.builder()
-                            .content(content)
-                            .msg_type("text")
-                            .build()
-                        )
-                        .build()
-                    )
-                    response = await client.im.v1.message.areply(request)
-                else:
-                    if not receive_id or not receive_id_type:
-                        error = "Lark receive_id or receive_id_type is missing"
-                        logger.warning(f"Failed to send {label}: {error}")
-                        return SendAttempt(
-                            success=False, retryable=True, error=error
-                        )
-                    request = (
-                        CreateMessageRequest.builder()
-                        .receive_id_type(receive_id_type)
-                        .request_body(
-                            CreateMessageRequestBody.builder()
-                            .receive_id(receive_id)
-                            .msg_type("text")
-                            .content(content)
-                            .build()
-                        )
-                        .build()
-                    )
-                    response = await client.im.v1.message.acreate(request)
-
-                if not response.success():
-                    error = (
-                        f"Lark API returned {getattr(response, 'code', '')}: "
-                        f"{getattr(response, 'msg', '')}"
-                    )
-                    logger.warning(f"Failed to send {label}: {error}")
-                    return SendAttempt(
-                        success=False, retryable=True, error=error
-                    )
-        except Exception as exc:
-            error = str(exc)
-            if self._is_uncertain_delivery_error(exc):
-                warning = self.UNCERTAIN_DELIVERY_WARNING
-                target = receive_id or reply_message_id or receive_id_type or "unknown"
-                self._log_uncertain_delivery(label, target, exc)
-                return SendAttempt(
-                    success=False,
-                    retryable=False,
-                    uncertain=True,
-                    error=error,
-                    warning=warning,
-                )
-            logger.warning(f"Failed to send {label}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
-
         return SendAttempt(success=True)
 
     @staticmethod
@@ -1103,129 +1024,6 @@ class TweetSender:
         platform = cls._event_platform(event)
         return platform or "unknown"
 
-    def _build_nodes(
-        self, event, username: str, instance: str, tweets: list[TweetItem],
-        exclude_videos: bool = False, notices: list[str] | None = None,
-    ):
-        return self._build_nodes_for_uin(
-            node_uin(event), username, instance, tweets, exclude_videos, notices
-        )
-
-    def _build_nodes_for_uin(
-        self, uin, username: str, instance: str, tweets: list[TweetItem],
-        exclude_videos: bool = False, notices: list[str] | None = None,
-    ):
-        nodes = Nodes([])
-        nodes.nodes.append(
-            Node(
-                uin=uin,
-                name="Nitter",
-                content=[
-                    Plain(self._format_header(username, instance, len(tweets), notices))
-                ],
-            )
-        )
-
-        for index, tweet in enumerate(tweets, 1):
-            nodes.nodes.append(
-                Node(
-                    uin=uin,
-                    name=f"@{username}",
-                    content=self._build_components(
-                        index, username, tweet, exclude_videos=exclude_videos
-                    ),
-                )
-            )
-        return nodes
-
-    def _build_merged_nodes_for_uin(
-        self, uin, batches: list[TweetBatch], exclude_videos: bool = False,
-    ):
-        nodes = Nodes([])
-        nodes.nodes.append(
-            Node(
-                uin=uin,
-                name="Nitter",
-                content=[Plain(self.format_merged_header(batches))],
-            )
-        )
-
-        index = 1
-        for username, instance, tweets in batches:
-            for tweet in tweets:
-                nodes.nodes.append(
-                    Node(
-                        uin=uin,
-                        name=f"@{username}",
-                        content=self._build_components(
-                            index, username, tweet, source=instance,
-                            exclude_videos=exclude_videos,
-                        ),
-                    )
-                )
-                index += 1
-        return nodes
-
-    def _build_direct_components(
-        self,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        exclude_videos: bool = False,
-        notices: list[str] | None = None,
-    ):
-        components = [
-            Plain(self._format_header(username, instance, len(tweets), notices))
-        ]
-        for index, tweet in enumerate(tweets, 1):
-            components.extend(
-                self._build_direct_tweet_components(
-                    index,
-                    username,
-                    tweet,
-                    exclude_videos=exclude_videos,
-                )
-            )
-        return components
-
-    def _build_merged_direct_components(
-        self, batches: list[TweetBatch], exclude_videos: bool = False,
-    ):
-        components = [Plain(self.format_merged_header(batches))]
-        index = 1
-        for username, instance, tweets in batches:
-            for tweet in tweets:
-                components.extend(
-                    self._build_direct_tweet_components(
-                        index,
-                        username,
-                        tweet,
-                        source=instance,
-                        exclude_videos=exclude_videos,
-                    )
-                )
-                index += 1
-        return components
-
-    def _build_direct_tweet_components(
-        self,
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        source: str = "",
-        exclude_videos: bool = False,
-    ):
-        components = self._build_components(
-            index,
-            username,
-            tweet,
-            source=source,
-            exclude_videos=exclude_videos,
-        )
-        if components and isinstance(components[0], Plain):
-            components[0].text = "\n\n" + components[0].text
-        return components
-
     @staticmethod
     def _count_attached_videos(batches: list[TweetBatch]) -> int:
         return sum(
@@ -1278,6 +1076,9 @@ class TweetSender:
             chunks.append(current)
         return chunks
 
+    def supports_merged_forward_for_umo(self, context, umo: str) -> bool:
+        return self._should_use_forward_for_umo(context, umo)
+
     @classmethod
     def _should_use_lark_for_umo(cls, context, umo: str) -> bool:
         platform = cls._platform_from_umo(umo)
@@ -1291,7 +1092,7 @@ class TweetSender:
 
     @classmethod
     def _is_lark_platform(cls, platform: str) -> bool:
-        return str(platform or "").strip().lower() in cls.LARK_PLATFORM_NAMES
+        return is_lark_platform(platform)
 
     @classmethod
     def _should_use_forward_for_umo(cls, context, umo: str) -> bool:
@@ -1382,226 +1183,6 @@ class TweetSender:
             umo = ""
         return cls._platform_from_umo(str(umo))
 
-    @classmethod
-    def _lark_client_and_target(cls, context, umo: str):
-        platform_id, message_type, session_id = cls._parse_umo(umo)
-        platform = cls._platform_inst_from_context(context, platform_id)
-        client = cls._lark_client_from_platform(platform)
-        receive_id_type = cls._lark_receive_id_type(message_type)
-        receive_id = cls._lark_receive_id(message_type, session_id)
-        return client, receive_id_type, receive_id
-
-    @classmethod
-    def _lark_client_from_event(cls, event):
-        client = getattr(event, "bot", None)
-        if cls._is_lark_client(client):
-            return client
-
-        platform = getattr(event, "platform", None) or getattr(
-            event, "platform_inst", None
-        )
-        client = cls._lark_client_from_platform(platform)
-        if client is not None:
-            return client
-
-        context = getattr(event, "context", None)
-        try:
-            umo = getattr(event, "unified_msg_origin", "")
-        except Exception:
-            umo = ""
-        if context and umo:
-            client, _, _ = cls._lark_client_and_target(context, str(umo))
-            return client
-        return None
-
-    @classmethod
-    def _lark_client_from_platform(cls, platform):
-        if platform is None:
-            return None
-        for attr in ("lark_api", "client", "_client", "bot"):
-            client = getattr(platform, attr, None)
-            if cls._is_lark_client(client):
-                return client
-        if cls._is_lark_client(platform):
-            return platform
-        return None
-
-    @staticmethod
-    def _is_lark_client(client) -> bool:
-        return bool(client is not None and getattr(client, "im", None) is not None)
-
-    @staticmethod
-    def _parse_umo(umo: str) -> tuple[str, str, str]:
-        parts = str(umo or "").split(":", 2)
-        if len(parts) != 3:
-            return "", "", ""
-        return parts[0].strip(), parts[1].strip(), parts[2].strip()
-
-    @classmethod
-    def _lark_receive_id_type(cls, message_type: str) -> str:
-        message_type = message_type.strip().lower()
-        if message_type in {"groupmessage", "group", "group_message"}:
-            return "chat_id"
-        if message_type in {"friendmessage", "private", "private_message"}:
-            return "open_id"
-        return ""
-
-    @classmethod
-    def _lark_receive_id(cls, message_type: str, session_id: str) -> str:
-        if cls._lark_receive_id_type(message_type) == "chat_id" and "%" in session_id:
-            return session_id.split("%", 1)[1]
-        return session_id
-
-    @staticmethod
-    def _lark_reply_message_id(event) -> str:
-        message_obj = getattr(event, "message_obj", None)
-        for source in (message_obj, event):
-            for attr in ("message_id", "id"):
-                value = getattr(source, attr, None)
-                if value:
-                    return str(value)
-        return ""
-
-    @classmethod
-    def _lark_event_target(cls, event) -> tuple[str, str]:
-        try:
-            umo = getattr(event, "unified_msg_origin", "")
-        except Exception:
-            umo = ""
-        _, message_type, session_id = cls._parse_umo(str(umo))
-        receive_id_type = cls._lark_receive_id_type(message_type)
-        receive_id = cls._lark_receive_id(message_type, session_id)
-        return receive_id_type, receive_id
-
-    @staticmethod
-    def _plain_text_from_components(components) -> str:
-        parts = [
-            component.text
-            for component in components
-            if isinstance(component, Plain) and component.text
-        ]
-        return "\n".join(part.strip() for part in parts if part.strip())
-
-    @staticmethod
-    def _media_components(components) -> list:
-        return [
-            component
-            for component in components
-            if isinstance(component, (Image, Video))
-        ]
-
-    @classmethod
-    def _split_lark_text(cls, text: str) -> list[str]:
-        text = text or ""
-        if len(text) <= cls.LARK_TEXT_CHUNK_SIZE:
-            return [text]
-
-        chunks = []
-        remaining = text
-        while len(remaining) > cls.LARK_TEXT_CHUNK_SIZE:
-            split_at = remaining.rfind("\n\n", 0, cls.LARK_TEXT_CHUNK_SIZE)
-            if split_at <= 0:
-                split_at = remaining.rfind("\n", 0, cls.LARK_TEXT_CHUNK_SIZE)
-            if split_at <= 0:
-                split_at = cls.LARK_TEXT_CHUNK_SIZE
-            chunks.append(remaining[:split_at].strip())
-            remaining = remaining[split_at:].strip()
-        if remaining:
-            chunks.append(remaining)
-        return [chunk for chunk in chunks if chunk]
-
-    def _build_components(
-        self, index: int, username: str, tweet: TweetItem, source: str = "",
-        exclude_videos: bool = False,
-    ):
-        text = self.format_tweet_with_source(index, username, tweet, source)
-        components = [Plain(text)]
-        video_notice_added = False
-        for media in tweet.media:
-            if not media.path:
-                continue
-            if media.is_video and exclude_videos:
-                if not video_notice_added:
-                    components.append(
-                        Plain(
-                            "视频/GIF 附件未作为消息发送，请打开原文查看："
-                            f"{tweet.x_url}"
-                        )
-                    )
-                    video_notice_added = True
-                continue
-            if media.is_video and not self.send_video_attachments:
-                if not video_notice_added:
-                    components.append(
-                        Plain(
-                            "视频/GIF 附件发送功能仍在优化，当前按配置不发送，"
-                            f"请打开原文查看：{tweet.x_url}"
-                        )
-                    )
-                    video_notice_added = True
-                continue
-            if media.is_image and self.send_image_attachments:
-                components.append(Image.fromFileSystem(str(media.path)))
-            elif media.is_video:
-                components.append(Video.fromFileSystem(str(media.path)))
-        return components
-
-    def _build_onebot_nodes(
-        self,
-        event,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        notices: list[str] | None = None,
-    ) -> list[dict]:
-        uin = str(node_uin(event))
-        items = [
-            {
-                "name": "Nitter",
-                "uin": uin,
-                "content": [
-                    self._raw_text(
-                        self._format_header(username, instance, len(tweets), notices)
-                    )
-                ],
-            }
-        ]
-        for index, tweet in enumerate(tweets, 1):
-            content = [self._raw_text(self.format_tweet(index, username, tweet))]
-            content.extend(
-                self._raw_media(media)
-                for media in tweet.media
-                if media.path
-                and (
-                    (media.is_image and self.send_image_attachments)
-                    or (media.is_video and self.send_video_attachments)
-                )
-            )
-            items.append({"name": f"@{username}", "uin": uin, "content": content})
-
-        return [
-            {
-                "type": "node",
-                "data": {
-                    "name": item["name"],
-                    "uin": item["uin"],
-                    "content": item["content"],
-                },
-            }
-            for item in items
-        ]
-
-    @staticmethod
-    def _raw_text(text: str) -> dict:
-        return {"type": "text", "data": {"text": text}}
-
-    @staticmethod
-    def _raw_media(media: TweetMedia) -> dict:
-        uri = file_uri(media.path)
-        if media.is_image:
-            return {"type": "image", "data": {"file": uri}}
-        return {"type": "video", "data": {"file": uri}}
-
     async def _send_onebot_forward(self, event, raw_nodes: list[dict]) -> bool:
         client = getattr(event, "bot", None)
         if client is None:
@@ -1648,142 +1229,3 @@ class TweetSender:
             await call_action(action, **base_payload, messages=raw_nodes)
         except TypeError:
             await call_action(action, **base_payload, message=raw_nodes)
-
-    def format_plain(
-        self,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        notices: list[str] | None = None,
-    ) -> str:
-        blocks = [self._format_header(username, instance, len(tweets), notices)]
-        notice_text = self._format_notices(notices)
-        if notice_text and notice_text not in blocks[0]:
-            blocks.append(notice_text)
-        blocks.extend(
-            self.format_tweet(index, username, tweet)
-            for index, tweet in enumerate(tweets, 1)
-        )
-        return "\n\n".join(blocks)
-
-    def format_merged_plain(self, batches: list[TweetBatch]) -> str:
-        blocks = [self.format_merged_header(batches)]
-        index = 1
-        for username, instance, tweets in batches:
-            for tweet in tweets:
-                blocks.append(
-                    self.format_tweet_with_source(index, username, tweet, instance)
-                )
-                index += 1
-        return "\n\n".join(blocks)
-
-    @staticmethod
-    def format_merged_header(batches: list[TweetBatch]) -> str:
-        total = sum(len(tweets) for _, _, tweets in batches)
-        accounts = "，".join(
-            f"@{username} {len(tweets)} 条" for username, _, tweets in batches
-        )
-        lines = [
-            f"Nitter 本次检查发现 {total} 条新推文",
-            f"更新账号：{accounts}",
-        ]
-        return "\n".join(lines)
-
-    @staticmethod
-    def format_tweet_with_source(
-        index: int, username: str, tweet: TweetItem, source: str = ""
-    ) -> str:
-        return TweetSender.format_tweet(index, username, tweet, source=source)
-
-    @staticmethod
-    def format_tweet(
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        source: str = "",
-    ) -> str:
-        blocks = [f"#{index} @{username}"]
-        if tweet.published:
-            blocks[0] = f"{blocks[0]}\n时间：{tweet.published}"
-
-        original_text = normalize_external_links(tweet.text).strip()
-        if original_text:
-            blocks.append(f"原文：\n{original_text}")
-
-        translation = strip_external_links(tweet.translation)
-        if translation:
-            blocks.append(f"翻译：\n{translation}")
-
-        image_caption = normalize_external_links(tweet.image_caption).strip()
-        if image_caption:
-            blocks.append(f"识图：\n{image_caption}")
-
-        ai_comment = normalize_external_links(tweet.ai_comment).strip()
-        if ai_comment:
-            blocks.append(f"评论：\n{ai_comment}")
-
-        original_link = tweet.x_url or tweet.link
-        if original_link:
-            blocks.append(f"原帖：\n{original_link}")
-
-        if tweet.media_warnings:
-            blocks.append(
-                "媒体提示：\n"
-                + "\n".join(f"- {warning}" for warning in tweet.media_warnings)
-            )
-
-        media_summary = TweetSender._format_media_summary(tweet)
-        if media_summary:
-            blocks.append(media_summary)
-
-        if source:
-            blocks.append(f"Nitter：{TweetSender._format_instance_label(source)}")
-
-        return "\n\n".join(blocks)
-
-    @classmethod
-    def _format_header(
-        cls,
-        username: str,
-        instance: str,
-        tweet_count: int,
-        notices: list[str] | None = None,
-    ) -> str:
-        lines = [
-            f"@{username} 最近 {tweet_count} 条推文",
-        ]
-        if instance:
-            lines.append(f"Nitter：{cls._format_instance_label(instance)}")
-        notice_text = cls._format_notices(notices)
-        if notice_text:
-            lines.append(notice_text)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _format_notices(notices: list[str] | None = None) -> str:
-        clean_notices = [
-            notice.strip() for notice in notices or [] if notice and notice.strip()
-        ]
-        if not clean_notices:
-            return ""
-        return "\n".join(
-            ["处理提示：", *[f"- {notice}" for notice in clean_notices]]
-        )
-
-    @staticmethod
-    def _format_media_summary(tweet: TweetItem) -> str:
-        image_count = sum(1 for item in tweet.media if item.is_image)
-        video_count = sum(1 for item in tweet.media if item.is_video)
-        parts = []
-        if image_count:
-            parts.append(f"图片 {image_count} 张")
-        if video_count:
-            parts.append(f"视频/GIF {video_count} 个")
-        if not parts:
-            return ""
-        return "媒体：" + "，".join(parts)
-
-    @staticmethod
-    def _format_instance_label(instance: str) -> str:
-        parsed = urlparse(instance)
-        return parsed.netloc or parsed.path or instance
