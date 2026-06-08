@@ -454,6 +454,13 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result("\n".join(lines)))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("博主导出")
+    async def cmd_tweets_export_bloggers(self, event: AstrMessageEvent):
+        """按分组导出已配置的订阅博主。"""
+        event.stop_event()
+        await event.send(event.plain_result("\n".join(self._export_bloggers_lines())))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文订阅去重", alias={"推文关注去重"})
     async def cmd_tweets_dedup(self, event: AstrMessageEvent):
         """规范化并去重定时订阅账号列表。"""
@@ -637,6 +644,21 @@ class NitterTweetsPlugin(Star):
             log_invalid_targets=False
         )
         return [f"{group.name} ({group.group_id})" for group in groups]
+
+    def _export_bloggers_lines(self) -> list[str]:
+        groups = self.scheduler.config_reader.schedule_groups(
+            log_invalid_targets=False
+        )
+        return [
+            f"{self._export_group_label(group)}: {','.join(group.users)}"
+            for group in groups
+        ]
+
+    @staticmethod
+    def _export_group_label(group: ScheduleGroup) -> str:
+        if group.group_id == GLOBAL_GROUP_ID:
+            return "全局分组"
+        return group.name or group.group_id
 
     @staticmethod
     def _import_group_label(group: ScheduleGroup | None) -> str:

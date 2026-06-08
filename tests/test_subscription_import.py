@@ -298,6 +298,35 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["tweet_groups"][0]["watch_users"], [])
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
 
+    async def test_export_bloggers_outputs_grouped_comma_lists(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA", "@NASA", "bad user"],
+                "tweet_groups": [
+                    {
+                        "name": "科技",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI", "@SpaceX"],
+                    },
+                    {
+                        "name": "新闻",
+                        "group_id": "news",
+                        "watch_users": ["BBCWorld"],
+                    },
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_export_bloggers(event)
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(
+            event.messages[-1],
+            "全局分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
+        )
+
     async def test_import_rejects_more_than_50_accounts(self):
         config = _Config({"watch_users": [], "tweet_groups": []})
         plugin = _plugin(config)
