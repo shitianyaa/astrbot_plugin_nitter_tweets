@@ -25,6 +25,15 @@ except ImportError:
 SCHEMA_VERSION = 2
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
+PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
+    "instance": "ALTER TABLE pending_tweets ADD COLUMN instance TEXT NOT NULL DEFAULT ''",
+    "published_at": "ALTER TABLE pending_tweets ADD COLUMN published_at INTEGER",
+    "failed_at": "ALTER TABLE pending_tweets ADD COLUMN failed_at INTEGER",
+    "fail_count": "ALTER TABLE pending_tweets ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0",
+    "last_error": "ALTER TABLE pending_tweets ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
+}
+SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media"}
+
 
 @dataclass(slots=True)
 class PendingTweetRecord:
@@ -289,18 +298,9 @@ class SQLiteStorage:
             return
 
         columns = self._table_columns(cursor, "pending_tweets")
-        additions = {
-            "instance": "TEXT NOT NULL DEFAULT ''",
-            "published_at": "INTEGER",
-            "failed_at": "INTEGER",
-            "fail_count": "INTEGER NOT NULL DEFAULT 0",
-            "last_error": "TEXT NOT NULL DEFAULT ''",
-        }
-        for name, definition in additions.items():
+        for name, statement in PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS.items():
             if name not in columns:
-                cursor.execute(
-                    f"ALTER TABLE pending_tweets ADD COLUMN {name} {definition}"
-                )
+                cursor.execute(statement)
         cursor.execute(
             """
             DELETE FROM pending_tweets
@@ -323,10 +323,15 @@ class SQLiteStorage:
         ).fetchone()
         return row is not None
 
-    @staticmethod
-    def _table_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
-        rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
-        return {str(row[1]) for row in rows}
+    @classmethod
+    def _table_columns(cls, cursor: sqlite3.Cursor, table_name: str) -> set[str]:
+        if table_name not in SQLITE_TABLE_NAMES:
+            raise ValueError(f"Unsupported SQLite table: {table_name}")
+        rows = cursor.execute(
+            "SELECT name FROM pragma_table_info(?)",
+            (table_name,),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def set_meta(self, key: str, value: str) -> None:
         """设置 meta 键值."""
@@ -699,22 +704,23 @@ class SQLiteStorage:
         """Get unsent pending tweets for a group."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
-        rows = self.conn.execute(
-            """
-            SELECT * FROM pending_tweets
-            WHERE group_id = ? AND sent_at IS NULL
-            ORDER BY created_at ASC, id ASC
-            LIMIT ?
-            """,
-            (normalized_group_id, max(1, int(limit))),
-        ).fetchall()
-        if not rows:
-            return []
+        with self._conn_lock:
+            normalized_group_id = normalize_group_id(group_id)
+            rows = self.conn.execute(
+                """
+                SELECT * FROM pending_tweets
+                WHERE group_id = ? AND sent_at IS NULL
+                ORDER BY created_at ASC, id ASC
+                LIMIT ?
+                """,
+                (normalized_group_id, max(1, int(limit))),
+            ).fetchall()
+            if not rows:
+                return []
 
-        pending_ids = [int(row["id"]) for row in rows]
-        media_map = self._pending_media_map(pending_ids)
-        return [self._pending_record_from_row(row, media_map) for row in rows]
+            pending_ids = [int(row["id"]) for row in rows]
+            media_map = self._pending_media_map(pending_ids)
+            return [self._pending_record_from_row(row, media_map) for row in rows]
 
     def get_pending_queue_summary(self, group_id: str) -> PendingQueueSummary:
         """Get pending queue counts for a group."""
@@ -898,15 +904,30 @@ class SQLiteStorage:
     ) -> dict[int, list[TweetMedia]]:
         if not pending_ids:
             return {}
-        placeholders = ",".join("?" for _ in pending_ids)
+        assert self.conn is not None
+        ids = [(int(item),) for item in pending_ids if int(item) > 0]
+        if not ids:
+            return {}
+        self.conn.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS temp_pending_media_ids (
+                id INTEGER PRIMARY KEY
+            )
+            """
+        )
+        self.conn.execute("DELETE FROM temp_pending_media_ids")
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO temp_pending_media_ids (id) VALUES (?)",
+            ids,
+        )
         rows = self.conn.execute(
-            f"""
+            """
             SELECT pending_tweet_id, kind, url, path
             FROM pending_media
-            WHERE pending_tweet_id IN ({placeholders})
+            JOIN temp_pending_media_ids
+                ON temp_pending_media_ids.id = pending_media.pending_tweet_id
             ORDER BY pending_tweet_id, media_index
             """,
-            pending_ids,
         ).fetchall()
         media_map: dict[int, list[TweetMedia]] = {}
         for row in rows:

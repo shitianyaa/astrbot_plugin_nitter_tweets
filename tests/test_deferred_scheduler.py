@@ -201,6 +201,7 @@ sys.modules["astrbot.core.message.components"] = (
 sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
 
 
+import scheduler as scheduler_module  # noqa: E402
 from scheduler import NitterTweetScheduler  # noqa: E402
 from sqlite_storage import SQLiteStorage  # noqa: E402
 from storage_adapter import StorageAdapter  # noqa: E402
@@ -261,18 +262,38 @@ class _Translator:
 
 
 class _Sender:
-    def __init__(self, success=True, failed_targets=None):
+    def __init__(self, success=True, failed_targets=None, merge_targets=None):
         self.sent = []
+        self.merged_sent = []
         self.success = success
         self.failed_targets = set(failed_targets or [])
+        self.merge_targets = set(merge_targets or [])
 
     def supports_merged_forward_for_umo(self, context, umo):
-        return False
+        return umo in self.merge_targets
 
     async def send_to_umo_with_outcome(self, context, umo, username, instance, tweets):
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
+
+    async def send_merged_to_umo(self, context, umo, batches):
+        self.merged_sent.append(
+            (
+                umo,
+                [
+                    (username, instance, [tweet.status_id for tweet in tweets])
+                    for username, instance, tweets in batches
+                ],
+            )
+        )
+        success = self.success and umo not in self.failed_targets
+        return types.SimpleNamespace(
+            success=success,
+            warning="",
+            error="" if success else "send failed",
+            mode="full_forward",
+        )
 
 
 class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
@@ -293,6 +314,68 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             scheduler.storage.close()
         self.storage_patch.stop()
         self.temp_dir.cleanup()
+
+    def _create_scheduler(
+        self,
+        config,
+        *,
+        media=None,
+        sender=None,
+    ):
+        scheduler = NitterTweetScheduler(
+            _Owner(),
+            context=None,
+            config=config,
+            nitter=_Nitter(),
+            media=media or _Media(),
+            sender=sender or _Sender(),
+            translator=_Translator(),
+            enricher=None,
+        )
+        self.schedulers.append(scheduler)
+        return scheduler
+
+    async def _create_scheduler_with_deferred_publish_enabled(
+        self,
+        push_targets=None,
+        *,
+        media=None,
+        sender=None,
+        watch_users=None,
+        extra_config=None,
+    ):
+        config = {
+            "schedule_enabled": True,
+            "watch_users": watch_users or ["NASA"],
+            "push_targets": (
+                ["aiocqhttp:GroupMessage:1"]
+                if push_targets is None
+                else push_targets
+            ),
+            "deferred_publish_enabled": True,
+            "deferred_publish_times": ["08:00"],
+        }
+        if extra_config:
+            config.update(extra_config)
+        scheduler = self._create_scheduler(config, media=media, sender=sender)
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        return scheduler
+
+    @staticmethod
+    def _make_tweet(username, status_id):
+        return TweetItem(
+            text=f"queued {status_id}",
+            link=f"https://x.com/{username}/status/{status_id}",
+            published="",
+        )
+
+    async def _enqueue_deferred_tweets(self, scheduler, tweets_by_user):
+        for username, tweets in tweets_by_user.items():
+            await scheduler.storage.enqueue_pending_tweets(
+                "global", username, "https://nitter.test", tweets
+            )
 
     async def test_deferred_check_queues_without_sending(self):
         config = {
@@ -411,6 +494,28 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(media.staged_cleaned, 1)
 
+    async def test_publish_pending_skipped_no_push_targets(self):
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled(
+            push_targets=[]
+        )
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            result = await scheduler.publish_pending(reason="test_no_targets")
+
+        self.assertEqual(result.skipped_reason, "no_push_targets")
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("reason=no_push_targets", logged)
+
+    async def test_publish_pending_skipped_no_pending_tweets(self):
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled()
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            result = await scheduler.publish_pending(reason="test_empty_queue")
+
+        self.assertEqual(result.skipped_reason, "no_pending_tweets")
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("reason=no_pending_tweets", logged)
+
     async def test_publish_pending_removes_sent_rows_after_success(self):
         config = {
             "schedule_enabled": True,
@@ -450,6 +555,76 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(inserted_again, 1)
         self.assertEqual(summary.pending_count, 1)
+
+    async def test_deferred_publish_mixed_push_mode_cleans_media(self):
+        media = _Media()
+        sender = _Sender(merge_targets={"aiocqhttp:GroupMessage:1"})
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled(
+            push_targets=[
+                "aiocqhttp:GroupMessage:1",
+                "aiocqhttp:GroupMessage:2",
+            ],
+            watch_users=["NASA", "NASAHubble"],
+            media=media,
+            sender=sender,
+            extra_config={
+                "merge_tweet_threshold": 1,
+                "deferred_publish_batch_limit": 10,
+            },
+        )
+        await self._enqueue_deferred_tweets(
+            scheduler,
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                    self._make_tweet("NASA", "202"),
+                ],
+                "NASAHubble": [
+                    self._make_tweet("NASAHubble", "301"),
+                    self._make_tweet("NASAHubble", "302"),
+                ],
+            },
+        )
+
+        result = await scheduler.publish_pending(reason="test_mixed_push_mode")
+        summary = await scheduler.storage.get_pending_queue_summary("global")
+
+        self.assertEqual(result.push_mode, "mixed")
+        self.assertEqual(result.new_tweet_count, 4)
+        self.assertEqual(result.pushed_target_successes, 3)
+        self.assertEqual(result.pushed_target_attempts, 3)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "aiocqhttp:GroupMessage:2",
+                    "NASA",
+                    "https://nitter.test",
+                    ["201", "202"],
+                ),
+                (
+                    "aiocqhttp:GroupMessage:2",
+                    "NASAHubble",
+                    "https://nitter.test",
+                    ["301", "302"],
+                ),
+            ],
+        )
+        self.assertEqual(
+            sender.merged_sent,
+            [
+                (
+                    "aiocqhttp:GroupMessage:1",
+                    [
+                        ("NASA", "https://nitter.test", ["201", "202"]),
+                        ("NASAHubble", "https://nitter.test", ["301", "302"]),
+                    ],
+                )
+            ],
+        )
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(summary.failed_count, 0)
+        self.assertEqual(media.staged_cleaned, 4)
 
     async def test_publish_pending_keeps_queue_when_all_targets_fail(self):
         config = {

@@ -697,18 +697,25 @@ class NitterTweetScheduler:
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
-        queue_summaries = {}
-        for item in groups:
-            queue_summaries[item.group_id] = (
-                await self.storage.get_pending_queue_summary(item.group_id)
-            )
+        queue_summary_results = await asyncio.gather(
+            *[
+                self.storage.get_pending_queue_summary(item.group_id)
+                for item in groups
+            ]
+        )
+        queue_summaries = {
+            item.group_id: summary
+            for item, summary in zip(groups, queue_summary_results)
+        }
         total_pending = sum(item.pending_count for item in queue_summaries.values())
         total_pending_media = sum(item.media_count for item in queue_summaries.values())
-        group_seen_counts: dict[str, int] = {}
-        for item in groups:
-            group_seen_counts[item.group_id] = len(
-                await self._get_seen_map(item.group_id)
-            )
+        seen_map_results = await asyncio.gather(
+            *[self._get_seen_map(item.group_id) for item in groups]
+        )
+        group_seen_counts = {
+            item.group_id: len(seen_map)
+            for item, seen_map in zip(groups, seen_map_results)
+        }
         total_seen_users = sum(group_seen_counts.values())
 
         lines = [

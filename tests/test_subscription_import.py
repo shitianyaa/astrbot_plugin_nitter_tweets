@@ -298,6 +298,37 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["tweet_groups"][0]["watch_users"], [])
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
 
+    async def test_import_rejects_more_than_50_accounts(self):
+        config = _Config({"watch_users": [], "tweet_groups": []})
+        plugin = _plugin(config)
+        event = _Event()
+
+        raw_users = [f"user{index}" for index in range(1, 52)]
+        await plugin.cmd_tweets_import(event, ",".join(raw_users))
+
+        self.assertTrue(event.stopped)
+        self.assertFalse(config.saved)
+        self.assertEqual(config["watch_users"], [])
+        self.assertIn("50", event.messages[-1])
+
+    async def test_import_treats_last_token_as_username_when_group_not_found(self):
+        config = _Config(
+            {
+                "watch_users": [],
+                "tweet_groups": [
+                    {"name": "科技", "group_id": "tech", "watch_users": []}
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_import(event, "nasa, space_x")
+
+        self.assertTrue(event.stopped)
+        self.assertTrue(config.saved)
+        self.assertEqual(config["watch_users"], ["nasa", "space_x"])
+
     async def test_import_without_group_allows_space_after_comma(self):
         config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
         plugin = _plugin(config)
