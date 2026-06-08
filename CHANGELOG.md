@@ -8,6 +8,7 @@
 
 - 新增 SQLite 存储后端，替代 KV 存储用于分组配置和已见推文 ID 跟踪，支持 500+ 博主订阅。
 - 新增配置项 `storage_backend`，可选 `sqlite`（默认）或 `kv_legacy`（紧急回退）。
+- 新增 `/订阅导入` 管理命令，可用逗号、中文逗号或换行批量追加全局 `watch_users`，并自动识别 `@用户名` 和 X/Twitter 链接。
 - 数据库文件存放在 AstrBot 插件数据目录：`data/nitter_tweets.db`。
 - SQLite 表结构：`meta`（schema version、迁移标记）、`groups`（分组配置）、`group_users`（订阅账号）、`group_targets`（推送目标）、`seen_tweets`（已见推文）、`pending_tweets`（待推队列，首版仅建表）。
 - 自动从 KV 存储迁移已见推文数据到 SQLite，迁移使用事务保证原子性，失败可重试。

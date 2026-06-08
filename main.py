@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 
 from astrbot.api.all import At, AstrBotConfig, Context, MessageChain, Plain, Star, logger
@@ -350,13 +351,20 @@ class NitterTweetsPlugin(Star):
         ]
         if info.users:
             lines.append("作者列表:")
-            lines.extend(f"{index}. @{user}" for index, user in enumerate(info.users, 1))
+            lines.extend(
+                f"{index}. @{user}"
+                for index, user in enumerate(info.users[:10], 1)
+            )
+            if len(info.users) > 10:
+                lines.append(f"... 还有 {len(info.users) - 10} 个")
         else:
             lines.append("作者列表为空。")
         if info.duplicates:
-            lines.append("重复项: " + ", ".join(info.duplicates[:10]))
+            lines.append("重复项: " + self._format_limited_values(info.duplicates))
         if info.invalid_entries:
-            lines.append("无效项: " + ", ".join(info.invalid_entries[:10]))
+            lines.append(
+                "无效项: " + self._format_limited_values(info.invalid_entries)
+            )
 
         await event.send(event.plain_result("\n".join(lines)))
 
@@ -385,13 +393,109 @@ class NitterTweetsPlugin(Star):
             lines.append("结果: watch_users 已经是去重后的规范列表。")
 
         if info.users:
-            lines.append("作者列表: " + ", ".join(f"@{user}" for user in info.users))
+            lines.append(
+                "作者列表: "
+                + self._format_limited_values([f"@{user}" for user in info.users])
+            )
         if info.duplicates:
-            lines.append("已移除重复: " + ", ".join(info.duplicates[:10]))
+            lines.append("已移除重复: " + self._format_limited_values(info.duplicates))
         if info.invalid_entries:
-            lines.append("已移除无效: " + ", ".join(info.invalid_entries[:10]))
+            lines.append(
+                "已移除无效: " + self._format_limited_values(info.invalid_entries)
+            )
 
         await event.send(event.plain_result("\n".join(lines)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("订阅导入", alias={"推文订阅导入", "关注导入", "推文关注导入"})
+    async def cmd_tweets_import(self, event: AstrMessageEvent, args=GreedyStr):
+        """批量导入全局定时订阅账号。"""
+        event.stop_event()
+
+        raw_entries = self._parse_subscription_import_args(args)
+        if not raw_entries:
+            await event.send(
+                event.plain_result(
+                    "用法：/订阅导入 nasa,@BBCWorld,https://x.com/SpaceX"
+                )
+            )
+            return
+
+        existing_users = self.scheduler.watch_users_info().users
+        seen = {user.lower() for user in existing_users}
+        added: list[str] = []
+        duplicates: list[str] = []
+        invalid_entries: list[str] = []
+
+        for raw in raw_entries:
+            username = normalize_username(raw)
+            if not username:
+                invalid_entries.append(raw)
+                continue
+            username_key = username.lower()
+            if username_key in seen:
+                duplicates.append(raw)
+                continue
+            seen.add(username_key)
+            added.append(username)
+
+        if added:
+            self.config["watch_users"] = [*existing_users, *added]
+
+        save_error = ""
+        if added:
+            save_config = getattr(self.config, "save_config", None)
+            if callable(save_config):
+                try:
+                    save_config()
+                except Exception as exc:
+                    save_error = str(exc)
+                    logger.warning(
+                        f"Failed to save imported watch_users: {save_error}"
+                    )
+            else:
+                save_error = "当前配置对象不支持 save_config()"
+
+        lines = [
+            "Nitter 订阅导入",
+            f"输入项: {len(raw_entries)} 个",
+            f"新增: {len(added)} 个",
+            f"重复: {len(duplicates)} 个",
+            f"无效: {len(invalid_entries)} 个",
+            f"当前全局关注: {len(existing_users) + len(added)} 个",
+        ]
+        if added:
+            lines.append(
+                "新增账号: "
+                + self._format_limited_values([f"@{user}" for user in added])
+            )
+            if save_error:
+                lines.append(f"保存结果: 已更新运行时配置，但保存失败：{save_error}")
+            else:
+                lines.append("保存结果: 已写入 watch_users。")
+        else:
+            lines.append("保存结果: 没有新增账号。")
+        if duplicates:
+            lines.append("重复项: " + self._format_limited_values(duplicates))
+        if invalid_entries:
+            lines.append("无效项: " + self._format_limited_values(invalid_entries))
+
+        await event.send(event.plain_result("\n".join(lines)))
+
+    @staticmethod
+    def _parse_subscription_import_args(args: str) -> list[str]:
+        return [
+            item.strip()
+            for item in re.split(r"[\n,，]+", str(args or ""))
+            if item.strip()
+        ]
+
+    @staticmethod
+    def _format_limited_values(values: list[str], limit: int = 10) -> str:
+        shown = [str(item) for item in values[:limit]]
+        if len(values) > limit:
+            shown.append(f"... 还有 {len(values) - limit} 个")
+        return ", ".join(shown)
 
     def _cooldown_key(self, event: AstrMessageEvent) -> str:
         sender = safe_call(event, "get_sender_id") or "unknown"
