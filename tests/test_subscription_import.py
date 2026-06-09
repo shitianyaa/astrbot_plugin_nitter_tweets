@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import subprocess
 import sys
 import types
 import unittest
@@ -138,7 +141,14 @@ if "astrbot.api.all" not in sys.modules:
 
 
 from main import NitterTweetsPlugin
+from config_compat import (
+    LEGACY_CONFIG_MIGRATION_KEY,
+    config_get,
+    config_set,
+    migrate_legacy_grouped_config,
+)
 from scheduler_config import SchedulerConfigReader
+from utils import TweetItem
 
 
 class _Config(dict):
@@ -228,6 +238,59 @@ class _ManualNitter:
         return instance, []
 
 
+class _ManualTranslator:
+    def __init__(self, events):
+        self.events = events
+
+    async def attach_translations(self, tweets, umo=None):
+        self.events.append(
+            "translate:" + ",".join(tweet.status_id for tweet in tweets)
+        )
+
+
+class _ManualMedia:
+    def __init__(self, events):
+        self.events = events
+
+    async def attach_media(self, tweets):
+        self.events.append("media:" + ",".join(tweet.status_id for tweet in tweets))
+
+    def cleanup_after_send(self, tweets):
+        self.events.append(
+            "cleanup:" + ",".join(tweet.status_id for tweet in tweets)
+        )
+
+
+class _ManualEnricher:
+    def __init__(self, events):
+        self.events = events
+
+    async def attach_enrichments(self, tweets, umo=None):
+        self.events.append("enrich:" + ",".join(tweet.status_id for tweet in tweets))
+        return types.SimpleNamespace(visible_notices=lambda: [])
+
+
+class _ManualRenderer:
+    def format_plain(self, username, instance, tweets, notices=None):
+        ids = ",".join(tweet.status_id for tweet in tweets)
+        return f"fallback:{username}:{ids}"
+
+
+class _ManualSender:
+    def __init__(self, events, should_merge=False):
+        self.events = events
+        self.renderer = _ManualRenderer()
+        self._should_merge = should_merge
+
+    def should_merge_for_event(self, event, tweet_count):
+        return self._should_merge
+
+    async def send(self, event, username, instance, tweets, notices=None):
+        ids = ",".join(tweet.status_id for tweet in tweets)
+        self.events.append(f"send:{username}:{ids}")
+        return True
+
+
 def _plugin(config):
     plugin = object.__new__(NitterTweetsPlugin)
     plugin.config = config
@@ -248,6 +311,188 @@ def _manual_plugin(config):
     plugin._cooldowns = {}
     plugin.cooldown_seconds = 0
     return plugin
+
+
+class ConfigCompatTest(unittest.TestCase):
+    def test_conf_schema_is_grouped(self):
+        schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            list(schema)[:9],
+            [
+                "basic",
+                "media",
+                "ai_translation",
+                "ai_comment",
+                "ai_vision",
+                "schedule",
+                "deferred",
+                "push",
+                "performance",
+            ],
+        )
+        self.assertIn(LEGACY_CONFIG_MIGRATION_KEY, schema)
+        self.assertTrue(schema["watch_users"]["invisible"])
+        self.assertEqual(schema["tweet_groups"]["type"], "list")
+        self.assertIn("watch_users", schema["push"]["items"])
+        self.assertIn("vision_prompt", schema["ai_vision"]["items"])
+        self.assertIn("deferred_publish_times", schema["deferred"]["items"])
+
+    def test_config_get_prefers_grouped_value(self):
+        config = {
+            "translate_enabled": False,
+            "ai_translation": {"translate_enabled": True},
+        }
+
+        self.assertIs(config_get(config, "translate_enabled", False), True)
+
+    def test_config_get_falls_back_to_flat_value(self):
+        config = {"push_targets": ["telegram:FriendMessage:1"]}
+
+        self.assertEqual(
+            config_get(config, "push_targets", []),
+            ["telegram:FriendMessage:1"],
+        )
+
+    def test_config_set_writes_grouped_value(self):
+        config = {}
+
+        config_set(config, "watch_users", ["NASA"])
+
+        self.assertEqual(config, {"push": {"watch_users": ["NASA"]}})
+
+    def test_migrate_legacy_grouped_config_copies_flat_values_once(self):
+        config = _Config(
+            {
+                "default_limit": 9,
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "basic": {"default_limit": 5},
+                "schedule": {"schedule_enabled": False},
+                "push": {"watch_users": [], "push_targets": []},
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+        config["watch_users"] = ["SHOULD_NOT_OVERWRITE"]
+        config["push"]["watch_users"] = ["OpenAI"]
+        second_changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertFalse(second_changed)
+        self.assertTrue(config.saved)
+        self.assertTrue(config[LEGACY_CONFIG_MIGRATION_KEY])
+        self.assertEqual(config["basic"]["default_limit"], 9)
+        self.assertTrue(config["schedule"]["schedule_enabled"])
+        self.assertEqual(config["push"]["watch_users"], ["OpenAI"])
+        self.assertEqual(
+            config["push"]["push_targets"], ["telegram:FriendMessage:1"]
+        )
+
+    def test_astrbot_config_upgrade_preserves_legacy_flat_values(self):
+        repo = Path(__file__).resolve().parents[1]
+        script = r"""
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from astrbot.core.config.astrbot_config import AstrBotConfig
+from config_compat import config_get, migrate_legacy_grouped_config
+
+repo = Path.cwd()
+schema = json.loads((repo / "_conf_schema.json").read_text(encoding="utf-8"))
+legacy_config = {
+    "schedule_enabled": True,
+    "watch_users": ["NASA"],
+    "push_targets": ["telegram:FriendMessage:1"],
+    "default_limit": 9,
+}
+with TemporaryDirectory() as temp_dir:
+    config_path = Path(temp_dir) / "plugin_config.json"
+    config_path.write_text(
+        json.dumps(legacy_config, ensure_ascii=False),
+        encoding="utf-8-sig",
+    )
+    config = AstrBotConfig(config_path=str(config_path), schema=schema)
+    migrate_legacy_grouped_config(config)
+    print(
+        "RESULT:"
+        + json.dumps(
+            {
+                "schedule_enabled": config_get(config, "schedule_enabled"),
+                "watch_users": config_get(config, "watch_users"),
+                "push_targets": config_get(config, "push_targets"),
+                "default_limit": config_get(config, "default_limit"),
+            },
+            ensure_ascii=False,
+        )
+    )
+"""
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        result_line = next(
+            line.removeprefix("RESULT:")
+            for line in completed.stdout.splitlines()
+            if line.startswith("RESULT:")
+        )
+
+        self.assertEqual(
+            json.loads(result_line),
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "default_limit": 9,
+            },
+        )
+
+    def test_scheduler_reader_reads_grouped_config(self):
+        config = {
+            "schedule": {
+                "schedule_enabled": True,
+                "scheduled_fetch_limit": 7,
+                "daily_check_enabled": True,
+                "daily_check_times": ["08:30"],
+            },
+            "push": {
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:2"],
+                    }
+                ],
+            },
+            "deferred": {
+                "deferred_publish_enabled": True,
+                "deferred_publish_times": ["20:00"],
+            },
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        global_group, tech_group = reader.schedule_groups(log_invalid_targets=False)
+
+        self.assertTrue(global_group.enabled)
+        self.assertEqual(global_group.users, ["NASA"])
+        self.assertEqual(global_group.targets, ["telegram:FriendMessage:1"])
+        self.assertEqual(global_group.scheduled_fetch_limit, 7)
+        self.assertEqual(global_group.daily_check_times, [(8, 30)])
+        self.assertTrue(global_group.deferred_publish_enabled)
+        self.assertEqual(global_group.deferred_publish_times, [(20, 0)])
+        self.assertEqual(tech_group.group_id, "tech")
+        self.assertEqual(tech_group.users, ["OpenAI"])
+        self.assertEqual(tech_group.targets, ["telegram:FriendMessage:2"])
 
 
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
@@ -277,6 +522,47 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plugin.nitter.calls, [])
         self.assertIn("数量需要大于 0", event.messages[-1])
+
+    async def test_manual_tweets_send_each_tweet_after_ai_prepare(self):
+        events = []
+        plugin = _manual_plugin(_Config({"default_limit": 5}))
+        plugin.translator = _ManualTranslator(events)
+        plugin.media = _ManualMedia(events)
+        plugin.enricher = _ManualEnricher(events)
+        plugin.sender = _ManualSender(events)
+        event = _Event()
+        tweets = [
+            TweetItem(
+                text="first",
+                link="https://x.com/NASA/status/101",
+                published="",
+            ),
+            TweetItem(
+                text="second",
+                link="https://x.com/NASA/status/102",
+                published="",
+            ),
+        ]
+
+        await plugin._send_tweets_response(
+            event, "NASA", "https://nitter.test", tweets
+        )
+
+        self.assertEqual(
+            events,
+            [
+                "translate:101",
+                "media:101",
+                "enrich:101",
+                "send:NASA:101",
+                "cleanup:101",
+                "translate:102",
+                "media:102",
+                "enrich:102",
+                "send:NASA:102",
+                "cleanup:102",
+            ],
+        )
 
     async def test_mirror_probe_uses_default_limit_without_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -443,8 +729,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
         self.assertTrue(config.saved)
-        self.assertEqual(config["watch_users"], ["NASA", "BBCWorld", "SpaceX"])
-        self.assertEqual(config["tweet_groups"][0]["watch_users"], [])
+        self.assertEqual(
+            config_get(config, "watch_users"), ["NASA", "BBCWorld", "SpaceX"]
+        )
+        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], [])
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
 
     async def test_export_bloggers_outputs_grouped_comma_lists(self):
@@ -486,7 +774,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
         self.assertFalse(config.saved)
-        self.assertEqual(config["watch_users"], [])
+        self.assertEqual(config_get(config, "watch_users"), [])
         self.assertIn("50", event.messages[-1])
 
     async def test_import_treats_last_token_as_username_when_group_not_found(self):
@@ -505,7 +793,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
         self.assertTrue(config.saved)
-        self.assertEqual(config["watch_users"], ["nasa", "space_x"])
+        self.assertEqual(config_get(config, "watch_users"), ["nasa", "space_x"])
 
     async def test_import_without_group_allows_space_after_comma(self):
         config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
@@ -515,7 +803,9 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets_import(event, "BBCWorld, @SpaceX")
 
         self.assertTrue(config.saved)
-        self.assertEqual(config["watch_users"], ["NASA", "BBCWorld", "SpaceX"])
+        self.assertEqual(
+            config_get(config, "watch_users"), ["NASA", "BBCWorld", "SpaceX"]
+        )
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
 
     async def test_import_without_group_only_splits_accounts_on_commas(self):
@@ -527,7 +817,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(config.saved)
         self.assertEqual(
-            config["watch_users"],
+            config_get(config, "watch_users"),
             ["NASA", "BBCWorld"],
         )
         self.assertIn("无效: 1 个", event.messages[-1])
@@ -553,9 +843,9 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets_import(event, "BBCWorld,@SpaceX 科技")
 
         self.assertTrue(config.saved)
-        self.assertEqual(config["watch_users"], ["NASA"])
+        self.assertEqual(config_get(config, "watch_users"), ["NASA"])
         self.assertEqual(
-            config["tweet_groups"][0]["watch_users"],
+            config_get(config, "tweet_groups")[0]["watch_users"],
             ["OpenAI", "BBCWorld", "SpaceX"],
         )
         self.assertIn("导入分组: 科技 (tech)", event.messages[-1])
@@ -580,8 +870,8 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets_import(event, "BBCWorld,SpaceX 不存在")
 
         self.assertFalse(config.saved)
-        self.assertEqual(config["watch_users"], ["NASA"])
-        self.assertEqual(config["tweet_groups"][0]["watch_users"], [])
+        self.assertEqual(config_get(config, "watch_users"), ["NASA"])
+        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], [])
         self.assertIn("未找到分组：不存在", event.messages[-1])
         self.assertIn("科技 (tech)", event.messages[-1])
 

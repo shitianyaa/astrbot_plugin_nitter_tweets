@@ -7,9 +7,11 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
+    from .config_compat import config_get
     from .seen_store import SeenStore
     from .sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
 except ImportError:
+    from config_compat import config_get
     from seen_store import SeenStore
     from sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
 
@@ -22,7 +24,9 @@ class StorageAdapter:
         self.config = config
         self.context = context
 
-        configured_backend = str(config.get("storage_backend", "sqlite")).strip().lower()
+        configured_backend = str(
+            config_get(config, "storage_backend", "sqlite")
+        ).strip().lower()
         if configured_backend and configured_backend != "sqlite":
             logger.info(
                 "[NitterTweets] "

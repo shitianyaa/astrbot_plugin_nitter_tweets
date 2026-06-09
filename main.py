@@ -10,6 +10,7 @@ from astrbot.api.star import register
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
+    from .config_compat import config_get, config_set, migrate_legacy_grouped_config
     from .enricher import TweetEnricher, TweetTranslator
     from .media import MediaService, NitterClient
     from .scheduler import NitterTweetScheduler
@@ -18,6 +19,7 @@ try:
     from .sender import TweetSender
     from .utils import clamp_float, normalize_username, safe_call
 except ImportError:
+    from config_compat import config_get, config_set, migrate_legacy_grouped_config
     from enricher import TweetEnricher, TweetTranslator
     from media import MediaService, NitterClient
     from scheduler import NitterTweetScheduler
@@ -38,6 +40,7 @@ class NitterTweetsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        migrate_legacy_grouped_config(self.config)
         self.nitter = NitterClient(config)
         self.media = MediaService(config)
         self.sender = TweetSender(config)
@@ -54,10 +57,10 @@ class NitterTweetsPlugin(Star):
             self.enricher,
         )
         self.default_limit = self._parse_positive_limit(
-            config.get("default_limit", 5), 5
+            config_get(config, "default_limit", 5), 5
         )
         self.cooldown_seconds = clamp_float(
-            config.get("cooldown_seconds", 15.0), 0.0, 3600.0
+            config_get(config, "cooldown_seconds", 15.0), 0.0, 3600.0
         )
         self._cooldowns: dict[str, float] = {}
         self.scheduler.start(reason="__init__")
@@ -194,41 +197,101 @@ class NitterTweetsPlugin(Star):
         instance: str,
         tweets,
     ) -> None:
-        await self.translator.attach_translations(tweets, event.unified_msg_origin)
-        try:
-            await self.media.attach_media(tweets)
-            enrich_report = await self.enricher.attach_enrichments(
-                tweets, event.unified_msg_origin
-            )
-            notices = enrich_report.visible_notices()
-            if not await self.sender.send(
-                event, username, instance, tweets, notices=notices
-            ):
-                fallback_text = self.sender.renderer.format_plain(
-                    username, instance, tweets, notices=notices
+        if self.sender.should_merge_for_event(event, len(tweets)):
+            notices = []
+            try:
+                for tweet in tweets:
+                    notices.extend(
+                        await self._prepare_manual_tweets(
+                            [tweet], event.unified_msg_origin
+                        )
+                    )
+                await self._send_manual_tweets_with_fallback(
+                    event,
+                    username,
+                    instance,
+                    tweets,
+                    notices=self._dedupe_texts(notices),
                 )
-                try:
-                    await event.send(MessageChain([Plain(fallback_text)]))
-                except Exception as exc:
-                    logger.warning(f"Failed to send manual tweet fallback: {exc}")
-                    try:
-                        await event.send(
-                            MessageChain(
-                                [
-                                    Plain(
-                                        f"已获取 @{username} 的推文，但发送失败。"
-                                        "请查看插件日志或稍后重试。"
-                                    )
-                                ]
+            finally:
+                await asyncio.to_thread(self.media.cleanup_after_send, tweets)
+            return
+
+        sent_notices: set[str] = set()
+        for tweet in tweets:
+            try:
+                notices = await self._prepare_manual_tweets(
+                    [tweet], event.unified_msg_origin
+                )
+                notices = [
+                    notice for notice in notices if notice not in sent_notices
+                ]
+                sent_notices.update(notices)
+                await self._send_manual_tweets_with_fallback(
+                    event,
+                    username,
+                    instance,
+                    [tweet],
+                    notices=notices,
+                )
+            finally:
+                await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
+
+    async def _prepare_manual_tweets(
+        self,
+        tweets,
+        umo: str | None,
+    ) -> list[str]:
+        await self.translator.attach_translations(tweets, umo)
+        await self.media.attach_media(tweets)
+        enrich_report = await self.enricher.attach_enrichments(tweets, umo)
+        return enrich_report.visible_notices()
+
+    async def _send_manual_tweets_with_fallback(
+        self,
+        event: AstrMessageEvent,
+        username: str,
+        instance: str,
+        tweets,
+        notices: list[str] | None = None,
+    ) -> None:
+        notices = notices or []
+        if await self.sender.send(event, username, instance, tweets, notices=notices):
+            return
+        fallback_text = self.sender.renderer.format_plain(
+            username, instance, tweets, notices=notices
+        )
+        try:
+            await event.send(MessageChain([Plain(fallback_text)]))
+        except Exception as exc:
+            logger.warning(f"Failed to send manual tweet fallback: {exc}")
+            try:
+                await event.send(
+                    MessageChain(
+                        [
+                            Plain(
+                                f"已获取 @{username} 的推文，但发送失败。"
+                                "请查看插件日志或稍后重试。"
                             )
-                        )
-                    except Exception as notice_exc:
-                        logger.warning(
-                            "Failed to send manual tweet failure notice: "
-                            f"{notice_exc}"
-                        )
-        finally:
-            await asyncio.to_thread(self.media.cleanup_after_send, tweets)
+                        ]
+                    )
+                )
+            except Exception as notice_exc:
+                logger.warning(
+                    "Failed to send manual tweet failure notice: "
+                    f"{notice_exc}"
+                )
+
+    @staticmethod
+    def _dedupe_texts(values: list[str]) -> list[str]:
+        result = []
+        seen = set()
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
 
     def _parse_mirror_probe_args(
         self,
@@ -745,10 +808,10 @@ class NitterTweetsPlugin(Star):
         self, group: ScheduleGroup | None, users: list[str]
     ) -> None:
         if group is None or group.group_id == GLOBAL_GROUP_ID:
-            self.config["watch_users"] = users
+            config_set(self.config, "watch_users", users)
             return
 
-        raw_groups = self.config.get("tweet_groups", []) or []
+        raw_groups = config_get(self.config, "tweet_groups", []) or []
         if isinstance(raw_groups, dict):
             group_items = [raw_groups]
         elif isinstance(raw_groups, list):
@@ -768,7 +831,7 @@ class NitterTweetsPlugin(Star):
             if normalize_group_id(parsed.group_id) != target_group_id:
                 continue
             raw_group["watch_users"] = users
-            self.config["tweet_groups"] = raw_groups
+            config_set(self.config, "tweet_groups", raw_groups)
             return
 
         raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")

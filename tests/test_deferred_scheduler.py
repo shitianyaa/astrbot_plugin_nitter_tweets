@@ -205,6 +205,7 @@ import scheduler as scheduler_module  # noqa: E402
 from scheduler import NitterTweetScheduler  # noqa: E402
 from sqlite_storage import SQLiteStorage  # noqa: E402
 from storage_adapter import StorageAdapter  # noqa: E402
+from tweet_rendering import TweetMessageRenderer  # noqa: E402
 from utils import TweetItem  # noqa: E402
 
 
@@ -265,10 +266,51 @@ class _Media:
         self.staged_cleaned += len(tweets)
 
 
+class _RecordingMedia(_Media):
+    def __init__(self, events):
+        super().__init__()
+        self.events = events
+
+    async def attach_media(self, tweets):
+        self.events.append("media:" + ",".join(tweet.status_id for tweet in tweets))
+        await super().attach_media(tweets)
+
+    def cleanup_after_send(self, tweets):
+        self.events.append("cleanup:" + ",".join(tweet.status_id for tweet in tweets))
+        super().cleanup_after_send(tweets)
+
+
 class _Translator:
     async def attach_translations(self, tweets, target):
         for tweet in tweets:
             tweet.translation = "translated"
+
+
+class _RecordingTranslator(_Translator):
+    def __init__(self, events):
+        self.events = events
+
+    async def attach_translations(self, tweets, target):
+        self.events.append(
+            "translate:" + ",".join(tweet.status_id for tweet in tweets)
+        )
+        await super().attach_translations(tweets, target)
+
+
+class _RecordingEnricher:
+    def __init__(self, events, fail_status_ids=None):
+        self.events = events
+        self.fail_status_ids = set(fail_status_ids or [])
+
+    async def attach_enrichments(self, tweets, target):
+        status_ids = [tweet.status_id for tweet in tweets]
+        self.events.append("enrich:" + ",".join(status_ids))
+        failed = self.fail_status_ids.intersection(status_ids)
+        if failed:
+            raise RuntimeError(f"enrich failed: {','.join(sorted(failed))}")
+        for tweet in tweets:
+            tweet.ai_comment = "comment"
+        return types.SimpleNamespace(visible_notices=lambda: [])
 
 
 class _Sender:
@@ -281,6 +323,8 @@ class _Sender:
     ):
         self.sent = []
         self.merged_sent = []
+        self.group_labels = []
+        self.merged_group_labels = []
         self.success = success
         self.failed_targets = set(failed_targets or [])
         self.merge_targets = set(merge_targets or [])
@@ -289,13 +333,16 @@ class _Sender:
     def supports_merged_forward_for_umo(self, context, umo):
         return umo in self.merge_targets
 
-    async def send_to_umo_with_outcome(self, context, umo, username, instance, tweets):
+    async def send_to_umo_with_outcome(
+        self, context, umo, username, instance, tweets, group_label=""
+    ):
         self.events.append(f"send:{umo}:{username}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
+        self.group_labels.append((umo, username, group_label))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
-    async def send_merged_to_umo(self, context, umo, batches):
+    async def send_merged_to_umo(self, context, umo, batches, group_label=""):
         self.events.append(f"merged:{umo}")
         self.merged_sent.append(
             (
@@ -306,6 +353,7 @@ class _Sender:
                 ],
             )
         )
+        self.merged_group_labels.append((umo, group_label))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(
             success=success,
@@ -316,9 +364,23 @@ class _Sender:
 
 
 class _CancelingSender(_Sender):
-    async def send_to_umo_with_outcome(self, context, umo, username, instance, tweets):
+    async def send_to_umo_with_outcome(
+        self, context, umo, username, instance, tweets, group_label=""
+    ):
         self.events.append(f"cancel:{umo}:{username}")
         raise scheduler_module.asyncio.CancelledError()
+
+
+class _RecordingSender(_Sender):
+    async def send_to_umo_with_outcome(
+        self, context, umo, username, instance, tweets, group_label=""
+    ):
+        status_ids = ",".join(tweet.status_id for tweet in tweets)
+        self.events.append(f"send:{umo}:{username}:{status_ids}")
+        self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
+        self.group_labels.append((umo, username, group_label))
+        success = self.success and umo not in self.failed_targets
+        return types.SimpleNamespace(success=success, warning="")
 
 
 class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
@@ -347,6 +409,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         nitter=None,
         media=None,
         sender=None,
+        translator=None,
+        enricher=None,
     ):
         scheduler = NitterTweetScheduler(
             _Owner(),
@@ -355,8 +419,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             nitter=nitter or _Nitter(),
             media=media or _Media(),
             sender=sender or _Sender(),
-            translator=_Translator(),
-            enricher=None,
+            translator=translator or _Translator(),
+            enricher=enricher,
         )
         self.schedulers.append(scheduler)
         return scheduler
@@ -396,6 +460,47 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             link=f"https://x.com/{username}/status/{status_id}",
             published="",
         )
+
+    def test_merged_header_aggregates_repeated_account_batches(self):
+        header = TweetMessageRenderer.format_merged_header(
+            [
+                ("NASA", "https://nitter.test", [self._make_tweet("NASA", "101")]),
+                ("NASA", "https://nitter.test", [self._make_tweet("NASA", "102")]),
+                (
+                    "OpenAI",
+                    "https://nitter.test",
+                    [self._make_tweet("OpenAI", "201")],
+                ),
+            ]
+        )
+
+        self.assertIn("Nitter 本次检查发现 3 条新推文", header)
+        self.assertIn("更新账号：@NASA 2 条，@OpenAI 1 条", header)
+
+    def test_tweet_headers_include_group_label(self):
+        header = TweetMessageRenderer.format_header(
+            "NASA", "https://nitter.test", 1, group_label="Tech"
+        )
+        merged_header = TweetMessageRenderer.format_merged_header(
+            [
+                ("NASA", "https://nitter.test", [self._make_tweet("NASA", "101")]),
+            ],
+            group_label="Tech",
+        )
+
+        self.assertIn("分组：Tech", header)
+        self.assertIn("分组：Tech", merged_header)
+
+    def test_tweet_rendering_omits_image_caption_block(self):
+        tweet = self._make_tweet("NASA", "101")
+        tweet.image_caption = "一张火箭照片"
+        tweet.ai_comment = "发射任务值得关注。"
+
+        text = TweetMessageRenderer().format_tweet(1, "NASA", tweet)
+
+        self.assertNotIn("识图：", text)
+        self.assertNotIn("一张火箭照片", text)
+        self.assertIn("评论：\n发射任务值得关注。", text)
 
     async def _enqueue_deferred_tweets(self, scheduler, tweets_by_user):
         for username, tweets in tweets_by_user.items():
@@ -589,6 +694,214 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.attached, 1)
         self.assertEqual(media.moved, 0)
         self.assertEqual(media.cleaned, 1)
+
+    async def test_custom_group_label_is_passed_to_ordinary_push(self):
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "100"),
+                    self._make_tweet("OpenAI", "101"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": [],
+                "push_targets": [],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                        "scheduled_fetch_limit": 2,
+                    }
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("tech", "OpenAI", ["100"])
+
+        result = await scheduler.run_check(reason="test_group_label", group_name="tech")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(
+            sender.group_labels,
+            [("telegram:FriendMessage:1", "OpenAI", "Tech")],
+        )
+
+    async def test_custom_group_label_is_passed_to_merged_push(self):
+        sender = _Sender(merge_targets={"aiocqhttp:GroupMessage:1"})
+        nitter = _MultiUserNitter(
+            {
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "100"),
+                    self._make_tweet("OpenAI", "101"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": [],
+                "push_targets": [],
+                "merge_tweet_threshold": 1,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["aiocqhttp:GroupMessage:1"],
+                        "scheduled_fetch_limit": 2,
+                    }
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("tech", "OpenAI", ["100"])
+
+        result = await scheduler.run_check(
+            reason="test_merged_group_label", group_name="tech"
+        )
+
+        self.assertEqual(result.push_mode, "merged")
+        self.assertEqual(sender.group_labels, [])
+        self.assertEqual(
+            sender.merged_group_labels,
+            [("aiocqhttp:GroupMessage:1", "Tech")],
+        )
+
+    async def test_immediate_ordinary_sends_each_tweet_after_ai_prepare(self):
+        events = []
+        media = _RecordingMedia(events)
+        sender = _RecordingSender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "100"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+            translator=_RecordingTranslator(events),
+            enricher=_RecordingEnricher(events),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_per_tweet_immediate")
+
+        self.assertEqual(
+            events,
+            [
+                "fetch:NASA",
+                "translate:101",
+                "media:101",
+                "enrich:101",
+                "send:telegram:FriendMessage:1:NASA:101",
+                "cleanup:101",
+                "translate:102",
+                "media:102",
+                "enrich:102",
+                "send:telegram:FriendMessage:1:NASA:102",
+                "cleanup:102",
+            ],
+        )
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                ),
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["102"],
+                ),
+            ],
+        )
+        self.assertEqual(media.cleaned, 2)
+
+    async def test_immediate_per_tweet_prepare_failure_does_not_mark_seen(self):
+        events = []
+        media = _RecordingMedia(events)
+        sender = _RecordingSender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "100"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+            translator=_RecordingTranslator(events),
+            enricher=_RecordingEnricher(events, fail_status_ids={"102"}),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_per_tweet_seen_failure")
+        seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertIn("NASA:102", result.failed_users)
+        self.assertIn("101", seen_ids)
+        self.assertIn("100", seen_ids)
+        self.assertNotIn("102", seen_ids)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                )
+            ],
+        )
 
     async def test_ordinary_targets_send_immediately_but_qq_merges_at_end(self):
         events = []

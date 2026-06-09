@@ -15,11 +15,13 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
+    from .config_compat import config_get
     from .utils import (
         TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
         generate_file_name, load_instances, normalize_external_links,
     )
 except ImportError:
+    from config_compat import config_get
     from utils import (
         TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
         generate_file_name, load_instances, normalize_external_links,
@@ -96,31 +98,38 @@ class MediaCacheCleanupResult:
 
 class MediaService:
     def __init__(self, config):
-        image_config = config.get("send_image_attachments", None)
+        image_config = config_get(config, "send_image_attachments", None)
         if image_config is None:
-            image_config = bool(config.get("download_media", True)) and bool(
-                config.get("download_images", True)
+            image_config = bool(config_get(config, "download_media", True)) and bool(
+                config_get(config, "download_images", True)
             )
         self.send_image_attachments = bool(
             image_config
         )
         self.send_video_attachments = bool(
-            config.get("send_video_attachments", False)
+            config_get(config, "send_video_attachments", False)
         )
-        self.max_per_tweet = clamp_int(config.get("max_media_per_tweet", 4), 0, 12)
-        self.timeout = clamp_float(config.get("media_timeout", 25.0), 5.0, 120.0)
-        self.max_bytes = clamp_float(config.get("media_max_size_mb", 25.0), 1.0, 200.0)
+        self.max_per_tweet = clamp_int(
+            config_get(config, "max_media_per_tweet", 4), 0, 12
+        )
+        self.timeout = clamp_float(
+            config_get(config, "media_timeout", 25.0), 5.0, 120.0
+        )
+        self.max_bytes = clamp_float(
+            config_get(config, "media_max_size_mb", 25.0), 1.0, 200.0
+        )
         self.max_bytes = int(self.max_bytes * 1024 * 1024)
         self.cache_retention_days = clamp_float(
-            config.get("media_cache_retention_days", 3.0), 0.0, 3650.0
+            config_get(config, "media_cache_retention_days", 3.0), 0.0, 3650.0
         )
         self.cache_cleanup_interval = 3600.0
         self._last_cache_cleanup = 0.0
         self.xdown_url = str(
-            config.get("xdown_api_url", "https://xdown.app/api/ajaxSearch")
+            config_get(config, "xdown_api_url", "https://xdown.app/api/ajaxSearch")
         )
         self.user_agent = str(
-            config.get(
+            config_get(
+                config,
                 "media_user_agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -567,9 +576,12 @@ class MediaService:
 
 class NitterClient:
     def __init__(self, config):
-        self.instances = load_instances(config.get("instances"))
-        self.timeout = clamp_float(config.get("request_timeout", 12.0), 3.0, 60.0)
-        self.user_agent = config.get(
+        self.instances = load_instances(config_get(config, "instances"))
+        self.timeout = clamp_float(
+            config_get(config, "request_timeout", 12.0), 3.0, 60.0
+        )
+        self.user_agent = config_get(
+            config,
             "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
 
