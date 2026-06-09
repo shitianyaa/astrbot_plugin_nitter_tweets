@@ -688,11 +688,11 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
         event = _Event()
 
-        await plugin.cmd_mirror_probe(event, "nitter.top")
+        await plugin.cmd_mirror_probe(event, "https://nitter.top")
 
         self.assertEqual(
             plugin.nitter.calls,
-            [("fetch_tweets_from_instance", "nitter.top", "nasa", 5)],
+            [("fetch_tweets_from_instance", "https://nitter.top", "nasa", 5)],
         )
         self.assertIn("最近最多 5 条", event.messages[0])
 
@@ -700,19 +700,28 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
         event = _Event()
 
-        await plugin.cmd_mirror_probe(event, "NASA 50 nitter.top")
+        await plugin.cmd_mirror_probe(event, "NASA 50 https://nitter.top")
 
         self.assertEqual(
             plugin.nitter.calls,
-            [("fetch_tweets_from_instance", "nitter.top", "NASA", 50)],
+            [("fetch_tweets_from_instance", "https://nitter.top", "NASA", 50)],
         )
         self.assertIn("最近最多 50 条", event.messages[0])
+
+    async def test_mirror_probe_requires_full_url_instance(self):
+        plugin = _manual_plugin(_Config({"default_limit": 5}))
+        event = _Event()
+
+        await plugin.cmd_mirror_probe(event, "nitter.top")
+
+        self.assertEqual(plugin.nitter.calls, [])
+        self.assertIn("完整 Nitter 镜像站地址", event.messages[-1])
 
     async def test_mirror_probe_rejects_non_positive_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5}))
         event = _Event()
 
-        await plugin.cmd_mirror_probe(event, "0 nitter.top")
+        await plugin.cmd_mirror_probe(event, "0 https://nitter.top")
 
         self.assertEqual(plugin.nitter.calls, [])
         self.assertIn("数量需要大于 0", event.messages[-1])

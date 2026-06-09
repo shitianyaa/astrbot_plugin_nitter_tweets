@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.7.0-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.9.0-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -10,15 +10,17 @@
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
-通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、图片附件、翻译、AI 评论、AI 识图和定时推送。
+通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、当前会话手动检查、图片附件、翻译、AI 评论、AI 识图、即时推送、暂存发布和定时推送。
 
 ## 功能
 
 - 手动查询指定用户最近公开推文，并提供独立的 Nitter 镜像站测试命令。
-- 定时检查 `watch_users`，发现新推文后推送到 `push_targets`；也可在插件配置里通过 `tweet_groups` 配置多个独立推文分组。
+- 定时检查 `watch_users`，发现新推文后推送到 `push_targets`；也可在插件配置里通过 `tweet_groups` 配置多个独立推文分组，推文正文会显示来源分组。
+- 普通目标按单条推文即时处理和发送；QQ/`aiocqhttp` 合并转发目标仍按阈值缓冲到本轮最后统一发送。
 - 支持图片附件发送；视频/GIF 可选发送，默认仅保留原帖链接。
 - 支持非中文推文翻译。
-- 支持按概率追加 AI 评论；AI 识图结果会作为评论上下文使用，不单独显示在推文消息里。
+- 支持按概率追加 AI 评论；AI 识图结果会作为评论上下文使用，不单独显示在推文消息里。AI 评论仅在翻译或识图实际产生结果后触发。
+- 支持 SQLite seen/queue 存储、暂存定时发布、暂存队列查看和手动发布。
 - 支持多个 Nitter 实例按顺序重试。
 - 支持为 QQ/`aiocqhttp` 按新推文数量阈值启用 OneBot v11 `Node/Nodes` 合并转发；飞书/Lark、Telegram 和微信 OC 始终走普通逐账号发送，其中飞书会优先把单个账号的正文和图片放入同一条原生 `post` 消息。
 
@@ -37,13 +39,13 @@
 ### 镜像测试
 
 ```text
-/镜像测试 nitter.top
-/镜像测试 3 nitter.top
-/镜像测试 nasa nitter.top
-/镜像测试 nasa 3 nitter.top
+/镜像测试 https://nitter.net
+/镜像测试 3 https://nitter.net
+/镜像测试 nasa https://nitter.net
+/镜像测试 nasa 3 https://nitter.net
 ```
 
-`/镜像测试` 默认测试 `nasa`，默认获取 `default_limit` 条；用户名和数量都可以省略，镜像站只影响本次测试，不会写入 `instances` 配置。
+`/镜像测试` 默认测试 `nasa`，默认获取 `default_limit` 条；用户名和数量都可以省略。镜像站必须填写完整 `http://` 或 `https://` 地址，只影响本次测试，不会写入 `instances` 配置。
 
 ### 定时推送
 
@@ -90,7 +92,7 @@ telegram:FriendMessage:123456789
 | 命令 | 说明 |
 | --- | --- |
 | `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
-| `/镜像测试 [用户名] [数量] 镜像站` | 用临时 Nitter 镜像站测试获取推文；默认用户名 `nasa`，默认数量使用 `default_limit`。 |
+| `/镜像测试 [用户名] [数量] 镜像站URL` | 用临时 Nitter 镜像站测试获取推文；镜像站必须是完整 `http://` 或 `https://` 地址；默认用户名 `nasa`，默认数量使用 `default_limit`。 |
 | `/推文状态` | 查看调度器状态、全部分组项合计、默认分组和自定义分组的关注账号、推送目标、无效项和已记录账号数；长列表最多显示 10 项。 |
 | `/推文检查 [分组名]` | 立即执行一次定时检查；不填时按当前会话 UMO 匹配唯一已启用分组，填写时可指定分组名称、分组 ID 或别名；手动检查只向当前会话发送新推文和结果摘要，并在结果末尾显示该分组当前暂存状态。 |
 | `/推文缓存清理` | 清理普通图片/视频缓存文件；只删除 `cache/` 根目录文件，保留暂存队列媒体目录。 |
@@ -179,6 +181,8 @@ telegram:FriendMessage:123456789
 | `vision_max_images` | 每条推文最多识别几张图片，范围 `1-12`。 |
 | `vision_prompt` | 识图提示词。 |
 
+AI 处理顺序为：翻译 → 媒体下载 → 识图 → 评论。评论不会仅凭原文触发；必须先有翻译结果或识图结果，且 `comment_enabled=true`、评论 provider 可用、`comment_probability` 命中，才会调用评论模型。
+
 ## 行为说明
 
 - 首次启用某个账号时，只记录当前 RSS 中已有的推文 ID，不推送历史内容。
@@ -189,13 +193,14 @@ telegram:FriendMessage:123456789
 - 多个 Nitter 实例会按配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`；翻译只处理去除 URL 后的正文，避免重复链接。
-- 手动 `/推文` 和即时推送的普通目标会按单条推文处理：一条推文完成翻译、媒体下载、AI 识图和 AI 评论后就发送这一条，不再等待同一账号的其他新推文全部处理完。识图结果仅用于生成评论上下文，不单独展示；QQ 合并转发目标仍会缓冲到本轮最后统一发送。
+- 手动 `/推文` 和即时推送的普通目标会按单条推文处理：一条推文完成翻译、媒体下载、AI 识图和 AI 评论后就发送这一条，不再等待同一账号的其他新推文全部处理完。手动 `/推文 用户名 数量` 的普通单条结果标题会显示“本次结果 x/总数”；识图结果仅用于生成评论上下文，不单独展示；QQ 合并转发目标仍会缓冲到本轮最后统一发送。
 - QQ 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发，单次推文较多时会按每批最多 8 条自动分批，避免大合并包漏节点。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终逐账号普通发送；飞书逐账号发送时会优先用原生 `post` 同框发送正文和图片。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮出现完整版和纯文本/去视频版重复推送；定时推送只在日志记录短提示。
 - 视频/GIF 附件发送默认关闭，因为目前不太成熟，还在优化中；关闭时会保留原帖链接并提示打开原文查看。开启后仍可能受平台大小、格式、CDN 上传或本地文件权限限制，失败时会去掉视频重试。
 - `media_cache_retention_days` 设为 `0` 时，媒体文件会在本轮手动查询或定时推送发送流程结束后删除；如果同一轮要发送到多个目标，会等所有目标都处理完再删除。
 - 暂存发布开启时，后台定时检查发现的新推文会先进入 SQLite 队列；入队成功后立即写入 seen，避免反复入队。手动 `/推文检查` 会绕过暂存队列，只向当前会话即时发送本次新推文，并在结果末尾提示 `/推文队列`、`/推文发布`。发布失败会保留队列和 `cache/staged/` 媒体供下次重试，发布成功后删除暂存媒体。
 - 翻译、AI 评论、AI 识图都使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
+- 日志会把单条推文的翻译、媒体、识图、评论结果合并为一条 `AI processed` 摘要；批量推送会显示 `progress=x/总数`。模型调用失败、下载失败和发送失败仍会保留 warning 日志。
 
 ## 常见问题
 
@@ -214,6 +219,14 @@ telegram:FriendMessage:123456789
 ### 为什么媒体没有发出来？
 
 图片和视频附件依赖 `xdown.app` 解析，下载后还会受平台大小、格式和风控限制。附件失败不会阻止推文文本和原文链接发送。
+
+### 为什么 AI 评论没有出现？
+
+AI 评论不会只根据原文生成。需要先有翻译结果或识图结果，再满足评论开关、模型和概率条件；如果翻译跳过且识图跳过，评论会直接跳过。
+
+### 为什么 `/推文 用户名 30` 后面显示“本次结果 1/30”？
+
+普通平台会按单条推文即时处理和发送。“最近最多 30 条”表示本次最多拉取 30 条；“本次结果 1/30”表示当前正在发送本次结果中的第 1 条。QQ 合并转发达到阈值时仍会合并发送。
 
 ## 致谢
 

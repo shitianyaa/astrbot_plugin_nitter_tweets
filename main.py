@@ -33,7 +33,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.7.0",
+    "0.9.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -86,7 +86,7 @@ class NitterTweetsPlugin(Star):
     async def terminate(self):
         await self.scheduler.stop()
 
-    @filter.command("推文", alias={"x推文"})
+    @filter.command("推文")
     async def cmd_tweets(
         self,
         event: AstrMessageEvent,
@@ -142,10 +142,7 @@ class NitterTweetsPlugin(Star):
 
         await self._send_tweets_response(event, username, instance, tweets)
 
-    @filter.command(
-        "镜像测试",
-        alias={"推文镜像测试"},
-    )
+    @filter.command("镜像测试")
     async def cmd_mirror_probe(self, event: AstrMessageEvent, args=GreedyStr):
         """用临时 Nitter 镜像站测试获取推文。"""
         event.stop_event()
@@ -358,8 +355,9 @@ class NitterTweetsPlugin(Star):
         tokens = self._command_tokens(event, args)
         usage = (
             "用法：/镜像测试 [用户名] [数量] 镜像站\n"
-            "例如：/镜像测试 nitter.top\n"
-            "也可以：/镜像测试 nasa 3 nitter.top"
+            "镜像站必须填写完整 http:// 或 https:// 地址\n"
+            "例如：/镜像测试 https://nitter.net\n"
+            "也可以：/镜像测试 nasa 3 https://nitter.net"
         )
         if not tokens:
             return "", 0, "", usage
@@ -369,7 +367,9 @@ class NitterTweetsPlugin(Star):
             if self._looks_like_instance(token):
                 instance_index = index
         if instance_index < 0:
-            return "", 0, "", "请提供 Nitter 镜像站，例如：/镜像测试 nitter.top"
+            return "", 0, "", (
+                "请提供完整 Nitter 镜像站地址，例如：/镜像测试 https://nitter.net"
+            )
 
         instance_text = tokens[instance_index]
         extras = tokens[:instance_index] + tokens[instance_index + 1 :]
@@ -383,7 +383,9 @@ class NitterTweetsPlugin(Star):
         for token in extras:
             if self._looks_like_limit(token):
                 if seen_limit:
-                    return "", 0, "", "数量只能填写一次，例如：/镜像测试 3 nitter.top"
+                    return "", 0, "", (
+                        "数量只能填写一次，例如：/镜像测试 3 https://nitter.net"
+                    )
                 parsed_limit, limit_error = self._parse_command_limit(token)
                 if limit_error:
                     return "", 0, "", limit_error
@@ -395,7 +397,9 @@ class NitterTweetsPlugin(Star):
             if not normalized:
                 return "", 0, "", usage
             if seen_username:
-                return "", 0, "", "用户名只能填写一次，例如：/镜像测试 nasa nitter.top"
+                return "", 0, "", (
+                    "用户名只能填写一次，例如：/镜像测试 nasa https://nitter.net"
+                )
             username = normalized
             seen_username = True
 
@@ -459,9 +463,9 @@ class NitterTweetsPlugin(Star):
         value = str(value or "").strip().lower()
         if not value or value.startswith("@") or " " in value:
             return False
-        if value.startswith(("http://", "https://")):
-            return "." in value or "localhost" in value
-        return "." in value or value.startswith(("localhost", "127.0.0.1"))
+        if not value.startswith(("http://", "https://")):
+            return False
+        return "." in value or "localhost" in value
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文状态")
@@ -552,7 +556,7 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result(result.format_message("Nitter 暂存发布结果")))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文订阅列表", alias={"推文关注列表"})
+    @filter.command("推文订阅列表")
     async def cmd_tweets_list(self, event: AstrMessageEvent):
         """查看已配置的定时订阅账号列表。"""
         event.stop_event()
@@ -592,7 +596,7 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result("\n".join(self._export_bloggers_lines())))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文订阅去重", alias={"推文关注去重"})
+    @filter.command("推文订阅去重")
     async def cmd_tweets_dedup(self, event: AstrMessageEvent):
         """规范化并去重定时订阅账号列表。"""
         event.stop_event()
@@ -630,7 +634,7 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result("\n".join(lines)))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("订阅导入", alias={"推文订阅导入", "关注导入", "推文关注导入"})
+    @filter.command("订阅导入")
     async def cmd_tweets_import(self, event: AstrMessageEvent, args=GreedyStr):
         """批量导入定时订阅账号，可指定分组。"""
         event.stop_event()
