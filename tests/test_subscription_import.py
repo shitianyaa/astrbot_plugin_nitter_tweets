@@ -774,7 +774,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Tech (tech)", event.messages[0])
         self.assertEqual(event.messages[-1], "检查结果\n\n当前分组暂存: 已关闭")
 
-    async def test_check_without_group_rejects_unknown_current_target(self):
+    async def test_check_without_group_falls_back_to_global_when_target_unlisted(self):
         config = _Config(
             {
                 "schedule_enabled": True,
@@ -796,9 +796,44 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets_check(event)
 
         self.assertTrue(event.stopped)
+        self.assertEqual(plugin.scheduler.started, ["manual_check"])
+        self.assertEqual(
+            plugin.scheduler.run_check_calls[0],
+            {
+                "reason": "manual_command",
+                "notify_no_updates": False,
+                "group_name": "global",
+                "target_override": ["telegram:FriendMessage:missing"],
+                "force_immediate": True,
+            },
+        )
+        self.assertIn("全局分组 (global)", event.messages[0])
+
+    async def test_check_without_group_rejects_unknown_target_when_global_disabled(self):
+        config = _Config(
+            {
+                "schedule_enabled": False,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:global"],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:missing")
+
+        await plugin.cmd_tweets_check(event)
+
+        self.assertTrue(event.stopped)
         self.assertEqual(plugin.scheduler.started, [])
         self.assertEqual(plugin.scheduler.run_check_calls, [])
-        self.assertIn("不在任何已启用推文分组", event.messages[-1])
+        self.assertIn("全局分组未启用", event.messages[-1])
 
     async def test_check_without_group_rejects_ambiguous_current_target(self):
         config = _Config(
@@ -851,6 +886,31 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.started, [])
         self.assertEqual(plugin.scheduler.run_check_calls, [])
         self.assertIn("当前对话不属于分组：Tech (tech)", event.messages[-1])
+
+    async def test_check_with_global_group_allows_current_target_override(self):
+        config = _Config(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:global"],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:missing")
+
+        await plugin.cmd_tweets_check(event, "global")
+
+        self.assertEqual(plugin.scheduler.started, ["manual_check"])
+        self.assertEqual(
+            plugin.scheduler.run_check_calls[0],
+            {
+                "reason": "manual_command",
+                "notify_no_updates": False,
+                "group_name": "global",
+                "target_override": ["telegram:FriendMessage:missing"],
+                "force_immediate": True,
+            },
+        )
 
     async def test_import_without_group_appends_global_watch_users(self):
         config = _Config(
