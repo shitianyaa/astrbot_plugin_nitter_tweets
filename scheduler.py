@@ -20,6 +20,7 @@ except ImportError:
 
 try:
     from .config_compat import config_get, config_set
+    from .enricher import format_ai_tweet_summary
     from .scheduler_config import (
         PushTargetParseResult,
         ScheduleGroup,
@@ -34,6 +35,7 @@ try:
     )
 except ImportError:
     from config_compat import config_get, config_set
+    from enricher import format_ai_tweet_summary
     from scheduler_config import (
         PushTargetParseResult,
         ScheduleGroup,
@@ -630,7 +632,7 @@ class NitterTweetScheduler:
                 prepared_count = len(new_tweets) if deferred_enabled else 0
                 if deferred_enabled:
                     try:
-                        await self.translator.attach_translations(
+                        translation_report = await self.translator.attach_translations(
                             new_tweets, targets[0]
                         )
                         if group.deferred_prefetch_media:
@@ -638,9 +640,17 @@ class NitterTweetScheduler:
                                 group, username, new_tweets
                             )
                         if self.enricher is not None:
-                            await self.enricher.attach_enrichments(
+                            enrich_report = await self.enricher.attach_enrichments(
                                 new_tweets, targets[0]
                             )
+                        else:
+                            enrich_report = None
+                        self._log_ai_process_results(
+                            username,
+                            new_tweets,
+                            translation_report,
+                            enrich_report,
+                        )
                     except Exception as exc:
                         await asyncio.to_thread(
                             self.media.cleanup_after_send, new_tweets
@@ -670,14 +680,24 @@ class NitterTweetScheduler:
                             seen_ids=seen_map.get(username, []),
                         )
                         try:
-                            await self.translator.attach_translations(
+                            translation_report = await self.translator.attach_translations(
                                 [tweet], targets[0]
                             )
                             await self.media.attach_media([tweet])
                             if self.enricher is not None:
-                                await self.enricher.attach_enrichments(
+                                enrich_report = await self.enricher.attach_enrichments(
                                     [tweet], targets[0]
                                 )
+                            else:
+                                enrich_report = None
+                            self._log_ai_process_results(
+                                username,
+                                [tweet],
+                                translation_report,
+                                enrich_report,
+                                progress_index=tweet_index,
+                                progress_total=len(new_tweets),
+                            )
                         except Exception as exc:
                             await asyncio.to_thread(
                                 self.media.cleanup_after_send, [tweet]
@@ -711,6 +731,10 @@ class NitterTweetScheduler:
                                         target_interval,
                                         0.0,
                                         group_label=group_label,
+                                        batch_progress=(
+                                            tweet_index,
+                                            len(new_tweets),
+                                        ),
                                     )
                                     immediate_batches_sent += 1
                                 pending_batches.append(batch)
@@ -731,6 +755,10 @@ class NitterTweetScheduler:
                                         target_interval,
                                         0.0,
                                         group_label=group_label,
+                                        batch_progress=(
+                                            tweet_index,
+                                            len(new_tweets),
+                                        ),
                                     )
                                     immediate_batches_sent += 1
                             finally:
@@ -926,6 +954,7 @@ class NitterTweetScheduler:
         user_interval: float,
         merge_existing_stats: bool = False,
         group_label: str = "",
+        batch_progress: tuple[int, int] | None = None,
     ) -> None:
         for batch_index, batch in enumerate(batches):
             success = 0
@@ -956,12 +985,42 @@ class NitterTweetScheduler:
                 len(targets),
                 merge_existing_stats=merge_existing_stats,
             )
+            if batch_progress:
+                progress_text = f" progress={batch_progress[0]}/{batch_progress[1]}"
+            elif len(batches) > 1:
+                progress_text = f" progress={batch_index + 1}/{len(batches)}"
+            else:
+                progress_text = ""
             logger.info(
-                f"[NitterTweets] pushed @{batch.username} {len(batch.tweets)} new tweets "
+                f"[NitterTweets] pushed{progress_text} "
+                f"@{batch.username} {len(batch.tweets)} new tweets "
                 f"to {success}/{len(targets)} targets"
             )
             if batch_index < len(batches) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
+
+    def _log_ai_process_results(
+        self,
+        username: str,
+        tweets,
+        translation_report=None,
+        enrich_report=None,
+        progress_index: int = 0,
+        progress_total: int = 0,
+    ) -> None:
+        total = progress_total or len(tweets)
+        start = progress_index or 1
+        for offset, tweet in enumerate(tweets):
+            logger.info(
+                format_ai_tweet_summary(
+                    username,
+                    tweet,
+                    translation_report,
+                    enrich_report,
+                    start + offset,
+                    total,
+                )
+            )
 
     def _record_scheduled_push(
         self,

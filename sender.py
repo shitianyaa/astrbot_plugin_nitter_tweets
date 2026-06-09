@@ -129,17 +129,28 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         notices: list[str] | None = None,
+        header_text: str = "",
     ) -> bool:
         if self._should_use_lark_for_event(event):
             return await self._send_lark_event(
-                event, username, instance, tweets, notices=notices
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
+                header_text=header_text,
             )
 
         if not self._should_use_forward_for_event(
             event
         ) or not self._should_use_merge_for_count(len(tweets)):
             return await self._send_direct_event(
-                event, username, instance, tweets, notices=notices
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
+                header_text=header_text,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
@@ -522,12 +533,17 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         notices: list[str] | None = None,
+        header_text: str = "",
     ) -> bool:
         try:
             await event.send(
                 MessageChain(
                     self.renderer.build_direct_components(
-                        username, instance, tweets, notices=notices
+                        username,
+                        instance,
+                        tweets,
+                        notices=notices,
+                        header_text=header_text,
                     )
                 )
             )
@@ -546,7 +562,9 @@ class TweetSender:
                     MessageChain(
                         self.renderer.build_direct_components(
                             username, instance, tweets,
-                            exclude_videos=True, notices=notices
+                            exclude_videos=True,
+                            notices=notices,
+                            header_text=header_text,
                         )
                     )
                 )
@@ -572,7 +590,11 @@ class TweetSender:
                     [
                         Plain(
                             self.renderer.format_plain(
-                                username, instance, tweets, notices=notices
+                                username,
+                                instance,
+                                tweets,
+                                notices=notices,
+                                header_text=header_text,
                             )
                         )
                     ]
@@ -758,15 +780,25 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         notices: list[str] | None = None,
+        header_text: str = "",
     ) -> bool:
         components = self.renderer.build_direct_components(
-            username, instance, tweets, notices=notices
+            username,
+            instance,
+            tweets,
+            notices=notices,
+            header_text=header_text,
         )
         client = lark_client_from_event(event, self._platform_inst_from_context)
         if client is None:
             logger.warning("[NitterTweets] Lark client not found; using generic send")
             return await self._send_direct_event(
-                event, username, instance, tweets, notices=notices
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
+                header_text=header_text,
             )
 
         text = plain_text_from_components(components)
@@ -774,7 +806,7 @@ class TweetSender:
         receive_id_type, receive_id = lark_event_target(event)
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets)),
+            lark_tweet_post_title(username, len(tweets), header_text),
             components,
             "manual Lark tweet post",
             is_uncertain_delivery_error=self._is_uncertain_delivery_error,
@@ -796,7 +828,7 @@ class TweetSender:
             )
             post_attempt = await send_lark_post(
                 client,
-                lark_tweet_post_title(username, len(tweets)),
+                lark_tweet_post_title(username, len(tweets), header_text),
                 components,
                 "manual Lark tweet post fallback",
                 is_uncertain_delivery_error=self._is_uncertain_delivery_error,

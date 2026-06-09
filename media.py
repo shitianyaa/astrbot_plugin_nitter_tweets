@@ -234,8 +234,13 @@ class MediaService:
                         f"[NitterTweets] failed to delete media file {path}: {exc}"
                     )
 
-        if removed or failed:
-            logger.info(
+        if failed:
+            logger.warning(
+                "[NitterTweets] media cleanup after send finished: "
+                f"removed={removed}, failed={failed}"
+            )
+        elif removed:
+            logger.debug(
                 "[NitterTweets] media cleanup after send finished: "
                 f"removed={removed}, failed={failed}"
             )

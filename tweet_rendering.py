@@ -139,11 +139,17 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ):
         components = [
             Plain(
                 self.format_header(
-                    username, instance, len(tweets), notices, group_label
+                    username,
+                    instance,
+                    len(tweets),
+                    notices,
+                    group_label,
+                    header_text,
                 )
             )
         ]
@@ -301,10 +307,16 @@ class TweetMessageRenderer:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ) -> str:
         blocks = [
             self.format_header(
-                username, instance, len(tweets), notices, group_label
+                username,
+                instance,
+                len(tweets),
+                notices,
+                group_label,
+                header_text,
             )
         ]
         notice_text = self.format_notices(notices)
@@ -402,9 +414,10 @@ class TweetMessageRenderer:
         tweet_count: int,
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ) -> str:
         lines = [
-            f"@{username} 最近 {tweet_count} 条推文",
+            header_text.strip() or f"@{username} 最近 {tweet_count} 条推文",
         ]
         if group_label:
             lines.append(f"分组：{group_label}")

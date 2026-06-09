@@ -11,7 +11,7 @@ from astrbot.core.star.filter.command import GreedyStr
 
 try:
     from .config_compat import config_get, config_set, migrate_legacy_grouped_config
-    from .enricher import TweetEnricher, TweetTranslator
+    from .enricher import TweetEnricher, TweetTranslator, format_ai_tweet_summary
     from .media import MediaService, NitterClient
     from .scheduler import NitterTweetScheduler
     from .scheduler_config import ScheduleGroup
@@ -20,7 +20,7 @@ try:
     from .utils import clamp_float, normalize_username, safe_call
 except ImportError:
     from config_compat import config_get, config_set, migrate_legacy_grouped_config
-    from enricher import TweetEnricher, TweetTranslator
+    from enricher import TweetEnricher, TweetTranslator, format_ai_tweet_summary
     from media import MediaService, NitterClient
     from scheduler import NitterTweetScheduler
     from scheduler_config import ScheduleGroup
@@ -122,7 +122,7 @@ class NitterTweetsPlugin(Star):
         limit = requested_limit
         self._mark_cooldown(event)
         await event.send(
-            event.plain_result(f"正在获取 @{username} 最近 {limit} 条推文...")
+            event.plain_result(f"正在获取 @{username} 最近最多 {limit} 条推文...")
         )
 
         try:
@@ -164,7 +164,7 @@ class NitterTweetsPlugin(Star):
         self._mark_cooldown(event)
         await event.send(
             event.plain_result(
-                f"正在测试 {instance_text}：获取 @{username} 最近 {limit} 条推文..."
+                f"正在测试 {instance_text}：获取 @{username} 最近最多 {limit} 条推文..."
             )
         )
 
@@ -200,10 +200,14 @@ class NitterTweetsPlugin(Star):
         if self.sender.should_merge_for_event(event, len(tweets)):
             notices = []
             try:
-                for tweet in tweets:
+                for tweet_index, tweet in enumerate(tweets, 1):
                     notices.extend(
                         await self._prepare_manual_tweets(
-                            [tweet], event.unified_msg_origin
+                            [tweet],
+                            event.unified_msg_origin,
+                            username=username,
+                            progress_index=tweet_index,
+                            progress_total=len(tweets),
                         )
                     )
                 await self._send_manual_tweets_with_fallback(
@@ -218,10 +222,15 @@ class NitterTweetsPlugin(Star):
             return
 
         sent_notices: set[str] = set()
-        for tweet in tweets:
+        total = len(tweets)
+        for index, tweet in enumerate(tweets, 1):
             try:
                 notices = await self._prepare_manual_tweets(
-                    [tweet], event.unified_msg_origin
+                    [tweet],
+                    event.unified_msg_origin,
+                    username=username,
+                    progress_index=index,
+                    progress_total=total,
                 )
                 notices = [
                     notice for notice in notices if notice not in sent_notices
@@ -233,6 +242,7 @@ class NitterTweetsPlugin(Star):
                     instance,
                     [tweet],
                     notices=notices,
+                    header_text=f"@{username} 本次结果 {index}/{total}",
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
@@ -241,11 +251,46 @@ class NitterTweetsPlugin(Star):
         self,
         tweets,
         umo: str | None,
+        username: str = "",
+        progress_index: int = 0,
+        progress_total: int = 0,
     ) -> list[str]:
-        await self.translator.attach_translations(tweets, umo)
+        translation_report = await self.translator.attach_translations(tweets, umo)
         await self.media.attach_media(tweets)
         enrich_report = await self.enricher.attach_enrichments(tweets, umo)
+        if username:
+            self._log_ai_process_results(
+                username,
+                tweets,
+                translation_report,
+                enrich_report,
+                progress_index,
+                progress_total,
+            )
         return enrich_report.visible_notices()
+
+    def _log_ai_process_results(
+        self,
+        username: str,
+        tweets,
+        translation_report=None,
+        enrich_report=None,
+        progress_index: int = 0,
+        progress_total: int = 0,
+    ) -> None:
+        total = progress_total or len(tweets)
+        start = progress_index or 1
+        for offset, tweet in enumerate(tweets):
+            logger.info(
+                format_ai_tweet_summary(
+                    username,
+                    tweet,
+                    translation_report,
+                    enrich_report,
+                    start + offset,
+                    total,
+                )
+            )
 
     async def _send_manual_tweets_with_fallback(
         self,
@@ -254,12 +299,24 @@ class NitterTweetsPlugin(Star):
         instance: str,
         tweets,
         notices: list[str] | None = None,
+        header_text: str = "",
     ) -> None:
         notices = notices or []
-        if await self.sender.send(event, username, instance, tweets, notices=notices):
+        if await self.sender.send(
+            event,
+            username,
+            instance,
+            tweets,
+            notices=notices,
+            header_text=header_text,
+        ):
             return
         fallback_text = self.sender.renderer.format_plain(
-            username, instance, tweets, notices=notices
+            username,
+            instance,
+            tweets,
+            notices=notices,
+            header_text=header_text,
         )
         try:
             await event.send(MessageChain([Plain(fallback_text)]))

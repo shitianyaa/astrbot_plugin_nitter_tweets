@@ -147,6 +147,13 @@ from config_compat import (
     config_set,
     migrate_legacy_grouped_config,
 )
+from enricher import (
+    TranslationReport,
+    TranslationTweetResult,
+    TweetEnricher,
+    format_ai_tweet_summary,
+)
+from lark_delivery import lark_tweet_post_title
 from scheduler_config import SchedulerConfigReader
 from utils import TweetItem
 
@@ -270,10 +277,19 @@ class _ManualEnricher:
         return types.SimpleNamespace(visible_notices=lambda: [])
 
 
+class _LLMContext:
+    def __init__(self):
+        self.calls = []
+
+    async def llm_generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return types.SimpleNamespace(completion_text="这是一句评论")
+
+
 class _ManualRenderer:
-    def format_plain(self, username, instance, tweets, notices=None):
+    def format_plain(self, username, instance, tweets, notices=None, header_text=""):
         ids = ",".join(tweet.status_id for tweet in tweets)
-        return f"fallback:{username}:{ids}"
+        return f"fallback:{username}:{ids}:{header_text}"
 
 
 class _ManualSender:
@@ -285,9 +301,11 @@ class _ManualSender:
     def should_merge_for_event(self, event, tweet_count):
         return self._should_merge
 
-    async def send(self, event, username, instance, tweets, notices=None):
+    async def send(
+        self, event, username, instance, tweets, notices=None, header_text=""
+    ):
         ids = ",".join(tweet.status_id for tweet in tweets)
-        self.events.append(f"send:{username}:{ids}")
+        self.events.append(f"send:{username}:{ids}:{header_text}")
         return True
 
 
@@ -495,6 +513,108 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(tech_group.targets, ["telegram:FriendMessage:2"])
 
 
+class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_enricher_summary_reports_off(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(context, _Config({}))
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/300",
+            published="",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+        summary = format_ai_tweet_summary("NASA", tweet, None, report)
+
+        self.assertIn("translation=off", summary)
+        self.assertIn("vision=off", summary)
+        self.assertIn("comment=off", summary)
+
+    def test_summary_matches_single_fallback_id_with_global_progress(self):
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA",
+            published="",
+        )
+        translation_report = TranslationReport(
+            tweet_results=[
+                TranslationTweetResult(
+                    status_id="index-1",
+                    status="done",
+                    chars=6,
+                )
+            ]
+        )
+
+        summary = format_ai_tweet_summary(
+            "NASA",
+            tweet,
+            translation_report,
+            None,
+            index=2,
+            total=5,
+        )
+
+        self.assertIn("status=index-2", summary)
+        self.assertIn("progress=2/5", summary)
+        self.assertIn("translation=done(chars=6)", summary)
+        self.assertNotIn("translation=unknown", summary)
+
+    def test_lark_title_uses_manual_header_override(self):
+        title = lark_tweet_post_title("NASA", 1, "@NASA 本次结果 2/30")
+
+        self.assertEqual(title, "@NASA 本次结果 2/30")
+
+    async def test_comment_skips_without_translation_or_vision_result(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/301",
+            published="",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 0)
+        self.assertEqual(context.calls, [])
+        self.assertEqual(tweet.ai_comment, "")
+
+    async def test_comment_runs_with_translation_result(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/302",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        self.assertEqual(len(context.calls), 1)
+        self.assertEqual(tweet.ai_comment, "这是一句评论")
+
+
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
     async def test_manual_tweets_uses_default_limit_without_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -503,7 +623,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets(event, "NASA", "")
 
         self.assertEqual(plugin.nitter.calls, [("fetch_tweets", "NASA", 5)])
-        self.assertIn("最近 5 条", event.messages[0])
+        self.assertIn("最近最多 5 条", event.messages[0])
 
     async def test_manual_tweets_does_not_clamp_requested_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -512,7 +632,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets(event, "NASA", "50")
 
         self.assertEqual(plugin.nitter.calls, [("fetch_tweets", "NASA", 50)])
-        self.assertIn("最近 50 条", event.messages[0])
+        self.assertIn("最近最多 50 条", event.messages[0])
 
     async def test_manual_tweets_rejects_non_positive_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5}))
@@ -554,12 +674,12 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
                 "translate:101",
                 "media:101",
                 "enrich:101",
-                "send:NASA:101",
+                "send:NASA:101:@NASA 本次结果 1/2",
                 "cleanup:101",
                 "translate:102",
                 "media:102",
                 "enrich:102",
-                "send:NASA:102",
+                "send:NASA:102:@NASA 本次结果 2/2",
                 "cleanup:102",
             ],
         )
@@ -574,7 +694,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
             plugin.nitter.calls,
             [("fetch_tweets_from_instance", "nitter.top", "nasa", 5)],
         )
-        self.assertIn("最近 5 条", event.messages[0])
+        self.assertIn("最近最多 5 条", event.messages[0])
 
     async def test_mirror_probe_does_not_clamp_requested_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -586,7 +706,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
             plugin.nitter.calls,
             [("fetch_tweets_from_instance", "nitter.top", "NASA", 50)],
         )
-        self.assertIn("最近 50 条", event.messages[0])
+        self.assertIn("最近最多 50 条", event.messages[0])
 
     async def test_mirror_probe_rejects_non_positive_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5}))
