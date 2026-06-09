@@ -354,7 +354,7 @@ class NitterTweetsPlugin(Star):
     ) -> tuple[str, int, str, str]:
         tokens = self._command_tokens(event, args)
         usage = (
-            "用法：/镜像测试 [用户名] [数量] 镜像站\n"
+            "用法：/镜像测试 [用户名] [数量] 镜像站URL\n"
             "镜像站必须填写完整 http:// 或 https:// 地址\n"
             "例如：/镜像测试 https://nitter.net\n"
             "也可以：/镜像测试 nasa 3 https://nitter.net"
