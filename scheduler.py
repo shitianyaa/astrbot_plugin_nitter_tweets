@@ -72,6 +72,7 @@ class ScheduledPushResult:
     new_count: int
     success_targets: int
     total_targets: int
+    batch_key: str = field(default="", repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -543,6 +544,10 @@ class NitterTweetScheduler:
         if group.deferred_publish_enabled:
             result.push_mode = "deferred"
         pending_batches = []
+        immediate_targets, buffered_targets = self._split_immediate_targets(
+            targets, merge_threshold
+        )
+        immediate_batches_sent = 0
         if not users:
             result.skipped_reason = "no_watch_users"
             logger.info(result.format_log_summary())
@@ -622,15 +627,55 @@ class NitterTweetScheduler:
                     )
                     continue
 
-                pending_batches.append(
-                    PendingTweetBatch(
-                        username=username,
-                        instance=instance,
-                        tweets=new_tweets,
-                        fetched_ids=fetched_ids,
-                        seen_ids=seen_ids,
-                    )
+                batch = PendingTweetBatch(
+                    username=username,
+                    instance=instance,
+                    tweets=new_tweets,
+                    fetched_ids=fetched_ids,
+                    seen_ids=seen_ids,
                 )
+                if group.deferred_publish_enabled:
+                    pending_batches.append(batch)
+                else:
+                    await self._store_pending_seen_ids(
+                        group.group_id, [batch], seen_map
+                    )
+                    if buffered_targets:
+                        try:
+                            if immediate_targets:
+                                if immediate_batches_sent > 0 and user_interval > 0:
+                                    await asyncio.sleep(user_interval)
+                                await self._send_per_user_updates(
+                                    [batch],
+                                    result,
+                                    immediate_targets,
+                                    target_interval,
+                                    0.0,
+                                )
+                                immediate_batches_sent += 1
+                            pending_batches.append(batch)
+                        except BaseException:
+                            await asyncio.to_thread(
+                                self.media.cleanup_after_send, batch.tweets
+                            )
+                            raise
+                    else:
+                        try:
+                            if immediate_targets:
+                                if immediate_batches_sent > 0 and user_interval > 0:
+                                    await asyncio.sleep(user_interval)
+                                await self._send_per_user_updates(
+                                    [batch],
+                                    result,
+                                    immediate_targets,
+                                    target_interval,
+                                    0.0,
+                                )
+                                immediate_batches_sent += 1
+                        finally:
+                            await asyncio.to_thread(
+                                self.media.cleanup_after_send, batch.tweets
+                            )
                 logger.info(
                     f"[NitterTweets] prepared @{username} {len(new_tweets)} "
                     "new tweets for scheduled push"
@@ -644,9 +689,8 @@ class NitterTweetScheduler:
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
                 await self._put_seen_map(group.group_id, seen_map)
 
-        if pending_batches:
-            if group.deferred_publish_enabled:
-                await self._enqueue_pending_batches(group, pending_batches, result)
+        if pending_batches and group.deferred_publish_enabled:
+            await self._enqueue_pending_batches(group, pending_batches, result)
             await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
 
         if group.deferred_publish_enabled:
@@ -657,17 +701,20 @@ class NitterTweetScheduler:
                 await self._send_no_update_notice(result, target_interval)
             return result
 
-        try:
-            await self._send_prepared_batches(
-                pending_batches,
-                result,
-                targets,
-                target_interval,
-                user_interval,
-            )
-        finally:
-            for batch in pending_batches:
-                await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+        if pending_batches:
+            try:
+                await self._send_prepared_batches(
+                    pending_batches,
+                    result,
+                    buffered_targets,
+                    target_interval,
+                    user_interval,
+                    record_merge_placeholders=not bool(immediate_targets),
+                    merge_existing_stats=bool(immediate_targets),
+                )
+            finally:
+                for batch in pending_batches:
+                    await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
 
         logger.info(result.format_log_summary())
         if result.delivery_warnings:
@@ -814,6 +861,7 @@ class NitterTweetScheduler:
         targets: list[str],
         target_interval: float,
         user_interval: float,
+        merge_existing_stats: bool = False,
     ) -> None:
         for batch_index, batch in enumerate(batches):
             success = 0
@@ -836,13 +884,12 @@ class NitterTweetScheduler:
                     )
                 if target_index < len(targets) - 1 and target_interval > 0:
                     await asyncio.sleep(target_interval)
-            result.pushes.append(
-                ScheduledPushResult(
-                    username=batch.username,
-                    new_count=len(batch.tweets),
-                    success_targets=success,
-                    total_targets=len(targets),
-                )
+            self._record_scheduled_push(
+                result,
+                batch,
+                success,
+                len(targets),
+                merge_existing_stats=merge_existing_stats,
             )
             logger.info(
                 f"[NitterTweets] pushed @{batch.username} {len(batch.tweets)} new tweets "
@@ -850,6 +897,40 @@ class NitterTweetScheduler:
             )
             if batch_index < len(batches) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
+
+    def _record_scheduled_push(
+        self,
+        result: ScheduledCheckResult,
+        batch: PendingTweetBatch,
+        success_targets: int,
+        total_targets: int,
+        *,
+        merge_existing_stats: bool = False,
+    ) -> None:
+        batch_key = self._scheduled_batch_key(batch)
+        if merge_existing_stats:
+            for push in result.pushes:
+                if push.batch_key == batch_key:
+                    push.success_targets += success_targets
+                    push.total_targets += total_targets
+                    return
+        result.pushes.append(
+            ScheduledPushResult(
+                username=batch.username,
+                new_count=len(batch.tweets),
+                success_targets=success_targets,
+                total_targets=total_targets,
+                batch_key=batch_key,
+            )
+        )
+
+    @staticmethod
+    def _scheduled_batch_key(batch: PendingTweetBatch) -> str:
+        status_ids = tuple(
+            str(getattr(tweet, "status_id", "")) for tweet in batch.tweets
+        )
+        pending_ids = tuple(str(item) for item in batch.pending_ids)
+        return repr((batch.username, batch.instance, status_ids, pending_ids))
 
     async def _send_merged_updates(
         self,
@@ -1060,6 +1141,8 @@ class NitterTweetScheduler:
         targets: list[str],
         target_interval: float,
         user_interval: float,
+        record_merge_placeholders: bool = True,
+        merge_existing_stats: bool = False,
     ) -> None:
         if self._should_merge_batches(batches, result.merge_tweet_threshold):
             merge_targets, ordinary_targets = self._split_merge_targets(targets)
@@ -1067,7 +1150,7 @@ class NitterTweetScheduler:
             merge_targets, ordinary_targets = [], targets
 
         if merge_targets:
-            result.push_mode = "mixed" if ordinary_targets else "merged"
+            result.push_mode = "mixed" if ordinary_targets or result.pushes else "merged"
             if ordinary_targets:
                 await self._send_per_user_updates(
                     batches,
@@ -1075,10 +1158,11 @@ class NitterTweetScheduler:
                     ordinary_targets,
                     target_interval,
                     user_interval,
+                    merge_existing_stats=merge_existing_stats,
                 )
                 if target_interval > 0:
                     await asyncio.sleep(target_interval)
-            else:
+            elif record_merge_placeholders:
                 for batch in batches:
                     result.pushes.append(
                         ScheduledPushResult(
@@ -1086,6 +1170,7 @@ class NitterTweetScheduler:
                             new_count=len(batch.tweets),
                             success_targets=0,
                             total_targets=0,
+                            batch_key=self._scheduled_batch_key(batch),
                         )
                     )
             await self._send_merged_updates(
@@ -1103,6 +1188,7 @@ class NitterTweetScheduler:
             ordinary_targets,
             target_interval,
             user_interval,
+            merge_existing_stats=merge_existing_stats,
         )
 
     def _merge_tweet_threshold(self) -> int:
@@ -1113,6 +1199,16 @@ class NitterTweetScheduler:
         if threshold <= 0:
             return False
         return sum(len(batch.tweets) for batch in batches) >= threshold
+
+    def _split_immediate_targets(
+        self, targets: list[str], merge_threshold: int
+    ) -> tuple[list[str], list[str]]:
+        if merge_threshold <= 0:
+            return targets, []
+        merge_targets, ordinary_targets = self._split_merge_targets(targets)
+        if not merge_targets:
+            return targets, []
+        return ordinary_targets, merge_targets
 
     def _split_merge_targets(self, targets: list[str]) -> tuple[list[str], list[str]]:
         merge_targets = []
