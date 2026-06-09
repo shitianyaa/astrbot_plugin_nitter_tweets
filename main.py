@@ -33,7 +33,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.9.0",
+    "0.9.1",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(Star):
@@ -518,6 +518,54 @@ class NitterTweetsPlugin(Star):
                 f"已删除文件: {result.removed}\n"
                 f"删除失败: {result.failed}\n"
                 f"已跳过目录: {result.skipped_dirs}"
+            )
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文记录清理")
+    async def cmd_tweets_clear_seen(self, event: AstrMessageEvent, args=GreedyStr):
+        """清理定时检查 seen 记录，并移除旧版 KV seen 数据。"""
+        event.stop_event()
+        tokens = self._command_tokens(event, args)
+        if not tokens or tokens[-1] != "确认":
+            await event.send(
+                event.plain_result(
+                    "用法：/推文记录清理 确认\n"
+                    "指定分组：/推文记录清理 分组名 确认\n"
+                    "会清理定时检查的已记录推文索引，不会删除订阅、暂存队列或媒体文件。"
+                )
+            )
+            return
+
+        group_name = " ".join(tokens[:-1]).strip()
+        group = None
+        if group_name and group_name.lower() not in {"all", "全部"}:
+            group = self.scheduler.config_reader.schedule_group(
+                group_name,
+                log_invalid_targets=False,
+            )
+            if group is None:
+                await event.send(
+                    event.plain_result(
+                        "未找到分组："
+                        f"{group_name}\n可用分组: "
+                        + self._format_limited_values(self._available_group_labels())
+                    )
+                )
+                return
+
+        deleted = await self.scheduler.storage.clear_seen_records(
+            group.group_id if group else None
+        )
+        legacy_deleted = await self.scheduler.storage.delete_legacy_seen_kv()
+        scope = self._check_group_label(group) if group else "全部分组"
+        await event.send(
+            event.plain_result(
+                "Nitter 已记录推文索引清理完成\n"
+                f"范围: {scope}\n"
+                f"SQLite seen 删除: {deleted} 条\n"
+                f"旧版 KV seen 清理: {'已执行' if legacy_deleted else '无记录或不支持'}\n"
+                "订阅配置、暂存队列和媒体文件未删除。"
             )
         )
 

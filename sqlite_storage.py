@@ -630,6 +630,19 @@ class SQLiteStorage:
 
         return seen_map
 
+    def clear_seen_tweets(self, group_id: str | None = None) -> int:
+        """清理 seen 记录；group_id 为空时清理全部分组."""
+        assert self.conn is not None
+
+        if group_id:
+            cursor = self.conn.execute(
+                "DELETE FROM seen_tweets WHERE group_id = ?",
+                (normalize_group_id(group_id),),
+            )
+        else:
+            cursor = self.conn.execute("DELETE FROM seen_tweets")
+        return int(cursor.rowcount or 0)
+
     def enqueue_pending_tweets(
         self,
         group_id: str,
@@ -1128,6 +1141,7 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "clear_seen_tweets",
     "enqueue_pending_tweets",
     "get_pending_tweets",
     "get_pending_queue_summary",

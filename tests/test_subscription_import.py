@@ -170,9 +170,19 @@ class _Config(dict):
 class _Storage:
     def __init__(self):
         self.synced_groups = []
+        self.clear_seen_calls = []
+        self.delete_legacy_seen_kv_calls = 0
 
     async def migrate_and_sync(self, schedule_groups):
         self.synced_groups = schedule_groups
+
+    async def clear_seen_records(self, group_id=None):
+        self.clear_seen_calls.append(group_id)
+        return 12
+
+    async def delete_legacy_seen_kv(self):
+        self.delete_legacy_seen_kv_calls += 1
+        return True
 
 
 class _CheckResult:
@@ -863,6 +873,47 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], [])
         self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
+
+    async def test_clear_seen_command_requires_confirmation(self):
+        config = _Config({"watch_users": ["NASA"], "push_targets": []})
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_clear_seen(event, "")
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [])
+        self.assertIn("/推文记录清理 确认", event.messages[-1])
+
+    async def test_clear_seen_command_clears_all_seen_and_legacy_kv(self):
+        config = _Config({"watch_users": ["NASA"], "push_targets": []})
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_clear_seen(event, "确认")
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [None])
+        self.assertEqual(plugin.scheduler.storage.delete_legacy_seen_kv_calls, 1)
+        self.assertIn("范围: 全部分组", event.messages[-1])
+        self.assertIn("SQLite seen 删除: 12 条", event.messages[-1])
+
+    async def test_clear_seen_command_clears_named_group(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA"],
+                "tweet_groups": [
+                    {"name": "科技", "group_id": "tech", "watch_users": ["OpenAI"]}
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_clear_seen(event, "科技 确认")
+
+        self.assertEqual(plugin.scheduler.storage.clear_seen_calls, ["tech"])
+        self.assertIn("范围: 科技 (tech)", event.messages[-1])
 
     async def test_export_bloggers_outputs_grouped_comma_lists(self):
         config = _Config(

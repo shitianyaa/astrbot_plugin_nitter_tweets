@@ -39,6 +39,7 @@ class _Owner:
     def __init__(self):
         self.data = {}
         self.put_calls = 0
+        self.deleted_keys = []
 
     async def get_kv_data(self, key, default):
         return self.data.get(key, default)
@@ -46,6 +47,10 @@ class _Owner:
     async def put_kv_data(self, key, value):
         self.put_calls += 1
         self.data[key] = value
+
+    async def delete_kv_data(self, key):
+        self.deleted_keys.append(key)
+        self.data.pop(key, None)
 
 
 class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
@@ -105,6 +110,75 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(summary.group_id, "global")
             self.assertEqual(summary.pending_count, 0)
             self.assertTrue(db_path.exists())
+
+    async def test_legacy_seen_kv_is_deleted_after_migration(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            owner = _Owner()
+            owner.data["nitter_seen_status_ids"] = {"NASA": ["100", "99"]}
+
+            with patch.object(
+                StorageAdapter,
+                "_init_sqlite",
+                return_value=SQLiteStorage(db_path),
+            ):
+                adapter = StorageAdapter(owner, {"storage_backend": "sqlite"}, None)
+
+            try:
+                await adapter.migrate_and_sync([])
+                seen_ids = await adapter.get_seen_ids("global", "NASA")
+            finally:
+                adapter.close()
+
+            self.assertEqual(seen_ids, ["100", "99"])
+            self.assertEqual(
+                owner.deleted_keys,
+                [
+                    "nitter_seen_status_ids",
+                    "nitter_seen_status_ids_by_target_v1",
+                ],
+            )
+            self.assertNotIn("nitter_seen_status_ids", owner.data)
+
+    async def test_target_scoped_legacy_seen_kv_is_migrated_and_deleted(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            owner = _Owner()
+            owner.data["nitter_seen_status_ids_by_target_v1"] = {
+                "telegram:FriendMessage:1": {
+                    "NASA": ["100", "99"],
+                    "OpenAI": ["80"],
+                },
+                "telegram:FriendMessage:2": {
+                    "NASA": ["98"],
+                },
+            }
+
+            with patch.object(
+                StorageAdapter,
+                "_init_sqlite",
+                return_value=SQLiteStorage(db_path),
+            ):
+                adapter = StorageAdapter(owner, {"storage_backend": "sqlite"}, None)
+
+            try:
+                await adapter.migrate_and_sync([])
+                nasa_seen = await adapter.get_seen_ids("global", "NASA")
+                openai_seen = await adapter.get_seen_ids("global", "OpenAI")
+            finally:
+                adapter.close()
+
+            self.assertEqual(set(nasa_seen), {"100", "99", "98"})
+            self.assertEqual(len(nasa_seen), 3)
+            self.assertEqual(openai_seen, ["80"])
+            self.assertEqual(
+                owner.deleted_keys,
+                [
+                    "nitter_seen_status_ids",
+                    "nitter_seen_status_ids_by_target_v1",
+                ],
+            )
+            self.assertNotIn("nitter_seen_status_ids_by_target_v1", owner.data)
 
 
 if __name__ == "__main__":

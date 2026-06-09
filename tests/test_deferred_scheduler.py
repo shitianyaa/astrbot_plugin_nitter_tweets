@@ -425,6 +425,25 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.schedulers.append(scheduler)
         return scheduler
 
+    async def test_check_result_seen_count_refreshes_after_initialization(self):
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+            }
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        result = await scheduler.run_check(reason="test_initial_seen_count")
+
+        self.assertEqual(result.initialized_users, {"NASA": 2})
+        self.assertEqual(result.seen_users, 1)
+        self.assertIn("已记录账号索引: 1 个", result.format_message())
+
     async def _create_scheduler_with_deferred_publish_enabled(
         self,
         push_targets=None,

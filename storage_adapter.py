@@ -8,12 +8,29 @@ from astrbot.api import logger
 
 try:
     from .config_compat import config_get
-    from .seen_store import SeenStore
+    from .seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
     from .sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
 except ImportError:
     from config_compat import config_get
-    from seen_store import SeenStore
+    from seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
     from sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
+
+
+PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
+
+
+def _plugin_data_dir() -> Path:
+    try:
+        from astrbot.api.star import StarTools
+
+        return Path(StarTools.get_data_dir(PLUGIN_NAME))
+    except Exception:
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
+        except Exception:
+            return Path("data") / "plugin_data" / PLUGIN_NAME
 
 
 class StorageAdapter:
@@ -40,14 +57,7 @@ class StorageAdapter:
 
     def _init_sqlite(self) -> SQLiteStorage:
         """Initialize SQLite storage."""
-        try:
-            from astrbot.api.star import StarTools
-
-            data_dir = StarTools.get_data_dir("astrbot_plugin_nitter_tweets")
-        except Exception:
-            data_dir = Path("data")
-
-        db_path = Path(data_dir) / "nitter_tweets.db"
+        db_path = _plugin_data_dir() / "nitter_tweets.db"
         return SQLiteStorage(db_path)
 
     async def _ensure_sqlite_connected(self) -> SQLiteStorage:
@@ -61,9 +71,12 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
 
         grouped_seen_map = await self.seen_store.get_grouped_seen_map()
+        has_legacy_seen = self._has_seen_data(grouped_seen_map.groups)
         await asyncio.to_thread(
             sqlite.migrate_kv_seen_data, grouped_seen_map.groups
         )
+        if has_legacy_seen:
+            await self.delete_legacy_seen_kv()
 
         await asyncio.to_thread(sqlite.sync_config_groups, schedule_groups)
 
@@ -96,6 +109,29 @@ class StorageAdapter:
         await asyncio.to_thread(
             sqlite.add_seen_ids, group_id, username, status_ids
         )
+
+    async def clear_seen_records(self, group_id: str | None = None) -> int:
+        """Clear SQLite seen records for a group, or all groups when omitted."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.clear_seen_tweets, group_id)
+
+    async def delete_legacy_seen_kv(self) -> bool:
+        """Delete legacy KV seen data so it cannot resurrect after reinstall."""
+        delete_kv_data = getattr(self.owner, "delete_kv_data", None)
+        if not callable(delete_kv_data):
+            logger.warning(
+                "[NitterTweets] legacy KV seen data exists but "
+                "owner does not support delete_kv_data()"
+            )
+            return False
+
+        try:
+            for key in (self.seen_store.key, KV_KEY_SEEN_BY_TARGET):
+                await delete_kv_data(key)
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] failed to delete legacy KV seen data: {exc}")
+            return False
+        return True
 
     async def enqueue_pending_tweets(
         self,
@@ -179,3 +215,11 @@ class StorageAdapter:
         """Close the SQLite connection."""
         if self.sqlite:
             self.sqlite.close()
+
+    @staticmethod
+    def _has_seen_data(grouped_seen_map: dict[str, dict[str, list[str]]]) -> bool:
+        return any(
+            bool(status_ids)
+            for seen_map in grouped_seen_map.values()
+            for status_ids in seen_map.values()
+        )

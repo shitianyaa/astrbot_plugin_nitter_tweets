@@ -28,6 +28,23 @@ except ImportError:
     )
 
 
+PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
+
+
+def _plugin_data_dir() -> Path:
+    try:
+        from astrbot.api.star import StarTools
+
+        return Path(StarTools.get_data_dir(PLUGIN_NAME))
+    except Exception:
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
+        except Exception:
+            return Path("data") / "plugin_data" / PLUGIN_NAME
+
+
 class XdownMediaParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -135,7 +152,8 @@ class MediaService:
                 "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
             )
         )
-        self.cache_dir = Path(__file__).resolve().parent / "cache"
+        self.cache_dir = _plugin_data_dir() / "cache"
+        self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -240,10 +258,12 @@ class MediaService:
                 f"removed={removed}, failed={failed}"
             )
         elif removed:
-            logger.debug(
-                "[NitterTweets] media cleanup after send finished: "
-                f"removed={removed}, failed={failed}"
-            )
+            debug_log = getattr(logger, "debug", None)
+            if debug_log:
+                debug_log(
+                    "[NitterTweets] media cleanup after send finished: "
+                    f"removed={removed}, failed={failed}"
+                )
 
     async def move_tweets_media_to_staged(
         self,
@@ -376,10 +396,31 @@ class MediaService:
 
     def clear_non_staged_cache(self) -> MediaCacheCleanupResult:
         result = MediaCacheCleanupResult()
-        if not self.cache_dir.exists():
-            return result
+        seen_dirs: set[Path] = set()
+        for cache_dir in (self.cache_dir, self.legacy_cache_dir):
+            try:
+                resolved = cache_dir.resolve()
+            except OSError:
+                resolved = cache_dir
+            if resolved in seen_dirs:
+                continue
+            seen_dirs.add(resolved)
+            self._clear_non_staged_cache_dir(cache_dir, result)
+        logger.info(
+            "[NitterTweets] non-staged media cache clear finished: "
+            f"removed={result.removed}, failed={result.failed}, "
+            f"skipped_dirs={result.skipped_dirs}"
+        )
+        return result
 
-        for path in self.cache_dir.iterdir():
+    @staticmethod
+    def _clear_non_staged_cache_dir(
+        cache_dir: Path, result: MediaCacheCleanupResult
+    ) -> None:
+        if not cache_dir.exists():
+            return
+
+        for path in cache_dir.iterdir():
             if path.is_dir():
                 result.skipped_dirs += 1
                 continue
@@ -393,13 +434,6 @@ class MediaService:
                 logger.warning(
                     f"[NitterTweets] failed to clear media cache file {path}: {exc}"
                 )
-
-        logger.info(
-            "[NitterTweets] non-staged media cache clear finished: "
-            f"removed={result.removed}, failed={result.failed}, "
-            f"skipped_dirs={result.skipped_dirs}"
-        )
-        return result
 
     @property
     def staged_cache_dir(self) -> Path:

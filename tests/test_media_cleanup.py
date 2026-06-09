@@ -102,6 +102,7 @@ class MediaCleanupTest(unittest.TestCase):
             staged_image.write_bytes(b"queued")
             service = MediaService({})
             service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
 
             result = service.clear_non_staged_cache()
 
@@ -111,6 +112,33 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertFalse(image.exists())
             self.assertFalse(temp.exists())
             self.assertTrue(staged_image.exists())
+
+    def test_clear_non_staged_cache_also_clears_legacy_cache_root_files(self):
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            legacy_cache_dir = Path(temp_dir) / "legacy_cache"
+            cache_dir.mkdir()
+            legacy_cache_dir.mkdir()
+            current_image = cache_dir / "image.jpg"
+            legacy_video = legacy_cache_dir / "video.mp4"
+            legacy_staged_dir = legacy_cache_dir / "staged"
+            legacy_staged_dir.mkdir()
+            legacy_staged_video = legacy_staged_dir / "queued.mp4"
+            current_image.write_bytes(b"image")
+            legacy_video.write_bytes(b"video")
+            legacy_staged_video.write_bytes(b"queued")
+            service = MediaService({})
+            service.cache_dir = cache_dir
+            service.legacy_cache_dir = legacy_cache_dir
+
+            result = service.clear_non_staged_cache()
+
+            self.assertEqual(result.removed, 2)
+            self.assertEqual(result.failed, 0)
+            self.assertEqual(result.skipped_dirs, 1)
+            self.assertFalse(current_image.exists())
+            self.assertFalse(legacy_video.exists())
+            self.assertTrue(legacy_staged_video.exists())
 
     def test_move_media_to_staged_then_cleanup_staged_media(self):
         with TemporaryDirectory() as temp_dir:
@@ -127,6 +155,7 @@ class MediaCleanupTest(unittest.TestCase):
             )
             service = MediaService({})
             service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
 
             service._move_tweets_media_to_staged("global", "example", [tweet])
             staged_path = media.path
@@ -159,6 +188,7 @@ class MediaCleanupTest(unittest.TestCase):
             )
             service = MediaService({"media_cache_retention_days": 0})
             service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
 
             service.cleanup_after_send([tweet])
 
@@ -179,6 +209,7 @@ class MediaCleanupTest(unittest.TestCase):
             os.utime(expired, (old_time, old_time))
             service = MediaService({})
             service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
 
             result = service.cleanup_expired_staged_media(
                 retention_hours=1,

@@ -198,7 +198,7 @@ class ScheduledCheckResult:
             f"触发原因: {self.reason}",
             f"关注账号: {len(self.users)} 个",
             f"推送目标: {len(self.targets)} 个",
-            f"已记录账号: {self.seen_users} 个",
+            f"已记录账号索引: {self.seen_users} 个",
         ]
         if self.fetch_limit:
             lines.append(f"每账号拉取: {self.fetch_limit} 条")
@@ -783,6 +783,7 @@ class NitterTweetScheduler:
             await self._enqueue_pending_batches(group, pending_batches, result)
             await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
 
+        result.seen_users = len(seen_map)
         if deferred_enabled:
             for batch in pending_batches:
                 await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
@@ -866,7 +867,7 @@ class NitterTweetScheduler:
             f"{total_users} 个（配置 {total_raw_users} 项，"
             f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
-            f"全部分组已记录账号项: {total_seen_users} 个",
+            f"全部分组已记录账号索引: {total_seen_users} 个",
             f"全部分组待发布: {total_pending} 条（媒体 {total_pending_media} 个）",
         ]
         lines.append("默认分组详情:")
@@ -1437,7 +1438,7 @@ class NitterTweetScheduler:
             f"（无效 {len(group.invalid_targets)} 个）"
         )
         if seen_count is not None:
-            lines.append(f"  已记录账号: {seen_count} 个")
+            lines.append(f"  已记录账号索引: {seen_count} 个")
         if group.deferred_publish_enabled:
             lines.append(
                 "  暂存发布: 已启用，"
