@@ -842,9 +842,18 @@ class NitterTweetsPlugin(Star):
                     f"{group_name}\n可用分组: "
                     + self._format_limited_values(self._available_group_labels()),
                 )
+            if group.group_id == GLOBAL_GROUP_ID:
+                if target_umo not in group.targets:
+                    return (
+                        None,
+                        "当前对话不属于分组："
+                        f"{self._check_group_label(group)}\n"
+                        f"当前对话: {target_umo}",
+                    )
+                return group, ""
             if not group.enabled:
                 return None, f"分组已禁用：{self._check_group_label(group)}"
-            if group.group_id != GLOBAL_GROUP_ID and target_umo not in group.targets:
+            if target_umo not in group.targets:
                 return (
                     None,
                     "当前对话不属于分组："
@@ -858,7 +867,10 @@ class NitterTweetsPlugin(Star):
             for group in self.scheduler.config_reader.schedule_groups(
                 log_invalid_targets=False
             )
-            if group.enabled and target_umo in group.targets
+            if (
+                target_umo in group.targets
+                and (group.group_id == GLOBAL_GROUP_ID or group.enabled)
+            )
         ]
         if matches:
             if len(matches) > 1:
@@ -870,17 +882,10 @@ class NitterTweetsPlugin(Star):
                 )
             return matches[0], ""
 
-        global_group = self.scheduler.config_reader.schedule_group(
-            GLOBAL_GROUP_ID,
-            log_invalid_targets=False,
-        )
-        if global_group and global_group.enabled:
-            return global_group, ""
-
         return (
             None,
-            "当前对话不在任何已启用推文分组的 push_targets 中，"
-            "且全局分组未启用，不会执行 /推文检查。\n"
+            "当前对话不在全局分组或任何已启用自定义分组的 push_targets 中，"
+            "不会执行 /推文检查。\n"
             f"当前对话: {target_umo}",
         )
 
