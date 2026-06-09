@@ -502,6 +502,8 @@ class NitterTweetScheduler:
         reason: str = "manual",
         notify_no_updates: bool | None = None,
         group_name: str = GLOBAL_GROUP_ID,
+        target_override: list[str] | None = None,
+        force_immediate: bool = False,
     ) -> ScheduledCheckResult:
         group = self._schedule_group(group_name)
         if group is None:
@@ -510,24 +512,35 @@ class NitterTweetScheduler:
             return result
 
         if self._check_lock.locked():
-            result = self._new_check_result(reason, group)
+            result = self._new_check_result(reason, group, target_override)
             result.skipped_reason = "check_already_running"
             logger.warning(result.format_log_summary())
             return result
 
         async with self._check_lock:
-            return await self._run_check_unlocked(group, reason, notify_no_updates)
+            return await self._run_check_unlocked(
+                group,
+                reason,
+                notify_no_updates,
+                target_override,
+                force_immediate,
+            )
 
     def _new_check_result(
-        self, reason: str, group: ScheduleGroup
+        self,
+        reason: str,
+        group: ScheduleGroup,
+        target_override: list[str] | None = None,
     ) -> ScheduledCheckResult:
+        targets = list(target_override) if target_override is not None else group.targets
+        invalid_targets = [] if target_override is not None else group.invalid_targets
         return ScheduledCheckResult(
             reason=reason,
             group_id=group.group_id,
             group_name=group.name,
             users=group.users,
-            targets=group.targets,
-            invalid_targets=group.invalid_targets,
+            targets=targets,
+            invalid_targets=invalid_targets,
         )
 
     async def _run_check_unlocked(
@@ -535,13 +548,16 @@ class NitterTweetScheduler:
         group: ScheduleGroup,
         reason: str,
         notify_no_updates: bool | None,
+        target_override: list[str] | None = None,
+        force_immediate: bool = False,
     ) -> ScheduledCheckResult:
-        result = self._new_check_result(reason, group)
+        result = self._new_check_result(reason, group, target_override)
         users = result.users
         targets = result.targets
         merge_threshold = self._merge_tweet_threshold()
         result.merge_tweet_threshold = merge_threshold
-        if group.deferred_publish_enabled:
+        deferred_enabled = group.deferred_publish_enabled and not force_immediate
+        if deferred_enabled:
             result.push_mode = "deferred"
         pending_batches = []
         immediate_targets, buffered_targets = self._split_immediate_targets(
@@ -610,7 +626,7 @@ class NitterTweetScheduler:
                 new_tweets.reverse()
                 try:
                     await self.translator.attach_translations(new_tweets, targets[0])
-                    if group.deferred_publish_enabled:
+                    if deferred_enabled:
                         if group.deferred_prefetch_media:
                             await self._attach_deferred_media(group, username, new_tweets)
                     else:
@@ -634,7 +650,7 @@ class NitterTweetScheduler:
                     fetched_ids=fetched_ids,
                     seen_ids=seen_ids,
                 )
-                if group.deferred_publish_enabled:
+                if deferred_enabled:
                     pending_batches.append(batch)
                 else:
                     await self._store_pending_seen_ids(
@@ -689,11 +705,11 @@ class NitterTweetScheduler:
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
                 await self._put_seen_map(group.group_id, seen_map)
 
-        if pending_batches and group.deferred_publish_enabled:
+        if pending_batches and deferred_enabled:
             await self._enqueue_pending_batches(group, pending_batches, result)
             await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
 
-        if group.deferred_publish_enabled:
+        if deferred_enabled:
             for batch in pending_batches:
                 await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
             logger.info(result.format_log_summary())
@@ -1358,6 +1374,11 @@ class NitterTweetScheduler:
             f"发布时间: {self._format_daily_times(group.deferred_publish_times)}",
             f"每次发布上限: {group.deferred_publish_batch_limit} 条",
         ]
+        if summary.user_counts:
+            lines.append(
+                "暂存博主: "
+                + self._format_pending_user_counts(summary.user_counts)
+            )
         if summary.oldest_created_at:
             lines.append(
                 "最早暂存: "
@@ -1370,11 +1391,76 @@ class NitterTweetScheduler:
             )
         return "\n".join(lines)
 
+    async def check_pending_brief(self, group: ScheduleGroup) -> str:
+        if not group.deferred_publish_enabled:
+            return "当前分组暂存: 已关闭"
+
+        summary = await self.storage.get_pending_queue_summary(group.group_id)
+        suffix = self._group_command_suffix(group)
+        lines = [
+            "当前分组暂存:",
+            f"待发布: {summary.pending_count} 条",
+            f"失败待重试: {summary.failed_count} 条",
+            "暂存博主: "
+            + (
+                self._format_pending_user_counts(summary.user_counts)
+                if summary.user_counts
+                else "无"
+            ),
+            "下次发布时间: "
+            + self._format_next_daily_time(group.deferred_publish_times),
+            "",
+            "可用命令:",
+            f" /推文队列{suffix}",
+            f" /推文发布{suffix}",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _group_command_suffix(group: ScheduleGroup) -> str:
+        if group.group_id == GLOBAL_GROUP_ID:
+            return ""
+        name = str(group.name or group.group_id).strip()
+        return f" {name}" if name else ""
+
+    @staticmethod
+    def _format_pending_user_counts(user_counts: list[tuple[str, int]]) -> str:
+        values = [
+            f"@{username} {count} 条"
+            for username, count in user_counts
+        ]
+        return _format_limited_values(values, separator="; ")
+
     @staticmethod
     def _format_daily_times(times: list[tuple[int, int]]) -> str:
         if not times:
             return "未配置"
         return ", ".join(f"{hour:02d}:{minute:02d}" for hour, minute in times)
+
+    @staticmethod
+    def _format_next_daily_time(times: list[tuple[int, int]]) -> str:
+        if not times:
+            return "未配置"
+        now = dt.datetime.now(CN_TZ)
+        candidates = []
+        for hour, minute in times:
+            candidate = now.replace(
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
+            if candidate <= now:
+                candidate += dt.timedelta(days=1)
+            candidates.append(candidate)
+        next_time = min(candidates)
+        if next_time.date() == now.date():
+            prefix = "今天"
+        elif next_time.date() == (now + dt.timedelta(days=1)).date():
+            prefix = "明天"
+        else:
+            prefix = next_time.strftime("%Y-%m-%d")
+        return f"{prefix} {next_time:%H:%M}"
 
     @staticmethod
     def _format_timestamp(timestamp: int) -> str:

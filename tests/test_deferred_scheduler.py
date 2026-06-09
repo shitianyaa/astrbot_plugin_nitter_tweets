@@ -462,6 +462,134 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.cleaned, 2)
         self.assertEqual(sleep_calls, [0.25])
 
+    async def test_target_override_limits_scheduled_check_targets(self):
+        events = []
+        media = _Media()
+        sender = _Sender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [
+                    "telegram:FriendMessage:1",
+                    "telegram:FriendMessage:2",
+                ],
+                "scheduled_fetch_limit": 2,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(
+            reason="test_target_override",
+            target_override=["telegram:FriendMessage:2"],
+        )
+
+        self.assertEqual(result.targets, ["telegram:FriendMessage:2"])
+        self.assertEqual(
+            events,
+            [
+                "fetch:NASA",
+                "send:telegram:FriendMessage:2:NASA",
+            ],
+        )
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:2",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                )
+            ],
+        )
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(result.pushed_target_successes, 1)
+        self.assertEqual(result.pushed_target_attempts, 1)
+        self.assertEqual(media.cleaned, 1)
+
+    async def test_force_immediate_bypasses_deferred_queue_for_override_target(self):
+        events = []
+        media = _Media()
+        sender = _Sender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [
+                    "telegram:FriendMessage:1",
+                    "telegram:FriendMessage:2",
+                ],
+                "scheduled_fetch_limit": 2,
+                "deferred_publish_enabled": True,
+                "deferred_publish_times": ["08:00"],
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(
+            reason="test_force_immediate",
+            target_override=["telegram:FriendMessage:2"],
+            force_immediate=True,
+        )
+        summary = await scheduler.storage.get_pending_queue_summary("global")
+
+        self.assertEqual(result.targets, ["telegram:FriendMessage:2"])
+        self.assertEqual(result.push_mode, "per_user")
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(summary.pending_count, 0)
+        self.assertEqual(
+            events,
+            [
+                "fetch:NASA",
+                "send:telegram:FriendMessage:2:NASA",
+            ],
+        )
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:2",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                )
+            ],
+        )
+        self.assertEqual(media.attached, 1)
+        self.assertEqual(media.moved, 0)
+        self.assertEqual(media.cleaned, 1)
+
     async def test_ordinary_targets_send_immediately_but_qq_merges_at_end(self):
         events = []
         media = _Media()
@@ -782,6 +910,65 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.media_count, 0)
         self.assertEqual(media.attached, 0)
         self.assertEqual(media.moved, 0)
+
+    async def test_check_pending_brief_includes_queue_state_and_global_commands(self):
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled()
+        await self._enqueue_deferred_tweets(
+            scheduler,
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                    self._make_tweet("NASA", "202"),
+                ],
+                "OpenAI": [self._make_tweet("OpenAI", "301")],
+            },
+        )
+        records = await scheduler.storage.get_pending_tweets("global", 10)
+        await scheduler.storage.mark_pending_tweets_failed(
+            [records[0].id], "send failed"
+        )
+        group = scheduler._schedule_group("global")
+
+        summary = await scheduler.check_pending_brief(group)
+
+        self.assertIn("当前分组暂存:", summary)
+        self.assertIn("待发布: 3 条", summary)
+        self.assertIn("失败待重试: 1 条", summary)
+        self.assertIn("@NASA 2 条", summary)
+        self.assertIn("@OpenAI 1 条", summary)
+        self.assertIn("下次发布时间:", summary)
+        self.assertIn("\n /推文队列\n", summary)
+        self.assertIn("\n /推文发布", summary)
+
+    async def test_check_pending_brief_uses_custom_group_command_suffix(self):
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": [],
+                "push_targets": [],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                        "deferred_publish_enabled": True,
+                        "deferred_publish_times": ["08:00"],
+                    }
+                ],
+            }
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        group = scheduler._schedule_group("tech")
+
+        summary = await scheduler.check_pending_brief(group)
+
+        self.assertIn("待发布: 0 条", summary)
+        self.assertIn("暂存博主: 无", summary)
+        self.assertIn("\n /推文队列 Tech\n", summary)
+        self.assertIn("\n /推文发布 Tech", summary)
 
     async def test_publish_pending_sends_and_marks_queue_sent(self):
         config = {

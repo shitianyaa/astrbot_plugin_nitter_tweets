@@ -7,7 +7,7 @@ import json
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -60,6 +60,7 @@ class PendingQueueSummary:
     media_count: int = 0
     oldest_created_at: int | None = None
     newest_created_at: int | None = None
+    user_counts: list[tuple[str, int]] = field(default_factory=list)
 
 
 def _locked_sqlite_method(method):
@@ -751,6 +752,17 @@ class SQLiteStorage:
             """,
             (normalized_group_id,),
         ).fetchone()
+        user_rows = self.conn.execute(
+            """
+            SELECT username, COUNT(*) AS pending_count
+            FROM pending_tweets
+            WHERE group_id = ? AND sent_at IS NULL
+            GROUP BY username
+            ORDER BY pending_count DESC, username COLLATE NOCASE ASC
+            LIMIT 10
+            """,
+            (normalized_group_id,),
+        ).fetchall()
         return PendingQueueSummary(
             group_id=normalized_group_id,
             pending_count=int(row["pending_count"] or 0),
@@ -758,6 +770,10 @@ class SQLiteStorage:
             media_count=int(media_row["media_count"] or 0),
             oldest_created_at=row["oldest_created_at"],
             newest_created_at=row["newest_created_at"],
+            user_counts=[
+                (str(item["username"]), int(item["pending_count"] or 0))
+                for item in user_rows
+            ],
         )
 
     def get_pending_media_paths(self) -> set[str]:

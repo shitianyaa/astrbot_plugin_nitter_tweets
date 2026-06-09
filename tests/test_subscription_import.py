@@ -158,19 +158,46 @@ class _Storage:
         self.synced_groups = schedule_groups
 
 
+class _CheckResult:
+    def format_message(self):
+        return "检查结果"
+
+
 class _Scheduler:
     def __init__(self, config):
         self.config_reader = SchedulerConfigReader(config, context=None)
         self.storage = _Storage()
+        self.started = []
+        self.run_check_calls = []
+        self.check_pending_brief_calls = []
 
     def watch_users_info(self):
         return self.config_reader.watch_users_info()
 
+    def start(self, reason=""):
+        self.started.append(reason)
+
+    async def run_check(self, **kwargs):
+        self.run_check_calls.append(kwargs)
+        return _CheckResult()
+
+    async def check_pending_brief(self, group):
+        self.check_pending_brief_calls.append(group.group_id)
+        return "当前分组暂存: 已关闭"
+
 
 class _Event:
-    def __init__(self):
+    def __init__(
+        self,
+        unified_msg_origin="telegram:FriendMessage:1",
+        group_id="1",
+        sender_id="user",
+    ):
         self.messages: list[str] = []
         self.stopped = False
+        self.unified_msg_origin = unified_msg_origin
+        self._group_id = group_id
+        self._sender_id = sender_id
 
     def stop_event(self):
         self.stopped = True
@@ -180,6 +207,12 @@ class _Event:
 
     async def send(self, message):
         self.messages.append(message)
+
+    def get_group_id(self):
+        return self._group_id
+
+    def get_sender_id(self):
+        return self._sender_id
 
 
 class _ManualNitter:
@@ -277,6 +310,122 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plugin.nitter.calls, [])
         self.assertIn("数量需要大于 0", event.messages[-1])
+
+    async def test_check_without_group_uses_current_target_group(self):
+        config = _Config(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:global"],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:1")
+
+        await plugin.cmd_tweets_check(event)
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(plugin.scheduler.started, ["manual_check"])
+        self.assertEqual(len(plugin.scheduler.run_check_calls), 1)
+        self.assertEqual(
+            plugin.scheduler.run_check_calls[0],
+            {
+                "reason": "manual_command",
+                "notify_no_updates": False,
+                "group_name": "tech",
+                "target_override": ["telegram:FriendMessage:1"],
+                "force_immediate": True,
+            },
+        )
+        self.assertEqual(plugin.scheduler.check_pending_brief_calls, ["tech"])
+        self.assertIn("Tech (tech)", event.messages[0])
+        self.assertEqual(event.messages[-1], "检查结果\n\n当前分组暂存: 已关闭")
+
+    async def test_check_without_group_rejects_unknown_current_target(self):
+        config = _Config(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:global"],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:missing")
+
+        await plugin.cmd_tweets_check(event)
+
+        self.assertTrue(event.stopped)
+        self.assertEqual(plugin.scheduler.started, [])
+        self.assertEqual(plugin.scheduler.run_check_calls, [])
+        self.assertIn("不在任何已启用推文分组", event.messages[-1])
+
+    async def test_check_without_group_rejects_ambiguous_current_target(self):
+        config = _Config(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:1")
+
+        await plugin.cmd_tweets_check(event)
+
+        self.assertEqual(plugin.scheduler.started, [])
+        self.assertEqual(plugin.scheduler.run_check_calls, [])
+        self.assertIn("匹配到多个推文分组", event.messages[-1])
+        self.assertIn("全局分组 (global)", event.messages[-1])
+        self.assertIn("Tech (tech)", event.messages[-1])
+
+    async def test_check_with_group_rejects_target_outside_group(self):
+        config = _Config(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [],
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event(unified_msg_origin="telegram:FriendMessage:2")
+
+        await plugin.cmd_tweets_check(event, "tech")
+
+        self.assertEqual(plugin.scheduler.started, [])
+        self.assertEqual(plugin.scheduler.run_check_calls, [])
+        self.assertIn("当前对话不属于分组：Tech (tech)", event.messages[-1])
 
     async def test_import_without_group_appends_global_watch_users(self):
         config = _Config(

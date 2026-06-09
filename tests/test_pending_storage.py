@@ -134,6 +134,61 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(failed_summary.failed_count, 1)
             self.assertEqual(sent_summary.pending_count, 0)
 
+    async def test_pending_queue_summary_groups_unsent_tweets_by_username(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                tweets = [
+                    TweetItem(
+                        text="hello",
+                        link="https://x.com/NASA/status/201",
+                        published="",
+                    ),
+                    TweetItem(
+                        text="hello",
+                        link="https://x.com/NASA/status/202",
+                        published="",
+                    ),
+                ]
+                openai_tweet = TweetItem(
+                    text="hello",
+                    link="https://x.com/OpenAI/status/301",
+                    published="",
+                )
+                await asyncio.to_thread(
+                    storage.enqueue_pending_tweets,
+                    "global",
+                    "NASA",
+                    "https://nitter.test",
+                    tweets,
+                )
+                await asyncio.to_thread(
+                    storage.enqueue_pending_tweets,
+                    "global",
+                    "OpenAI",
+                    "https://nitter.test",
+                    [openai_tweet],
+                )
+                records = await asyncio.to_thread(
+                    storage.get_pending_tweets, "global", 10
+                )
+                await asyncio.to_thread(
+                    storage.mark_pending_tweets_failed,
+                    [records[0].id],
+                    "send failed",
+                )
+                summary = await asyncio.to_thread(
+                    storage.get_pending_queue_summary, "global"
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual(summary.pending_count, 3)
+            self.assertEqual(summary.failed_count, 1)
+            self.assertEqual(summary.user_counts, [("NASA", 2), ("OpenAI", 1)])
+
     async def test_cleanup_sent_pending_tweets_removes_current_sent_rows(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"

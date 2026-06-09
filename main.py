@@ -361,15 +361,26 @@ class NitterTweetsPlugin(Star):
         """立即执行一次定时推文检查。"""
         event.stop_event()
         group_name = self._strip_self_at_argument(event, group_name)
+        target_umo = TweetSender.event_target(event)
+        group, error = self._resolve_check_group_for_target(group_name, target_umo)
+        if error:
+            await event.send(event.plain_result(error))
+            return
+
         self.scheduler.start(reason="manual_check")
-        group_label = group_name or "全局分组"
+        group_label = self._check_group_label(group)
         await event.send(event.plain_result(f"正在执行 Nitter 定时检查：{group_label}..."))
         result = await self.scheduler.run_check(
             reason="manual_command",
             notify_no_updates=False,
-            group_name=group_name,
+            group_name=group.group_id,
+            target_override=[target_umo],
+            force_immediate=True,
         )
-        await event.send(event.plain_result(result.format_message()))
+        pending_brief = await self.scheduler.check_pending_brief(group)
+        await event.send(
+            event.plain_result(result.format_message() + "\n\n" + pending_brief)
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文缓存清理")
@@ -639,6 +650,60 @@ class NitterTweetsPlugin(Star):
             group_name, log_invalid_targets=False
         )
 
+    def _resolve_check_group_for_target(
+        self, group_name: str, target_umo: str
+    ) -> tuple[ScheduleGroup | None, str]:
+        group_name = str(group_name or "").strip()
+        target_umo = str(target_umo or "").strip()
+        if not target_umo or target_umo == "unknown":
+            return None, "无法识别当前对话，不能执行 /推文检查。"
+
+        if group_name:
+            group = self.scheduler.config_reader.schedule_group(
+                group_name,
+                log_invalid_targets=False,
+            )
+            if group is None:
+                return (
+                    None,
+                    "未找到分组："
+                    f"{group_name}\n可用分组: "
+                    + self._format_limited_values(self._available_group_labels()),
+                )
+            if not group.enabled:
+                return None, f"分组已禁用：{self._check_group_label(group)}"
+            if target_umo not in group.targets:
+                return (
+                    None,
+                    "当前对话不属于分组："
+                    f"{self._check_group_label(group)}\n"
+                    f"当前对话: {target_umo}",
+                )
+            return group, ""
+
+        matches = [
+            group
+            for group in self.scheduler.config_reader.schedule_groups(
+                log_invalid_targets=False
+            )
+            if group.enabled and target_umo in group.targets
+        ]
+        if not matches:
+            return (
+                None,
+                "当前对话不在任何已启用推文分组的 push_targets 中，"
+                "不会执行 /推文检查。\n"
+                f"当前对话: {target_umo}",
+            )
+        if len(matches) > 1:
+            labels = [self._check_group_label(group) for group in matches]
+            return (
+                None,
+                "当前对话匹配到多个推文分组，请使用 /推文检查 分组名 指定。\n"
+                "匹配分组: " + self._format_limited_values(labels),
+            )
+        return matches[0], ""
+
     def _available_group_labels(self) -> list[str]:
         groups = self.scheduler.config_reader.schedule_groups(
             log_invalid_targets=False
@@ -664,6 +729,10 @@ class NitterTweetsPlugin(Star):
     def _import_group_label(group: ScheduleGroup | None) -> str:
         if group is None or group.group_id == GLOBAL_GROUP_ID:
             return "全局分组 (global)"
+        return f"{group.name} ({group.group_id})"
+
+    @staticmethod
+    def _check_group_label(group: ScheduleGroup) -> str:
         return f"{group.name} ({group.group_id})"
 
     @staticmethod

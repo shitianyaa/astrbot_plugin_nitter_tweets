@@ -998,6 +998,10 @@ class TweetSender:
         return False
 
     @classmethod
+    def event_target(cls, event) -> str:
+        return cls._event_target(event)
+
+    @classmethod
     def _event_target(cls, event) -> str:
         try:
             umo = getattr(event, "unified_msg_origin", "")
