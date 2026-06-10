@@ -578,7 +578,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
                 "global", username, "https://nitter.test", tweets
             )
 
-    async def test_ordinary_targets_send_after_each_user_is_prepared(self):
+    async def test_ordinary_targets_send_after_update_discovery(self):
         events = []
         media = _Media()
         sender = _Sender(events=events)
@@ -587,6 +587,9 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
                 "NASA": [
                     self._make_tweet("NASA", "100"),
                     self._make_tweet("NASA", "101"),
+                ],
+                "ESA": [
+                    self._make_tweet("ESA", "300"),
                 ],
                 "NASAHubble": [
                     self._make_tweet("NASAHubble", "200"),
@@ -598,7 +601,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         scheduler = self._create_scheduler(
             {
                 "schedule_enabled": True,
-                "watch_users": ["NASA", "NASAHubble"],
+                "watch_users": ["NASA", "ESA", "NASAHubble"],
                 "push_targets": ["telegram:FriendMessage:1"],
                 "scheduled_fetch_limit": 2,
                 "send_user_interval": 0.25,
@@ -611,6 +614,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             scheduler._schedule_groups(log_invalid_targets=False)
         )
         await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "ESA", ["300"])
         await scheduler.storage.add_seen_ids("global", "NASAHubble", ["200"])
 
         sleep_calls = []
@@ -625,8 +629,9 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             events,
             [
                 "fetch:NASA",
-                "send:telegram:FriendMessage:1:NASA",
+                "fetch:ESA",
                 "fetch:NASAHubble",
+                "send:telegram:FriendMessage:1:NASA",
                 "send:telegram:FriendMessage:1:NASAHubble",
             ],
         )
@@ -988,7 +993,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_ordinary_targets_send_immediately_but_qq_merges_at_end(self):
+    async def test_ordinary_targets_send_per_account_but_qq_merges_at_end(self):
         events = []
         media = _Media()
         sender = _Sender(
@@ -1035,8 +1040,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             events,
             [
                 "fetch:NASA",
-                "send:telegram:FriendMessage:1:NASA",
                 "fetch:NASAHubble",
+                "send:telegram:FriendMessage:1:NASA",
                 "send:telegram:FriendMessage:1:NASAHubble",
                 "merged:aiocqhttp:GroupMessage:1",
             ],
@@ -1106,8 +1111,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             events,
             [
                 "fetch:NASA",
-                "send:telegram:FriendMessage:1:NASA",
                 "fetch:NASAHubble",
+                "send:telegram:FriendMessage:1:NASA",
                 "send:telegram:FriendMessage:1:NASAHubble",
                 "send:aiocqhttp:GroupMessage:1:NASA",
                 "send:aiocqhttp:GroupMessage:1:NASAHubble",
