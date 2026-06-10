@@ -247,10 +247,11 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> bool:
         return (
             await self.send_to_umo_with_outcome(
-                context, umo, username, instance, tweets, group_label
+                context, umo, username, instance, tweets, group_label, header_text
             )
         ).success
 
@@ -262,26 +263,27 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> SendOutcome:
         if self._should_use_lark_for_umo(context, umo):
             return await self._send_lark_to_umo(
-                context, umo, username, instance, tweets, group_label
+                context, umo, username, instance, tweets, group_label, header_text
             )
 
         if not self._should_use_forward_for_umo(
             context, umo
         ) or not self._should_use_merge_for_count(len(tweets)):
             return await self._send_direct_to_umo(
-                context, umo, username, instance, tweets, group_label
+                context, umo, username, instance, tweets, group_label, header_text
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
             return await self._send_forward_chunks_to_umo(
-                context, umo, username, instance, tweets, group_label
+                context, umo, username, instance, tweets, group_label, header_text
             )
 
         return await self._send_forward_chunk_to_umo(
-            context, umo, username, instance, tweets, group_label
+            context, umo, username, instance, tweets, group_label, header_text
         )
 
     async def _send_forward_chunks_to_umo(
@@ -292,11 +294,12 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> SendOutcome:
         return await self._send_chunked_outcomes(
             self._tweet_chunks(tweets),
             lambda chunk: self._send_forward_chunk_to_umo(
-                context, umo, username, instance, chunk, group_label
+                context, umo, username, instance, chunk, group_label, header_text
             ),
             lambda error, warning: SendOutcome(
                 success=True, error=error, warning=warning
@@ -316,9 +319,15 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> SendOutcome:
         nodes = self.renderer.build_nodes_for_uin(
-            10000, username, instance, tweets, group_label=group_label
+            10000,
+            username,
+            instance,
+            tweets,
+            group_label=group_label,
+            header_text=header_text,
         )
         attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "scheduled forwarded tweets"
@@ -341,6 +350,7 @@ class TweetSender:
                 tweets,
                 exclude_videos=True,
                 group_label=group_label,
+                header_text=header_text,
             )
             attempt_nv = await self._send_context_message(
                 context,
@@ -368,7 +378,11 @@ class TweetSender:
                 [
                     Plain(
                         self.renderer.format_plain(
-                            username, instance, tweets, group_label=group_label
+                            username,
+                            instance,
+                            tweets,
+                            group_label=group_label,
+                            header_text=header_text,
                         )
                     )
                 ]
@@ -618,13 +632,18 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> SendOutcome:
         attempt = await self._send_context_message(
             context,
             umo,
             MessageChain(
                 self.renderer.build_direct_components(
-                    username, instance, tweets, group_label=group_label
+                    username,
+                    instance,
+                    tweets,
+                    group_label=group_label,
+                    header_text=header_text,
                 )
             ),
             "direct scheduled tweets",
@@ -649,6 +668,7 @@ class TweetSender:
                         tweets,
                         exclude_videos=True,
                         group_label=group_label,
+                        header_text=header_text,
                     )
                 ),
                 "direct scheduled tweets without videos",
@@ -674,7 +694,11 @@ class TweetSender:
                 [
                     Plain(
                         self.renderer.format_plain(
-                            username, instance, tweets, group_label=group_label
+                            username,
+                            instance,
+                            tweets,
+                            group_label=group_label,
+                            header_text=header_text,
                         )
                     )
                 ]
@@ -912,9 +936,14 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         group_label: str = "",
+        header_text: str = "",
     ) -> SendOutcome:
         components = self.renderer.build_direct_components(
-            username, instance, tweets, group_label=group_label
+            username,
+            instance,
+            tweets,
+            group_label=group_label,
+            header_text=header_text,
         )
         text = plain_text_from_components(components)
         client, receive_id_type, receive_id = lark_client_and_target(
@@ -926,12 +955,12 @@ class TweetSender:
                 "using generic send"
             )
             return await self._send_direct_to_umo(
-                context, umo, username, instance, tweets, group_label
+                context, umo, username, instance, tweets, group_label, header_text
             )
 
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets)),
+            lark_tweet_post_title(username, len(tweets), header_text),
             components,
             "scheduled Lark tweet post",
             is_uncertain_delivery_error=self._is_uncertain_delivery_error,

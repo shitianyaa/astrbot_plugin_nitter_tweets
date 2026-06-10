@@ -87,6 +87,10 @@ class PendingTweetBatch:
     fetched_ids: list[str]
     seen_ids: list[str]
     pending_ids: list[int] = field(default_factory=list)
+    account_index: int = 0
+    account_total: int = 0
+    tweet_index: int = 0
+    tweet_total: int = 0
 
 
 @dataclass(slots=True)
@@ -592,7 +596,8 @@ class NitterTweetScheduler:
             f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}"
         )
 
-        for username in users:
+        user_total = len(users)
+        for user_index, username in enumerate(users, 1):
             try:
                 instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
             except Exception as exc:
@@ -667,6 +672,10 @@ class NitterTweetScheduler:
                         tweets=new_tweets,
                         fetched_ids=fetched_ids,
                         seen_ids=seen_ids,
+                        account_index=user_index,
+                        account_total=user_total,
+                        tweet_index=len(new_tweets),
+                        tweet_total=len(new_tweets),
                     )
                     pending_batches.append(batch)
                 else:
@@ -678,6 +687,10 @@ class NitterTweetScheduler:
                             tweets=[tweet],
                             fetched_ids=[tweet.status_id] if tweet.status_id else [],
                             seen_ids=seen_map.get(username, []),
+                            account_index=user_index,
+                            account_total=user_total,
+                            tweet_index=tweet_index,
+                            tweet_total=len(new_tweets),
                         )
                         try:
                             translation_report = await self.translator.attach_translations(
@@ -961,6 +974,7 @@ class NitterTweetScheduler:
             success = 0
             for target_index, umo in enumerate(targets):
                 try:
+                    header_text = self._scheduled_update_header(batch, batch_progress)
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -968,6 +982,7 @@ class NitterTweetScheduler:
                         batch.instance,
                         batch.tweets,
                         group_label=group_label,
+                        header_text=header_text,
                     )
                     if outcome.success:
                         success += 1
@@ -999,6 +1014,26 @@ class NitterTweetScheduler:
             )
             if batch_index < len(batches) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
+
+    @staticmethod
+    def _scheduled_update_header(
+        batch: PendingTweetBatch, batch_progress: tuple[int, int] | None = None
+    ) -> str:
+        if batch_progress:
+            tweet_index, tweet_total = batch_progress
+        else:
+            tweet_index = batch.tweet_index
+            tweet_total = batch.tweet_total
+        if tweet_total <= 0:
+            tweet_total = max(len(batch.tweets), 1)
+        if tweet_index <= 0:
+            tweet_index = min(len(batch.tweets), tweet_total) or 1
+
+        lines = [f"@{batch.username} 新推文"]
+        if batch.account_index > 0 and batch.account_total > 0:
+            lines.append(f"所有账号：{batch.account_index}/{batch.account_total}")
+        lines.append(f"该账号推文：{tweet_index}/{tweet_total}")
+        return "\n".join(lines)
 
     def _log_ai_process_results(
         self,
@@ -1260,6 +1295,12 @@ class NitterTweetScheduler:
                 batches.append(batch)
             batch.tweets.append(record.tweet)
             batch.pending_ids.append(record.id)
+        account_total = len(batches)
+        for account_index, batch in enumerate(batches, 1):
+            batch.account_index = account_index
+            batch.account_total = account_total
+            batch.tweet_index = len(batch.tweets)
+            batch.tweet_total = len(batch.tweets)
         return batches
 
     async def _send_prepared_batches(
@@ -1514,7 +1555,7 @@ class NitterTweetScheduler:
         ]
         if summary.user_counts:
             lines.append(
-                "暂存博主: "
+                "暂存账号: "
                 + self._format_pending_user_counts(summary.user_counts)
             )
         if summary.oldest_created_at:
@@ -1539,7 +1580,7 @@ class NitterTweetScheduler:
             "当前分组暂存:",
             f"待发布: {summary.pending_count} 条",
             f"失败待重试: {summary.failed_count} 条",
-            "暂存博主: "
+            "暂存账号: "
             + (
                 self._format_pending_user_counts(summary.user_counts)
                 if summary.user_counts

@@ -325,6 +325,7 @@ class _Sender:
         self.merged_sent = []
         self.group_labels = []
         self.merged_group_labels = []
+        self.headers = []
         self.success = success
         self.failed_targets = set(failed_targets or [])
         self.merge_targets = set(merge_targets or [])
@@ -334,11 +335,12 @@ class _Sender:
         return umo in self.merge_targets
 
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label=""
+        self, context, umo, username, instance, tweets, group_label="", header_text=""
     ):
         self.events.append(f"send:{umo}:{username}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         self.group_labels.append((umo, username, group_label))
+        self.headers.append((umo, username, header_text))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
@@ -365,7 +367,7 @@ class _Sender:
 
 class _CancelingSender(_Sender):
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label=""
+        self, context, umo, username, instance, tweets, group_label="", header_text=""
     ):
         self.events.append(f"cancel:{umo}:{username}")
         raise scheduler_module.asyncio.CancelledError()
@@ -373,12 +375,13 @@ class _CancelingSender(_Sender):
 
 class _RecordingSender(_Sender):
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label=""
+        self, context, umo, username, instance, tweets, group_label="", header_text=""
     ):
         status_ids = ",".join(tweet.status_id for tweet in tweets)
         self.events.append(f"send:{umo}:{username}:{status_ids}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         self.group_labels.append((umo, username, group_label))
+        self.headers.append((umo, username, header_text))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
@@ -521,6 +524,54 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("一张火箭照片", text)
         self.assertIn("评论：\n发射任务值得关注。", text)
 
+    async def test_immediate_single_tweet_push_uses_new_tweet_progress_header(self):
+        media = _Media()
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "102"),
+                ],
+            },
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_new_tweet_headers")
+
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertEqual(
+            sender.headers,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "@NASA 新推文\n所有账号：1/1\n该账号推文：1/2",
+                ),
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "@NASA 新推文\n所有账号：1/1\n该账号推文：2/2",
+                ),
+            ],
+        )
+        self.assertNotIn("最近 1 条推文", "\n".join(item[2] for item in sender.headers))
+
     async def _enqueue_deferred_tweets(self, scheduler, tweets_by_user):
         for username, tweets in tweets_by_user.items():
             await scheduler.storage.enqueue_pending_tweets(
@@ -585,6 +636,21 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.pushed_target_attempts, 2)
         self.assertEqual(media.cleaned, 2)
         self.assertEqual(sleep_calls, [0.25])
+        self.assertEqual(
+            sender.headers,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "@NASA 新推文\n所有账号：1/2\n该账号推文：1/1",
+                ),
+                (
+                    "telegram:FriendMessage:1",
+                    "NASAHubble",
+                    "@NASAHubble 新推文\n所有账号：2/2\n该账号推文：1/1",
+                ),
+            ],
+        )
 
     async def test_target_override_limits_scheduled_check_targets(self):
         events = []
@@ -1298,7 +1364,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         summary = await scheduler.check_pending_brief(group)
 
         self.assertIn("待发布: 0 条", summary)
-        self.assertIn("暂存博主: 无", summary)
+        self.assertIn("暂存账号: 无", summary)
         self.assertIn("\n /推文队列 Tech\n", summary)
         self.assertIn("\n /推文发布 Tech", summary)
 

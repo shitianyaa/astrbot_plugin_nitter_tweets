@@ -604,21 +604,21 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result(result.format_message("Nitter 暂存发布结果")))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文订阅列表")
+    @filter.command("订阅列表")
     async def cmd_tweets_list(self, event: AstrMessageEvent):
         """查看已配置的定时订阅账号列表。"""
         event.stop_event()
         info = self.scheduler.watch_users_info()
 
         lines = [
-            "Nitter 订阅作者列表",
+            "Nitter 订阅账号列表",
             f"原配置项: {info.raw_count} 个",
-            f"有效作者: {len(info.users)} 个",
+            f"有效账号: {len(info.users)} 个",
             f"重复项: {len(info.duplicates)} 个",
             f"无效项: {len(info.invalid_entries)} 个",
         ]
         if info.users:
-            lines.append("作者列表:")
+            lines.append("账号列表:")
             lines.extend(
                 f"{index}. @{user}"
                 for index, user in enumerate(info.users[:10], 1)
@@ -626,7 +626,7 @@ class NitterTweetsPlugin(Star):
             if len(info.users) > 10:
                 lines.append(f"... 还有 {len(info.users) - 10} 个")
         else:
-            lines.append("作者列表为空。")
+            lines.append("账号列表为空。")
         if info.duplicates:
             lines.append("重复项: " + self._format_limited_values(info.duplicates))
         if info.invalid_entries:
@@ -637,23 +637,148 @@ class NitterTweetsPlugin(Star):
         await event.send(event.plain_result("\n".join(lines)))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("博主导出")
-    async def cmd_tweets_export_bloggers(self, event: AstrMessageEvent):
-        """按分组导出已配置的订阅博主。"""
+    @filter.command("订阅导出")
+    async def cmd_tweets_export_subscriptions(self, event: AstrMessageEvent):
+        """按分组导出已配置的订阅账号。"""
         event.stop_event()
-        await event.send(event.plain_result("\n".join(self._export_bloggers_lines())))
+        await event.send(
+            event.plain_result("\n".join(self._export_subscription_lines()))
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文订阅去重")
+    @filter.command("订阅删除")
+    async def cmd_tweets_delete_subscriptions(self, event: AstrMessageEvent, args=GreedyStr):
+        """批量删除定时订阅账号，可指定分组。"""
+        event.stop_event()
+
+        raw_entries, group, group_error = self._parse_subscription_import_args(args)
+        if not raw_entries:
+            await event.send(
+                event.plain_result(
+                    "用法：/订阅删除 nasa,@BBCWorld\n"
+                    "指定分组：/订阅删除 nasa,@BBCWorld 科技"
+                )
+            )
+            return
+        if group_error:
+            await event.send(
+                event.plain_result(
+                    "未找到分组："
+                    f"{group_error}\n"
+                    "可用分组: "
+                    + self._format_limited_values(self._available_group_labels())
+                )
+            )
+            return
+        if len(raw_entries) > 50:
+            await event.send(
+                event.plain_result(
+                    f"单次最多删除 50 个账号，本次输入 {len(raw_entries)} 个；"
+                    "请分批删除。"
+                )
+            )
+            return
+
+        existing_users = group.users if group else self.scheduler.watch_users_info().users
+        existing_by_key = {user.lower(): user for user in existing_users}
+        delete_keys: set[str] = set()
+        requested_users: list[str] = []
+        duplicate_requests: list[str] = []
+        invalid_entries: list[str] = []
+
+        for raw in raw_entries:
+            username = self._normalize_import_username(raw)
+            if not username:
+                invalid_entries.append(raw)
+                continue
+            username_key = username.lower()
+            if username_key in delete_keys:
+                duplicate_requests.append(raw)
+                continue
+            delete_keys.add(username_key)
+            requested_users.append(username)
+
+        removed = [
+            existing_by_key[user.lower()]
+            for user in requested_users
+            if user.lower() in existing_by_key
+        ]
+        missing = [
+            user for user in requested_users if user.lower() not in existing_by_key
+        ]
+        remaining_users = [
+            user for user in existing_users if user.lower() not in delete_keys
+        ]
+
+        if removed:
+            try:
+                self._set_import_group_users(group, remaining_users)
+            except RuntimeError as exc:
+                await event.send(event.plain_result(str(exc)))
+                return
+
+        save_error = ""
+        sync_error = ""
+        if removed:
+            save_config = getattr(self.config, "save_config", None)
+            if callable(save_config):
+                try:
+                    save_config()
+                except Exception as exc:
+                    save_error = str(exc)
+                    logger.warning(f"Failed to save deleted watch_users: {save_error}")
+            else:
+                save_error = "当前配置对象不支持 save_config()"
+            sync_error = await self._sync_import_config_groups()
+
+        group_label = self._import_group_label(group)
+        config_target = self._import_config_target(group)
+        lines = [
+            "Nitter 订阅删除",
+            f"删除分组: {group_label}",
+            f"输入项: {len(raw_entries)} 个",
+            f"删除: {len(removed)} 个",
+            f"未关注: {len(missing)} 个",
+            f"重复输入: {len(duplicate_requests)} 个",
+            f"无效: {len(invalid_entries)} 个",
+            f"当前分组关注: {len(remaining_users)} 个",
+        ]
+        if removed:
+            lines.append(
+                "已删除账号: "
+                + self._format_limited_values([f"@{user}" for user in removed])
+            )
+            if save_error:
+                lines.append(f"保存结果: 已更新运行时配置，但保存失败：{save_error}")
+            else:
+                lines.append(f"保存结果: 已写入 {config_target}。")
+            if sync_error:
+                lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
+        else:
+            lines.append("保存结果: 没有删除账号。")
+        if missing:
+            lines.append(
+                "未关注账号: "
+                + self._format_limited_values([f"@{user}" for user in missing])
+            )
+        if duplicate_requests:
+            lines.append("重复输入: " + self._format_limited_values(duplicate_requests))
+        if invalid_entries:
+            lines.append("无效项: " + self._format_limited_values(invalid_entries))
+
+        await event.send(event.plain_result("\n".join(lines)))
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("订阅去重")
     async def cmd_tweets_dedup(self, event: AstrMessageEvent):
         """规范化并去重定时订阅账号列表。"""
         event.stop_event()
         info = self.scheduler.deduplicate_watch_users()
 
         lines = [
-            "Nitter 订阅作者去重",
+            "Nitter 订阅账号去重",
             f"原配置项: {info.raw_count} 个",
-            f"有效作者: {len(info.users)} 个",
+            f"有效账号: {len(info.users)} 个",
             f"重复项: {len(info.duplicates)} 个",
             f"无效项: {len(info.invalid_entries)} 个",
         ]
@@ -669,7 +794,7 @@ class NitterTweetsPlugin(Star):
 
         if info.users:
             lines.append(
-                "作者列表: "
+                "账号列表: "
                 + self._format_limited_values([f"@{user}" for user in info.users])
             )
         if info.duplicates:
@@ -895,7 +1020,7 @@ class NitterTweetsPlugin(Star):
         )
         return [f"{group.name} ({group.group_id})" for group in groups]
 
-    def _export_bloggers_lines(self) -> list[str]:
+    def _export_subscription_lines(self) -> list[str]:
         groups = self.scheduler.config_reader.schedule_groups(
             log_invalid_targets=False
         )

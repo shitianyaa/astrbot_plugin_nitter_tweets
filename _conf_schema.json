@@ -8,7 +8,7 @@
         "description": "存储后端",
         "type": "string",
         "default": "sqlite",
-        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 博主订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
+        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
       },
       "instances": {
         "description": "Nitter 实例列表",
@@ -345,7 +345,7 @@
         "description": "关注账号列表",
         "type": "list",
         "default": [],
-        "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /推文订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+        "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。"
       },
       "push_targets": {
         "description": "定时推送目标列表",
@@ -512,7 +512,7 @@
     "description": "存储后端",
     "type": "string",
     "default": "sqlite",
-    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 博主订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
+    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
     "invisible": true
   },
   "instances": {
@@ -847,7 +847,7 @@
     "description": "关注账号列表",
     "type": "list",
     "default": [],
-    "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /推文订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。",
+    "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。",
     "invisible": true
   },
   "push_targets": {

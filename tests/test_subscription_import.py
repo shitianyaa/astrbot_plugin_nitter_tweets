@@ -967,7 +967,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.clear_seen_calls, ["tech"])
         self.assertIn("范围: 科技 (tech)", event.messages[-1])
 
-    async def test_export_bloggers_outputs_grouped_comma_lists(self):
+    async def test_export_subscriptions_outputs_grouped_comma_lists(self):
         config = _Config(
             {
                 "watch_users": ["NASA", "@NASA", "bad user"],
@@ -988,13 +988,101 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         plugin = _plugin(config)
         event = _Event()
 
-        await plugin.cmd_tweets_export_bloggers(event)
+        await plugin.cmd_tweets_export_subscriptions(event)
 
         self.assertTrue(event.stopped)
         self.assertEqual(
             event.messages[-1],
             "全局分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
         )
+
+    async def test_delete_subscriptions_without_group_removes_global_watch_users(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA", "BBCWorld", "SpaceX"],
+                "tweet_groups": [
+                    {"name": "科技", "group_id": "tech", "watch_users": ["OpenAI"]}
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_delete_subscriptions(event, "BBCWorld,@Missing")
+
+        self.assertTrue(event.stopped)
+        self.assertTrue(config.saved)
+        self.assertEqual(config_get(config, "watch_users"), ["NASA", "SpaceX"])
+        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], ["OpenAI"])
+        self.assertEqual(
+            [group.group_id for group in plugin.scheduler.storage.synced_groups],
+            ["global", "tech"],
+        )
+        self.assertIn("删除分组: 全局分组 (global)", event.messages[-1])
+        self.assertIn("删除: 1 个", event.messages[-1])
+        self.assertIn("未关注: 1 个", event.messages[-1])
+
+    async def test_delete_subscriptions_with_group_removes_that_group_watch_users(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA"],
+                "tweet_groups": [
+                    {
+                        "name": "科技",
+                        "group_id": "tech",
+                        "aliases": ["tech-news"],
+                        "watch_users": ["OpenAI", "SpaceX"],
+                    }
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_delete_subscriptions(event, "spacex 科技")
+
+        self.assertTrue(config.saved)
+        self.assertEqual(config_get(config, "watch_users"), ["NASA"])
+        self.assertEqual(
+            config_get(config, "tweet_groups")[0]["watch_users"],
+            ["OpenAI"],
+        )
+        self.assertIn("删除分组: 科技 (tech)", event.messages[-1])
+        self.assertIn("已删除账号: @SpaceX", event.messages[-1])
+        self.assertIn("保存结果: 已写入 tweet_groups[tech].watch_users。", event.messages[-1])
+
+    async def test_delete_subscriptions_without_matches_does_not_save(self):
+        config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_delete_subscriptions(event, "OpenAI")
+
+        self.assertFalse(config.saved)
+        self.assertEqual(plugin.scheduler.storage.synced_groups, [])
+        self.assertEqual(config_get(config, "watch_users"), ["NASA"])
+        self.assertIn("删除: 0 个", event.messages[-1])
+        self.assertIn("保存结果: 没有删除账号。", event.messages[-1])
+
+    async def test_delete_subscriptions_with_unknown_group_after_comma_list_is_rejected(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA"],
+                "tweet_groups": [
+                    {"name": "科技", "group_id": "tech", "watch_users": ["OpenAI"]}
+                ],
+            }
+        )
+        plugin = _plugin(config)
+        event = _Event()
+
+        await plugin.cmd_tweets_delete_subscriptions(event, "NASA,OpenAI 不存在")
+
+        self.assertFalse(config.saved)
+        self.assertEqual(config_get(config, "watch_users"), ["NASA"])
+        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], ["OpenAI"])
+        self.assertIn("未找到分组：不存在", event.messages[-1])
+        self.assertIn("科技 (tech)", event.messages[-1])
 
     async def test_import_rejects_more_than_50_accounts(self):
         config = _Config({"watch_users": [], "tweet_groups": []})

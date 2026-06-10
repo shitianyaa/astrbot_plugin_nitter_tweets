@@ -48,6 +48,7 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ):
         return self.build_nodes_for_uin(
             node_uin(event),
@@ -57,6 +58,7 @@ class TweetMessageRenderer:
             exclude_videos,
             notices,
             group_label,
+            header_text,
         )
 
     def build_nodes_for_uin(
@@ -68,6 +70,7 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ):
         nodes = Nodes([])
         nodes.nodes.append(
@@ -77,7 +80,12 @@ class TweetMessageRenderer:
                 content=[
                     Plain(
                         self.format_header(
-                            username, instance, len(tweets), notices, group_label
+                            username,
+                            instance,
+                            len(tweets),
+                            notices,
+                            group_label,
+                            header_text,
                         )
                     )
                 ],
@@ -249,6 +257,7 @@ class TweetMessageRenderer:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         group_label: str = "",
+        header_text: str = "",
     ) -> list[dict]:
         uin = str(node_uin(event))
         items = [
@@ -258,7 +267,12 @@ class TweetMessageRenderer:
                 "content": [
                     self.raw_text(
                         self.format_header(
-                            username, instance, len(tweets), notices, group_label
+                            username,
+                            instance,
+                            len(tweets),
+                            notices,
+                            group_label,
+                            header_text,
                         )
                     )
                 ],
