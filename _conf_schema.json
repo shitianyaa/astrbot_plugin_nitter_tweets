@@ -1,341 +1,766 @@
 {
+  "basic": {
+    "description": "基础设置",
+    "type": "object",
+    "hint": "Nitter 请求、存储和手动查询的基础配置。",
+    "items": {
+      "storage_backend": {
+        "description": "存储后端",
+        "type": "string",
+        "default": "sqlite",
+        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
+      },
+      "instances": {
+        "description": "Nitter 实例列表",
+        "type": "list",
+        "default": [
+          "https://nitter.net"
+        ],
+        "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
+      },
+      "default_limit": {
+        "description": "手动查询默认条数",
+        "type": "int",
+        "default": 5,
+        "hint": "用于 /推文 用户名 和 /镜像测试 镜像站 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。"
+      },
+      "request_timeout": {
+        "description": "单个 Nitter 实例超时秒数",
+        "type": "float",
+        "default": 12.0,
+        "hint": "某个实例超时后会自动尝试下一个实例。"
+      },
+      "cooldown_seconds": {
+        "description": "用户请求冷却秒数",
+        "type": "float",
+        "default": 15.0,
+        "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。"
+      },
+      "user_agent": {
+        "description": "Nitter 请求 User-Agent",
+        "type": "string",
+        "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
+        "hint": "发送给 Nitter 实例的 User-Agent。"
+      }
+    }
+  },
+  "media": {
+    "description": "媒体设置",
+    "type": "object",
+    "hint": "控制推文图片、视频/GIF 附件下载、缓存和发送行为。",
+    "items": {
+      "send_image_attachments": {
+        "description": "发送图片附件",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。"
+      },
+      "send_video_attachments": {
+        "description": "发送视频/GIF 附件",
+        "type": "bool",
+        "default": false,
+        "hint": "视频/GIF 附件发送目前不太成熟，还在优化中；容易受平台大小、格式、CDN 上传和本地文件权限影响。默认关闭，仅保留原帖链接。"
+      },
+      "max_media_per_tweet": {
+        "description": "单条推文最大媒体数",
+        "type": "int",
+        "default": 4,
+        "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。"
+      },
+      "media_timeout": {
+        "description": "媒体解析/下载超时秒数",
+        "type": "float",
+        "default": 25.0
+      },
+      "media_max_size_mb": {
+        "description": "单个媒体大小上限 MB",
+        "type": "float",
+        "default": 25.0,
+        "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
+      },
+      "media_cache_retention_days": {
+        "description": "媒体缓存保留天数",
+        "type": "float",
+        "default": 3.0,
+        "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 时，本次下载的图片/视频在发送流程结束后立即删除。"
+      },
+      "xdown_api_url": {
+        "description": "xdown 解析 API",
+        "type": "string",
+        "default": "https://xdown.app/api/ajaxSearch",
+        "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
+      },
+      "media_user_agent": {
+        "description": "媒体解析/下载 User-Agent",
+        "type": "string",
+        "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+      }
+    }
+  },
+  "ai_translation": {
+    "description": "AI 翻译",
+    "type": "object",
+    "hint": "控制推文翻译开关、服务商和提示词。",
+    "items": {
+      "translate_enabled": {
+        "description": "翻译非中文推文",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会检测推文文本是否不像中文，并调用大模型生成简体中文译文。"
+      },
+      "translation_provider_id": {
+        "description": "翻译使用的模型",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "留空时，手动命令使用当前会话模型；定时推送会尝试使用第一个推送目标的默认模型。若定时翻译不可用，建议在这里指定模型。"
+      },
+      "translate_min_chars": {
+        "description": "翻译最短文本长度",
+        "type": "int",
+        "default": 8,
+        "hint": "清理链接和 @ 后，少于该长度的推文不会翻译，范围 0-1000。"
+      },
+      "translate_max_chars": {
+        "description": "单条翻译最大字符数",
+        "type": "int",
+        "default": 2000,
+        "hint": "发送给模型的单条推文最大长度，范围 100-10000。"
+      },
+      "translate_chinese_ratio_threshold": {
+        "description": "中文占比阈值",
+        "type": "float",
+        "default": 0.2,
+        "hint": "中文字符占比低于该值时判定为非中文；日文假名、韩文会直接判定为需要翻译。范围 0-1。"
+      },
+      "translate_prompt": {
+        "description": "翻译提示词",
+        "type": "text",
+        "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
+        "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。"
+      }
+    }
+  },
+  "ai_comment": {
+    "description": "AI 评论",
+    "type": "object",
+    "hint": "控制推文评论生成开关、概率、服务商和提示词。",
+    "items": {
+      "comment_enabled": {
+        "description": "启用 AI 评论",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。"
+      },
+      "comment_provider_id": {
+        "description": "AI 评论使用的模型",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。"
+      },
+      "comment_probability": {
+        "description": "AI 评论触发概率",
+        "type": "float",
+        "default": 0.3,
+        "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。"
+      },
+      "comment_max_chars": {
+        "description": "AI 评论输入最大字符数",
+        "type": "int",
+        "default": 2000,
+        "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。"
+      },
+      "comment_prompt": {
+        "description": "AI 评论提示词",
+        "type": "text",
+        "default": "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，生成一句简短、自然、有信息量的中文点评。不要复述原文，不要使用 Markdown。\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}",
+        "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。"
+      }
+    }
+  },
+  "ai_vision": {
+    "description": "AI 识图",
+    "type": "object",
+    "hint": "控制图片识别开关、概率、图片数量和提示词。识图结果会进入推文内容上下文，不再单独显示识图段落。",
+    "items": {
+      "vision_enabled": {
+        "description": "启用 AI 识图",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。"
+      },
+      "vision_provider_id": {
+        "description": "AI 识图使用的模型",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。"
+      },
+      "vision_probability": {
+        "description": "AI 识图触发概率",
+        "type": "float",
+        "default": 0.3,
+        "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。"
+      },
+      "vision_prompt": {
+        "description": "AI 识图提示词",
+        "type": "text",
+        "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。"
+      },
+      "vision_max_images": {
+        "description": "AI 识图最大图片数",
+        "type": "int",
+        "default": 1,
+        "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。"
+      }
+    }
+  },
+  "schedule": {
+    "description": "定时检查",
+    "type": "object",
+    "hint": "控制后台定时检查、启动检查、无更新提示和每次拉取数量。",
+    "items": {
+      "schedule_enabled": {
+        "description": "启用定时检查",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后会按配置定时检查 watch_users 是否有新推文，并推送到 push_targets。"
+      },
+      "notify_no_updates": {
+        "description": "定时检查无新推文时发送检查结果提示",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。"
+      },
+      "check_on_startup": {
+        "description": "启动后立即检查",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。"
+      },
+      "interval_check_enabled": {
+        "description": "启用间隔检查",
+        "type": "bool",
+        "default": true,
+        "hint": "schedule_enabled 开启后生效。按 check_interval_minutes 周期检查。"
+      },
+      "check_interval_minutes": {
+        "description": "间隔检查分钟数",
+        "type": "int",
+        "default": 30,
+        "hint": "范围 1-1440。"
+      },
+      "daily_check_enabled": {
+        "description": "启用每日定点检查",
+        "type": "bool",
+        "default": false,
+        "hint": "schedule_enabled 开启后生效。可与间隔检查同时开启。"
+      },
+      "daily_check_times": {
+        "description": "每日检查时间列表",
+        "type": "list",
+        "default": [
+          "08:00"
+        ],
+        "hint": "格式 HH:MM，每行一个。"
+      },
+      "scheduled_fetch_limit": {
+        "description": "定时检查每账号拉取条数",
+        "type": "int",
+        "default": 5,
+        "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
+      }
+    }
+  },
+  "deferred": {
+    "description": "暂存发布",
+    "type": "object",
+    "hint": "控制暂存队列、定时发布、暂存媒体预下载和清理策略。",
+    "items": {
+      "deferred_publish_enabled": {
+        "description": "启用暂存定时发布",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，定时检查发现的新推文会先写入 SQLite 暂存队列，不立即发送；到 deferred_publish_times 配置的时间再统一发布。"
+      },
+      "deferred_publish_times": {
+        "description": "暂存发布时间列表",
+        "type": "list",
+        "default": [
+          "08:00"
+        ],
+        "hint": "格式 HH:MM，每行一个。只有 deferred_publish_enabled 开启时生效。"
+      },
+      "deferred_publish_batch_limit": {
+        "description": "每次暂存发布上限",
+        "type": "int",
+        "default": 50,
+        "hint": "每次从暂存队列最多发布多少条推文，范围 1-500。"
+      },
+      "deferred_prefetch_media": {
+        "description": "暂存时预下载媒体",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，定时检查入队时就下载图片/视频到 cache/staged/；发布成功后删除。关闭时只暂存文本和已生成的翻译/评论。"
+      },
+      "deferred_media_retention_hours": {
+        "description": "暂存媒体保留小时数",
+        "type": "float",
+        "default": 72.0,
+        "hint": "用于清理长期未发布或失败重试遗留的 cache/staged/ 媒体文件，范围 1-8760。"
+      },
+      "deferred_media_download_interval_seconds": {
+        "description": "暂存媒体下载间隔秒数",
+        "type": "float",
+        "default": 0.5,
+        "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。"
+      }
+    }
+  },
+  "push": {
+    "description": "推送目标与分组",
+    "type": "object",
+    "hint": "配置关注账号、推送目标、QQ 合并阈值、发送间隔和多分组。",
+    "items": {
+      "merge_tweet_threshold": {
+        "description": "QQ 合并推送触发条数",
+        "type": "int",
+        "default": 2,
+        "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。"
+      },
+      "send_target_interval": {
+        "description": "多目标发送间隔秒数",
+        "type": "float",
+        "default": 1.5,
+        "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+      },
+      "send_user_interval": {
+        "description": "多账号发送间隔秒数",
+        "type": "float",
+        "default": 2.0,
+        "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+      },
+      "watch_users": {
+        "description": "关注账号列表",
+        "type": "list",
+        "default": [],
+        "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+      },
+      "push_targets": {
+        "description": "定时推送目标列表",
+        "type": "list",
+        "default": [],
+        "hint": "每行一个。在目标群聊或私聊发送 /sid，复制返回的 UMO 填入，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx、telegram:FriendMessage:123456789。"
+      },
+      "tweet_groups": {
+        "description": "自定义推文分组",
+        "type": "template_list",
+        "default": [],
+        "hint": "可选。每个分组可单独配置关注账号、推送目标、间隔检查和每日定点。留空时只使用上面的全局定时配置。分组已见推文 ID 会互相隔离。",
+        "templates": {
+          "group": {
+            "name": "推文分组",
+            "display_item": "name",
+            "hide_hint_in_list": true,
+            "items": {
+              "name": {
+                "description": "分组名称",
+                "type": "string",
+                "default": "",
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
+              },
+              "group_id": {
+                "description": "分组 ID",
+                "type": "string",
+                "default": "",
+                "hint": "可选。用于内部存储已见推文 ID；留空时使用分组名称。不能使用 global。改名但想保留已见记录时，请保持该 ID 不变。"
+              },
+              "aliases": {
+                "description": "分组别名",
+                "type": "list",
+                "default": [],
+                "hint": "可选。每行一个别名，也可用于 /推文检查。"
+              },
+              "enabled": {
+                "description": "启用分组",
+                "type": "bool",
+                "default": true
+              },
+              "watch_users": {
+                "description": "分组关注账号",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+              },
+              "push_targets": {
+                "description": "分组推送目标",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+              },
+              "check_on_startup": {
+                "description": "启动后立即检查",
+                "type": "bool",
+                "default": false
+              },
+              "notify_no_updates": {
+                "description": "无新推文时发送检查结果提示",
+                "type": "bool",
+                "default": false
+              },
+              "deferred_publish_enabled": {
+                "description": "启用暂存定时发布",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组检查发现的新推文会先暂存到 SQLite，按 deferred_publish_times 再统一发布。"
+              },
+              "deferred_publish_times": {
+                "description": "暂存发布时间列表",
+                "type": "list",
+                "default": [
+                  "08:00"
+                ],
+                "hint": "格式 HH:MM，每行一个。"
+              },
+              "deferred_publish_batch_limit": {
+                "description": "每次暂存发布上限",
+                "type": "int",
+                "default": 50,
+                "hint": "每次最多发布多少条暂存推文，范围 1-500。"
+              },
+              "deferred_prefetch_media": {
+                "description": "暂存时预下载媒体",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，入队时就下载媒体到 cache/staged/，发布成功后删除。"
+              },
+              "deferred_media_retention_hours": {
+                "description": "暂存媒体保留小时数",
+                "type": "float",
+                "default": 72.0,
+                "hint": "清理长期未发布或失败重试遗留的暂存媒体，范围 1-8760。"
+              },
+              "deferred_media_download_interval_seconds": {
+                "description": "暂存媒体下载间隔秒数",
+                "type": "float",
+                "default": 0.5,
+                "hint": "暂存媒体预下载后的额外节流等待，范围 0-60。"
+              },
+              "interval_check_enabled": {
+                "description": "启用间隔检查",
+                "type": "bool",
+                "default": true
+              },
+              "check_interval_minutes": {
+                "description": "间隔检查分钟数",
+                "type": "int",
+                "default": 30,
+                "hint": "范围 1-1440。"
+              },
+              "daily_check_enabled": {
+                "description": "启用每日定点检查",
+                "type": "bool",
+                "default": false
+              },
+              "daily_check_times": {
+                "description": "每日检查时间列表",
+                "type": "list",
+                "default": [
+                  "08:00"
+                ],
+                "hint": "格式 HH:MM，每行一个。"
+              },
+              "scheduled_fetch_limit": {
+                "description": "每账号拉取条数",
+                "type": "int",
+                "default": 5,
+                "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
+              },
+              "send_target_interval": {
+                "description": "多目标发送间隔秒数",
+                "type": "float",
+                "default": 1.5,
+                "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+              },
+              "send_user_interval": {
+                "description": "多账号发送间隔秒数",
+                "type": "float",
+                "default": 2.0,
+                "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "performance": {
+    "description": "并发与限流",
+    "type": "object",
+    "hint": "预留栏目：多并发抓取、翻译、评论和识图会在后续实现；当前版本仍按已有串行处理和发送间隔执行。",
+    "items": {}
+  },
+  "_legacy_grouped_config_migrated": {
+    "description": "Legacy grouped config migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
+  "storage_backend": {
+    "description": "存储后端",
+    "type": "string",
+    "default": "sqlite",
+    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
+    "invisible": true
+  },
   "instances": {
     "description": "Nitter 实例列表",
     "type": "list",
     "default": [
       "https://nitter.net"
     ],
-    "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
+    "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。",
+    "invisible": true
   },
   "default_limit": {
-    "description": "默认获取条数",
+    "description": "手动查询默认条数",
     "type": "int",
     "default": 5,
-    "hint": "用户未传数量时使用，范围 1-20。"
-  },
-  "max_limit": {
-    "description": "单次最大条数",
-    "type": "int",
-    "default": 10,
-    "hint": "为避免刷屏和公共实例压力，建议不要超过 10。代码会限制在 1-20。"
+    "hint": "用于 /推文 用户名 和 /镜像测试 镜像站 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。",
+    "invisible": true
   },
   "request_timeout": {
     "description": "单个 Nitter 实例超时秒数",
     "type": "float",
     "default": 12.0,
-    "hint": "某个实例超时后会自动尝试下一个实例。"
+    "hint": "某个实例超时后会自动尝试下一个实例。",
+    "invisible": true
   },
   "cooldown_seconds": {
     "description": "用户请求冷却秒数",
     "type": "float",
     "default": 15.0,
-    "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。"
+    "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。",
+    "invisible": true
   },
   "user_agent": {
     "description": "Nitter 请求 User-Agent",
     "type": "string",
     "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
-    "hint": "发送给 Nitter 实例的 User-Agent。"
+    "hint": "发送给 Nitter 实例的 User-Agent。",
+    "invisible": true
   },
   "send_image_attachments": {
     "description": "发送图片附件",
     "type": "bool",
     "default": true,
-    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。"
+    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。",
+    "invisible": true
   },
   "send_video_attachments": {
     "description": "发送视频/GIF 附件",
     "type": "bool",
     "default": false,
-    "hint": "视频/GIF 附件发送目前不太成熟，还在优化中；容易受平台大小、格式、CDN 上传和本地文件权限影响。默认关闭，仅保留原帖链接。"
+    "hint": "视频/GIF 附件发送目前不太成熟，还在优化中；容易受平台大小、格式、CDN 上传和本地文件权限影响。默认关闭，仅保留原帖链接。",
+    "invisible": true
   },
   "max_media_per_tweet": {
     "description": "单条推文最大媒体数",
     "type": "int",
     "default": 4,
-    "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。"
+    "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。",
+    "invisible": true
   },
   "media_timeout": {
     "description": "媒体解析/下载超时秒数",
     "type": "float",
-    "default": 25.0
+    "default": 25.0,
+    "invisible": true
   },
   "media_max_size_mb": {
     "description": "单个媒体大小上限 MB",
     "type": "float",
     "default": 25.0,
-    "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
+    "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。",
+    "invisible": true
   },
   "media_cache_retention_days": {
     "description": "媒体缓存保留天数",
     "type": "float",
     "default": 3.0,
-    "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 可关闭自动清理。"
+    "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 时，本次下载的图片/视频在发送流程结束后立即删除。",
+    "invisible": true
   },
   "xdown_api_url": {
     "description": "xdown 解析 API",
     "type": "string",
     "default": "https://xdown.app/api/ajaxSearch",
-    "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
+    "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。",
+    "invisible": true
   },
   "media_user_agent": {
     "description": "媒体解析/下载 User-Agent",
     "type": "string",
-    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "invisible": true
   },
   "translate_enabled": {
     "description": "翻译非中文推文",
     "type": "bool",
     "default": false,
-    "hint": "开启后会检测推文文本是否不像中文，并调用大模型生成简体中文译文。"
+    "hint": "开启后会检测推文文本是否不像中文，并调用大模型生成简体中文译文。",
+    "invisible": true
   },
   "translation_provider_id": {
     "description": "翻译使用的模型",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "留空时，手动命令使用当前会话模型；定时推送会尝试使用第一个推送目标的默认模型。若定时翻译不可用，建议在这里指定模型。"
+    "hint": "留空时，手动命令使用当前会话模型；定时推送会尝试使用第一个推送目标的默认模型。若定时翻译不可用，建议在这里指定模型。",
+    "invisible": true
   },
   "translate_min_chars": {
     "description": "翻译最短文本长度",
     "type": "int",
     "default": 8,
-    "hint": "清理链接和 @ 后，少于该长度的推文不会翻译，范围 0-1000。"
+    "hint": "清理链接和 @ 后，少于该长度的推文不会翻译，范围 0-1000。",
+    "invisible": true
   },
   "translate_max_chars": {
     "description": "单条翻译最大字符数",
     "type": "int",
     "default": 2000,
-    "hint": "发送给模型的单条推文最大长度，范围 100-10000。"
+    "hint": "发送给模型的单条推文最大长度，范围 100-10000。",
+    "invisible": true
   },
   "translate_chinese_ratio_threshold": {
     "description": "中文占比阈值",
     "type": "float",
     "default": 0.2,
-    "hint": "中文字符占比低于该值时判定为非中文；日文假名、韩文会直接判定为需要翻译。范围 0-1。"
+    "hint": "中文字符占比低于该值时判定为非中文；日文假名、韩文会直接判定为需要翻译。范围 0-1。",
+    "invisible": true
   },
   "translate_prompt": {
     "description": "翻译提示词",
     "type": "text",
     "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
-    "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。"
+    "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。",
+    "invisible": true
   },
   "comment_enabled": {
     "description": "启用 AI 评论",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。"
+    "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。",
+    "invisible": true
   },
   "comment_provider_id": {
     "description": "AI 评论使用的模型",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。"
+    "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。",
+    "invisible": true
   },
   "comment_probability": {
     "description": "AI 评论触发概率",
     "type": "float",
     "default": 0.3,
-    "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。"
+    "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。",
+    "invisible": true
   },
   "comment_max_chars": {
     "description": "AI 评论输入最大字符数",
     "type": "int",
     "default": 2000,
-    "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。"
+    "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。",
+    "invisible": true
   },
   "comment_prompt": {
     "description": "AI 评论提示词",
     "type": "text",
     "default": "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，生成一句简短、自然、有信息量的中文点评。不要复述原文，不要使用 Markdown。\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}",
-    "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。"
+    "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。",
+    "invisible": true
   },
   "vision_enabled": {
     "description": "启用 AI 识图",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。"
+    "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。",
+    "invisible": true
   },
   "vision_provider_id": {
     "description": "AI 识图使用的模型",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。"
+    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。",
+    "invisible": true
   },
   "vision_probability": {
     "description": "AI 识图触发概率",
     "type": "float",
     "default": 0.3,
-    "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。"
+    "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。",
+    "invisible": true
   },
   "vision_prompt": {
     "description": "AI 识图提示词",
     "type": "text",
-    "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。"
+    "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。",
+    "invisible": true
   },
   "vision_max_images": {
     "description": "AI 识图最大图片数",
     "type": "int",
     "default": 1,
-    "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。"
+    "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。",
+    "invisible": true
   },
   "schedule_enabled": {
     "description": "启用定时检查",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按配置定时检查 watch_users 是否有新推文，并推送到 push_targets。"
+    "hint": "开启后会按配置定时检查 watch_users 是否有新推文，并推送到 push_targets。",
+    "invisible": true
   },
   "notify_no_updates": {
     "description": "定时检查无新推文时发送检查结果提示",
     "type": "bool",
     "default": false,
-    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。"
+    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向 push_targets 发送检查摘要。",
+    "invisible": true
   },
   "check_on_startup": {
     "description": "启动后立即检查",
     "type": "bool",
     "default": false,
-    "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。"
-  },
-  "merge_tweet_threshold": {
-    "description": "QQ 合并推送触发条数",
-    "type": "int",
-    "default": 2,
-    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。"
-  },
-  "watch_users": {
-    "description": "关注账号列表",
-    "type": "list",
-    "default": [],
-    "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /推文订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。"
-  },
-  "push_targets": {
-    "description": "定时推送目标列表",
-    "type": "list",
-    "default": [],
-    "hint": "每行一个。在目标群聊或私聊发送 /sid，复制返回的 UMO 填入，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx、telegram:FriendMessage:123456789。"
-  },
-  "tweet_groups": {
-    "description": "自定义推文分组",
-    "type": "template_list",
-    "default": [],
-    "hint": "可选。每个分组可单独配置关注账号、推送目标、间隔检查和每日定点。留空时只使用上面的全局定时配置。分组已见推文 ID 会互相隔离。",
-    "templates": {
-      "group": {
-        "name": "推文分组",
-        "display_item": "name",
-        "hide_hint_in_list": true,
-        "items": {
-          "name": {
-            "description": "分组名称",
-            "type": "string",
-            "default": "",
-            "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
-          },
-          "group_id": {
-            "description": "分组 ID",
-            "type": "string",
-            "default": "",
-            "hint": "可选。用于内部存储已见推文 ID；留空时使用分组名称。不能使用 global。改名但想保留已见记录时，请保持该 ID 不变。"
-          },
-          "aliases": {
-            "description": "分组别名",
-            "type": "list",
-            "default": [],
-            "hint": "可选。每行一个别名，也可用于 /推文检查。"
-          },
-          "enabled": {
-            "description": "启用分组",
-            "type": "bool",
-            "default": true
-          },
-          "watch_users": {
-            "description": "分组关注账号",
-            "type": "list",
-            "default": [],
-            "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
-          },
-          "push_targets": {
-            "description": "分组推送目标",
-            "type": "list",
-            "default": [],
-            "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
-          },
-          "check_on_startup": {
-            "description": "启动后立即检查",
-            "type": "bool",
-            "default": false
-          },
-          "notify_no_updates": {
-            "description": "无新推文时发送检查结果提示",
-            "type": "bool",
-            "default": false
-          },
-          "interval_check_enabled": {
-            "description": "启用间隔检查",
-            "type": "bool",
-            "default": true
-          },
-          "check_interval_minutes": {
-            "description": "间隔检查分钟数",
-            "type": "int",
-            "default": 30,
-            "hint": "范围 1-1440。"
-          },
-          "daily_check_enabled": {
-            "description": "启用每日定点检查",
-            "type": "bool",
-            "default": false
-          },
-          "daily_check_times": {
-            "description": "每日检查时间列表",
-            "type": "list",
-            "default": [
-              "08:00"
-            ],
-            "hint": "格式 HH:MM，每行一个。"
-          },
-          "scheduled_fetch_limit": {
-            "description": "每账号拉取条数",
-            "type": "int",
-            "default": 5,
-            "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
-          },
-          "send_target_interval": {
-            "description": "多目标发送间隔秒数",
-            "type": "float",
-            "default": 1.5,
-            "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
-          },
-          "send_user_interval": {
-            "description": "多账号发送间隔秒数",
-            "type": "float",
-            "default": 2.0,
-            "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
-          }
-        }
-      }
-    }
+    "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。",
+    "invisible": true
   },
   "interval_check_enabled": {
     "description": "启用间隔检查",
     "type": "bool",
     "default": true,
-    "hint": "schedule_enabled 开启后生效。按 check_interval_minutes 周期检查。"
+    "hint": "schedule_enabled 开启后生效。按 check_interval_minutes 周期检查。",
+    "invisible": true
   },
   "check_interval_minutes": {
     "description": "间隔检查分钟数",
     "type": "int",
     "default": 30,
-    "hint": "范围 1-1440。"
+    "hint": "范围 1-1440。",
+    "invisible": true
   },
   "daily_check_enabled": {
     "description": "启用每日定点检查",
     "type": "bool",
     "default": false,
-    "hint": "schedule_enabled 开启后生效。可与间隔检查同时开启。"
+    "hint": "schedule_enabled 开启后生效。可与间隔检查同时开启。",
+    "invisible": true
   },
   "daily_check_times": {
     "description": "每日检查时间列表",
@@ -343,24 +768,100 @@
     "default": [
       "08:00"
     ],
-    "hint": "格式 HH:MM，每行一个。"
+    "hint": "格式 HH:MM，每行一个。",
+    "invisible": true
   },
   "scheduled_fetch_limit": {
     "description": "定时检查每账号拉取条数",
     "type": "int",
     "default": 5,
-    "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
+    "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。",
+    "invisible": true
+  },
+  "deferred_publish_enabled": {
+    "description": "启用暂存定时发布",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，定时检查发现的新推文会先写入 SQLite 暂存队列，不立即发送；到 deferred_publish_times 配置的时间再统一发布。",
+    "invisible": true
+  },
+  "deferred_publish_times": {
+    "description": "暂存发布时间列表",
+    "type": "list",
+    "default": [
+      "08:00"
+    ],
+    "hint": "格式 HH:MM，每行一个。只有 deferred_publish_enabled 开启时生效。",
+    "invisible": true
+  },
+  "deferred_publish_batch_limit": {
+    "description": "每次暂存发布上限",
+    "type": "int",
+    "default": 50,
+    "hint": "每次从暂存队列最多发布多少条推文，范围 1-500。",
+    "invisible": true
+  },
+  "deferred_prefetch_media": {
+    "description": "暂存时预下载媒体",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，定时检查入队时就下载图片/视频到 cache/staged/；发布成功后删除。关闭时只暂存文本和已生成的翻译/评论。",
+    "invisible": true
+  },
+  "deferred_media_retention_hours": {
+    "description": "暂存媒体保留小时数",
+    "type": "float",
+    "default": 72.0,
+    "hint": "用于清理长期未发布或失败重试遗留的 cache/staged/ 媒体文件，范围 1-8760。",
+    "invisible": true
+  },
+  "deferred_media_download_interval_seconds": {
+    "description": "暂存媒体下载间隔秒数",
+    "type": "float",
+    "default": 0.5,
+    "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。",
+    "invisible": true
+  },
+  "merge_tweet_threshold": {
+    "description": "QQ 合并推送触发条数",
+    "type": "int",
+    "default": 2,
+    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。",
+    "invisible": true
   },
   "send_target_interval": {
     "description": "多目标发送间隔秒数",
     "type": "float",
     "default": 1.5,
-    "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+    "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。",
+    "invisible": true
   },
   "send_user_interval": {
     "description": "多账号发送间隔秒数",
     "type": "float",
     "default": 2.0,
-    "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+    "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。",
+    "invisible": true
+  },
+  "watch_users": {
+    "description": "关注账号列表",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。运行时会按规范化用户名去重；也可用 /订阅去重 清理配置。首次启用某个账号只记录当前最新推文，不推送历史内容。",
+    "invisible": true
+  },
+  "push_targets": {
+    "description": "定时推送目标列表",
+    "type": "list",
+    "default": [],
+    "hint": "每行一个。在目标群聊或私聊发送 /sid，复制返回的 UMO 填入，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx、telegram:FriendMessage:123456789。",
+    "invisible": true
+  },
+  "tweet_groups": {
+    "description": "自定义推文分组",
+    "type": "list",
+    "default": [],
+    "hint": "Legacy compatibility field; hidden in UI and migrated into push.tweet_groups on first startup.",
+    "invisible": true
   }
 }

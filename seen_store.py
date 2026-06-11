@@ -9,8 +9,9 @@ except ImportError:
 
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
+KV_KEY_SEEN_BY_TARGET = "nitter_seen_status_ids_by_target_v1"
 GLOBAL_GROUP_ID = "global"
-SEEN_LIMIT_PER_USER = 100
+SEEN_LIMIT_PER_USER = 300
 
 
 @dataclass(slots=True)
@@ -48,6 +49,20 @@ class SeenStore:
 
     async def get_grouped_seen_map(self) -> GroupedSeenMap:
         value = await self.owner.get_kv_data(self.key, {})
+        grouped = self._grouped_seen_from_value(value)
+        target_value = await self.owner.get_kv_data(KV_KEY_SEEN_BY_TARGET, {})
+        target_seen = self.normalize_seen_by_target(target_value)
+        if target_seen:
+            global_seen = grouped.groups.setdefault(GLOBAL_GROUP_ID, {})
+            for seen_map in target_seen.values():
+                for username, status_ids in seen_map.items():
+                    global_seen[username] = self.merge_seen_ids(
+                        status_ids,
+                        global_seen.get(username, []),
+                    )
+        return grouped
+
+    def _grouped_seen_from_value(self, value) -> GroupedSeenMap:
         if not isinstance(value, dict):
             return GroupedSeenMap()
 
@@ -83,6 +98,21 @@ class SeenStore:
             if not username or not isinstance(ids, list):
                 continue
             result[username] = [str(item) for item in ids if item]
+        return result
+
+    @classmethod
+    def normalize_seen_by_target(cls, value) -> dict[str, dict[str, list[str]]]:
+        if not isinstance(value, dict):
+            return {}
+
+        result: dict[str, dict[str, list[str]]] = {}
+        for target, seen_map in value.items():
+            target_key = str(target or "").strip()
+            if not target_key or not isinstance(seen_map, dict):
+                continue
+            normalized_seen = cls.normalize_seen_map(seen_map)
+            if normalized_seen:
+                result[target_key] = normalized_seen
         return result
 
     def initial_seen_ids(self, ids: list[str]) -> list[str]:

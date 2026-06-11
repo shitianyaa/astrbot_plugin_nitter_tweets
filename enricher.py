@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from astrbot.api import logger
 
 try:
+    from .config_compat import config_get
     from .utils import TweetItem, clamp_float, clamp_int, strip_external_links
 except ImportError:
+    from config_compat import config_get
     from utils import TweetItem, clamp_float, clamp_int, strip_external_links
 
 
@@ -62,6 +64,18 @@ VISION_FAILED_NOTICE = (
 
 
 @dataclass(slots=True)
+class EnrichmentTweetResult:
+    status_id: str
+    vision_status: str = "off"
+    vision_reason: str = ""
+    vision_chars: int = 0
+    vision_images: int = 0
+    comment_status: str = "off"
+    comment_reason: str = ""
+    comment_chars: int = 0
+
+
+@dataclass(slots=True)
 class EnrichmentReport:
     vision_provider_id: str = ""
     vision_provider_source: str = ""
@@ -73,9 +87,114 @@ class EnrichmentReport:
     comment_provider_source: str = ""
     commented: int = 0
     notice: str = ""
+    tweet_results: list[EnrichmentTweetResult] = field(default_factory=list)
 
     def visible_notices(self) -> list[str]:
         return [self.notice] if self.notice else []
+
+
+@dataclass(slots=True)
+class TranslationTweetResult:
+    status_id: str
+    status: str = "off"
+    reason: str = ""
+    chars: int = 0
+
+
+@dataclass(slots=True)
+class TranslationReport:
+    provider_id: str = ""
+    provider_source: str = ""
+    translated: int = 0
+    skipped: int = 0
+    failed: int = 0
+    tweet_results: list[TranslationTweetResult] = field(default_factory=list)
+
+
+def format_ai_tweet_summary(
+    username: str,
+    tweet: TweetItem,
+    translation_report: TranslationReport | None = None,
+    enrichment_report: EnrichmentReport | None = None,
+    index: int = 1,
+    total: int = 1,
+) -> str:
+    status_id = tweet.status_id or f"index-{index}"
+    progress = f", progress={index}/{total}" if total > 1 else ""
+    return (
+        f"{LOG_PREFIX} AI processed @{username} status={status_id}{progress}: "
+        f"translation={_format_translation_result(translation_report, status_id)}, "
+        f"media={_format_media_result(tweet)}, "
+        f"vision={_format_vision_result(enrichment_report, status_id)}, "
+        f"comment={_format_comment_result(enrichment_report, status_id)}"
+    )
+
+
+def _format_translation_result(
+    report: TranslationReport | None, status_id: str
+) -> str:
+    if report is None or not getattr(report, "tweet_results", None):
+        return "off"
+    result = _find_report_item(report, status_id)
+    if result is None:
+        return "unknown"
+    if result.status in {"done", "existing"}:
+        suffix = f", chars={result.chars}" if result.chars else ""
+        return f"{result.status}({suffix.lstrip(', ')})" if suffix else result.status
+    if result.reason:
+        return f"{result.status}({result.reason})"
+    return result.status
+
+
+def _format_media_result(tweet: TweetItem) -> str:
+    image_total = sum(1 for item in tweet.media if item.is_image)
+    video_total = sum(1 for item in tweet.media if item.is_video)
+    if not image_total and not video_total:
+        return "none"
+    parts = []
+    if image_total:
+        image_attached = sum(1 for item in tweet.media if item.is_image and item.path)
+        parts.append(f"images={image_attached}/{image_total}")
+    if video_total:
+        video_attached = sum(1 for item in tweet.media if item.is_video and item.path)
+        parts.append(f"videos={video_attached}/{video_total}")
+    return ",".join(parts)
+
+
+def _format_vision_result(report: EnrichmentReport | None, status_id: str) -> str:
+    if report is None or not getattr(report, "tweet_results", None):
+        return "off"
+    result = _find_report_item(report, status_id)
+    if result is None:
+        return "unknown"
+    if result.vision_status == "done":
+        return f"done(images={result.vision_images}, chars={result.vision_chars})"
+    if result.vision_reason:
+        return f"{result.vision_status}({result.vision_reason})"
+    return result.vision_status
+
+
+def _format_comment_result(report: EnrichmentReport | None, status_id: str) -> str:
+    if report is None or not getattr(report, "tweet_results", None):
+        return "off"
+    result = _find_report_item(report, status_id)
+    if result is None:
+        return "unknown"
+    if result.comment_status == "done":
+        return f"done(chars={result.comment_chars})"
+    if result.comment_reason:
+        return f"{result.comment_status}({result.comment_reason})"
+    return result.comment_status
+
+
+def _find_report_item(report, status_id: str):
+    items = getattr(report, "tweet_results", []) or []
+    for item in items:
+        if getattr(item, "status_id", "") == status_id:
+            return item
+    if len(items) == 1:
+        return items[0]
+    return None
 
 
 class TweetEnricher:
@@ -85,23 +204,45 @@ class TweetEnricher:
         self.context = context
 
         # ── 开关与概率 ──
-        self.vision_enabled = bool(config.get("vision_enabled", False))
-        self.comment_enabled = bool(config.get("comment_enabled", False))
-        self.vision_probability = clamp_float(config.get("vision_probability", 0.3), 0.0, 1.0)
-        self.comment_probability = clamp_float(config.get("comment_probability", 0.3), 0.0, 1.0)
+        self.vision_enabled = bool(config_get(config, "vision_enabled", False))
+        self.comment_enabled = bool(config_get(config, "comment_enabled", False))
+        self.vision_probability = clamp_float(
+            config_get(config, "vision_probability", 0.3), 0.0, 1.0
+        )
+        self.comment_probability = clamp_float(
+            config_get(config, "comment_probability", 0.3), 0.0, 1.0
+        )
 
         # ── Provider ──
-        self.vision_provider_id = str(config.get("vision_provider_id", "") or "").strip()
-        self.comment_provider_id = str(config.get("comment_provider_id", "") or "").strip()
+        self.vision_provider_id = str(
+            config_get(config, "vision_provider_id", "") or ""
+        ).strip()
+        self.comment_provider_id = str(
+            config_get(config, "comment_provider_id", "") or ""
+        ).strip()
 
         # ── 图片 ──
-        self.vision_max_images = clamp_int(config.get("vision_max_images", 3), 1, 20)
-        self.vision_max_total = clamp_int(config.get("vision_max_total", 6), 1, 50)
-        self.comment_max_chars = clamp_int(config.get("comment_max_chars", 2000), 100, 10000)
+        self.vision_max_images = clamp_int(
+            config_get(config, "vision_max_images", 3), 1, 20
+        )
+        self.vision_max_total = clamp_int(
+            config_get(config, "vision_max_total", 6), 1, 50
+        )
+        self.comment_max_chars = clamp_int(
+            config_get(config, "comment_max_chars", 2000), 100, 10000
+        )
 
         # ── 提示词 ──
-        self.vision_prompt = self._load_prompt(config, "vision_prompt", DEFAULT_VISION_PROMPT)
-        self.comment_prompt_template = self._load_prompt(config, "comment_prompt", DEFAULT_COMMENT_PROMPT)
+        self.vision_prompt = self._load_prompt(
+            config, "vision_prompt", DEFAULT_VISION_PROMPT
+        )
+        self.comment_prompt_template = self._load_prompt(
+            config, "comment_prompt", DEFAULT_COMMENT_PROMPT
+        )
+        self._logged_vision_provider = ""
+        self._logged_comment_provider = ""
+        self._warned_vision_unavailable = False
+        self._warned_comment_unavailable = False
 
     @property
     def enabled(self) -> bool:
@@ -116,10 +257,18 @@ class TweetEnricher:
     ) -> EnrichmentReport:
         report = EnrichmentReport()
         if not self.enabled:
-            logger.info(f"{LOG_PREFIX} AI enrich skipped: disabled")
+            logger.debug(f"{LOG_PREFIX} AI enrich skipped: disabled")
+            report.tweet_results = [
+                EnrichmentTweetResult(
+                    status_id=tweet.status_id or f"index-{index}",
+                    vision_status="off",
+                    comment_status="off",
+                )
+                for index, tweet in enumerate(tweets, 1)
+            ]
             return report
         if not tweets:
-            logger.info(f"{LOG_PREFIX} AI enrich skipped: no tweets")
+            logger.debug(f"{LOG_PREFIX} AI enrich skipped: no tweets")
             return report
 
         # ── 解析模型 ──
@@ -132,12 +281,17 @@ class TweetEnricher:
             report.vision_provider_id = v_pid
             report.vision_provider_source = v_source
             if v_pid:
-                logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid} ({v_source})")
+                provider_key = f"{v_pid}:{v_source}"
+                if provider_key != self._logged_vision_provider:
+                    logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid} ({v_source})")
+                    self._logged_vision_provider = provider_key
             else:
                 report.vision_unavailable = True
                 if self._has_image_paths(tweets):
                     report.notice = VISION_UNAVAILABLE_NOTICE
-                logger.warning(f"{LOG_PREFIX} {VISION_UNAVAILABLE_LOG}")
+                if not self._warned_vision_unavailable:
+                    logger.warning(f"{LOG_PREFIX} {VISION_UNAVAILABLE_LOG}")
+                    self._warned_vision_unavailable = True
         if self.comment_enabled and self.comment_probability > 0:
             c_pid, c_source = await self._resolve_provider(
                 self.comment_provider_id, umo
@@ -145,9 +299,14 @@ class TweetEnricher:
             report.comment_provider_id = c_pid
             report.comment_provider_source = c_source
             if c_pid:
-                logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid} ({c_source})")
+                provider_key = f"{c_pid}:{c_source}"
+                if provider_key != self._logged_comment_provider:
+                    logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid} ({c_source})")
+                    self._logged_comment_provider = provider_key
             else:
-                logger.warning(f"{LOG_PREFIX} AI comment enabled but no provider available")
+                if not self._warned_comment_unavailable:
+                    logger.warning(f"{LOG_PREFIX} AI comment enabled but no provider available")
+                    self._warned_comment_unavailable = True
 
         # ── 逐条处理 ──
         captioned = commented = skipped = failed = 0
@@ -155,17 +314,30 @@ class TweetEnricher:
 
         for index, tweet in enumerate(tweets, 1):
             sid = tweet.status_id or f"index-{index}"
+            tweet_result = EnrichmentTweetResult(status_id=sid)
+            report.tweet_results.append(tweet_result)
 
             # ── 识图（受 vision_max_images 单条上限 + vision_max_total 全局上限控制）──
-            if (
-                self.vision_enabled
-                and v_pid
-                and not tweet.image_caption
-                and self._roll(self.vision_probability)
-            ):
+            if not self.vision_enabled:
+                tweet_result.vision_status = "off"
+            elif not v_pid:
+                tweet_result.vision_status = "unavailable"
+            elif tweet.image_caption:
+                tweet_result.vision_status = "existing"
+                tweet_result.vision_chars = len(tweet.image_caption)
+            elif self.vision_probability <= 0:
+                tweet_result.vision_status = "skipped"
+                tweet_result.vision_reason = "probability_zero"
+            elif not self._roll(self.vision_probability):
+                tweet_result.vision_status = "skipped"
+                tweet_result.vision_reason = "probability"
+            else:
                 remaining = self.vision_max_total - vision_used
                 if remaining <= 0:
-                    logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=global_limit_reached ({self.vision_max_total})")
+                    tweet_result.vision_status = "skipped"
+                    tweet_result.vision_reason = (
+                        f"global_limit_reached({self.vision_max_total})"
+                    )
                     skipped += 1
                     report.vision_skipped += 1
                 else:
@@ -173,33 +345,60 @@ class TweetEnricher:
                     image_paths = self._image_paths(tweet, per_tweet_cap)
                     if image_paths:
                         actual = len(image_paths)
-                        if actual < len([m for m in tweet.media if m.is_image and m.path]):
-                            logger.info(f"{LOG_PREFIX} AI vision capped: status={sid}, {actual} images (global remaining={remaining})")
                         captions = await self._vision_images(v_pid, image_paths, sid)
                         vision_used += actual
                         if captions:
                             tweet.image_caption = (
                                 captions[0] if len(captions) == 1
-                                else "\n".join(f"[{i}/{len(captions)}] {c}" for i, c in enumerate(captions, 1))
+                                else "\n".join(
+                                    f"[{i}/{len(captions)}] {c}"
+                                    for i, c in enumerate(captions, 1)
+                                )
                             )
+                            tweet_result.vision_status = "done"
+                            tweet_result.vision_images = len(captions)
+                            tweet_result.vision_chars = len(tweet.image_caption)
                             captioned += 1
                             report.vision_captioned += 1
                         else:
+                            tweet_result.vision_status = "failed"
+                            tweet_result.vision_reason = "empty_or_failed"
                             failed += 1
                             report.vision_failed += 1
                     else:
+                        tweet_result.vision_status = "skipped"
+                        tweet_result.vision_reason = "no_image"
                         skipped += 1
                         report.vision_skipped += 1
-                        logger.info(f"{LOG_PREFIX} AI vision skipped: status={sid}, reason=no_image")
 
             # ── 评论 ──
-            if self.comment_enabled and c_pid and not tweet.ai_comment and self._roll(self.comment_probability):
-                comment = await self._comment_tweet(c_pid, tweet, sid)
+            if not self.comment_enabled:
+                tweet_result.comment_status = "off"
+            elif not c_pid:
+                tweet_result.comment_status = "unavailable"
+            elif tweet.ai_comment:
+                tweet_result.comment_status = "existing"
+                tweet_result.comment_chars = len(tweet.ai_comment)
+            elif self.comment_probability <= 0:
+                tweet_result.comment_status = "skipped"
+                tweet_result.comment_reason = "probability_zero"
+            elif not self._roll(self.comment_probability):
+                tweet_result.comment_status = "skipped"
+                tweet_result.comment_reason = "probability"
+            else:
+                comment, reason = await self._comment_tweet(c_pid, tweet, sid)
                 if comment:
                     tweet.ai_comment = comment
+                    tweet_result.comment_status = "done"
+                    tweet_result.comment_chars = len(comment)
                     commented += 1
                     report.commented += 1
+                elif reason == "no_translation_or_vision":
+                    tweet_result.comment_status = "skipped"
+                    tweet_result.comment_reason = reason
                 else:
+                    tweet_result.comment_status = "failed"
+                    tweet_result.comment_reason = reason or "empty"
                     failed += 1
 
         if (
@@ -215,11 +414,12 @@ class TweetEnricher:
                 f"source={report.vision_provider_source}"
             )
 
-        logger.info(
-            f"{LOG_PREFIX} AI enrich finished: tweets={len(tweets)}, "
-            f"captioned={captioned}, commented={commented}, "
-            f"skipped={skipped}, failed={failed}"
-        )
+        if len(tweets) > 1:
+            logger.info(
+                f"{LOG_PREFIX} AI enrich finished: tweets={len(tweets)}, "
+                f"captioned={captioned}, commented={commented}, "
+                f"skipped={skipped}, failed={failed}"
+            )
         return report
 
     # ──────────────────────────────────────────────────────────────────
@@ -243,10 +443,6 @@ class TweetEnricher:
                 logger.warning(f"{LOG_PREFIX} AI vision failed: status={status_id} img={idx}, error={exc}")
                 return ""
             text = self._clean((resp.completion_text or "").strip())
-            if text:
-                logger.info(f"{LOG_PREFIX} AI vision done: status={status_id} img={idx}, chars={len(text)}")
-            else:
-                logger.warning(f"{LOG_PREFIX} AI vision empty: status={status_id} img={idx}")
             return text
 
         results = await asyncio.gather(*[_caption_one(i, p) for i, p in enumerate(image_paths, 1)])
@@ -256,30 +452,30 @@ class TweetEnricher:
     # 评论
     # ──────────────────────────────────────────────────────────────────
 
-    async def _comment_tweet(self, provider_id: str, tweet: TweetItem, status_id: str) -> str:
+    async def _comment_tweet(
+        self, provider_id: str, tweet: TweetItem, status_id: str
+    ) -> tuple[str, str]:
         text = (tweet.text or "").strip()
         if len(text) > self.comment_max_chars:
             text = text[: self.comment_max_chars].rstrip()
+        translation = (tweet.translation or "").strip()
         caption = (tweet.image_caption or "").strip()
-        if not text and not caption:
-            logger.info(f"{LOG_PREFIX} AI comment skipped: status={status_id}, reason=no_content")
-            return ""
+        if not translation and not caption:
+            return "", "no_translation_or_vision"
 
-        prompt = self._render_comment_prompt(text, tweet.translation, caption, tweet.link)
+        prompt = self._render_comment_prompt(text, translation, caption, tweet.link)
         try:
             resp = await self.context.llm_generate(chat_provider_id=provider_id, prompt=prompt)
         except Exception as exc:
             logger.warning(f"{LOG_PREFIX} AI comment failed: status={status_id}, error={exc}")
-            return ""
+            return "", "exception"
 
         comment = self._clean((resp.completion_text or "").strip())
         if self._same(comment, tweet.text) or self._same(comment, tweet.translation):
-            return ""
-        if comment:
-            logger.info(f"{LOG_PREFIX} AI comment done: status={status_id}, chars={len(comment)}")
-        else:
-            logger.warning(f"{LOG_PREFIX} AI comment empty: status={status_id}")
-        return comment
+            return "", "same_as_source"
+        if not comment:
+            return "", "empty"
+        return comment, ""
 
     # ──────────────────────────────────────────────────────────────────
     # Provider 解析（配置 > 框架全局视觉模型 > 当前会话）
@@ -399,7 +595,7 @@ class TweetEnricher:
 
     @staticmethod
     def _load_prompt(config, key: str, default: str) -> str:
-        prompt = str(config.get(key, "") or "").strip()
+        prompt = str(config_get(config, key, "") or "").strip()
         return prompt or default
 
 
@@ -410,56 +606,96 @@ class TweetEnricher:
 class TweetTranslator:
     def __init__(self, context, config):
         self.context = context
-        self.enabled = bool(config.get("translate_enabled", False))
-        self.provider_id = str(config.get("translation_provider_id", "") or "").strip()
-        self.min_chars = clamp_int(config.get("translate_min_chars", 8), 0, 1000)
-        self.max_chars = clamp_int(config.get("translate_max_chars", 2000), 100, 10000)
+        self.enabled = bool(config_get(config, "translate_enabled", False))
+        self.provider_id = str(
+            config_get(config, "translation_provider_id", "") or ""
+        ).strip()
+        self.min_chars = clamp_int(
+            config_get(config, "translate_min_chars", 8), 0, 1000
+        )
+        self.max_chars = clamp_int(
+            config_get(config, "translate_max_chars", 2000), 100, 10000
+        )
         self.chinese_ratio_threshold = clamp_float(
-            config.get("translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
+            config_get(config, "translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
         )
         self.prompt_template = self._load_prompt(config)
         if "{text}" not in self.prompt_template:
             self.prompt_template = f"{self.prompt_template}\n\n{{text}}"
+        self._warned_no_provider = False
 
     async def attach_translations(
         self, tweets: list[TweetItem], umo: str | None = None,
-    ) -> None:
+    ) -> TranslationReport:
+        report = TranslationReport()
         if not self.enabled:
-            logger.info(f"{LOG_PREFIX} translation skipped: translate_enabled=false")
-            return
+            logger.debug(f"{LOG_PREFIX} translation skipped: translate_enabled=false")
+            report.tweet_results = [
+                TranslationTweetResult(
+                    status_id=tweet.status_id or f"index-{index}",
+                    status="off",
+                )
+                for index, tweet in enumerate(tweets, 1)
+            ]
+            return report
         if not tweets:
-            logger.info(f"{LOG_PREFIX} translation skipped: no tweets")
-            return
+            logger.debug(f"{LOG_PREFIX} translation skipped: no tweets")
+            return report
 
         provider_id, source = await self._resolve_provider(umo)
+        report.provider_id = provider_id
+        report.provider_source = source
         if not provider_id:
-            logger.warning(f"{LOG_PREFIX} translation enabled but no provider available")
-            return
-        logger.info(f"{LOG_PREFIX} translation started: tweets={len(tweets)}, provider={provider_id} ({source})")
+            if not self._warned_no_provider:
+                logger.warning(f"{LOG_PREFIX} translation enabled but no provider available")
+                self._warned_no_provider = True
+            report.tweet_results = [
+                TranslationTweetResult(
+                    status_id=tweet.status_id or f"index-{index}",
+                    status="unavailable",
+                )
+                for index, tweet in enumerate(tweets, 1)
+            ]
+            return report
+        if len(tweets) > 1:
+            logger.info(f"{LOG_PREFIX} translation started: tweets={len(tweets)}, provider={provider_id} ({source})")
 
         translated = skipped = failed = 0
         for index, tweet in enumerate(tweets, 1):
             sid = tweet.status_id or f"index-{index}"
+            tweet_result = TranslationTweetResult(status_id=sid)
+            report.tweet_results.append(tweet_result)
             if tweet.translation:
+                tweet_result.status = "existing"
+                tweet_result.chars = len(tweet.translation)
                 skipped += 1
                 continue
 
             should, reason = self._should_translate(tweet.text)
             if not should:
+                tweet_result.status = "skipped"
+                tweet_result.reason = reason
                 skipped += 1
-                logger.info(f"{LOG_PREFIX} translation skipped: status={sid}, reason={reason}")
                 continue
 
-            logger.info(f"{LOG_PREFIX} translation requested: status={sid}, reason={reason}")
             result = await self._translate(provider_id, tweet.text, sid)
             if result:
                 tweet.translation = result
+                tweet_result.status = "done"
+                tweet_result.reason = reason
+                tweet_result.chars = len(result)
                 translated += 1
-                logger.info(f"{LOG_PREFIX} translation done: status={sid}, chars={len(result)}")
             else:
+                tweet_result.status = "failed"
+                tweet_result.reason = reason
                 failed += 1
 
-        logger.info(f"{LOG_PREFIX} translation finished: translated={translated}, skipped={skipped}, failed={failed}")
+        report.translated = translated
+        report.skipped = skipped
+        report.failed = failed
+        if len(tweets) > 1:
+            logger.info(f"{LOG_PREFIX} translation finished: translated={translated}, skipped={skipped}, failed={failed}")
+        return report
 
     # ── 判断是否需要翻译 ──
 
@@ -541,11 +777,15 @@ class TweetTranslator:
 
     @staticmethod
     def _load_prompt(config) -> str:
-        prompt = str(config.get("translate_prompt", "") or "").strip()
+        prompt = str(config_get(config, "translate_prompt", "") or "").strip()
         if prompt:
             return prompt
-        old_system = str(config.get("translate_system_prompt", "") or "").strip()
-        old_template = str(config.get("translate_prompt_template", "") or "").strip()
+        old_system = str(
+            config_get(config, "translate_system_prompt", "") or ""
+        ).strip()
+        old_template = str(
+            config_get(config, "translate_prompt_template", "") or ""
+        ).strip()
         if old_system or old_template:
             return "\n\n".join(p for p in (old_system, old_template) if p).strip()
         return DEFAULT_TRANSLATE_PROMPT

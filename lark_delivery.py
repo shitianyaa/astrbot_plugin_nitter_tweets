@@ -171,7 +171,14 @@ def _lark_post_title(title: str) -> str:
     return title[:120]
 
 
-def lark_tweet_post_title(username: str, tweet_count: int) -> str:
+def lark_tweet_post_title(
+    username: str,
+    tweet_count: int,
+    header_text: str = "",
+) -> str:
+    title = str(header_text or "").strip()
+    if title:
+        return _lark_post_title(title)
     return _lark_post_title(f"@{username} 最近 {tweet_count} 条推文")
 
 

@@ -1,0 +1,225 @@
+"""Storage adapter for SQLite storage and legacy KV migration."""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from astrbot.api import logger
+
+try:
+    from .config_compat import config_get
+    from .seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
+    from .sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
+except ImportError:
+    from config_compat import config_get
+    from seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
+    from sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
+
+
+PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
+
+
+def _plugin_data_dir() -> Path:
+    try:
+        from astrbot.api.star import StarTools
+
+        return Path(StarTools.get_data_dir(PLUGIN_NAME))
+    except Exception:
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+            return Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
+        except Exception:
+            return Path("data") / "plugin_data" / PLUGIN_NAME
+
+
+class StorageAdapter:
+    """SQLite runtime storage with legacy KV used only as a migration source."""
+
+    def __init__(self, owner, config, context):
+        self.owner = owner
+        self.config = config
+        self.context = context
+
+        configured_backend = str(
+            config_get(config, "storage_backend", "sqlite")
+        ).strip().lower()
+        if configured_backend and configured_backend != "sqlite":
+            logger.info(
+                "[NitterTweets] "
+                f"storage_backend={configured_backend} is no longer supported; "
+                "using SQLite and importing legacy KV seen IDs only"
+            )
+
+        logger.info("[NitterTweets] Using SQLite storage backend")
+        self.sqlite: SQLiteStorage | None = self._init_sqlite()
+        self.seen_store = SeenStore(owner)
+
+    def _init_sqlite(self) -> SQLiteStorage:
+        """Initialize SQLite storage."""
+        db_path = _plugin_data_dir() / "nitter_tweets.db"
+        return SQLiteStorage(db_path)
+
+    async def _ensure_sqlite_connected(self) -> SQLiteStorage:
+        """Return SQLite storage with an initialized connection."""
+        assert self.sqlite is not None
+        await self.sqlite.connect()
+        return self.sqlite
+
+    async def migrate_and_sync(self, schedule_groups: list) -> None:
+        """Migrate legacy KV seen IDs once and sync configured groups."""
+        sqlite = await self._ensure_sqlite_connected()
+
+        grouped_seen_map = await self.seen_store.get_grouped_seen_map()
+        has_legacy_seen = self._has_seen_data(grouped_seen_map.groups)
+        await asyncio.to_thread(
+            sqlite.migrate_kv_seen_data, grouped_seen_map.groups
+        )
+        if has_legacy_seen:
+            await self.delete_legacy_seen_kv()
+
+        await asyncio.to_thread(sqlite.sync_config_groups, schedule_groups)
+
+    async def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
+        """Get seen IDs for every user in a group."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.get_group_seen_map, group_id)
+
+    async def put_group_seen_map(
+        self, group_id: str, seen_map: dict[str, list[str]]
+    ) -> None:
+        """Save a group's seen map into SQLite."""
+        sqlite = await self._ensure_sqlite_connected()
+        for username, status_ids in seen_map.items():
+            if status_ids:
+                await asyncio.to_thread(
+                    sqlite.add_seen_ids, group_id, username, status_ids
+                )
+
+    async def get_seen_ids(self, group_id: str, username: str) -> list[str]:
+        """Get seen IDs for a group/user pair."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.get_seen_ids, group_id, username)
+
+    async def add_seen_ids(
+        self, group_id: str, username: str, status_ids: list[str]
+    ) -> None:
+        """Add seen IDs for a group/user pair."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.add_seen_ids, group_id, username, status_ids
+        )
+
+    async def clear_seen_records(self, group_id: str | None = None) -> int:
+        """Clear SQLite seen records for a group, or all groups when omitted."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.clear_seen_tweets, group_id)
+
+    async def delete_legacy_seen_kv(self) -> bool:
+        """Delete legacy KV seen data so it cannot resurrect after reinstall."""
+        delete_kv_data = getattr(self.owner, "delete_kv_data", None)
+        if not callable(delete_kv_data):
+            logger.warning(
+                "[NitterTweets] legacy KV seen data exists but "
+                "owner does not support delete_kv_data()"
+            )
+            return False
+
+        try:
+            for key in (self.seen_store.key, KV_KEY_SEEN_BY_TARGET):
+                await delete_kv_data(key)
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] failed to delete legacy KV seen data: {exc}")
+            return False
+        return True
+
+    async def enqueue_pending_tweets(
+        self,
+        group_id: str,
+        username: str,
+        instance: str,
+        tweets: list,
+        scheduled_at: int | None = None,
+    ) -> int:
+        """Add prepared tweets to the pending publish queue."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.enqueue_pending_tweets,
+            group_id,
+            username,
+            instance,
+            tweets,
+            scheduled_at,
+        )
+
+    async def get_pending_tweets(
+        self, group_id: str, limit: int
+    ) -> list[PendingTweetRecord]:
+        """Get unsent pending tweets for a group."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_pending_tweets, group_id, limit
+        )
+
+    async def get_pending_queue_summary(
+        self, group_id: str
+    ) -> PendingQueueSummary:
+        """Get pending queue counts for a group."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_pending_queue_summary, group_id
+        )
+
+    async def get_pending_media_paths(self) -> set[str]:
+        """Get staged media paths still referenced by unsent queue rows."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.get_pending_media_paths)
+
+    async def mark_pending_tweets_published(self, pending_ids: list[int]) -> None:
+        """Mark pending tweets as sent."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.mark_pending_tweets_published, pending_ids
+        )
+
+    async def mark_pending_tweets_failed(
+        self, pending_ids: list[int], error: str
+    ) -> None:
+        """Record a publish failure for pending tweets."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.mark_pending_tweets_failed, pending_ids, error
+        )
+
+    async def delete_pending_tweets(self, pending_ids: list[int]) -> None:
+        """Delete pending tweets and media rows."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(sqlite.delete_pending_tweets, pending_ids)
+
+    async def cleanup_sent_pending_tweets(self, older_than: int) -> int:
+        """Delete sent pending tweet rows older than a timestamp."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.cleanup_sent_pending_tweets, older_than
+        )
+
+    def initial_seen_ids(self, ids: list[str]) -> list[str]:
+        """Build an initial limited seen ID list."""
+        return self.seen_store.initial_seen_ids(ids)
+
+    def merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
+        """Merge seen IDs with the legacy-compatible limit/order helper."""
+        return self.seen_store.merge_seen_ids(new_ids, old_ids)
+
+    def close(self) -> None:
+        """Close the SQLite connection."""
+        if self.sqlite:
+            self.sqlite.close()
+
+    @staticmethod
+    def _has_seen_data(grouped_seen_map: dict[str, dict[str, list[str]]]) -> bool:
+        return any(
+            bool(status_ids)
+            for seen_map in grouped_seen_map.values()
+            for status_ids in seen_map.values()
+        )
