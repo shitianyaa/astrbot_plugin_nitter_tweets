@@ -7,11 +7,11 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
+    from .group_config import get_default_group_dict
     from .seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
     from .sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
 except ImportError:
-    from config_compat import config_get
+    from group_config import get_default_group_dict
     from seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
     from sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
 
@@ -42,7 +42,7 @@ class StorageAdapter:
         self.context = context
 
         configured_backend = str(
-            config_get(config, "storage_backend", "sqlite")
+            get_default_group_dict(config).get("storage_backend", "sqlite")
         ).strip().lower()
         if configured_backend and configured_backend != "sqlite":
             logger.info(

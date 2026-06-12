@@ -29,6 +29,7 @@ if "astrbot.api" not in sys.modules:
 
 from media import MediaService
 from utils import TweetItem, TweetMedia
+from conftest import make_group_config
 
 
 class MediaCleanupTest(unittest.TestCase):
@@ -43,7 +44,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService(make_group_config(media_cache_retention_days=0))
 
             service.cleanup_after_send([tweet])
 
@@ -61,7 +62,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 3})
+            service = MediaService(make_group_config(media_cache_retention_days=3))
 
             service.cleanup_after_send([tweet])
 
@@ -80,7 +81,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[first, second],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService(make_group_config(media_cache_retention_days=0))
 
             service.cleanup_after_send([tweet])
 
@@ -100,7 +101,7 @@ class MediaCleanupTest(unittest.TestCase):
             image.write_bytes(b"image")
             temp.write_bytes(b"temp")
             staged_image.write_bytes(b"queued")
-            service = MediaService({})
+            service = MediaService(make_group_config())
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 
@@ -127,7 +128,7 @@ class MediaCleanupTest(unittest.TestCase):
             current_image.write_bytes(b"image")
             legacy_video.write_bytes(b"video")
             legacy_staged_video.write_bytes(b"queued")
-            service = MediaService({})
+            service = MediaService(make_group_config())
             service.cache_dir = cache_dir
             service.legacy_cache_dir = legacy_cache_dir
 
@@ -153,11 +154,11 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({})
+            service = MediaService(make_group_config())
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 
-            service._move_tweets_media_to_staged("global", "example", [tweet])
+            service._move_tweets_media_to_staged("default", "example", [tweet])
             staged_path = media.path
             clear_result = service.clear_non_staged_cache()
 
@@ -175,7 +176,7 @@ class MediaCleanupTest(unittest.TestCase):
     def test_zero_retention_cleanup_after_send_keeps_staged_media(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
-            staged_dir = cache_dir / "staged" / "global" / "123"
+            staged_dir = cache_dir / "staged" / "default" / "123"
             staged_dir.mkdir(parents=True)
             staged_path = staged_dir / "00_image.jpg"
             staged_path.write_bytes(b"image")
@@ -186,7 +187,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService(make_group_config(media_cache_retention_days=0))
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 
@@ -198,7 +199,7 @@ class MediaCleanupTest(unittest.TestCase):
     def test_expired_staged_cleanup_keeps_protected_paths(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
-            staged_dir = cache_dir / "staged" / "global" / "123"
+            staged_dir = cache_dir / "staged" / "default" / "123"
             staged_dir.mkdir(parents=True)
             protected = staged_dir / "00_keep.jpg"
             expired = staged_dir / "01_delete.jpg"
@@ -207,7 +208,7 @@ class MediaCleanupTest(unittest.TestCase):
             old_time = 1
             os.utime(protected, (old_time, old_time))
             os.utime(expired, (old_time, old_time))
-            service = MediaService({})
+            service = MediaService(make_group_config())
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 

@@ -10,7 +10,8 @@ except ImportError:
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
 KV_KEY_SEEN_BY_TARGET = "nitter_seen_status_ids_by_target_v1"
-GLOBAL_GROUP_ID = "global"
+DEFAULT_GROUP_ID = "default"
+GLOBAL_GROUP_ID = DEFAULT_GROUP_ID
 SEEN_LIMIT_PER_USER = 300
 
 

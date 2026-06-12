@@ -24,6 +24,7 @@ if "astrbot.api" not in sys.modules:
 
 import media
 from media import NitterClient
+from conftest import make_group_config
 
 
 class _FakeResponse:
@@ -65,10 +66,10 @@ def _rss_page(start_id: int, count: int) -> bytes:
 class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_tweets_paginates_after_nitter_first_page_limit(self):
         client = NitterClient(
-            {
-                "instances": ["https://nitter.example"],
-                "request_timeout": 12,
-            }
+            make_group_config(
+                instances=["https://nitter.example"],
+                request_timeout=12,
+            )
         )
         calls: list[str] = []
 
@@ -86,7 +87,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
         original_urlopen = media.urlopen
         media.urlopen = fake_urlopen
         try:
-            instance, tweets = await client.fetch_tweets("nasa", 20)
+            instance, tweets, skipped_retweets = await client.fetch_tweets("nasa", 20)
         finally:
             media.urlopen = original_urlopen
 
@@ -94,6 +95,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tweets), 20)
         self.assertEqual([tweet.status_id for tweet in tweets[:3]], ["100", "99", "98"])
         self.assertEqual([tweet.status_id for tweet in tweets[-3:]], ["83", "82", "81"])
+        self.assertEqual(skipped_retweets, 0)
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0], "https://nitter.example/nasa/rss")
         self.assertEqual(

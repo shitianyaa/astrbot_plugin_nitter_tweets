@@ -9,11 +9,11 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
-    from .utils import TweetItem, clamp_float, clamp_int, strip_external_links
+    from .group_config import GroupConfig
+    from .utils import TweetItem, strip_external_links
 except ImportError:
-    from config_compat import config_get
-    from utils import TweetItem, clamp_float, clamp_int, strip_external_links
+    from group_config import GroupConfig
+    from utils import TweetItem, strip_external_links
 
 
 LOG_PREFIX = "[NitterTweets]"
@@ -200,45 +200,23 @@ def _find_report_item(report, status_id: str):
 class TweetEnricher:
     """AI 识图 + 评论，参照 get_px 的两步式设计。"""
 
-    def __init__(self, context, config):
+    def __init__(self, context, group_config: GroupConfig):
         self.context = context
 
-        # ── 开关与概率 ──
-        self.vision_enabled = bool(config_get(config, "vision_enabled", False))
-        self.comment_enabled = bool(config_get(config, "comment_enabled", False))
-        self.vision_probability = clamp_float(
-            config_get(config, "vision_probability", 0.3), 0.0, 1.0
-        )
-        self.comment_probability = clamp_float(
-            config_get(config, "comment_probability", 0.3), 0.0, 1.0
-        )
+        self.vision_enabled = group_config.vision_enabled
+        self.comment_enabled = group_config.comment_enabled
+        self.vision_probability = group_config.vision_probability
+        self.comment_probability = group_config.comment_probability
 
-        # ── Provider ──
-        self.vision_provider_id = str(
-            config_get(config, "vision_provider_id", "") or ""
-        ).strip()
-        self.comment_provider_id = str(
-            config_get(config, "comment_provider_id", "") or ""
-        ).strip()
+        self.vision_provider_id = group_config.vision_provider_id
+        self.comment_provider_id = group_config.comment_provider_id
 
-        # ── 图片 ──
-        self.vision_max_images = clamp_int(
-            config_get(config, "vision_max_images", 3), 1, 20
-        )
-        self.vision_max_total = clamp_int(
-            config_get(config, "vision_max_total", 6), 1, 50
-        )
-        self.comment_max_chars = clamp_int(
-            config_get(config, "comment_max_chars", 2000), 100, 10000
-        )
+        self.vision_max_images = group_config.vision_max_images
+        self.vision_max_total = group_config.vision_max_total
+        self.comment_max_chars = group_config.comment_max_chars
 
-        # ── 提示词 ──
-        self.vision_prompt = self._load_prompt(
-            config, "vision_prompt", DEFAULT_VISION_PROMPT
-        )
-        self.comment_prompt_template = self._load_prompt(
-            config, "comment_prompt", DEFAULT_COMMENT_PROMPT
-        )
+        self.vision_prompt = group_config.vision_prompt
+        self.comment_prompt_template = group_config.comment_prompt
         self._logged_vision_provider = ""
         self._logged_comment_provider = ""
         self._warned_vision_unavailable = False
@@ -593,33 +571,20 @@ class TweetEnricher:
             return SPACE_RE.sub("", v or "").casefold()
         return bool(left) and bool(right) and norm(left) == norm(right)
 
-    @staticmethod
-    def _load_prompt(config, key: str, default: str) -> str:
-        prompt = str(config_get(config, key, "") or "").strip()
-        return prompt or default
-
 
 # ──────────────────────────────────────────────────────────────────────
 # 翻译
 # ──────────────────────────────────────────────────────────────────────
 
 class TweetTranslator:
-    def __init__(self, context, config):
+    def __init__(self, context, group_config: GroupConfig):
         self.context = context
-        self.enabled = bool(config_get(config, "translate_enabled", False))
-        self.provider_id = str(
-            config_get(config, "translation_provider_id", "") or ""
-        ).strip()
-        self.min_chars = clamp_int(
-            config_get(config, "translate_min_chars", 8), 0, 1000
-        )
-        self.max_chars = clamp_int(
-            config_get(config, "translate_max_chars", 2000), 100, 10000
-        )
-        self.chinese_ratio_threshold = clamp_float(
-            config_get(config, "translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
-        )
-        self.prompt_template = self._load_prompt(config)
+        self.enabled = group_config.translate_enabled
+        self.provider_id = group_config.translation_provider_id
+        self.min_chars = group_config.translate_min_chars
+        self.max_chars = group_config.translate_max_chars
+        self.chinese_ratio_threshold = group_config.translate_chinese_ratio_threshold
+        self.prompt_template = group_config.translate_prompt
         if "{text}" not in self.prompt_template:
             self.prompt_template = f"{self.prompt_template}\n\n{{text}}"
         self._warned_no_provider = False
@@ -774,21 +739,6 @@ class TweetTranslator:
         text = URL_RE.sub("", text or "")
         text = MENTION_RE.sub("", text)
         return SPACE_RE.sub("", text)
-
-    @staticmethod
-    def _load_prompt(config) -> str:
-        prompt = str(config_get(config, "translate_prompt", "") or "").strip()
-        if prompt:
-            return prompt
-        old_system = str(
-            config_get(config, "translate_system_prompt", "") or ""
-        ).strip()
-        old_template = str(
-            config_get(config, "translate_prompt_template", "") or ""
-        ).strip()
-        if old_system or old_template:
-            return "\n\n".join(p for p in (old_system, old_template) if p).strip()
-        return DEFAULT_TRANSLATE_PROMPT
 
     @staticmethod
     def _clean(text: str) -> str:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import re
 import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -15,16 +17,15 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
+    from .group_config import GroupConfig
     from .utils import (
-        TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
+        TweetItem, TweetMedia, clean_text,
         generate_file_name, load_instances, normalize_external_links,
     )
 except ImportError:
-    from config_compat import config_get
+    from group_config import GroupConfig
     from utils import (
-        TweetItem, TweetMedia, clean_text, clamp_float, clamp_int,
-        generate_file_name, load_instances, normalize_external_links,
+        TweetItem, TweetMedia, clean_text, generate_file_name, load_instances, normalize_external_links,
     )
 
 
@@ -49,7 +50,7 @@ class XdownMediaParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.cover_url = ""
-        self.items: list[tuple[str, str]] = []
+        self.items: list[tuple[str, str, str]] = []
         self._href = ""
         self._classes: set[str] = set()
         self._text_parts: list[str] = []
@@ -78,7 +79,7 @@ class XdownMediaParser(HTMLParser):
         text = "".join(self._text_parts).strip()
         kind = self._detect_kind(text, self._href)
         if kind:
-            self.items.append((kind, self._href))
+            self.items.append((kind, self._href, text))
         self._href = ""
         self._classes = set()
         self._text_parts = []
@@ -114,44 +115,18 @@ class MediaCacheCleanupResult:
 
 
 class MediaService:
-    def __init__(self, config):
-        image_config = config_get(config, "send_image_attachments", None)
-        if image_config is None:
-            image_config = bool(config_get(config, "download_media", True)) and bool(
-                config_get(config, "download_images", True)
-            )
-        self.send_image_attachments = bool(
-            image_config
-        )
-        self.send_video_attachments = bool(
-            config_get(config, "send_video_attachments", False)
-        )
-        self.max_per_tweet = clamp_int(
-            config_get(config, "max_media_per_tweet", 4), 0, 12
-        )
-        self.timeout = clamp_float(
-            config_get(config, "media_timeout", 25.0), 5.0, 120.0
-        )
-        self.max_bytes = clamp_float(
-            config_get(config, "media_max_size_mb", 25.0), 1.0, 200.0
-        )
-        self.max_bytes = int(self.max_bytes * 1024 * 1024)
-        self.cache_retention_days = clamp_float(
-            config_get(config, "media_cache_retention_days", 3.0), 0.0, 3650.0
-        )
+    def __init__(self, group_config: GroupConfig):
+        self.send_image_attachments = group_config.send_image_attachments
+        self.send_video_attachments = group_config.send_video_attachments
+        self.max_per_tweet = group_config.max_media_per_tweet
+        self.timeout = group_config.media_timeout
+        self.max_bytes = int(group_config.media_max_size_mb * 1024 * 1024)
+        self.cache_retention_days = group_config.media_cache_retention_days
         self.cache_cleanup_interval = 3600.0
         self._last_cache_cleanup = 0.0
-        self.xdown_url = str(
-            config_get(config, "xdown_api_url", "https://xdown.app/api/ajaxSearch")
-        )
-        self.user_agent = str(
-            config_get(
-                config,
-                "media_user_agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-            )
-        )
+        self.xdown_url = group_config.xdown_api_url
+        self.user_agent = group_config.media_user_agent
+        self.preferred_video_resolution = group_config.preferred_video_resolution
         self.cache_dir = _plugin_data_dir() / "cache"
         self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -489,55 +464,88 @@ class MediaService:
         parser.feed(str(html))
 
         base_url = "https://xdown.app"
-        cover_url = urljoin(base_url, parser.cover_url) if parser.cover_url else ""
         has_video_candidate = any(
-            kind in {"video", "dynamic"} for kind, _ in parser.items
+            kind in {"video", "dynamic"} for kind, _, _ in parser.items
         )
         result: list[TweetMedia] = []
-        for kind, url in parser.items:
+        video_candidates: dict[str, list[tuple[int, str]]] = {}
+        for kind, url, text in parser.items:
             full_url = urljoin(base_url, url)
-            # 最终兜底：如果解析不出类型，按 URL 扩展名再试一次
             if not kind:
                 kind = XdownMediaParser._detect_kind("", full_url)
             if not kind:
                 logger.info(f"[NitterTweets] skipping unclassified media: {full_url}")
                 continue
-            if (
-                kind == "image"
-                and has_video_candidate
-                and cover_url
-                and self._same_media_url(full_url, cover_url)
-            ):
+            if kind == "image" and has_video_candidate:
                 logger.info(
-                    "[NitterTweets] skipping video/GIF cover image: "
+                    "[NitterTweets] skipping image (video present): "
                     f"{full_url}"
                 )
                 continue
-            result.append(TweetMedia(kind, full_url))
+            if kind == "video":
+                video_id = self._extract_video_id(full_url)
+                res = self._parse_resolution(text)
+                video_candidates.setdefault(video_id, []).append((res, full_url))
+            else:
+                result.append(TweetMedia(kind, full_url))
+        for video_id, candidates in video_candidates.items():
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            chosen_url = self._select_resolution(candidates)
+            result.append(TweetMedia("video", chosen_url))
         return result
 
     @staticmethod
-    def _same_media_url(left: str, right: str) -> bool:
-        left = (left or "").strip()
-        right = (right or "").strip()
-        if not left or not right:
-            return False
-        if left.rstrip("/") == right.rstrip("/"):
-            return True
+    def _decode_jwt_payload(url: str) -> dict:
+        parsed = urlparse(url)
+        token = ""
+        for part in parsed.query.split("&"):
+            if part.startswith("token="):
+                token = part[len("token="):]
+                break
+        if not token:
+            return {}
+        try:
+            payload_b64 = token.split(".")[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            return json.loads(base64.urlsafe_b64decode(payload_b64))
+        except Exception:
+            return {}
 
-        left_parsed = urlparse(left)
-        right_parsed = urlparse(right)
-        if left_parsed.netloc and right_parsed.netloc:
-            if left_parsed.netloc.lower() != right_parsed.netloc.lower():
-                return False
+    @staticmethod
+    def _extract_video_id(url: str) -> str:
+        payload = MediaService._decode_jwt_payload(url)
+        inner_url = payload.get("url", "")
+        if not inner_url:
+            return ""
+        inner_path = urlparse(inner_url).path
+        parts = inner_path.split("/")
+        for i, part in enumerate(parts):
+            if part.endswith("_video") and i + 1 < len(parts):
+                return parts[i + 1]
+        return inner_path
 
-        left_path = left_parsed.path.rstrip("/")
-        right_path = right_parsed.path.rstrip("/")
-        if left_path != right_path:
-            return False
+    @staticmethod
+    def _parse_resolution(text: str) -> int:
+        m = re.search(r"(\d+)p", text)
+        return int(m.group(1)) if m else 0
 
-        suffix = Path(left_path).suffix.lower()
-        return suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"}
+    def _select_resolution(self, candidates: list[tuple[int, str]]) -> str:
+        if not candidates:
+            return ""
+        pref = self.preferred_video_resolution
+        if pref == "highest" or not pref:
+            return candidates[0][1]
+        m = re.search(r"(\d+)p", pref)
+        if not m:
+            return candidates[0][1]
+        target = int(m.group(1))
+        for res, url in candidates:
+            if res == target:
+                return url
+        lower = [(res, url) for res, url in candidates if res < target]
+        if lower:
+            return lower[0][1]
+        return candidates[-1][1]
 
     def _download(self, media: TweetMedia) -> Path:
         default_suffix = ".mp4" if media.is_video else ".jpg"
@@ -614,41 +622,39 @@ class MediaService:
 # ──────────────────────────────────────────────────────────────────────
 
 class NitterClient:
-    def __init__(self, config):
-        self.instances = load_instances(config_get(config, "instances"))
-        self.timeout = clamp_float(
-            config_get(config, "request_timeout", 12.0), 3.0, 60.0
-        )
-        self.user_agent = config_get(
-            config,
-            "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
-        )
+    def __init__(self, group_config: GroupConfig):
+        self.instances = load_instances(group_config.instances)
+        self.timeout = group_config.request_timeout
+        self.user_agent = group_config.user_agent
+        self.skip_retweets = group_config.deduplicate_retweets
 
-    async def fetch_tweets(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
+    async def fetch_tweets(self, username: str, limit: int, skip_retweets: bool | None = None) -> tuple[str, list[TweetItem], int]:
         errors: list[str] = []
+        effective_skip = self.skip_retweets if skip_retweets is None else skip_retweets
         for instance in self.instances:
             try:
-                tweets = await asyncio.to_thread(
-                    self._fetch_from_instance, instance, username, limit,
+                tweets, skipped = await asyncio.to_thread(
+                    self._fetch_from_instance, instance, username, limit, effective_skip,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
                 continue
             if tweets:
-                return instance, tweets
+                return instance, tweets, skipped
             errors.append(f"{instance}: empty feed")
         raise RuntimeError(self._format_fetch_errors(errors))
 
     async def fetch_tweets_from_instance(
-        self, instance: str, username: str, limit: int,
-    ) -> tuple[str, list[TweetItem]]:
+        self, instance: str, username: str, limit: int, skip_retweets: bool | None = None,
+    ) -> tuple[str, list[TweetItem], int]:
         normalized = load_instances([instance])[0]
-        tweets = await asyncio.to_thread(
-            self._fetch_from_instance, normalized, username, limit,
+        effective_skip = self.skip_retweets if skip_retweets is None else skip_retweets
+        tweets, skipped = await asyncio.to_thread(
+            self._fetch_from_instance, normalized, username, limit, effective_skip,
         )
         if not tweets:
             raise RuntimeError(f"{normalized}: empty feed")
-        return normalized, tweets
+        return normalized, tweets, skipped
 
     def _format_fetch_errors(self, errors: list[str]) -> str:
         if not errors:
@@ -670,21 +676,23 @@ class NitterClient:
         return f"{summary}: {'; '.join(shown_errors)}"
 
     def _fetch_from_instance(
-        self, instance: str, username: str, limit: int,
-    ) -> list[TweetItem]:
+        self, instance: str, username: str, limit: int, skip_retweets: bool,
+    ) -> tuple[list[TweetItem], int]:
         if limit <= 0:
-            return []
+            return [], 0
 
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         seen_cursors: set[str] = set()
         cursor = ""
+        total_skipped = 0
 
         while len(tweets) < limit:
             try:
-                page_tweets, next_cursor = self._fetch_page_from_instance(
-                    instance, username, cursor, limit,
+                page_tweets, next_cursor, skipped = self._fetch_page_from_instance(
+                    instance, username, cursor, limit, skip_retweets,
                 )
+                total_skipped += skipped
             except Exception:
                 if not tweets:
                     raise
@@ -717,11 +725,11 @@ class NitterClient:
             if added == 0:
                 break
 
-        return tweets
+        return tweets, total_skipped
 
     def _fetch_page_from_instance(
-        self, instance: str, username: str, cursor: str, limit: int,
-    ) -> tuple[list[TweetItem], str]:
+        self, instance: str, username: str, cursor: str, limit: int, skip_retweets: bool,
+    ) -> tuple[list[TweetItem], str, int]:
         rss_url = self._rss_url(instance, username, cursor)
         request = Request(
             rss_url,
@@ -738,7 +746,8 @@ class NitterClient:
             raise RuntimeError(f"HTTP {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(str(getattr(exc, "reason", exc))) from exc
-        return self._parse_rss(data, instance, limit), next_cursor
+        tweets, skipped = self._parse_rss(data, instance, limit, username, skip_retweets)
+        return tweets, next_cursor, skipped
 
     @staticmethod
     def _rss_url(instance: str, username: str, cursor: str = "") -> str:
@@ -761,12 +770,13 @@ class NitterClient:
     def _tweet_identity(tweet: TweetItem) -> str:
         return tweet.status_id or tweet.link or f"{tweet.published}:{tweet.text}"
 
-    def _parse_rss(self, data: bytes, instance: str, limit: int) -> list[TweetItem]:
+    def _parse_rss(self, data: bytes, instance: str, limit: int, username: str = "", skip_retweets: bool = False) -> tuple[list[TweetItem], int]:
         root = ET.fromstring(data)
         channel = root.find("channel") if root.tag.lower().endswith("rss") else root
         if channel is None:
-            return []
+            return [], 0
         tweets: list[TweetItem] = []
+        skipped_retweets = 0
         for item in channel.findall("item"):
             title = self._node_text(item, "title")
             description = self._node_text(item, "description")
@@ -775,10 +785,15 @@ class NitterClient:
             published = self._format_pub_date(self._node_text(item, "pubDate"))
             if not text and not link:
                 continue
-            tweets.append(TweetItem(text=text or "(无正文)", link=link, published=published))
+            tweet = TweetItem(text=text or "(无正文)", link=link, published=published)
+            if skip_retweets and username and tweet.username and tweet.username.lower() != username.lower():
+                logger.info(f"[NitterTweets] skipping retweet: @{tweet.username} (expected @{username})")
+                skipped_retweets += 1
+                continue
+            tweets.append(tweet)
             if len(tweets) >= limit:
                 break
-        return tweets
+        return tweets, skipped_retweets
 
     @staticmethod
     def _node_text(node: ET.Element, name: str) -> str:

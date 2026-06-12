@@ -7,11 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-try:
-    from .config_compat import config_get
-except ImportError:
-    from config_compat import config_get
-
 
 # ──────────────────────────────────────────────────────────────────────
 # 数据模型
@@ -96,13 +91,6 @@ def clamp_float(value, minimum: float, maximum: float) -> float:
     except (TypeError, ValueError):
         number = minimum
     return max(minimum, min(maximum, number))
-
-
-def configured_merge_tweet_threshold(config) -> int:
-    value = config_get(config, "merge_tweet_threshold", None)
-    if value is None:
-        value = 1 if config_get(config, "merge_scheduled_updates", False) else 2
-    return clamp_int(value, 0, 20)
 
 
 def clean_text(raw: str) -> str:

@@ -72,9 +72,9 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
 
             try:
                 await adapter.migrate_and_sync([])
-                await adapter.add_seen_ids("global", "NASA", ["100"])
-                seen_ids = await adapter.get_seen_ids("global", "NASA")
-                seen_map = await adapter.get_group_seen_map("global")
+                await adapter.add_seen_ids("default", "NASA", ["100"])
+                seen_ids = await adapter.get_seen_ids("default", "NASA")
+                seen_map = await adapter.get_group_seen_map("default")
             finally:
                 adapter.close()
 
@@ -103,11 +103,11 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             try:
-                summary = await adapter.get_pending_queue_summary("global")
+                summary = await adapter.get_pending_queue_summary("default")
             finally:
                 adapter.close()
 
-            self.assertEqual(summary.group_id, "global")
+            self.assertEqual(summary.group_id, "default")
             self.assertEqual(summary.pending_count, 0)
             self.assertTrue(db_path.exists())
 
@@ -126,7 +126,7 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
 
             try:
                 await adapter.migrate_and_sync([])
-                seen_ids = await adapter.get_seen_ids("global", "NASA")
+                seen_ids = await adapter.get_seen_ids("default", "NASA")
             finally:
                 adapter.close()
 
@@ -163,8 +163,8 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
 
             try:
                 await adapter.migrate_and_sync([])
-                nasa_seen = await adapter.get_seen_ids("global", "NASA")
-                openai_seen = await adapter.get_seen_ids("global", "OpenAI")
+                nasa_seen = await adapter.get_seen_ids("default", "NASA")
+                openai_seen = await adapter.get_seen_ids("default", "OpenAI")
             finally:
                 adapter.close()
 

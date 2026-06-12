@@ -27,7 +27,7 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get
+    from .group_config import GroupConfig, DEFAULT_GROUP_ID
     from .lark_delivery import (
         is_lark_platform,
         lark_client_and_target,
@@ -45,12 +45,11 @@ try:
     )
     from .utils import (
         TweetItem,
-        configured_merge_tweet_threshold,
         safe_call,
     )
     from .tweet_rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config_compat import config_get
+    from group_config import GroupConfig, DEFAULT_GROUP_ID
     from lark_delivery import (
         is_lark_platform,
         lark_client_and_target,
@@ -68,7 +67,6 @@ except ImportError:
     )
     from utils import (
         TweetItem,
-        configured_merge_tweet_threshold,
         safe_call,
     )
     from tweet_rendering import TweetBatch, TweetMessageRenderer
@@ -105,18 +103,13 @@ class TweetSender:
     FORWARD_TWEET_CHUNK_SIZE = 8
     UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
-    def __init__(self, config=None):
-        config = config or {}
-        image_config = config_get(config, "send_image_attachments", None)
-        if image_config is None:
-            image_config = bool(config_get(config, "download_media", True)) and bool(
-                config_get(config, "download_images", True)
-            )
-        self.send_image_attachments = bool(image_config)
-        self.send_video_attachments = bool(
-            config_get(config, "send_video_attachments", False)
+    def __init__(self, group_config: GroupConfig | None = None):
+        group_config = group_config or GroupConfig(
+            group_id=DEFAULT_GROUP_ID, name="default"
         )
-        self.merge_tweet_threshold = configured_merge_tweet_threshold(config)
+        self.send_image_attachments = group_config.send_image_attachments
+        self.send_video_attachments = group_config.send_video_attachments
+        self.merge_tweet_threshold = group_config.merge_tweet_threshold
         self.renderer = TweetMessageRenderer(
             send_image_attachments=self.send_image_attachments,
             send_video_attachments=self.send_video_attachments,

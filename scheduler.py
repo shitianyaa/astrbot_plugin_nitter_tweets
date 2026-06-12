@@ -19,35 +19,29 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get, config_set
+    from .config_compat import config_set
     from .enricher import format_ai_tweet_summary
-    from .scheduler_config import (
+    from .group_config import (
+        DEFAULT_GROUP_ID,
+        GroupConfig,
         PushTargetParseResult,
-        ScheduleGroup,
-        SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from .seen_store import GLOBAL_GROUP_ID
+    from .scheduler_config import SchedulerConfigReader
     from .storage_adapter import StorageAdapter
-    from .utils import (
-        TweetItem,
-        configured_merge_tweet_threshold,
-    )
+    from .utils import TweetItem
 except ImportError:
-    from config_compat import config_get, config_set
+    from config_compat import config_set
     from enricher import format_ai_tweet_summary
-    from scheduler_config import (
+    from group_config import (
+        DEFAULT_GROUP_ID,
+        GroupConfig,
         PushTargetParseResult,
-        ScheduleGroup,
-        SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from seen_store import GLOBAL_GROUP_ID
+    from scheduler_config import SchedulerConfigReader
     from storage_adapter import StorageAdapter
-    from utils import (
-        TweetItem,
-        configured_merge_tweet_threshold,
-    )
+    from utils import TweetItem
 
 
 try:
@@ -96,8 +90,8 @@ class PendingTweetBatch:
 @dataclass(slots=True)
 class ScheduledCheckResult:
     reason: str
-    group_id: str = GLOBAL_GROUP_ID
-    group_name: str = "全局分组"
+    group_id: str = DEFAULT_GROUP_ID
+    group_name: str = "默认分组"
     users: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     invalid_targets: list[str] = field(default_factory=list)
@@ -388,7 +382,7 @@ class NitterTweetScheduler:
 
     @property
     def schedule_enabled(self) -> bool:
-        config_enabled = bool(config_get(self.config, "schedule_enabled", False))
+        config_enabled = self.config_reader.default_group().schedule_enabled
         return config_enabled and any(
             group.enabled
             for group in self._schedule_groups(log_invalid_targets=False)
@@ -430,7 +424,7 @@ class NitterTweetScheduler:
                 )
 
     def _scheduled_reasons(
-        self, group: ScheduleGroup, now: dt.datetime
+        self, group: GroupConfig, now: dt.datetime
     ) -> list[str]:
         reasons: list[str] = []
         group_id = group.group_id
@@ -470,7 +464,7 @@ class NitterTweetScheduler:
         return reasons
 
     def _deferred_publish_reasons(
-        self, group: ScheduleGroup, now: dt.datetime
+        self, group: GroupConfig, now: dt.datetime
     ) -> list[str]:
         if not group.deferred_publish_enabled:
             return []
@@ -491,7 +485,7 @@ class NitterTweetScheduler:
             }
         return reasons
 
-    def _seed_schedule_slots(self, group: ScheduleGroup, now: dt.datetime) -> None:
+    def _seed_schedule_slots(self, group: GroupConfig, now: dt.datetime) -> None:
         group_id = group.group_id
         if group.interval_check_enabled:
             interval_minutes = group.check_interval_minutes
@@ -509,7 +503,7 @@ class NitterTweetScheduler:
         self,
         reason: str = "manual",
         notify_no_updates: bool | None = None,
-        group_name: str = GLOBAL_GROUP_ID,
+        group_name: str = DEFAULT_GROUP_ID,
         target_override: list[str] | None = None,
         force_immediate: bool = False,
     ) -> ScheduledCheckResult:
@@ -537,7 +531,7 @@ class NitterTweetScheduler:
     def _new_check_result(
         self,
         reason: str,
-        group: ScheduleGroup,
+        group: GroupConfig,
         target_override: list[str] | None = None,
     ) -> ScheduledCheckResult:
         targets = list(target_override) if target_override is not None else group.targets
@@ -553,7 +547,7 @@ class NitterTweetScheduler:
 
     async def _run_check_unlocked(
         self,
-        group: ScheduleGroup,
+        group: GroupConfig,
         reason: str,
         notify_no_updates: bool | None,
         target_override: list[str] | None = None,
@@ -597,13 +591,24 @@ class NitterTweetScheduler:
         )
 
         discovered_batches: list[PendingTweetBatch] = []
+        total_skipped_retweets = 0
         for username in users:
             try:
-                instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
+                instance, tweets, skipped = await self.nitter.fetch_tweets(
+                    username, fetch_limit,
+                    skip_retweets=group.deduplicate_retweets,
+                )
             except Exception as exc:
                 result.failed_users[username] = str(exc)
                 logger.warning(f"[NitterTweets] scheduled fetch @{username} failed: {exc}")
                 continue
+
+            if skipped > 0:
+                total_skipped_retweets += skipped
+                logger.info(
+                    f"[NitterTweets] group={group.group_id} @{username}: "
+                    f"skipped {skipped} retweet(s)"
+                )
 
             tweets = [tweet for tweet in tweets if tweet.status_id]
             if not tweets:
@@ -655,6 +660,11 @@ class NitterTweetScheduler:
                 await self._put_seen_map(group.group_id, seen_map)
 
         push_account_total = len(discovered_batches)
+        if total_skipped_retweets > 0:
+            logger.info(
+                f"[NitterTweets] group={group.group_id}: "
+                f"skipped {total_skipped_retweets} retweet(s) total"
+            )
         for account_index, discovered_batch in enumerate(discovered_batches, 1):
             discovered_batch.account_index = account_index
             discovered_batch.account_total = push_account_total
@@ -843,7 +853,7 @@ class NitterTweetScheduler:
     async def status_summary(self) -> str:
         groups = self._schedule_groups(log_invalid_targets=False)
         default_group = next(
-            (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
+            (item for item in groups if item.group_id == DEFAULT_GROUP_ID),
             groups[0] if groups else None,
         )
         if default_group is None:
@@ -936,7 +946,7 @@ class NitterTweetScheduler:
         self,
         result: ScheduledCheckResult,
         notify_no_updates: bool | None,
-        group: ScheduleGroup,
+        group: GroupConfig,
     ) -> bool:
         if notify_no_updates is None:
             notify_no_updates = group.notify_no_updates
@@ -1148,7 +1158,7 @@ class NitterTweetScheduler:
 
     async def _enqueue_pending_batches(
         self,
-        group: ScheduleGroup,
+        group: GroupConfig,
         batches: list[PendingTweetBatch],
         result: ScheduledCheckResult,
     ) -> None:
@@ -1169,7 +1179,7 @@ class NitterTweetScheduler:
 
     async def _attach_deferred_media(
         self,
-        group: ScheduleGroup,
+        group: GroupConfig,
         username: str,
         tweets: list[TweetItem],
     ) -> None:
@@ -1189,7 +1199,7 @@ class NitterTweetScheduler:
 
     async def publish_pending(
         self,
-        group_name: str = GLOBAL_GROUP_ID,
+        group_name: str = DEFAULT_GROUP_ID,
         reason: str = "manual_publish",
     ) -> ScheduledCheckResult:
         group = self._schedule_group(group_name)
@@ -1208,7 +1218,7 @@ class NitterTweetScheduler:
             return await self._publish_pending_unlocked(group, reason)
 
     async def _publish_pending_unlocked(
-        self, group: ScheduleGroup, reason: str
+        self, group: GroupConfig, reason: str
     ) -> ScheduledCheckResult:
         result = self._new_check_result(reason, group)
         result.merge_tweet_threshold = self._merge_tweet_threshold()
@@ -1374,7 +1384,7 @@ class NitterTweetScheduler:
         )
 
     def _merge_tweet_threshold(self) -> int:
-        return configured_merge_tweet_threshold(self.config)
+        return self.config_reader.default_group().merge_tweet_threshold
 
     @staticmethod
     def _should_merge_batches(batches: list[PendingTweetBatch], threshold: int) -> bool:
@@ -1407,9 +1417,9 @@ class NitterTweetScheduler:
         return [(batch.username, batch.instance, batch.tweets) for batch in batches]
 
     @staticmethod
-    def _push_group_label(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
-            return "全局分组"
+    def _push_group_label(group: GroupConfig) -> str:
+        if group.group_id == DEFAULT_GROUP_ID:
+            return "默认分组"
         return str(group.name or group.group_id).strip() or group.group_id
 
     async def _store_pending_seen_ids(
@@ -1447,7 +1457,7 @@ class NitterTweetScheduler:
         return f"{threshold} 条及以上"
 
     @staticmethod
-    def _format_group_schedule(group: ScheduleGroup) -> str:
+    def _format_group_schedule(group: GroupConfig) -> str:
         parts = []
         if group.interval_check_enabled:
             parts.append(f"间隔 {group.check_interval_minutes} 分钟")
@@ -1465,7 +1475,7 @@ class NitterTweetScheduler:
     def _append_group_status(
         self,
         lines: list[str],
-        group: ScheduleGroup,
+        group: GroupConfig,
         seen_count: int | None = None,
     ) -> None:
         lines.append(
@@ -1540,9 +1550,9 @@ class NitterTweetScheduler:
         return _format_limited_values(values, limit=limit)
 
     async def pending_queue_summary(self, group_name: str = "") -> str:
-        group = self._schedule_group(group_name or GLOBAL_GROUP_ID)
+        group = self._schedule_group(group_name or DEFAULT_GROUP_ID)
         if group is None:
-            requested = str(group_name or "").strip() or GLOBAL_GROUP_ID
+            requested = str(group_name or "").strip() or DEFAULT_GROUP_ID
             available = _format_limited_values(
                 [
                     f"{item.name} ({item.group_id})"
@@ -1579,7 +1589,7 @@ class NitterTweetScheduler:
             )
         return "\n".join(lines)
 
-    async def check_pending_brief(self, group: ScheduleGroup) -> str:
+    async def check_pending_brief(self, group: GroupConfig) -> str:
         if not group.deferred_publish_enabled:
             return "当前分组暂存: 已关闭"
 
@@ -1605,8 +1615,8 @@ class NitterTweetScheduler:
         return "\n".join(lines)
 
     @staticmethod
-    def _group_command_suffix(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
+    def _group_command_suffix(group: GroupConfig) -> str:
+        if group.group_id == DEFAULT_GROUP_ID:
             return ""
         name = str(group.name or group.group_id).strip()
         return f" {name}" if name else ""
@@ -1657,7 +1667,7 @@ class NitterTweetScheduler:
         )
 
     async def _get_seen_map(
-        self, group_id: str = GLOBAL_GROUP_ID
+        self, group_id: str = DEFAULT_GROUP_ID
     ) -> dict[str, list[str]]:
         return await self.storage.get_group_seen_map(group_id)
 
@@ -1689,14 +1699,14 @@ class NitterTweetScheduler:
 
     def _schedule_groups(
         self, log_invalid_targets: bool = True
-    ) -> list[ScheduleGroup]:
+    ) -> list[GroupConfig]:
         return self.config_reader.schedule_groups(
             log_invalid_targets=log_invalid_targets
         )
 
     def _schedule_group(
-        self, group_name: str = GLOBAL_GROUP_ID, log_invalid_targets: bool = True
-    ) -> ScheduleGroup | None:
+        self, group_name: str = DEFAULT_GROUP_ID, log_invalid_targets: bool = True
+    ) -> GroupConfig | None:
         return self.config_reader.schedule_group(
             group_name, log_invalid_targets=log_invalid_targets
         )
@@ -1704,7 +1714,7 @@ class NitterTweetScheduler:
     def _unknown_group_result(
         self, reason: str, group_name: str
     ) -> ScheduledCheckResult:
-        requested = str(group_name or "").strip() or GLOBAL_GROUP_ID
+        requested = str(group_name or "").strip() or DEFAULT_GROUP_ID
         return ScheduledCheckResult(
             reason=reason,
             group_id=requested,

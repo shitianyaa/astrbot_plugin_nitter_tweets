@@ -10,23 +10,21 @@ from astrbot.api.star import register
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from .config_compat import config_get, config_set, migrate_legacy_grouped_config
+    from .group_config import GroupConfig, DEFAULT_GROUP_ID, migrate_to_groups
     from .enricher import TweetEnricher, TweetTranslator, format_ai_tweet_summary
     from .media import MediaService, NitterClient
     from .scheduler import NitterTweetScheduler
-    from .scheduler_config import ScheduleGroup
-    from .seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from .seen_store import normalize_group_id
     from .sender import TweetSender
-    from .utils import clamp_float, normalize_username, safe_call
+    from .utils import normalize_username, safe_call
 except ImportError:
-    from config_compat import config_get, config_set, migrate_legacy_grouped_config
+    from group_config import GroupConfig, DEFAULT_GROUP_ID, migrate_to_groups
     from enricher import TweetEnricher, TweetTranslator, format_ai_tweet_summary
     from media import MediaService, NitterClient
     from scheduler import NitterTweetScheduler
-    from scheduler_config import ScheduleGroup
-    from seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from seen_store import normalize_group_id
     from sender import TweetSender
-    from utils import clamp_float, normalize_username, safe_call
+    from utils import normalize_username, safe_call
 
 
 @register(
@@ -40,12 +38,15 @@ class NitterTweetsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        migrate_legacy_grouped_config(self.config)
-        self.nitter = NitterClient(config)
-        self.media = MediaService(config)
-        self.sender = TweetSender(config)
-        self.translator = TweetTranslator(context, config)
-        self.enricher = TweetEnricher(context, config)
+        migrate_to_groups(self.config)
+        from group_config import build_default_group
+        self.default_group_config = build_default_group(config, context)
+        gc = self.default_group_config
+        self.nitter = NitterClient(gc)
+        self.media = MediaService(gc)
+        self.sender = TweetSender(gc)
+        self.translator = TweetTranslator(context, gc)
+        self.enricher = TweetEnricher(context, gc)
         self.scheduler = NitterTweetScheduler(
             self,
             context,
@@ -56,12 +57,8 @@ class NitterTweetsPlugin(Star):
             self.translator,
             self.enricher,
         )
-        self.default_limit = self._parse_positive_limit(
-            config_get(config, "default_limit", 5), 5
-        )
-        self.cooldown_seconds = clamp_float(
-            config_get(config, "cooldown_seconds", 15.0), 0.0, 3600.0
-        )
+        self.default_limit = gc.default_limit
+        self.cooldown_seconds = gc.cooldown_seconds
         self._cooldowns: dict[str, float] = {}
         self.scheduler.start(reason="__init__")
 
@@ -126,7 +123,10 @@ class NitterTweetsPlugin(Star):
         )
 
         try:
-            instance, tweets = await self.nitter.fetch_tweets(username, limit)
+            instance, tweets, skipped_retweets = await self.nitter.fetch_tweets(
+                username, limit,
+                skip_retweets=self.default_group_config.deduplicate_retweets,
+            )
         except Exception as exc:
             logger.warning(f"Failed to fetch tweets for @{username}: {exc}")
             await event.send(
@@ -137,10 +137,19 @@ class NitterTweetsPlugin(Star):
             return
 
         if not tweets:
-            await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
+            if skipped_retweets > 0:
+                await event.send(event.plain_result(
+                    f"@{username} 没有原创推文，已过滤 {skipped_retweets} 条转帖。"
+                ))
+            else:
+                await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
             return
 
         await self._send_tweets_response(event, username, instance, tweets)
+        if skipped_retweets > 0:
+            await event.send(event.plain_result(
+                f"已过滤 {skipped_retweets} 条转帖，仅显示原创推文。"
+            ))
 
     @filter.command("镜像测试")
     async def cmd_mirror_probe(self, event: AstrMessageEvent, args=GreedyStr):
@@ -166,8 +175,9 @@ class NitterTweetsPlugin(Star):
         )
 
         try:
-            instance, tweets = await self.nitter.fetch_tweets_from_instance(
-                instance_text, username, limit
+            instance, tweets, skipped_retweets = await self.nitter.fetch_tweets_from_instance(
+                instance_text, username, limit,
+                skip_retweets=self.default_group_config.deduplicate_retweets,
             )
         except Exception as exc:
             logger.warning(
@@ -182,10 +192,19 @@ class NitterTweetsPlugin(Star):
             return
 
         if not tweets:
-            await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
+            if skipped_retweets > 0:
+                await event.send(event.plain_result(
+                    f"@{username} 没有原创推文，已过滤 {skipped_retweets} 条转帖。"
+                ))
+            else:
+                await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
             return
 
         await self._send_tweets_response(event, username, instance, tweets)
+        if skipped_retweets > 0:
+            await event.send(event.plain_result(
+                f"已过滤 {skipped_retweets} 条转帖，仅显示原创推文。"
+            ))
 
     async def _send_tweets_response(
         self,
@@ -595,7 +614,7 @@ class NitterTweetsPlugin(Star):
         event.stop_event()
         group_name = self._strip_self_at_argument(event, group_name)
         self.scheduler.start(reason="publish_command")
-        group_label = group_name or "全局分组"
+        group_label = group_name or "默认分组"
         await event.send(event.plain_result(f"正在发布 Nitter 暂存队列：{group_label}..."))
         result = await self.scheduler.publish_pending(
             group_name=group_name,
@@ -914,9 +933,9 @@ class NitterTweetsPlugin(Star):
 
     def _parse_subscription_import_args(
         self, args: str
-    ) -> tuple[list[str], ScheduleGroup | None, str]:
+    ) -> tuple[list[str], GroupConfig | None, str]:
         raw_text = str(args or "").strip()
-        group: ScheduleGroup | None = None
+        group: GroupConfig | None = None
         group_error = ""
 
         entries_text = raw_text
@@ -939,7 +958,7 @@ class NitterTweetsPlugin(Star):
         ]
         return entries, group, group_error
 
-    def _resolve_import_group(self, group_name: str) -> ScheduleGroup | None:
+    def _resolve_import_group(self, group_name: str) -> GroupConfig | None:
         group_name = str(group_name or "").strip()
         if not group_name:
             return None
@@ -949,7 +968,7 @@ class NitterTweetsPlugin(Star):
 
     def _resolve_check_group_for_target(
         self, group_name: str, target_umo: str
-    ) -> tuple[ScheduleGroup | None, str]:
+    ) -> tuple[GroupConfig | None, str]:
         group_name = str(group_name or "").strip()
         target_umo = str(target_umo or "").strip()
         if not target_umo or target_umo == "unknown":
@@ -967,7 +986,7 @@ class NitterTweetsPlugin(Star):
                     f"{group_name}\n可用分组: "
                     + self._format_limited_values(self._available_group_labels()),
                 )
-            if group.group_id == GLOBAL_GROUP_ID:
+            if group.group_id == DEFAULT_GROUP_ID:
                 if target_umo not in group.targets:
                     return (
                         None,
@@ -994,7 +1013,7 @@ class NitterTweetsPlugin(Star):
             )
             if (
                 target_umo in group.targets
-                and (group.group_id == GLOBAL_GROUP_ID or group.enabled)
+                and (group.group_id == DEFAULT_GROUP_ID or group.enabled)
             )
         ]
         if matches:
@@ -1009,7 +1028,7 @@ class NitterTweetsPlugin(Star):
 
         return (
             None,
-            "当前对话不在全局分组或任何已启用自定义分组的 push_targets 中，"
+            "当前对话不在默认分组或任何已启用自定义分组的 push_targets 中，"
             "不会执行 /推文检查。\n"
             f"当前对话: {target_umo}",
         )
@@ -1030,55 +1049,44 @@ class NitterTweetsPlugin(Star):
         ]
 
     @staticmethod
-    def _export_group_label(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
-            return "全局分组"
+    def _export_group_label(group: GroupConfig) -> str:
+        if group.group_id == DEFAULT_GROUP_ID:
+            return "默认分组"
         return group.name or group.group_id
 
     @staticmethod
-    def _import_group_label(group: ScheduleGroup | None) -> str:
-        if group is None or group.group_id == GLOBAL_GROUP_ID:
-            return "全局分组 (global)"
+    def _import_group_label(group: GroupConfig | None) -> str:
+        if group is None or group.group_id == DEFAULT_GROUP_ID:
+            return "默认分组 (default)"
         return f"{group.name} ({group.group_id})"
 
     @staticmethod
-    def _check_group_label(group: ScheduleGroup) -> str:
+    def _check_group_label(group: GroupConfig) -> str:
         return f"{group.name} ({group.group_id})"
 
     @staticmethod
-    def _import_config_target(group: ScheduleGroup | None) -> str:
-        if group is None or group.group_id == GLOBAL_GROUP_ID:
-            return "watch_users"
-        return f"tweet_groups[{group.group_id}].watch_users"
+    def _import_config_target(group: GroupConfig | None) -> str:
+        if group is None or group.group_id == DEFAULT_GROUP_ID:
+            return "groups.watch_users"
+        return f"groups[{group.group_id}].watch_users"
 
     def _set_import_group_users(
-        self, group: ScheduleGroup | None, users: list[str]
+        self, group: GroupConfig | None, users: list[str]
     ) -> None:
-        if group is None or group.group_id == GLOBAL_GROUP_ID:
-            config_set(self.config, "watch_users", users)
+        if group is None or group.group_id == DEFAULT_GROUP_ID:
+            from group_config import get_default_group_dict
+            dg = get_default_group_dict(self.config)
+            dg["watch_users"] = users
             return
 
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if isinstance(raw_groups, dict):
-            group_items = [raw_groups]
-        elif isinstance(raw_groups, list):
-            group_items = raw_groups
-        else:
-            group_items = []
-
+        from group_config import get_groups
+        raw_groups = get_groups(self.config)
         target_group_id = normalize_group_id(group.group_id)
-        for index, raw_group in enumerate(group_items, 1):
-            parsed = self.scheduler.config_reader.parse_schedule_group(
-                raw_group,
-                index,
-                log_invalid_targets=False,
-            )
-            if parsed is None:
-                continue
-            if normalize_group_id(parsed.group_id) != target_group_id:
+        for raw_group in raw_groups:
+            gid = normalize_group_id(str(raw_group.get("group_id", "")))
+            if gid != target_group_id:
                 continue
             raw_group["watch_users"] = users
-            config_set(self.config, "tweet_groups", raw_groups)
             return
 
         raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
