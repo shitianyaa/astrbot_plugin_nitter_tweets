@@ -290,6 +290,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             storage = SQLiteStorage(db_path)
             await storage.connect()
             try:
+                # group_id 迁移：'global' → 'default'（模拟正常启动流程）
+                await asyncio.to_thread(storage.migrate_legacy_global_group_id)
                 records = await asyncio.to_thread(
                     storage.get_pending_tweets, "global", 10
                 )

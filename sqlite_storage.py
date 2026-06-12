@@ -15,10 +15,20 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from .seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
+    from .seen_store import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        SEEN_LIMIT_PER_USER,
+        normalize_group_id,
+    )
     from .utils import TweetItem, TweetMedia, normalize_username
 except ImportError:
-    from seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
+    from seen_store import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        SEEN_LIMIT_PER_USER,
+        normalize_group_id,
+    )
     from utils import TweetItem, TweetMedia, normalize_username
 
 
@@ -1067,6 +1077,197 @@ class SQLiteStorage:
             logger.error(f"[NitterTweets] KV seen data migration failed: {exc}")
             raise
 
+    def migrate_legacy_global_group_id(self) -> None:
+        """将 SQLite 中 group_id='global' 的旧数据迁移到 'default'.
+
+        v0.9.x 使用 'global' 作为默认分组 ID，v0.10.0 改为 'default'.
+        此迁移将所有表中 group_id='global' 的行重写为 'default'，
+        若 'default' 行已存在则合并（seen_tweets/pending_tweets 用 INSERT OR IGNORE，
+        groups/group_users/group_targets 用 INSERT OR REPLACE）。
+        """
+        assert self.conn is not None
+
+        migrated_at = self.get_meta("legacy_global_group_id_migrated")
+        if migrated_at:
+            return
+
+        legacy_id = LEGACY_GLOBAL_GROUP_ID
+        target_id = DEFAULT_GROUP_ID
+
+        # 检查是否存在 legacy 行
+        tables_with_group_id = [
+            "seen_tweets",
+            "pending_tweets",
+            "groups",
+            "group_users",
+            "group_targets",
+        ]
+        has_legacy = False
+        for table in tables_with_group_id:
+            if not self._table_exists(self.conn.cursor(), table):
+                continue
+            row = self.conn.execute(
+                f"SELECT 1 FROM {table} WHERE group_id = ? LIMIT 1",
+                (legacy_id,),
+            ).fetchone()
+            if row:
+                has_legacy = True
+                break
+
+        if not has_legacy:
+            self.set_meta("legacy_global_group_id_migrated", str(int(time.time())))
+            logger.info(
+                "[NitterTweets] No legacy group_id='global' rows found, "
+                "skipping global→default migration"
+            )
+            return
+
+        logger.info(
+            "[NitterTweets] Migrating SQLite group_id 'global' → 'default'..."
+        )
+
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("BEGIN")
+
+            total_migrated = 0
+
+            # seen_tweets: INSERT OR IGNORE（PK = group_id, username, status_id）
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO seen_tweets (group_id, username, status_id, seen_at)
+                SELECT ?, username, status_id, seen_at
+                FROM seen_tweets WHERE group_id = ?
+                """,
+                (target_id, legacy_id),
+            )
+            migrated = cursor.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+            total_migrated += migrated
+            cursor.execute(
+                "DELETE FROM seen_tweets WHERE group_id = ?",
+                (legacy_id,),
+            )
+
+            # pending_tweets: INSERT OR IGNORE（unique index on group_id, username, status_id）
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO pending_tweets (
+                    group_id, username, status_id, instance, tweet_data,
+                    created_at, scheduled_at, published_at, sent_at,
+                    failed_at, fail_count, last_error
+                )
+                SELECT ?, username, status_id, instance, tweet_data,
+                    created_at, scheduled_at, published_at, sent_at,
+                    failed_at, fail_count, last_error
+                FROM pending_tweets WHERE group_id = ?
+                """,
+                (target_id, legacy_id),
+            )
+            migrated = cursor.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+            total_migrated += migrated
+            cursor.execute(
+                "DELETE FROM pending_tweets WHERE group_id = ?",
+                (legacy_id,),
+            )
+
+            # groups: INSERT OR REPLACE（PK = group_id）
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO groups (
+                    group_id, name, enabled, check_on_startup,
+                    interval_check_enabled, check_interval_minutes,
+                    daily_check_enabled, daily_check_times,
+                    scheduled_fetch_limit, send_target_interval,
+                    send_user_interval, notify_no_updates, aliases,
+                    created_at, updated_at
+                )
+                SELECT ?, name, enabled, check_on_startup,
+                    interval_check_enabled, check_interval_minutes,
+                    daily_check_enabled, daily_check_times,
+                    scheduled_fetch_limit, send_target_interval,
+                    send_user_interval, notify_no_updates, aliases,
+                    created_at, updated_at
+                FROM groups WHERE group_id = ?
+                """,
+                (target_id, legacy_id),
+            )
+            migrated = cursor.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+            if migrated:
+                total_migrated += migrated
+                cursor.execute(
+                    "DELETE FROM groups WHERE group_id = ?",
+                    (legacy_id,),
+                )
+
+            # group_users: INSERT OR REPLACE（PK = group_id, username）
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO group_users (group_id, username, added_at)
+                SELECT ?, username, added_at
+                FROM group_users WHERE group_id = ?
+                """,
+                (target_id, legacy_id),
+            )
+            migrated = cursor.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+            if migrated:
+                total_migrated += migrated
+                cursor.execute(
+                    "DELETE FROM group_users WHERE group_id = ?",
+                    (legacy_id,),
+                )
+
+            # group_targets: INSERT OR REPLACE（PK = group_id, target_umo）
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO group_targets (group_id, target_umo, added_at)
+                SELECT ?, target_umo, added_at
+                FROM group_targets WHERE group_id = ?
+                """,
+                (target_id, legacy_id),
+            )
+            migrated = cursor.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+            if migrated:
+                total_migrated += migrated
+                cursor.execute(
+                    "DELETE FROM group_targets WHERE group_id = ?",
+                    (legacy_id,),
+                )
+
+            now = int(time.time())
+            cursor.execute(
+                """
+                INSERT INTO meta (key, value, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                ("legacy_global_group_id_migrated", str(now), now),
+            )
+
+            cursor.execute("COMMIT")
+            cursor.close()
+
+            logger.info(
+                f"[NitterTweets] Legacy group_id migration completed: "
+                f"{total_migrated} rows updated from 'global' to 'default'"
+            )
+
+        except Exception as exc:
+            if self.conn:
+                self.conn.execute("ROLLBACK")
+            logger.error(
+                f"[NitterTweets] Legacy group_id migration failed: {exc}"
+            )
+            raise
+
     def sync_config_groups(self, schedule_groups: list) -> None:
         """从配置同步分组到数据库."""
         assert self.conn is not None
@@ -1152,6 +1353,7 @@ for _method_name in (
     "cleanup_sent_pending_tweets",
     "cleanup_orphan_seen_tweets",
     "migrate_kv_seen_data",
+    "migrate_legacy_global_group_id",
     "sync_config_groups",
 ):
     setattr(

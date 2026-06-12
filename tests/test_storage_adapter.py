@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import types
 import unittest
 from pathlib import Path
@@ -179,6 +180,169 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
                 ],
             )
             self.assertNotIn("nitter_seen_status_ids_by_target_v1", owner.data)
+
+    async def test_migrate_legacy_global_group_id(self):
+        """SQLite 中 group_id='global' 的行应被迁移为 'default'."""
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            owner = _Owner()
+
+            with patch.object(
+                StorageAdapter,
+                "_init_sqlite",
+                return_value=SQLiteStorage(db_path),
+            ):
+                adapter = StorageAdapter(owner, {"storage_backend": "sqlite"}, None)
+
+            try:
+                sqlite = adapter.sqlite
+                await sqlite.connect()
+
+                # 模拟 v0.9.x 数据：手动插入 group_id='global' 的行
+                now = int(time.time())
+                sqlite.conn.execute(
+                    "INSERT INTO seen_tweets (group_id, username, status_id, seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("global", "NASA", "100", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO seen_tweets (group_id, username, status_id, seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("global", "NASA", "101", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO group_users (group_id, username, added_at) "
+                    "VALUES (?, ?, ?)",
+                    ("global", "NASA", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO group_targets (group_id, target_umo, added_at) "
+                    "VALUES (?, ?, ?)",
+                    ("global", "aiocqhttp:GroupMessage:123", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO groups ("
+                    "group_id, name, enabled, check_on_startup, "
+                    "interval_check_enabled, check_interval_minutes, "
+                    "daily_check_enabled, daily_check_times, "
+                    "scheduled_fetch_limit, send_target_interval, "
+                    "send_user_interval, notify_no_updates, aliases, "
+                    "created_at, updated_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "global", "默认分组", 1, 0,
+                        1, 30, 0, "[]", 5, 1.5, 2.0, 0, "[]",
+                        now, now,
+                    ),
+                )
+                sqlite.conn.commit()
+
+                # 执行迁移
+                sqlite.migrate_legacy_global_group_id()
+
+                # 验证：seen_tweets 应迁移到 'default'
+                seen_ids = sqlite.get_seen_ids("default", "NASA")
+                self.assertEqual(set(seen_ids), {"100", "101"})
+
+                # 验证：group_users 应迁移到 'default'
+                users = sqlite.get_group_users("default")
+                self.assertEqual(users, ["NASA"])
+
+                # 验证：group_targets 应迁移到 'default'
+                targets = sqlite.get_group_targets("default")
+                self.assertEqual(targets, ["aiocqhttp:GroupMessage:123"])
+
+                # 验证：groups 应迁移到 'default'
+                groups = sqlite.get_all_groups()
+                self.assertEqual(len(groups), 1)
+                self.assertEqual(groups[0]["group_id"], "default")
+
+                # 验证：'global' 行应已删除
+                global_seen = sqlite.conn.execute(
+                    "SELECT 1 FROM seen_tweets WHERE group_id = 'global' LIMIT 1"
+                ).fetchone()
+                self.assertIsNone(global_seen)
+
+                # 验证：迁移标记应已设置
+                migrated_at = sqlite.get_meta("legacy_global_group_id_migrated")
+                self.assertIsNotNone(migrated_at)
+
+                # 验证：再次调用应跳过（幂等）
+                sqlite.migrate_legacy_global_group_id()
+                seen_ids_2 = sqlite.get_seen_ids("default", "NASA")
+                self.assertEqual(set(seen_ids_2), {"100", "101"})
+
+            finally:
+                adapter.close()
+
+    async def test_migrate_legacy_global_id_with_existing_default(self):
+        """当 'default' 行已存在时，'global' 行应合并（INSERT OR IGNORE/REPLACE）."""
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            owner = _Owner()
+
+            with patch.object(
+                StorageAdapter,
+                "_init_sqlite",
+                return_value=SQLiteStorage(db_path),
+            ):
+                adapter = StorageAdapter(owner, {"storage_backend": "sqlite"}, None)
+
+            try:
+                sqlite = adapter.sqlite
+                await sqlite.connect()
+
+                now = int(time.time())
+
+                # 同时有 'default' 和 'global' 的 seen 数据
+                sqlite.conn.execute(
+                    "INSERT INTO seen_tweets (group_id, username, status_id, seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("default", "NASA", "200", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO seen_tweets (group_id, username, status_id, seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("global", "NASA", "100", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO seen_tweets (group_id, username, status_id, seen_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("global", "NASA", "200", now),  # 与 default 重复
+                )
+
+                # group_users：default 已有 OpenAI，global 有 NASA
+                sqlite.conn.execute(
+                    "INSERT INTO group_users (group_id, username, added_at) "
+                    "VALUES (?, ?, ?)",
+                    ("default", "OpenAI", now),
+                )
+                sqlite.conn.execute(
+                    "INSERT INTO group_users (group_id, username, added_at) "
+                    "VALUES (?, ?, ?)",
+                    ("global", "NASA", now),
+                )
+                sqlite.conn.commit()
+
+                sqlite.migrate_legacy_global_group_id()
+
+                # seen：100 和 200 应都在 default 下
+                seen_ids = sqlite.get_seen_ids("default", "NASA")
+                self.assertEqual(set(seen_ids), {"100", "200"})
+
+                # group_users：OpenAI 和 NASA 都应在 default 下
+                users = sqlite.get_group_users("default")
+                self.assertIn("NASA", users)
+                self.assertIn("OpenAI", users)
+
+                # global 行应全部删除
+                global_count = sqlite.conn.execute(
+                    "SELECT COUNT(*) FROM seen_tweets WHERE group_id = 'global'"
+                ).fetchone()[0]
+                self.assertEqual(global_count, 0)
+
+            finally:
+                adapter.close()
 
 
 if __name__ == "__main__":

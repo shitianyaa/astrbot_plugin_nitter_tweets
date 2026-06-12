@@ -1,4 +1,49 @@
 {
+  "basic": {
+    "description": "旧版基础配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "media": {
+    "description": "旧版媒体配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "ai_translation": {
+    "description": "旧版翻译配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "ai_comment": {
+    "description": "旧版评论配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "ai_vision": {
+    "description": "旧版识图配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "schedule": {
+    "description": "旧版定时配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "deferred": {
+    "description": "旧版暂存配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "push": {
+    "description": "旧版推送配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
+  "tweet_groups": {
+    "description": "旧版分组配置（自动迁移用）",
+    "type": "list",
+    "default": []
+  },
   "groups": {
     "description": "推文分组",
     "type": "template_list",

@@ -70,6 +70,9 @@ class StorageAdapter:
         """Migrate legacy KV seen IDs once and sync configured groups."""
         sqlite = await self._ensure_sqlite_connected()
 
+        # 一次性迁移：group_id "global" → "default"
+        await asyncio.to_thread(sqlite.migrate_legacy_global_group_id)
+
         grouped_seen_map = await self.seen_store.get_grouped_seen_map()
         has_legacy_seen = self._has_seen_data(grouped_seen_map.groups)
         await asyncio.to_thread(
