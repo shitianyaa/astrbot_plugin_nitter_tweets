@@ -11,6 +11,7 @@ except ImportError:
 KV_KEY_SEEN = "nitter_seen_status_ids"
 KV_KEY_SEEN_BY_TARGET = "nitter_seen_status_ids_by_target_v1"
 DEFAULT_GROUP_ID = "default"
+LEGACY_GLOBAL_GROUP_ID = "global"  # v0.9.x 及更早版本的默认分组 ID
 GLOBAL_GROUP_ID = DEFAULT_GROUP_ID
 SEEN_LIMIT_PER_USER = 300
 
@@ -69,13 +70,19 @@ class SeenStore:
 
         groups_value = value.get("groups")
         if isinstance(groups_value, dict):
-            return GroupedSeenMap(
-                groups={
-                    normalize_group_id(group_id): self.normalize_seen_map(seen_map)
-                    for group_id, seen_map in groups_value.items()
-                    if isinstance(seen_map, dict)
-                }
-            )
+            result_groups: dict[str, dict[str, list[str]]] = {}
+            for group_id, seen_map in groups_value.items():
+                if isinstance(seen_map, dict):
+                    # normalize_group_id 会将 "global" 映射为 "default"
+                    norm_id = normalize_group_id(group_id)
+                    if norm_id in result_groups:
+                        # 同一逻辑分组可能来自 "global" 和 "default" 两个 key，合并
+                        result_groups[norm_id] = self.merge_seen_map(
+                            result_groups[norm_id], self.normalize_seen_map(seen_map)
+                        )
+                    else:
+                        result_groups[norm_id] = self.normalize_seen_map(seen_map)
+            return GroupedSeenMap(groups=result_groups)
 
         return GroupedSeenMap(groups={GLOBAL_GROUP_ID: self.normalize_seen_map(value)})
 
@@ -131,7 +138,30 @@ class SeenStore:
                 break
         return merged
 
+    @staticmethod
+    def merge_seen_map(
+        base: dict[str, list[str]],
+        other: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        """合并两个 seen_map，用于兼容 global → default 映射时的数据合并."""
+        result: dict[str, list[str]] = dict(base)
+        for username, status_ids in other.items():
+            if username in result:
+                # 合并去重
+                seen_set = set(result[username])
+                merged = result[username] + [
+                    sid for sid in status_ids if sid not in seen_set
+                ]
+                result[username] = merged[:SEEN_LIMIT_PER_USER]
+            else:
+                result[username] = status_ids[:SEEN_LIMIT_PER_USER]
+        return result
+
 
 def normalize_group_id(value: str) -> str:
     group_id = str(value or "").strip().lower()
-    return group_id or GLOBAL_GROUP_ID
+    # v0.9.x 使用 "global" 作为默认分组 ID，v0.10.0 改为 "default"
+    # 兼容映射：老数据中的 "global" 视为 "default"
+    if group_id == LEGACY_GLOBAL_GROUP_ID:
+        return DEFAULT_GROUP_ID
+    return group_id or DEFAULT_GROUP_ID

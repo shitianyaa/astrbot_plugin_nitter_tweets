@@ -411,8 +411,23 @@ def migrate_to_groups(config) -> bool:
                 new_g["push_targets"] = raw_g["push_targets"]
             if raw_g.get("name"):
                 new_g["name"] = raw_g["name"]
-            if raw_g.get("group_id"):
-                new_g["group_id"] = raw_g["group_id"]
+            raw_gid = str(raw_g.get("group_id") or "").strip().lower()
+            if raw_gid:
+                # v0.9.x 使用 "global" 作为默认分组 ID，迁移到 "default"
+                if raw_gid == _LEGACY_GLOBAL_GROUP_ID:
+                    logger.warning(
+                        "[NitterTweets] tweet_groups 中 group_id='global' "
+                        "已迁移为 'default'（与默认分组合并）"
+                    )
+                    # "global" 就是默认分组，合并到 default_group 而不另建分组
+                    if "watch_users" in raw_g:
+                        default_group["watch_users"] = raw_g["watch_users"]
+                    if "push_targets" in raw_g:
+                        default_group["push_targets"] = raw_g["push_targets"]
+                    if raw_g.get("name"):
+                        default_group["name"] = raw_g["name"]
+                    continue
+                new_g["group_id"] = raw_gid
             if raw_g.get("aliases"):
                 new_g["aliases"] = raw_g["aliases"]
             groups.append(new_g)
@@ -450,8 +465,16 @@ def _g(group_dict: dict, default_group_dict: dict | None, key: str, fallback):
     return fallback
 
 
+_LEGACY_GLOBAL_GROUP_ID = "global"  # v0.9.x 及更早版本的默认分组 ID
+
+
 def normalize_group_id(group_id: str) -> str:
-    return (group_id or "").strip().lower()
+    normalized = (group_id or "").strip().lower()
+    # v0.9.x 使用 "global" 作为默认分组 ID，v0.10.0 改为 "default"
+    # 兼容映射：老数据中的 "global" 视为 "default"
+    if normalized == _LEGACY_GLOBAL_GROUP_ID:
+        return DEFAULT_GROUP_ID
+    return normalized or DEFAULT_GROUP_ID
 
 
 def _parse_bool(value, default: bool = False) -> bool:
