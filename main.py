@@ -39,7 +39,7 @@ class NitterTweetsPlugin(Star):
         super().__init__(context)
         self.config = config
         migrate_to_groups(self.config)
-        from group_config import build_default_group
+        from .group_config import build_default_group
         self.default_group_config = build_default_group(config, context)
         gc = self.default_group_config
         self.nitter = NitterClient(gc)
@@ -1074,12 +1074,12 @@ class NitterTweetsPlugin(Star):
         self, group: GroupConfig | None, users: list[str]
     ) -> None:
         if group is None or group.group_id == DEFAULT_GROUP_ID:
-            from group_config import get_default_group_dict
+            from .group_config import get_default_group_dict
             dg = get_default_group_dict(self.config)
             dg["watch_users"] = users
             return
 
-        from group_config import get_groups
+        from .group_config import get_groups
         raw_groups = get_groups(self.config)
         target_group_id = normalize_group_id(group.group_id)
         for raw_group in raw_groups:

@@ -64,7 +64,7 @@ class SchedulerConfigReader:
         return self.default_group().targets
 
     def platform(self) -> str:
-        from group_config import _detect_platform
+        from .group_config import _detect_platform
         return _detect_platform(self.context)
 
     def parse_push_targets(self, log_invalid: bool = True) -> PushTargetParseResult:
