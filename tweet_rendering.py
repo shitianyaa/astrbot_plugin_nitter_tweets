@@ -49,6 +49,7 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         return self.build_nodes_for_uin(
             node_uin(event),
@@ -59,6 +60,7 @@ class TweetMessageRenderer:
             notices,
             group_label,
             header_text,
+            batch_summary,
         )
 
     def build_nodes_for_uin(
@@ -71,6 +73,7 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         nodes = Nodes([])
         nodes.nodes.append(
@@ -86,6 +89,7 @@ class TweetMessageRenderer:
                             notices,
                             group_label,
                             header_text,
+                            batch_summary,
                         )
                     )
                 ],
@@ -110,13 +114,20 @@ class TweetMessageRenderer:
         batches: list[TweetBatch],
         exclude_videos: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
     ):
         nodes = Nodes([])
         nodes.nodes.append(
             Node(
                 uin=uin,
                 name="Nitter",
-                content=[Plain(self.format_merged_header(batches, group_label))],
+                content=[
+                    Plain(
+                        self.format_merged_header(
+                            batches, group_label, batch_summary
+                        )
+                    )
+                ],
             )
         )
 
@@ -148,6 +159,7 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         components = [
             Plain(
@@ -158,6 +170,7 @@ class TweetMessageRenderer:
                     notices,
                     group_label,
                     header_text,
+                    batch_summary,
                 )
             )
         ]
@@ -177,8 +190,11 @@ class TweetMessageRenderer:
         batches: list[TweetBatch],
         exclude_videos: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
     ):
-        components = [Plain(self.format_merged_header(batches, group_label))]
+        components = [
+            Plain(self.format_merged_header(batches, group_label, batch_summary))
+        ]
         index = 1
         for username, instance, tweets in batches:
             for tweet in tweets:
@@ -322,6 +338,7 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ) -> str:
         blocks = [
             self.format_header(
@@ -331,6 +348,7 @@ class TweetMessageRenderer:
                 notices,
                 group_label,
                 header_text,
+                batch_summary,
             )
         ]
         notice_text = self.format_notices(notices)
@@ -343,9 +361,12 @@ class TweetMessageRenderer:
         return "\n\n".join(blocks)
 
     def format_merged_plain(
-        self, batches: list[TweetBatch], group_label: str = ""
+        self,
+        batches: list[TweetBatch],
+        group_label: str = "",
+        batch_summary: str = "",
     ) -> str:
-        blocks = [self.format_merged_header(batches, group_label)]
+        blocks = [self.format_merged_header(batches, group_label, batch_summary)]
         index = 1
         for username, instance, tweets in batches:
             for tweet in tweets:
@@ -357,7 +378,19 @@ class TweetMessageRenderer:
 
     @staticmethod
     def format_merged_header(
-        batches: list[TweetBatch], group_label: str = ""
+        batches: list[TweetBatch],
+        group_label: str = "",
+        batch_summary: str = "",
+    ) -> str:
+        if batch_summary.strip():
+            return batch_summary.strip()
+        return TweetMessageRenderer.format_batch_summary(batches, group_label)
+
+    @staticmethod
+    def format_batch_summary(
+        batches: list[TweetBatch],
+        group_label: str = "",
+        action_text: str = "本次检查发现",
     ) -> str:
         total = sum(len(tweets) for _, _, tweets in batches)
         counts: dict[str, int] = {}
@@ -366,10 +399,11 @@ class TweetMessageRenderer:
         accounts = "，".join(
             f"@{username} {count} 条" for username, count in counts.items()
         )
-        lines = [f"Nitter 本次检查发现 {total} 条新推文"]
+        lines = [f"Nitter {action_text} {total} 条新推文"]
         if group_label:
             lines.append(f"分组：{group_label}")
-        lines.append(f"更新账号：{accounts}")
+        if accounts:
+            lines.append(f"更新账号：{accounts}")
         return "\n".join(lines)
 
     @staticmethod
@@ -429,11 +463,14 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ) -> str:
-        lines = [
-            header_text.strip() or f"@{username} 最近 {tweet_count} 条推文",
-        ]
-        if group_label:
+        summary = batch_summary.strip()
+        lines = []
+        if summary:
+            lines.append(summary)
+        lines.append(header_text.strip() or f"@{username} 最近 {tweet_count} 条推文")
+        if group_label and f"分组：{group_label}" not in summary:
             lines.append(f"分组：{group_label}")
         if instance:
             lines.append(f"Nitter：{cls.format_instance_label(instance)}")

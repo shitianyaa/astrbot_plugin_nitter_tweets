@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 cache/
+tests/downloads/
 *.db
 *.db-wal
 *.db-shm

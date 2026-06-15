@@ -15,14 +15,16 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from .seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
+    from .group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from .seen_store import SEEN_LIMIT_PER_USER
     from .utils import TweetItem, TweetMedia, normalize_username
 except ImportError:
-    from seen_store import SEEN_LIMIT_PER_USER, normalize_group_id
+    from group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from seen_store import SEEN_LIMIT_PER_USER
     from utils import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
 PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
@@ -283,6 +285,8 @@ class SQLiteStorage:
     def _migrate_schema(self, cursor: sqlite3.Cursor, stored_version: int) -> None:
         if stored_version < 2:
             self._migrate_schema_v2(cursor)
+        if stored_version < 3:
+            self._migrate_schema_v3(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -311,6 +315,132 @@ class SQLiteStorage:
                 GROUP BY group_id, username, status_id
             )
             """
+        )
+
+    def _migrate_schema_v3(self, cursor: sqlite3.Cursor) -> None:
+        self._migrate_global_group_to_default(cursor)
+
+    def _migrate_global_group_to_default(self, cursor: sqlite3.Cursor) -> None:
+        legacy_id = LEGACY_GLOBAL_GROUP_ID
+        default_id = DEFAULT_GROUP_ID
+        now = int(time.time())
+
+        if self._table_exists(cursor, "groups"):
+            legacy_group = cursor.execute(
+                "SELECT * FROM groups WHERE group_id = ?",
+                (legacy_id,),
+            ).fetchone()
+            default_group = cursor.execute(
+                "SELECT 1 FROM groups WHERE group_id = ?",
+                (default_id,),
+            ).fetchone()
+            if legacy_group is not None and default_group is None:
+                cursor.execute(
+                    """
+                    UPDATE groups
+                    SET group_id = ?,
+                        name = CASE WHEN name = '全局分组' THEN '默认分组' ELSE name END,
+                        updated_at = ?
+                    WHERE group_id = ?
+                    """,
+                    (default_id, now, legacy_id),
+                )
+            elif legacy_group is not None:
+                cursor.execute("DELETE FROM groups WHERE group_id = ?", (legacy_id,))
+
+        self._merge_group_key_table(
+            cursor,
+            table="group_users",
+            legacy_id=legacy_id,
+            default_id=default_id,
+            key_column="username",
+        )
+        self._merge_group_key_table(
+            cursor,
+            table="group_targets",
+            legacy_id=legacy_id,
+            default_id=default_id,
+            key_column="target_umo",
+        )
+        self._merge_group_key_table(
+            cursor,
+            table="seen_tweets",
+            legacy_id=legacy_id,
+            default_id=default_id,
+            key_column=("username", "status_id"),
+        )
+        self._merge_pending_tweets(cursor, legacy_id=legacy_id, default_id=default_id)
+
+    def _merge_group_key_table(
+        self,
+        cursor: sqlite3.Cursor,
+        table: str,
+        legacy_id: str,
+        default_id: str,
+        key_column: str | tuple[str, ...],
+    ) -> None:
+        if not self._table_exists(cursor, table):
+            return
+        key_columns = (key_column,) if isinstance(key_column, str) else key_column
+        predicate = " AND ".join(
+            f"target.{column} = {table}.{column}" for column in key_columns
+        )
+        cursor.execute(
+            f"""
+            DELETE FROM {table}
+            WHERE group_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM {table} AS target
+                  WHERE target.group_id = ?
+                    AND {predicate}
+              )
+            """,
+            (legacy_id, default_id),
+        )
+        cursor.execute(
+            f"UPDATE {table} SET group_id = ? WHERE group_id = ?",
+            (default_id, legacy_id),
+        )
+
+    def _merge_pending_tweets(
+        self,
+        cursor: sqlite3.Cursor,
+        legacy_id: str,
+        default_id: str,
+    ) -> None:
+        if not self._table_exists(cursor, "pending_tweets"):
+            return
+
+        duplicate_ids = [
+            int(row[0])
+            for row in cursor.execute(
+                """
+                SELECT source.id
+                FROM pending_tweets AS source
+                WHERE source.group_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM pending_tweets AS target
+                      WHERE target.group_id = ?
+                        AND target.username = source.username
+                        AND target.status_id = source.status_id
+                  )
+                """,
+                (legacy_id, default_id),
+            ).fetchall()
+        ]
+        if duplicate_ids:
+            cursor.executemany(
+                "DELETE FROM pending_media WHERE pending_tweet_id = ?",
+                [(pending_id,) for pending_id in duplicate_ids],
+            )
+            cursor.executemany(
+                "DELETE FROM pending_tweets WHERE id = ?",
+                [(pending_id,) for pending_id in duplicate_ids],
+            )
+        cursor.execute(
+            "UPDATE pending_tweets SET group_id = ? WHERE group_id = ?",
+            (default_id, legacy_id),
         )
 
     @staticmethod
@@ -1151,6 +1281,7 @@ for _method_name in (
     "delete_pending_tweets",
     "cleanup_sent_pending_tweets",
     "cleanup_orphan_seen_tweets",
+    "_migrate_global_group_to_default",
     "migrate_kv_seen_data",
     "sync_config_groups",
 ):

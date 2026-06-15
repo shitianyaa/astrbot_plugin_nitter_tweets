@@ -143,8 +143,11 @@ if "astrbot.api.all" not in sys.modules:
 from main import NitterTweetsPlugin
 from config_compat import (
     LEGACY_CONFIG_MIGRATION_KEY,
+    TWEET_GROUP_TEMPLATE_KEY,
+    TWEET_GROUP_TEMPLATE_KEY_FIELD,
     config_get,
     config_set,
+    migrate_default_group_config,
     migrate_legacy_grouped_config,
 )
 from enricher import (
@@ -341,6 +344,13 @@ def _manual_plugin(config):
     return plugin
 
 
+def _group_config(config, group_id: str):
+    for group in config_get(config, "tweet_groups", []) or []:
+        if isinstance(group, dict) and group.get("group_id") == group_id:
+            return group
+    raise AssertionError(f"group not found: {group_id}")
+
+
 class ConfigCompatTest(unittest.TestCase):
     def test_conf_schema_is_grouped(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
@@ -419,6 +429,127 @@ class ConfigCompatTest(unittest.TestCase):
             config["push"]["push_targets"], ["telegram:FriendMessage:1"]
         )
 
+    def test_default_group_migration_leaves_empty_groups_empty(self):
+        config = _Config({"tweet_groups": []})
+
+        changed = migrate_default_group_config(config)
+
+        self.assertFalse(changed)
+        self.assertFalse(config.saved)
+        self.assertEqual(config_get(config, "tweet_groups"), [])
+
+    def test_default_group_migration_moves_legacy_top_level_config(self):
+        config = _Config(
+            {
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "schedule_enabled": True,
+                "scheduled_fetch_limit": 7,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                    }
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        default_group = _group_config(config, "default")
+        self.assertEqual(default_group["name"], "默认分组")
+        self.assertEqual(default_group["watch_users"], ["NASA"])
+        self.assertEqual(default_group["push_targets"], ["telegram:FriendMessage:1"])
+        self.assertNotIn("schedule_enabled", default_group)
+        self.assertNotIn("scheduled_fetch_limit", default_group)
+        self.assertTrue(config_get(config, "schedule_enabled"))
+        self.assertEqual(config_get(config, "scheduled_fetch_limit"), 7)
+        self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
+        self.assertEqual(
+            default_group[TWEET_GROUP_TEMPLATE_KEY_FIELD],
+            TWEET_GROUP_TEMPLATE_KEY,
+        )
+        self.assertEqual(
+            _group_config(config, "tech")[TWEET_GROUP_TEMPLATE_KEY_FIELD],
+            TWEET_GROUP_TEMPLATE_KEY,
+        )
+
+    def test_default_group_migration_repairs_template_key_after_marker(self):
+        config = _Config(
+            {
+                "_default_group_config_migrated": True,
+                "tweet_groups": [
+                    {
+                        "name": "默认分组",
+                        "group_id": "default",
+                        "watch_users": ["NASA"],
+                    },
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                    },
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        self.assertEqual(
+            _group_config(config, "default")[TWEET_GROUP_TEMPLATE_KEY_FIELD],
+            TWEET_GROUP_TEMPLATE_KEY,
+        )
+        self.assertEqual(
+            _group_config(config, "tech")[TWEET_GROUP_TEMPLATE_KEY_FIELD],
+            TWEET_GROUP_TEMPLATE_KEY,
+        )
+
+    def test_default_group_migration_merges_legacy_global_group(self):
+        config = _Config(
+            {
+                "watch_users": ["OpenAI"],
+                "scheduled_fetch_limit": 3,
+                "tweet_groups": [
+                    {
+                        "name": "默认分组",
+                        "group_id": "default",
+                        "watch_users": ["NASA"],
+                        "scheduled_fetch_limit": 9,
+                    },
+                    {
+                        "name": "全局分组",
+                        "group_id": "global",
+                        "watch_users": ["NASA", "ESA"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                        "scheduled_fetch_limit": 5,
+                    },
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["Anthropic"],
+                    },
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        default_group = _group_config(config, "default")
+        self.assertEqual(default_group["watch_users"], ["NASA", "ESA", "OpenAI"])
+        self.assertEqual(default_group["push_targets"], ["telegram:FriendMessage:1"])
+        self.assertEqual(config_get(config, "scheduled_fetch_limit"), 3)
+        self.assertIn("global", default_group["aliases"])
+        self.assertEqual(
+            [group["group_id"] for group in config_get(config, "tweet_groups")],
+            ["default", "tech"],
+        )
+
     def test_astrbot_config_upgrade_preserves_legacy_flat_values(self):
         repo = Path(__file__).resolve().parents[1]
         script = r"""
@@ -487,24 +618,33 @@ with TemporaryDirectory() as temp_dir:
             "schedule": {
                 "schedule_enabled": True,
                 "scheduled_fetch_limit": 7,
-                "daily_check_enabled": True,
-                "daily_check_times": ["08:30"],
+                "check_interval_minutes": 11,
+                "check_on_startup": True,
+                "notify_no_updates": True,
             },
             "push": {
                 "watch_users": ["NASA"],
                 "push_targets": ["telegram:FriendMessage:1"],
+                "send_target_interval": 0.25,
+                "send_user_interval": 0.5,
                 "tweet_groups": [
                     {
                         "name": "Tech",
                         "group_id": "tech",
                         "watch_users": ["OpenAI"],
                         "push_targets": ["telegram:FriendMessage:2"],
+                        "daily_check_times": ["08:30"],
+                        "deferred_publish_enabled": True,
+                        "scheduled_fetch_limit": 19,
+                        "send_target_interval": 9,
+                        "deferred_publish_times": ["23:59"],
                     }
                 ],
             },
             "deferred": {
                 "deferred_publish_enabled": True,
                 "deferred_publish_times": ["20:00"],
+                "deferred_publish_batch_limit": 7,
             },
         }
         reader = SchedulerConfigReader(config, context=None)
@@ -515,12 +655,43 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(global_group.users, ["NASA"])
         self.assertEqual(global_group.targets, ["telegram:FriendMessage:1"])
         self.assertEqual(global_group.scheduled_fetch_limit, 7)
-        self.assertEqual(global_group.daily_check_times, [(8, 30)])
+        self.assertEqual(global_group.check_interval_minutes, 11)
+        self.assertTrue(global_group.check_on_startup)
+        self.assertTrue(global_group.notify_no_updates)
+        self.assertEqual(global_group.daily_check_times, [])
         self.assertTrue(global_group.deferred_publish_enabled)
         self.assertEqual(global_group.deferred_publish_times, [(20, 0)])
+        self.assertEqual(global_group.deferred_publish_batch_limit, 7)
         self.assertEqual(tech_group.group_id, "tech")
         self.assertEqual(tech_group.users, ["OpenAI"])
         self.assertEqual(tech_group.targets, ["telegram:FriendMessage:2"])
+        self.assertEqual(tech_group.daily_check_times, [(8, 30)])
+        self.assertEqual(tech_group.scheduled_fetch_limit, 7)
+        self.assertEqual(tech_group.send_target_interval, 0.25)
+        self.assertEqual(tech_group.send_user_interval, 0.5)
+        self.assertEqual(tech_group.deferred_publish_times, [(20, 0)])
+        self.assertTrue(tech_group.deferred_publish_enabled)
+
+    def test_scheduler_reader_keeps_deferred_switch_per_group(self):
+        config = {
+            "deferred_publish_enabled": True,
+            "watch_users": ["NASA"],
+            "push_targets": ["telegram:FriendMessage:1"],
+            "tweet_groups": [
+                {
+                    "name": "Tech",
+                    "group_id": "tech",
+                    "watch_users": ["OpenAI"],
+                    "push_targets": ["telegram:FriendMessage:2"],
+                }
+            ],
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        default_group, tech_group = reader.schedule_groups(log_invalid_targets=False)
+
+        self.assertTrue(default_group.deferred_publish_enabled)
+        self.assertFalse(tech_group.deferred_publish_enabled)
 
 
 class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):
@@ -774,7 +945,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Tech (tech)", event.messages[0])
         self.assertEqual(event.messages[-1], "检查结果\n\n当前分组暂存: 已关闭")
 
-    async def test_check_without_group_uses_global_when_current_target_listed(self):
+    async def test_check_without_group_uses_default_when_current_target_listed(self):
         config = _Config(
             {
                 "schedule_enabled": False,
@@ -802,12 +973,12 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
             {
                 "reason": "manual_command",
                 "notify_no_updates": False,
-                "group_name": "global",
+                "group_name": "default",
                 "target_override": ["telegram:FriendMessage:global"],
                 "force_immediate": True,
             },
         )
-        self.assertIn("全局分组 (global)", event.messages[0])
+        self.assertIn("默认分组 (default)", event.messages[0])
 
     async def test_check_without_group_rejects_target_outside_all_push_targets(self):
         config = _Config(
@@ -833,7 +1004,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(plugin.scheduler.started, [])
         self.assertEqual(plugin.scheduler.run_check_calls, [])
-        self.assertIn("不在全局分组或任何已启用自定义分组", event.messages[-1])
+        self.assertIn("不在任何已启用用户分组", event.messages[-1])
 
     async def test_check_without_group_rejects_ambiguous_current_target(self):
         config = _Config(
@@ -859,7 +1030,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.started, [])
         self.assertEqual(plugin.scheduler.run_check_calls, [])
         self.assertIn("匹配到多个推文分组", event.messages[-1])
-        self.assertIn("全局分组 (global)", event.messages[-1])
+        self.assertIn("默认分组 (default)", event.messages[-1])
         self.assertIn("Tech (tech)", event.messages[-1])
 
     async def test_check_with_group_rejects_target_outside_group(self):
@@ -887,7 +1058,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.run_check_calls, [])
         self.assertIn("当前对话不属于分组：Tech (tech)", event.messages[-1])
 
-    async def test_check_with_global_group_requires_current_target_listed(self):
+    async def test_check_with_default_alias_requires_current_target_listed(self):
         config = _Config(
             {
                 "schedule_enabled": True,
@@ -902,9 +1073,9 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plugin.scheduler.started, [])
         self.assertEqual(plugin.scheduler.run_check_calls, [])
-        self.assertIn("当前对话不属于分组：全局分组 (global)", event.messages[-1])
+        self.assertIn("当前对话不属于分组：默认分组 (default)", event.messages[-1])
 
-    async def test_import_without_group_appends_global_watch_users(self):
+    async def test_import_without_group_appends_default_watch_users(self):
         config = _Config(
             {
                 "watch_users": ["NASA"],
@@ -921,10 +1092,11 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.stopped)
         self.assertTrue(config.saved)
         self.assertEqual(
-            config_get(config, "watch_users"), ["NASA", "BBCWorld", "SpaceX"]
+            _group_config(config, "default")["watch_users"],
+            ["NASA", "BBCWorld", "SpaceX"],
         )
-        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], [])
-        self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], [])
+        self.assertIn("导入分组: 默认分组 (default)", event.messages[-1])
 
     async def test_clear_seen_command_requires_confirmation(self):
         config = _Config({"watch_users": ["NASA"], "push_targets": []})
@@ -993,10 +1165,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(
             event.messages[-1],
-            "全局分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
+            "默认分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
         )
 
-    async def test_delete_subscriptions_without_group_removes_global_watch_users(self):
+    async def test_delete_subscriptions_without_group_removes_default_watch_users(self):
         config = _Config(
             {
                 "watch_users": ["NASA", "BBCWorld", "SpaceX"],
@@ -1012,13 +1184,13 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
         self.assertTrue(config.saved)
-        self.assertEqual(config_get(config, "watch_users"), ["NASA", "SpaceX"])
-        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], ["OpenAI"])
+        self.assertEqual(_group_config(config, "default")["watch_users"], ["NASA", "SpaceX"])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
         self.assertEqual(
             [group.group_id for group in plugin.scheduler.storage.synced_groups],
-            ["global", "tech"],
+            ["default", "tech"],
         )
-        self.assertIn("删除分组: 全局分组 (global)", event.messages[-1])
+        self.assertIn("删除分组: 默认分组 (default)", event.messages[-1])
         self.assertIn("删除: 1 个", event.messages[-1])
         self.assertIn("未关注: 1 个", event.messages[-1])
 
@@ -1044,7 +1216,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(config.saved)
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
         self.assertEqual(
-            config_get(config, "tweet_groups")[0]["watch_users"],
+            _group_config(config, "tech")["watch_users"],
             ["OpenAI"],
         )
         self.assertIn("删除分组: 科技 (tech)", event.messages[-1])
@@ -1080,11 +1252,11 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(config.saved)
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
-        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], ["OpenAI"])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
         self.assertIn("未找到分组：不存在", event.messages[-1])
         self.assertIn("科技 (tech)", event.messages[-1])
 
-    async def test_import_rejects_more_than_50_accounts(self):
+    async def test_import_allows_more_than_50_accounts(self):
         config = _Config({"watch_users": [], "tweet_groups": []})
         plugin = _plugin(config)
         event = _Event()
@@ -1093,9 +1265,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         await plugin.cmd_tweets_import(event, ",".join(raw_users))
 
         self.assertTrue(event.stopped)
-        self.assertFalse(config.saved)
-        self.assertEqual(config_get(config, "watch_users"), [])
-        self.assertIn("50", event.messages[-1])
+        self.assertTrue(config.saved)
+        self.assertEqual(_group_config(config, "default")["watch_users"], raw_users)
+        self.assertIn("输入项: 51 个", event.messages[-1])
+        self.assertIn("新增: 51 个", event.messages[-1])
 
     async def test_import_treats_last_token_as_username_when_group_not_found(self):
         config = _Config(
@@ -1113,7 +1286,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(event.stopped)
         self.assertTrue(config.saved)
-        self.assertEqual(config_get(config, "watch_users"), ["nasa", "space_x"])
+        self.assertEqual(
+            _group_config(config, "default")["watch_users"],
+            ["nasa", "space_x"],
+        )
 
     async def test_import_without_group_allows_space_after_comma(self):
         config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
@@ -1124,9 +1300,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(config.saved)
         self.assertEqual(
-            config_get(config, "watch_users"), ["NASA", "BBCWorld", "SpaceX"]
+            _group_config(config, "default")["watch_users"],
+            ["NASA", "BBCWorld", "SpaceX"],
         )
-        self.assertIn("导入分组: 全局分组 (global)", event.messages[-1])
+        self.assertIn("导入分组: 默认分组 (default)", event.messages[-1])
 
     async def test_import_without_group_only_splits_accounts_on_commas(self):
         config = _Config({"watch_users": ["NASA"], "tweet_groups": []})
@@ -1137,7 +1314,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(config.saved)
         self.assertEqual(
-            config_get(config, "watch_users"),
+            _group_config(config, "default")["watch_users"],
             ["NASA", "BBCWorld"],
         )
         self.assertIn("无效: 1 个", event.messages[-1])
@@ -1165,14 +1342,14 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(config.saved)
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
         self.assertEqual(
-            config_get(config, "tweet_groups")[0]["watch_users"],
+            _group_config(config, "tech")["watch_users"],
             ["OpenAI", "BBCWorld", "SpaceX"],
         )
         self.assertIn("导入分组: 科技 (tech)", event.messages[-1])
         self.assertIn("保存结果: 已写入 tweet_groups[tech].watch_users。", event.messages[-1])
         self.assertEqual(
             [group.group_id for group in plugin.scheduler.storage.synced_groups],
-            ["global", "tech"],
+            ["default", "tech"],
         )
 
     async def test_import_with_unknown_group_after_comma_list_is_rejected(self):
@@ -1191,7 +1368,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(config.saved)
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
-        self.assertEqual(config_get(config, "tweet_groups")[0]["watch_users"], [])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], [])
         self.assertIn("未找到分组：不存在", event.messages[-1])
         self.assertIn("科技 (tech)", event.messages[-1])
 

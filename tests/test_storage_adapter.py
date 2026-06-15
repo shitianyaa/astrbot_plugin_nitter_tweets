@@ -107,7 +107,7 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 adapter.close()
 
-            self.assertEqual(summary.group_id, "global")
+            self.assertEqual(summary.group_id, "default")
             self.assertEqual(summary.pending_count, 0)
             self.assertTrue(db_path.exists())
 

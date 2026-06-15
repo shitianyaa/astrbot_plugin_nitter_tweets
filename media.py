@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import re
 import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
@@ -49,7 +51,7 @@ class XdownMediaParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.cover_url = ""
-        self.items: list[tuple[str, str]] = []
+        self.items: list[tuple[str, str, str]] = []
         self._href = ""
         self._classes: set[str] = set()
         self._text_parts: list[str] = []
@@ -78,7 +80,7 @@ class XdownMediaParser(HTMLParser):
         text = "".join(self._text_parts).strip()
         kind = self._detect_kind(text, self._href)
         if kind:
-            self.items.append((kind, self._href))
+            self.items.append((kind, self._href, text))
         self._href = ""
         self._classes = set()
         self._text_parts = []
@@ -107,6 +109,14 @@ class XdownMediaParser(HTMLParser):
 
 
 @dataclass(slots=True)
+class XdownMediaCandidate:
+    kind: str
+    url: str
+    label: str = ""
+    resolution: int | None = None
+
+
+@dataclass(slots=True)
 class MediaCacheCleanupResult:
     removed: int = 0
     failed: int = 0
@@ -129,6 +139,9 @@ class MediaService:
         self.max_per_tweet = clamp_int(
             config_get(config, "max_media_per_tweet", 4), 0, 12
         )
+        self.video_resolution_preference = str(
+            config_get(config, "video_resolution_preference", "highest") or "highest"
+        ).strip().lower()
         self.timeout = clamp_float(
             config_get(config, "media_timeout", 25.0), 5.0, 120.0
         )
@@ -459,7 +472,7 @@ class MediaService:
                 return
             current = current.parent
 
-    def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
+    def _resolve_media_candidates(self, tweet: TweetItem) -> list[XdownMediaCandidate]:
         data = urlencode({"q": tweet.x_url, "lang": "zh-cn"}).encode("utf-8")
         request = Request(
             self.xdown_url,
@@ -489,12 +502,8 @@ class MediaService:
         parser.feed(str(html))
 
         base_url = "https://xdown.app"
-        cover_url = urljoin(base_url, parser.cover_url) if parser.cover_url else ""
-        has_video_candidate = any(
-            kind in {"video", "dynamic"} for kind, _ in parser.items
-        )
-        result: list[TweetMedia] = []
-        for kind, url in parser.items:
+        result: list[XdownMediaCandidate] = []
+        for kind, url, label in parser.items:
             full_url = urljoin(base_url, url)
             # 最终兜底：如果解析不出类型，按 URL 扩展名再试一次
             if not kind:
@@ -502,19 +511,137 @@ class MediaService:
             if not kind:
                 logger.info(f"[NitterTweets] skipping unclassified media: {full_url}")
                 continue
-            if (
-                kind == "image"
-                and has_video_candidate
-                and cover_url
-                and self._same_media_url(full_url, cover_url)
-            ):
-                logger.info(
-                    "[NitterTweets] skipping video/GIF cover image: "
-                    f"{full_url}"
+            result.append(
+                XdownMediaCandidate(
+                    kind=kind,
+                    url=full_url,
+                    label=label,
+                    resolution=self._extract_video_resolution(label, full_url),
                 )
-                continue
-            result.append(TweetMedia(kind, full_url))
+            )
         return result
+
+    def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
+        candidates = self._resolve_media_candidates(tweet)
+        return self._normalize_media_candidates(tweet, candidates)
+
+    def _normalize_media_candidates(
+        self,
+        tweet: TweetItem,
+        candidates: list[XdownMediaCandidate],
+    ) -> list[TweetMedia]:
+        video_candidates = [
+            item for item in candidates if item.kind in {"video", "dynamic"}
+        ]
+        if video_candidates:
+            selected = self._select_video_candidate(tweet, video_candidates)
+            if selected is None:
+                return []
+            skipped_images = sum(1 for item in candidates if item.kind == "image")
+            if skipped_images:
+                logger.info(
+                    "[NitterTweets] skipping image media because video/GIF was "
+                    f"detected: skipped={skipped_images}, tweet={tweet.x_url}"
+                )
+            return [TweetMedia(selected.kind, selected.url)]
+
+        return [TweetMedia(item.kind, item.url) for item in candidates]
+
+    def _select_video_candidate(
+        self,
+        tweet: TweetItem,
+        candidates: list[XdownMediaCandidate],
+    ) -> XdownMediaCandidate | None:
+        if not candidates:
+            return None
+
+        preference = self.video_resolution_preference or "highest"
+        known = [item for item in candidates if item.resolution is not None]
+        if not known:
+            return candidates[0]
+
+        if preference == "lowest":
+            return min(known, key=lambda item: item.resolution or 0)
+        if preference == "highest":
+            return max(known, key=lambda item: item.resolution or 0)
+
+        target = self._parse_resolution_preference(preference)
+        if target is None:
+            self._add_media_warning(
+                tweet,
+                f"视频分辨率配置 {preference} 无法识别，已改用最高分辨率",
+                log_warning=False,
+            )
+            return max(known, key=lambda item: item.resolution or 0)
+
+        exact = [item for item in known if item.resolution == target]
+        if exact:
+            return exact[0]
+
+        not_over_target = [
+            item
+            for item in known
+            if item.resolution is not None and item.resolution <= target
+        ]
+        if not_over_target:
+            selected = max(not_over_target, key=lambda item: item.resolution or 0)
+        else:
+            selected = min(known, key=lambda item: item.resolution or 0)
+        self._add_media_warning(
+            tweet,
+            f"未找到配置的视频分辨率 {target}p，已选择 {selected.resolution}p",
+            log_warning=False,
+        )
+        return selected
+
+    @staticmethod
+    def _parse_resolution_preference(value: str) -> int | None:
+        match = re.search(r"(\d{3,4})\s*p?", str(value or "").lower())
+        if not match:
+            return None
+        return int(match.group(1))
+
+    @classmethod
+    def _extract_video_resolution(cls, label: str, url: str) -> int | None:
+        text_parts = [label or "", url or ""]
+        token_payload = cls._xdown_token_payload(url)
+        if token_payload:
+            text_parts.extend(
+                [
+                    str(token_payload.get("filename") or ""),
+                    str(token_payload.get("url") or ""),
+                ]
+            )
+        text = " ".join(text_parts)
+
+        p_matches = [int(value) for value in re.findall(r"(?i)(\d{3,4})\s*p\b", text)]
+        if p_matches:
+            return max(p_matches)
+
+        size_matches = [
+            max(int(width), int(height))
+            for width, height in re.findall(r"(?i)(\d{3,4})x(\d{3,4})", text)
+        ]
+        if size_matches:
+            return max(size_matches)
+        return None
+
+    @staticmethod
+    def _xdown_token_payload(url: str) -> dict:
+        token = (parse_qs(urlparse(url).query).get("token") or [""])[0]
+        if not token:
+            return {}
+        parts = token.split(".")
+        if len(parts) < 2:
+            return {}
+        payload = parts[1]
+        padding = "=" * (-len(payload) % 4)
+        try:
+            decoded = base64.urlsafe_b64decode((payload + padding).encode("ascii"))
+            data = json.loads(decoded.decode("utf-8", errors="replace"))
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     @staticmethod
     def _same_media_url(left: str, right: str) -> bool:

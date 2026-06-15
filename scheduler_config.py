@@ -6,12 +6,24 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
-    from .seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from .config_compat import config_get, migrate_default_group_config
+    from .group_ids import (
+        DEFAULT_GROUP_ALIASES,
+        DEFAULT_GROUP_ID,
+        DEFAULT_GROUP_NAME,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from .utils import clamp_float, clamp_int, normalize_username
 except ImportError:
-    from config_compat import config_get
-    from seen_store import GLOBAL_GROUP_ID, normalize_group_id
+    from config_compat import config_get, migrate_default_group_config
+    from group_ids import (
+        DEFAULT_GROUP_ALIASES,
+        DEFAULT_GROUP_ID,
+        DEFAULT_GROUP_NAME,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from utils import clamp_float, clamp_int, normalize_username
 
 
@@ -71,67 +83,40 @@ class ScheduleGroup:
 
 class SchedulerConfigReader:
     def __init__(self, config, context):
+        migrate_default_group_config(config, save=False)
         self.config = config
         self.context = context
 
     def global_group(self, log_invalid_targets: bool = True) -> ScheduleGroup:
         return ScheduleGroup(
-            group_id=GLOBAL_GROUP_ID,
-            name="全局分组",
-            enabled=bool(config_get(self.config, "schedule_enabled", False)),
-            check_on_startup=bool(config_get(self.config, "check_on_startup", False)),
-            interval_check_enabled=bool(
-                config_get(self.config, "interval_check_enabled", True)
+            group_id=DEFAULT_GROUP_ID,
+            name=DEFAULT_GROUP_NAME,
+            enabled=False,
+            check_on_startup=False,
+            interval_check_enabled=True,
+            check_interval_minutes=30,
+            daily_check_enabled=False,
+            daily_check_times=[],
+            scheduled_fetch_limit=5,
+            send_target_interval=1.5,
+            send_user_interval=2.0,
+            notify_no_updates=False,
+            deferred_publish_enabled=False,
+            deferred_publish_times=[],
+            deferred_publish_batch_limit=50,
+            deferred_prefetch_media=True,
+            deferred_media_retention_hours=72.0,
+            deferred_media_download_interval_seconds=0.5,
+            users_info=self.parse_watch_users([]),
+            target_info=self.parse_push_targets(
+                [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
             ),
-            check_interval_minutes=clamp_int(
-                config_get(self.config, "check_interval_minutes", 30), 1, 1440
-            ),
-            daily_check_enabled=bool(
-                config_get(self.config, "daily_check_enabled", False)
-            ),
-            daily_check_times=self.parse_daily_times(),
-            scheduled_fetch_limit=clamp_int(
-                config_get(self.config, "scheduled_fetch_limit", 5), 1, 20
-            ),
-            send_target_interval=clamp_float(
-                config_get(self.config, "send_target_interval", 1.5), 0.0, 60.0
-            ),
-            send_user_interval=clamp_float(
-                config_get(self.config, "send_user_interval", 2.0), 0.0, 60.0
-            ),
-            notify_no_updates=bool(config_get(self.config, "notify_no_updates", False)),
-            deferred_publish_enabled=bool(
-                config_get(self.config, "deferred_publish_enabled", False)
-            ),
-            deferred_publish_times=self.parse_daily_times(
-                config_get(self.config, "deferred_publish_times", [])
-            ),
-            deferred_publish_batch_limit=clamp_int(
-                config_get(self.config, "deferred_publish_batch_limit", 50), 1, 500
-            ),
-            deferred_prefetch_media=bool(
-                config_get(self.config, "deferred_prefetch_media", True)
-            ),
-            deferred_media_retention_hours=clamp_float(
-                config_get(self.config, "deferred_media_retention_hours", 72.0),
-                1.0,
-                8760.0,
-            ),
-            deferred_media_download_interval_seconds=clamp_float(
-                config_get(
-                    self.config, "deferred_media_download_interval_seconds", 0.5
-                ),
-                0.0,
-                60.0,
-            ),
-            users_info=self.watch_users_info(),
-            target_info=self.parse_push_targets(log_invalid=log_invalid_targets),
-            aliases=["全局", "默认", "default"],
+            aliases=list(DEFAULT_GROUP_ALIASES),
         )
 
     def schedule_groups(self, log_invalid_targets: bool = True) -> list[ScheduleGroup]:
-        groups = [self.global_group(log_invalid_targets=log_invalid_targets)]
-        seen_group_ids = {normalize_group_id(GLOBAL_GROUP_ID)}
+        groups: list[ScheduleGroup] = []
+        seen_group_ids: set[str] = set()
 
         raw_groups = config_get(self.config, "tweet_groups", []) or []
         if isinstance(raw_groups, dict):
@@ -180,88 +165,90 @@ class SchedulerConfigReader:
         name = str(raw_group.get("name") or "").strip()
         raw_group_id = str(raw_group.get("group_id") or "").strip()
         group_id = normalize_group_id(raw_group_id or name or f"group_{index}")
-        if group_id == GLOBAL_GROUP_ID:
-            logger.warning(
-                "[NitterTweets] tweet group id 'global' is reserved; "
-                f"ignored group {name or index!r}"
-            )
-            return None
         if not name:
-            name = group_id
+            name = DEFAULT_GROUP_NAME if group_id == DEFAULT_GROUP_ID else group_id
+
+        aliases = self.config_list(raw_group.get("aliases"))
+        if group_id == DEFAULT_GROUP_ID:
+            aliases = self.merge_unique_strings(aliases, DEFAULT_GROUP_ALIASES)
+
+        daily_check_times = self.parse_daily_times(
+            raw_group.get(
+                "daily_check_times",
+                self.default_group_legacy_config(group_id, "daily_check_times", []),
+            )
+        )
+        daily_check_enabled = bool(daily_check_times)
+        if "daily_check_enabled" in raw_group:
+            daily_check_enabled = self.parse_bool(
+                raw_group.get("daily_check_enabled"), False
+            ) and bool(daily_check_times)
+        elif group_id == DEFAULT_GROUP_ID:
+            daily_check_enabled = self.parse_bool(
+                config_get(self.config, "daily_check_enabled", daily_check_enabled),
+                daily_check_enabled,
+            ) and bool(daily_check_times)
+        if not daily_check_enabled:
+            daily_check_times = []
+
+        interval_check_default = self.default_group_legacy_config(
+            group_id, "interval_check_enabled", True
+        )
+        deferred_publish_default = self.default_group_legacy_config(
+            group_id, "deferred_publish_enabled", False
+        )
 
         return ScheduleGroup(
             group_id=group_id,
             name=name,
             enabled=self.parse_bool(raw_group.get("enabled", True), True),
             check_on_startup=self.parse_bool(
-                raw_group.get("check_on_startup", False), False
+                config_get(self.config, "check_on_startup", False), False
             ),
             interval_check_enabled=self.parse_bool(
-                raw_group.get("interval_check_enabled", True), True
+                raw_group.get("interval_check_enabled", interval_check_default), True
             ),
             check_interval_minutes=clamp_int(
-                raw_group.get("check_interval_minutes", 30), 1, 1440
+                config_get(self.config, "check_interval_minutes", 30), 1, 1440
             ),
-            daily_check_enabled=self.parse_bool(
-                raw_group.get("daily_check_enabled", False), False
-            ),
-            daily_check_times=self.parse_daily_times(
-                raw_group.get("daily_check_times", [])
-            ),
+            daily_check_enabled=daily_check_enabled,
+            daily_check_times=daily_check_times,
             scheduled_fetch_limit=clamp_int(
-                raw_group.get("scheduled_fetch_limit", 5), 1, 20
+                config_get(self.config, "scheduled_fetch_limit", 5), 1, 20
             ),
             send_target_interval=clamp_float(
-                raw_group.get("send_target_interval", 1.5), 0.0, 60.0
+                config_get(self.config, "send_target_interval", 1.5), 0.0, 60.0
             ),
             send_user_interval=clamp_float(
-                raw_group.get("send_user_interval", 2.0), 0.0, 60.0
+                config_get(self.config, "send_user_interval", 2.0), 0.0, 60.0
             ),
             notify_no_updates=self.parse_bool(
-                raw_group.get("notify_no_updates", False), False
+                config_get(self.config, "notify_no_updates", False), False
             ),
             deferred_publish_enabled=self.parse_bool(
-                raw_group.get(
-                    "deferred_publish_enabled",
-                    config_get(self.config, "deferred_publish_enabled", False),
-                ),
+                raw_group.get("deferred_publish_enabled", deferred_publish_default),
                 False,
             ),
             deferred_publish_times=self.parse_daily_times(
-                raw_group.get(
-                    "deferred_publish_times",
-                    config_get(self.config, "deferred_publish_times", []),
-                )
+                config_get(self.config, "deferred_publish_times", [])
             ),
             deferred_publish_batch_limit=clamp_int(
-                raw_group.get(
-                    "deferred_publish_batch_limit",
-                    config_get(self.config, "deferred_publish_batch_limit", 50),
-                ),
+                config_get(self.config, "deferred_publish_batch_limit", 50),
                 1,
                 500,
             ),
             deferred_prefetch_media=self.parse_bool(
-                raw_group.get(
-                    "deferred_prefetch_media",
-                    config_get(self.config, "deferred_prefetch_media", True),
-                ),
+                config_get(self.config, "deferred_prefetch_media", True),
                 True,
             ),
             deferred_media_retention_hours=clamp_float(
-                raw_group.get(
-                    "deferred_media_retention_hours",
-                    config_get(self.config, "deferred_media_retention_hours", 72.0),
-                ),
+                config_get(self.config, "deferred_media_retention_hours", 72.0),
                 1.0,
                 8760.0,
             ),
             deferred_media_download_interval_seconds=clamp_float(
-                raw_group.get(
-                    "deferred_media_download_interval_seconds",
-                    config_get(
-                        self.config, "deferred_media_download_interval_seconds", 0.5
-                    ),
+                config_get(
+                    self.config, "deferred_media_download_interval_seconds", 0.5
                 ),
                 0.0,
                 60.0,
@@ -272,8 +259,13 @@ class SchedulerConfigReader:
                 log_invalid=log_invalid_targets,
                 group_id=group_id,
             ),
-            aliases=self.config_list(raw_group.get("aliases")),
+            aliases=aliases,
         )
+
+    def default_group_legacy_config(self, group_id: str, key: str, default=None):
+        if group_id != DEFAULT_GROUP_ID:
+            return default
+        return config_get(self.config, key, default)
 
     def schedule_group(
         self, group_name: str = "", log_invalid_targets: bool = True
@@ -293,7 +285,10 @@ class SchedulerConfigReader:
         return self.watch_users_info().users
 
     def watch_users_info(self) -> WatchUsersInfo:
-        return self.parse_watch_users(config_get(self.config, "watch_users", []))
+        group = self.schedule_group(DEFAULT_GROUP_ID, log_invalid_targets=False)
+        if group is None:
+            return self.parse_watch_users([])
+        return group.users_info
 
     def parse_watch_users(self, raw_users) -> WatchUsersInfo:
         if isinstance(raw_users, str):
@@ -518,6 +513,21 @@ class SchedulerConfigReader:
         else:
             raw_items = [value]
         return [str(item).strip() for item in raw_items if str(item).strip()]
+
+    @staticmethod
+    def merge_unique_strings(left: list[str], right: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in [*left, *right]:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(text)
+        return result
 
     @staticmethod
     def parse_bool(value, default: bool = False) -> bool:

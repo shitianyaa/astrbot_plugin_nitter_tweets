@@ -19,31 +19,41 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get, config_set
+    from .config_compat import config_get, config_set, migrate_default_group_config
     from .enricher import format_ai_tweet_summary
+    from .group_ids import (
+        DEFAULT_GROUP_NAME,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from .scheduler_config import (
         PushTargetParseResult,
         ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from .seen_store import GLOBAL_GROUP_ID
     from .storage_adapter import StorageAdapter
+    from .tweet_rendering import TweetMessageRenderer
     from .utils import (
         TweetItem,
         configured_merge_tweet_threshold,
     )
 except ImportError:
-    from config_compat import config_get, config_set
+    from config_compat import config_get, config_set, migrate_default_group_config
     from enricher import format_ai_tweet_summary
+    from group_ids import (
+        DEFAULT_GROUP_NAME,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from scheduler_config import (
         PushTargetParseResult,
         ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from seen_store import GLOBAL_GROUP_ID
     from storage_adapter import StorageAdapter
+    from tweet_rendering import TweetMessageRenderer
     from utils import (
         TweetItem,
         configured_merge_tweet_threshold,
@@ -94,10 +104,25 @@ class PendingTweetBatch:
 
 
 @dataclass(slots=True)
+class BatchSummaryTracker:
+    text: str = ""
+    delivered_targets: set[str] = field(default_factory=set)
+
+    def for_target(self, target: str) -> str:
+        if not self.text or target in self.delivered_targets:
+            return ""
+        return self.text
+
+    def mark_delivered(self, target: str) -> None:
+        if self.text:
+            self.delivered_targets.add(target)
+
+
+@dataclass(slots=True)
 class ScheduledCheckResult:
     reason: str
     group_id: str = GLOBAL_GROUP_ID
-    group_name: str = "全局分组"
+    group_name: str = DEFAULT_GROUP_NAME
     users: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     invalid_targets: list[str] = field(default_factory=list)
@@ -303,6 +328,7 @@ class NitterTweetScheduler:
         self.sender = sender
         self.translator = translator
         self.enricher = enricher
+        migrate_default_group_config(config)
         self.config_reader = SchedulerConfigReader(config, context)
         self.storage = StorageAdapter(owner, config, context)
         self._task: asyncio.Task | None = None
@@ -655,6 +681,12 @@ class NitterTweetScheduler:
                 await self._put_seen_map(group.group_id, seen_map)
 
         push_account_total = len(discovered_batches)
+        check_batch_summary = self._format_push_batch_summary(
+            discovered_batches,
+            group_label,
+            action_text="本次检查发现",
+        )
+        immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
         for account_index, discovered_batch in enumerate(discovered_batches, 1):
             discovered_batch.account_index = account_index
             discovered_batch.account_total = push_account_total
@@ -761,6 +793,9 @@ class NitterTweetScheduler:
                                     target_interval,
                                     0.0,
                                     group_label=group_label,
+                                    batch_summary_tracker=(
+                                        immediate_batch_summary_tracker
+                                    ),
                                     batch_progress=(
                                         tweet_index,
                                         len(new_tweets),
@@ -785,6 +820,9 @@ class NitterTweetScheduler:
                                     target_interval,
                                     0.0,
                                     group_label=group_label,
+                                    batch_summary_tracker=(
+                                        immediate_batch_summary_tracker
+                                    ),
                                     batch_progress=(
                                         tweet_index,
                                         len(new_tweets),
@@ -825,6 +863,7 @@ class NitterTweetScheduler:
                     record_merge_placeholders=not bool(immediate_targets),
                     merge_existing_stats=bool(immediate_targets),
                     group_label=group_label,
+                    batch_summary=check_batch_summary,
                 )
             finally:
                 for batch in pending_batches:
@@ -844,9 +883,9 @@ class NitterTweetScheduler:
         groups = self._schedule_groups(log_invalid_targets=False)
         default_group = next(
             (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
-            groups[0] if groups else None,
+            None,
         )
-        if default_group is None:
+        if not groups:
             return "Nitter 定时检查状态\n没有可用分组。"
 
         enabled_groups = [item for item in groups if item.enabled]
@@ -883,6 +922,12 @@ class NitterTweetScheduler:
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
+            "全局检查间隔: "
+            f"{config_get(self.config, 'check_interval_minutes', 30)} 分钟",
+            "启动立即检查: "
+            f"{'已启用' if config_get(self.config, 'check_on_startup', False) else '已关闭'}",
+            "无更新提示: "
+            f"{'已启用' if config_get(self.config, 'notify_no_updates', False) else '已关闭'}",
             f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
             f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
             "全部分组订阅账号项: "
@@ -892,16 +937,17 @@ class NitterTweetScheduler:
             f"全部分组已记录账号索引: {total_seen_users} 个",
             f"全部分组待发布: {total_pending} 条（媒体 {total_pending_media} 个）",
         ]
-        lines.append("默认分组详情:")
-        self._append_group_status(
-            lines,
-            default_group,
-            seen_count=group_seen_counts.get(default_group.group_id, 0),
-        )
-        if len(groups) > 1:
+        if default_group is not None:
+            lines.append("默认分组详情:")
+            self._append_group_status(
+                lines,
+                default_group,
+                seen_count=group_seen_counts.get(default_group.group_id, 0),
+            )
+        if len(groups) > (1 if default_group is not None else 0):
             lines.append("其他分组详情:")
             for item in groups:
-                if item.group_id == default_group.group_id:
+                if default_group is not None and item.group_id == default_group.group_id:
                     continue
                 self._append_group_status(
                     lines,
@@ -915,7 +961,22 @@ class NitterTweetScheduler:
         if not info.changed:
             return info
 
-        config_set(self.config, "watch_users", info.users)
+        groups = config_get(self.config, "tweet_groups", []) or []
+        if isinstance(groups, dict):
+            groups = [groups]
+        elif not isinstance(groups, list):
+            groups = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            if normalize_group_id(group.get("group_id") or group.get("name") or "") == GLOBAL_GROUP_ID:
+                group["watch_users"] = info.users
+                config_set(self.config, "tweet_groups", groups)
+                break
+        else:
+            info.save_error = "未找到默认分组配置"
+            return info
+
         save_config = getattr(self.config, "save_config", None)
         if not callable(save_config):
             info.save_error = "当前配置对象不支持 save_config()"
@@ -977,13 +1038,23 @@ class NitterTweetScheduler:
         user_interval: float,
         merge_existing_stats: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
+        batch_summary_tracker: BatchSummaryTracker | None = None,
         batch_progress: tuple[int, int] | None = None,
     ) -> None:
+        if batch_summary and batch_summary_tracker is None:
+            batch_summary_tracker = BatchSummaryTracker(batch_summary)
+
         for batch_index, batch in enumerate(batches):
             success = 0
             for target_index, umo in enumerate(targets):
                 try:
                     header_text = self._scheduled_update_header(batch, batch_progress)
+                    target_batch_summary = (
+                        batch_summary_tracker.for_target(umo)
+                        if batch_summary_tracker is not None
+                        else ""
+                    )
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -992,9 +1063,12 @@ class NitterTweetScheduler:
                         batch.tweets,
                         group_label=group_label,
                         header_text=header_text,
+                        batch_summary=target_batch_summary,
                     )
                     if outcome.success:
                         success += 1
+                        if target_batch_summary and batch_summary_tracker is not None:
+                            batch_summary_tracker.mark_delivered(umo)
                     if outcome.warning:
                         result.delivery_warnings.append(outcome.warning)
                 except Exception as exc:
@@ -1108,12 +1182,17 @@ class NitterTweetScheduler:
         targets: list[str],
         target_interval: float,
         group_label: str = "",
+        batch_summary: str = "",
     ) -> None:
         success = 0
         for target_index, umo in enumerate(targets):
             try:
                 outcome = await self.sender.send_merged_to_umo(
-                    self.context, umo, batches, group_label=group_label
+                    self.context,
+                    umo,
+                    batches,
+                    group_label=group_label,
+                    batch_summary=batch_summary,
                 )
                 if outcome.success:
                     success += 1
@@ -1232,6 +1311,11 @@ class NitterTweetScheduler:
         target_interval = group.send_target_interval
         user_interval = group.send_user_interval
         group_label = self._push_group_label(group)
+        batch_summary = self._format_push_batch_summary(
+            batches,
+            group_label,
+            action_text="本次发布",
+        )
         cleanup_retention_hours = group.deferred_media_retention_hours
         try:
             protected_media_paths = await self.storage.get_pending_media_paths()
@@ -1247,6 +1331,7 @@ class NitterTweetScheduler:
                 target_interval,
                 user_interval,
                 group_label=group_label,
+                batch_summary=batch_summary,
             )
             if (
                 result.pushed_target_attempts
@@ -1322,6 +1407,7 @@ class NitterTweetScheduler:
         record_merge_placeholders: bool = True,
         merge_existing_stats: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
     ) -> None:
         if self._should_merge_batches(batches, result.merge_tweet_threshold):
             merge_targets, ordinary_targets = self._split_merge_targets(targets)
@@ -1339,6 +1425,7 @@ class NitterTweetScheduler:
                     user_interval,
                     merge_existing_stats=merge_existing_stats,
                     group_label=group_label,
+                    batch_summary=batch_summary,
                 )
                 if target_interval > 0:
                     await asyncio.sleep(target_interval)
@@ -1359,6 +1446,7 @@ class NitterTweetScheduler:
                 merge_targets,
                 target_interval,
                 group_label=group_label,
+                batch_summary=batch_summary,
             )
             return
 
@@ -1371,6 +1459,7 @@ class NitterTweetScheduler:
             user_interval,
             merge_existing_stats=merge_existing_stats,
             group_label=group_label,
+            batch_summary=batch_summary,
         )
 
     def _merge_tweet_threshold(self) -> int:
@@ -1407,9 +1496,23 @@ class NitterTweetScheduler:
         return [(batch.username, batch.instance, batch.tweets) for batch in batches]
 
     @staticmethod
+    def _format_push_batch_summary(
+        batches: list[PendingTweetBatch],
+        group_label: str,
+        action_text: str,
+    ) -> str:
+        if not batches:
+            return ""
+        return TweetMessageRenderer.format_batch_summary(
+            NitterTweetScheduler._tweet_batches(batches),
+            group_label=group_label,
+            action_text=action_text,
+        )
+
+    @staticmethod
     def _push_group_label(group: ScheduleGroup) -> str:
         if group.group_id == GLOBAL_GROUP_ID:
-            return "全局分组"
+            return DEFAULT_GROUP_NAME
         return str(group.name or group.group_id).strip() or group.group_id
 
     async def _store_pending_seen_ids(
@@ -1492,8 +1595,7 @@ class NitterTweetScheduler:
         if group.deferred_publish_enabled:
             lines.append(
                 "  暂存发布: 已启用，"
-                f"发布时间 {self._format_daily_times(group.deferred_publish_times)}，"
-                f"每次最多 {group.deferred_publish_batch_limit} 条"
+                f"发布时间 {self._format_daily_times(group.deferred_publish_times)}"
             )
         else:
             lines.append("  暂存发布: 已关闭")
@@ -1503,14 +1605,6 @@ class NitterTweetScheduler:
                 f"{hour:02d}:{minute:02d}" for hour, minute in daily_times
             )
             lines.append(f"  每日时间: {formatted_times}")
-        lines.append(
-            "  启动立即检查: "
-            f"{'已启用' if group.check_on_startup else '已关闭'}"
-        )
-        lines.append(
-            "  无更新提示: "
-            f"{'已启用' if group.notify_no_updates else '已关闭'}"
-        )
         if group.users:
             usernames = [f"@{username}" for username in group.users]
             lines.append("  订阅账号: " + self._format_limited_values(usernames))
