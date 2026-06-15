@@ -150,6 +150,77 @@ class TweetMessageRenderer:
                 index += 1
         return nodes
 
+    def build_merged_onebot_nodes_for_uin(
+        self,
+        uin,
+        batches: list[TweetBatch],
+        exclude_videos: bool = False,
+        group_label: str = "",
+        batch_summary: str = "",
+    ) -> list[dict]:
+        items = [
+            {
+                "name": "Nitter",
+                "uin": str(uin),
+                "content": [
+                    self.raw_text(
+                        self.format_merged_header(
+                            batches, group_label, batch_summary
+                        )
+                    )
+                ],
+            }
+        ]
+
+        index = 1
+        for username, instance, tweets in batches:
+            for tweet in tweets:
+                content = [
+                    self.raw_text(
+                        self.format_tweet_with_source(
+                            index, username, tweet, instance
+                        )
+                    )
+                ]
+                video_notice_added = False
+                for media in tweet.media:
+                    if not media.path:
+                        continue
+                    if media.is_video and exclude_videos:
+                        if not video_notice_added:
+                            content.append(
+                                self.raw_text(
+                                    "视频/GIF 附件未作为消息发送，请打开原文查看："
+                                    f"{tweet.x_url}"
+                                )
+                            )
+                            video_notice_added = True
+                        continue
+                    if media.is_image and self.send_image_attachments:
+                        content.append(self.raw_media(media))
+                    elif media.is_video and self.send_video_attachments:
+                        content.append(self.raw_media(media))
+                items.append(
+                    {
+                        "name": f"@{username}",
+                        "uin": str(uin),
+                        "content": content,
+                    }
+                )
+                index += 1
+
+        return [
+            {
+                "type": "node",
+                "data": {
+                    "name": item["name"],
+                    "uin": item["uin"],
+                    "content": item["content"],
+                },
+            }
+            for item in items
+        ]
+
     def build_direct_components(
         self,
         username: str,

@@ -567,6 +567,7 @@ class NitterTweetScheduler:
         target_override: list[str] | None = None,
     ) -> ScheduledCheckResult:
         targets = list(target_override) if target_override is not None else group.targets
+        targets = self._order_targets_for_push(targets)
         invalid_targets = [] if target_override is not None else group.invalid_targets
         return ScheduledCheckResult(
             reason=reason,
@@ -1200,7 +1201,9 @@ class NitterTweetScheduler:
                         result.delivery_warnings.append(outcome.warning)
                     if outcome.mode not in {
                         "full_forward",
+                        "raw_forward",
                         "forward_without_videos",
+                        "raw_forward_without_videos",
                         "uncertain_delivery",
                     }:
                         logger.info(
@@ -1327,7 +1330,7 @@ class NitterTweetScheduler:
             await self._send_prepared_batches(
                 batches,
                 result,
-                group.targets,
+                result.targets,
                 target_interval,
                 user_interval,
                 group_label=group_label,
@@ -1490,6 +1493,16 @@ class NitterTweetScheduler:
             else:
                 ordinary_targets.append(umo)
         return merge_targets, ordinary_targets
+
+    def _order_targets_for_push(self, targets: list[str]) -> list[str]:
+        ordinary_targets = []
+        merge_targets = []
+        for umo in targets:
+            if self.sender.supports_merged_forward_for_umo(self.context, umo):
+                merge_targets.append(umo)
+            else:
+                ordinary_targets.append(umo)
+        return ordinary_targets + merge_targets
 
     @staticmethod
     def _tweet_batches(batches: list[PendingTweetBatch]) -> list[tuple[str, str, list]]:

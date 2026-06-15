@@ -524,24 +524,86 @@ class TweetSender:
         batch_summary: str = "",
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
-        nodes = self.renderer.build_merged_nodes_for_uin(
-            10000, batches, group_label=group_label, batch_summary=batch_summary
+        has_video = self._merged_forward_has_video(batches)
+        raw_forward_available = (
+            has_video and self._onebot_call_action_for_umo(context, umo) is not None
         )
-        attempt = await self._send_context_message(
-            context, umo, MessageChain([nodes]), "merged scheduled tweets"
+        attempt = SendAttempt(
+            success=False,
+            retryable=True,
+            error="video merged forward not attempted",
         )
-        if attempt.success:
-            return MergedSendOutcome(success=True, mode="full_forward")
-        if not attempt.retryable:
-            return MergedSendOutcome(
-                success=attempt.uncertain,
-                mode="uncertain_delivery" if attempt.uncertain else "failed",
-                omitted_videos=omitted_videos,
-                error=attempt.error,
-                warning=attempt.warning,
+        if raw_forward_available:
+            raw_nodes = self.renderer.build_merged_onebot_nodes_for_uin(
+                10000, batches, group_label=group_label, batch_summary=batch_summary
             )
+            attempt = await self._send_onebot_umo_forward(
+                context, umo, raw_nodes, "merged scheduled tweets"
+            )
+            if attempt.success:
+                return MergedSendOutcome(success=True, mode="raw_forward")
+            if not attempt.retryable:
+                return MergedSendOutcome(
+                    success=attempt.uncertain,
+                    mode="uncertain_delivery" if attempt.uncertain else "failed",
+                    omitted_videos=omitted_videos,
+                    error=attempt.error,
+                    warning=attempt.warning,
+                )
+
+        if not raw_forward_available:
+            nodes = self.renderer.build_merged_nodes_for_uin(
+                10000, batches, group_label=group_label, batch_summary=batch_summary
+            )
+            attempt = await self._send_context_message(
+                context, umo, MessageChain([nodes]), "merged scheduled tweets"
+            )
+            if attempt.success:
+                return MergedSendOutcome(success=True, mode="full_forward")
+            if not attempt.retryable:
+                return MergedSendOutcome(
+                    success=attempt.uncertain,
+                    mode="uncertain_delivery" if attempt.uncertain else "failed",
+                    omitted_videos=omitted_videos,
+                    error=attempt.error,
+                    warning=attempt.warning,
+                )
 
         if omitted_videos:
+            raw_nodes_nv = self.renderer.build_merged_onebot_nodes_for_uin(
+                10000,
+                batches,
+                exclude_videos=True,
+                group_label=group_label,
+                batch_summary=batch_summary,
+            )
+            raw_retry_attempt = await self._send_onebot_umo_forward(
+                context,
+                umo,
+                raw_nodes_nv,
+                "merged tweets without videos",
+            )
+            if raw_retry_attempt.success:
+                logger.warning(
+                    f"Sent merged tweets to {umo} without {omitted_videos} "
+                    "video/GIF attachments after initial failure"
+                )
+                return MergedSendOutcome(
+                    success=True,
+                    mode="raw_forward_without_videos",
+                    omitted_videos=omitted_videos,
+                    error=attempt.error,
+                )
+            if not raw_retry_attempt.retryable:
+                return MergedSendOutcome(
+                    success=raw_retry_attempt.uncertain,
+                    mode=(
+                        "uncertain_delivery" if raw_retry_attempt.uncertain else "failed"
+                    ),
+                    omitted_videos=omitted_videos,
+                    error=raw_retry_attempt.error or attempt.error,
+                    warning=raw_retry_attempt.warning,
+                )
             nodes_nv = self.renderer.build_merged_nodes_for_uin(
                 10000,
                 batches,
@@ -1261,6 +1323,17 @@ class TweetSender:
             media.is_video for tweet in tweets for media in tweet.media if media.path
         )
 
+    def _merged_forward_has_video(self, batches: list[TweetBatch]) -> bool:
+        return bool(
+            self.send_video_attachments
+            and any(
+                media.path and media.is_video
+                for _, _, tweets in batches
+                for tweet in tweets
+                for media in tweet.media
+            )
+        )
+
     def _should_use_merge_for_count(self, tweet_count: int) -> bool:
         return (
             self.merge_tweet_threshold > 0
@@ -1467,6 +1540,90 @@ class TweetSender:
             return True
 
         return False
+
+    async def _send_onebot_umo_forward(
+        self,
+        context,
+        umo: str,
+        raw_nodes: list[dict],
+        label: str,
+    ) -> SendAttempt:
+        call_action = self._onebot_call_action_for_umo(context, umo)
+        if call_action is None:
+            return SendAttempt(
+                success=False,
+                retryable=True,
+                error="OneBot call_action unavailable for proactive merged forward",
+            )
+
+        message_type, session_id = self._onebot_target_from_umo(umo)
+        if not session_id:
+            return SendAttempt(
+                success=False,
+                retryable=True,
+                error=f"invalid OneBot target UMO: {umo}",
+            )
+
+        action = "send_group_forward_msg"
+        base_payload = {"group_id": session_id}
+        if message_type in {"private", "friend", "friendmessage", "privatemessage"}:
+            action = "send_private_forward_msg"
+            base_payload = {"user_id": session_id}
+
+        try:
+            await self._call_forward_action(
+                call_action,
+                action,
+                base_payload,
+                raw_nodes,
+            )
+        except Exception as exc:
+            error = str(exc)
+            if self._is_uncertain_delivery_error(exc):
+                warning = self.UNCERTAIN_DELIVERY_WARNING
+                self._log_uncertain_delivery(label, umo, exc)
+                return SendAttempt(
+                    success=False,
+                    retryable=False,
+                    uncertain=True,
+                    error=error,
+                    warning=warning,
+                )
+            logger.warning(f"Failed to send {label} via OneBot action to {umo}: {error}")
+            return SendAttempt(success=False, retryable=True, error=error)
+
+        return SendAttempt(success=True)
+
+    @classmethod
+    def _onebot_call_action_for_umo(cls, context, umo: str):
+        platform = cls._platform_inst_from_context(context, cls._platform_from_umo(umo))
+        for candidate in (
+            getattr(platform, "bot", None),
+            getattr(platform, "client", None),
+            getattr(platform, "adapter", None),
+            platform,
+        ):
+            if candidate is None:
+                continue
+            api = getattr(candidate, "api", None)
+            call_action = getattr(api, "call_action", None)
+            if callable(call_action):
+                return call_action
+            call_action = getattr(candidate, "call_action", None)
+            if callable(call_action):
+                return call_action
+        return None
+
+    @staticmethod
+    def _onebot_target_from_umo(umo: str) -> tuple[str, int | str]:
+        parts = str(umo or "").split(":", 2)
+        message_type = parts[1].strip().lower() if len(parts) >= 2 else ""
+        raw_session_id = parts[2].strip() if len(parts) >= 3 else ""
+        try:
+            session_id: int | str = int(raw_session_id)
+        except (TypeError, ValueError):
+            session_id = raw_session_id
+        return message_type, session_id
 
     @staticmethod
     async def _call_forward_action(

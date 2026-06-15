@@ -207,7 +207,7 @@ from sender import SendAttempt, TweetSender  # noqa: E402
 from sqlite_storage import SQLiteStorage  # noqa: E402
 from storage_adapter import StorageAdapter  # noqa: E402
 from tweet_rendering import TweetMessageRenderer  # noqa: E402
-from utils import TweetItem  # noqa: E402
+from utils import TweetItem, TweetMedia  # noqa: E402
 
 
 class _Owner:
@@ -1274,6 +1274,96 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(outcome.success)
         self.assertEqual(captured_summaries, ["overall summary", ""])
+
+    async def test_qq_merged_forward_with_video_uses_onebot_raw_nodes(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "aiocqhttp" else None
+
+        tweet = self._make_tweet("NASA", "101")
+        video_path = Path(self.temp_dir.name) / "clip.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="aiocqhttp:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+            group_label="榛樿鍒嗙粍",
+            batch_summary="overall summary",
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+        node_contents = [
+            segment
+            for node in calls[0][1]["messages"]
+            for segment in node["data"]["content"]
+        ]
+        self.assertTrue(any(segment["type"] == "video" for segment in node_contents))
+
+    async def test_qq_raw_video_retry_keeps_omitted_video_notice(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+                if len(calls) == 1:
+                    raise RuntimeError("video forward failed")
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "aiocqhttp" else None
+
+        tweet = self._make_tweet("NASA", "102")
+        video_path = Path(self.temp_dir.name) / "clip-retry.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-retry.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="aiocqhttp:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+            group_label="默认分组",
+            batch_summary="overall summary",
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward_without_videos")
+        self.assertEqual(len(calls), 2)
+        retry_segments = [
+            segment
+            for node in calls[1][1]["messages"]
+            for segment in node["data"]["content"]
+        ]
+        self.assertFalse(any(segment["type"] == "video" for segment in retry_segments))
+        retry_text = "\n".join(
+            segment["data"]["text"]
+            for segment in retry_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("视频/GIF 附件未作为消息发送", retry_text)
+        self.assertIn(tweet.x_url, retry_text)
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
         events = []
