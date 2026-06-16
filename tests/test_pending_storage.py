@@ -51,6 +51,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     published="2026-06-08",
                     media=[TweetMedia("image", "https://example.test/image.jpg", media_path)],
                     media_warnings=["warn"],
+                    ai_warnings=["AI warn"],
                     translation="你好",
                     image_caption="一张图",
                     ai_comment="评论",
@@ -91,6 +92,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(record.tweet.text, "hello")
             self.assertEqual(record.tweet.translation, "你好")
             self.assertEqual(record.tweet.media_warnings, ["warn"])
+            self.assertEqual(record.tweet.ai_warnings, ["AI warn"])
             self.assertEqual(record.tweet.media[0].path, media_path)
 
     async def test_pending_queue_marks_failure_and_publish(self):

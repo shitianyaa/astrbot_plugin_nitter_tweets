@@ -556,6 +556,12 @@ class TweetMessageRenderer:
         if ai_comment:
             blocks.append(f"评论：\n{ai_comment}")
 
+        if tweet.ai_warnings:
+            blocks.append(
+                "AI提示：\n"
+                + "\n".join(f"- {warning}" for warning in tweet.ai_warnings if warning)
+            )
+
         original_link = tweet.x_url or tweet.link
         if original_link:
             blocks.append(f"原帖：\n{original_link}")

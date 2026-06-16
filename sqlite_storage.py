@@ -1031,6 +1031,7 @@ class SQLiteStorage:
                 "link": tweet.link,
                 "published": tweet.published,
                 "media_warnings": tweet.media_warnings,
+                "ai_warnings": tweet.ai_warnings,
                 "translation": tweet.translation,
                 "image_caption": tweet.image_caption,
                 "ai_comment": tweet.ai_comment,
@@ -1051,6 +1052,11 @@ class SQLiteStorage:
             media_warnings=[
                 str(item)
                 for item in data.get("media_warnings", [])
+                if str(item)
+            ],
+            ai_warnings=[
+                str(item)
+                for item in data.get("ai_warnings", [])
                 if str(item)
             ],
             translation=str(data.get("translation") or ""),

@@ -153,12 +153,14 @@ from config_compat import (
 from enricher import (
     TranslationReport,
     TranslationTweetResult,
+    TweetTranslator,
     TweetEnricher,
     format_ai_tweet_summary,
 )
 from lark_delivery import lark_tweet_post_title
 from scheduler_config import SchedulerConfigReader
-from utils import TweetItem
+from tweet_rendering import TweetMessageRenderer
+from utils import TweetItem, TweetMedia
 
 
 class _Config(dict):
@@ -297,6 +299,22 @@ class _LLMContext:
     async def llm_generate(self, **kwargs):
         self.calls.append(kwargs)
         return types.SimpleNamespace(completion_text="这是一句评论")
+
+
+class _QueuedLLMContext:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    async def llm_generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.outcomes:
+            outcome = self.outcomes.pop(0)
+        else:
+            outcome = "ok"
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return types.SimpleNamespace(completion_text=str(outcome))
 
 
 class _ManualRenderer:
@@ -811,6 +829,147 @@ class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.commented, 1)
         self.assertEqual(len(context.calls), 1)
         self.assertEqual(tweet.ai_comment, "这是一句评论")
+
+    async def test_translation_retries_until_success_without_warning(self):
+        context = _QueuedLLMContext([
+            TimeoutError("slow"),
+            RuntimeError("busy"),
+            "中文翻译",
+        ])
+        translator = TweetTranslator(
+            context,
+            _Config(
+                {
+                    "translate_enabled": True,
+                    "translation_provider_id": "translate-provider",
+                    "translate_min_chars": 0,
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/303",
+            published="",
+        )
+
+        report = await translator.attach_translations([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.translated, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.translation, "中文翻译")
+        self.assertEqual(tweet.ai_warnings, [])
+
+    async def test_translation_failure_after_retries_adds_visible_warning(self):
+        context = _QueuedLLMContext([
+            TimeoutError("slow"),
+            TimeoutError("slow"),
+            TimeoutError("slow"),
+        ])
+        translator = TweetTranslator(
+            context,
+            _Config(
+                {
+                    "translate_enabled": True,
+                    "translation_provider_id": "translate-provider",
+                    "translate_min_chars": 0,
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/304",
+            published="",
+        )
+
+        report = await translator.attach_translations([tweet], "telegram:FriendMessage:1")
+        rendered = TweetMessageRenderer.format_tweet(1, "NASA", tweet)
+
+        self.assertEqual(report.failed, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.translation, "")
+        self.assertIn("AI 翻译调用失败", rendered)
+
+    async def test_comment_retries_until_success(self):
+        context = _QueuedLLMContext([RuntimeError("busy"), "补充评论"])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/305",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        self.assertEqual(len(context.calls), 2)
+        self.assertEqual(tweet.ai_comment, "补充评论")
+        self.assertEqual(tweet.ai_warnings, [])
+
+    async def test_vision_failure_after_retries_adds_visible_warning(self):
+        context = _QueuedLLMContext([
+            RuntimeError("vision failed"),
+            RuntimeError("vision failed"),
+            RuntimeError("vision failed"),
+        ])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "vision_enabled": True,
+                    "vision_probability": 1.0,
+                    "vision_provider_id": "vision-provider",
+                }
+            ),
+        )
+        image_path = Path(__file__)
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/306",
+            published="",
+            media=[TweetMedia("image", "https://example.test/image.jpg", image_path)],
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+        rendered = TweetMessageRenderer.format_tweet(1, "NASA", tweet)
+
+        self.assertEqual(report.vision_failed, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.image_caption, "")
+        self.assertIn("AI 识图调用失败", rendered)
+
+    async def test_normal_ai_skips_do_not_add_warning(self):
+        context = _QueuedLLMContext([])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/307",
+            published="",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 0)
+        self.assertEqual(context.calls, [])
+        self.assertEqual(tweet.ai_warnings, [])
 
 
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
