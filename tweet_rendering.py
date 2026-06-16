@@ -187,7 +187,7 @@ class TweetMessageRenderer:
                     instance,
                     tweet,
                     exclude_videos=exclude_videos,
-                    include_videos=False,
+                    include_videos=True,
                 )
                 items.append(
                     {
@@ -196,16 +196,6 @@ class TweetMessageRenderer:
                         "content": content,
                     }
                 )
-                if not exclude_videos and self.send_video_attachments:
-                    for media in tweet.media:
-                        if media.path and media.is_video:
-                            items.append(
-                                {
-                                    "name": f"@{username}",
-                                    "uin": str(uin),
-                                    "content": [self.raw_media(media)],
-                                }
-                            )
                 index += 1
 
         return [
@@ -375,19 +365,9 @@ class TweetMessageRenderer:
                 username,
                 instance,
                 tweet,
-                include_videos=False,
+                include_videos=True,
             )
             items.append({"name": f"@{username}", "uin": uin, "content": content})
-            if self.send_video_attachments:
-                for media in tweet.media:
-                    if media.path and media.is_video:
-                        items.append(
-                            {
-                                "name": f"@{username}",
-                                "uin": uin,
-                                "content": [self.raw_media(media)],
-                            }
-                        )
 
         return [
             {
