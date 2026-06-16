@@ -1340,17 +1340,29 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[0][0], "send_group_forward_msg")
         self.assertEqual(calls[0][1]["group_id"], 123456)
         messages = calls[0][1]["messages"]
-        self.assertEqual(len(messages), 2)
-        tweet_segments = messages[1]["data"]["content"]
-        self.assertTrue(any(segment["type"] == "text" for segment in tweet_segments))
-        self.assertTrue(any(segment["type"] == "video" for segment in tweet_segments))
+        self.assertEqual(len(messages), 3)
+        text_segments = messages[1]["data"]["content"]
+        video_segments = messages[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual(
+            [segment["type"] for segment in video_segments],
+            ["text", "video"],
+        )
         text = "\n".join(
             segment["data"]["text"]
-            for segment in tweet_segments
+            for segment in text_segments
+            if segment["type"] == "text"
+        )
+        video_text = "\n".join(
+            segment["data"]["text"]
+            for segment in video_segments
             if segment["type"] == "text"
         )
         self.assertIn("#1 @NASA", text)
         self.assertIn("nitter.test", text)
+        self.assertIn("视频/GIF 附件", video_text)
+        self.assertIn(tweet.x_url, video_text)
 
     async def test_qq_raw_video_retry_keeps_omitted_video_notice(self):
         sender = TweetSender({"send_video_attachments": True})
@@ -1401,7 +1413,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("视频/GIF 附件未作为消息发送", retry_text)
         self.assertIn(tweet.x_url, retry_text)
 
-    async def test_qq_direct_forward_fallback_keeps_text_with_video_node(self):
+    async def test_qq_direct_forward_fallback_labels_video_node(self):
         sender = TweetSender({"send_video_attachments": True})
 
         class _Event:
@@ -1423,10 +1435,22 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             start_index=1,
         )
 
-        self.assertEqual(len(raw_nodes), 2)
-        tweet_segments = raw_nodes[1]["data"]["content"]
-        self.assertTrue(any(segment["type"] == "text" for segment in tweet_segments))
-        self.assertTrue(any(segment["type"] == "video" for segment in tweet_segments))
+        self.assertEqual(len(raw_nodes), 3)
+        text_segments = raw_nodes[1]["data"]["content"]
+        video_segments = raw_nodes[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual(
+            [segment["type"] for segment in video_segments],
+            ["text", "video"],
+        )
+        video_text = "\n".join(
+            segment["data"]["text"]
+            for segment in video_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("视频/GIF 附件", video_text)
+        self.assertIn(tweet.x_url, video_text)
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
         events = []

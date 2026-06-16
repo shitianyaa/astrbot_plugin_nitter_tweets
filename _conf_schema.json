@@ -194,13 +194,13 @@
   "ai_vision": {
     "description": "AI 识图",
     "type": "object",
-    "hint": "控制图片识别开关、概率、图片数量和提示词。识图结果会进入推文内容上下文，不再单独显示识图段落。",
+    "hint": "控制图片识别开关、概率、图片数量和提示词。识图结果不会单独显示在推文消息中，主要作为 AI 评论的图片上下文；如果未启用 AI 评论，识图成功结果只会写入处理日志。",
     "items": {
       "vision_enabled": {
         "description": "启用 AI 识图",
         "type": "bool",
         "default": false,
-        "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。"
+        "hint": "开启后会按 vision_probability 概率调用视觉模型识别已下载图片。识图结果不会直接发出，主要提供给 AI 评论使用；未启用 AI 评论时仅记录到处理日志。"
       },
       "vision_provider_id": {
         "description": "AI 识图使用的模型",
@@ -708,7 +708,7 @@
     "description": "启用 AI 识图",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按 vision_probability 概率调用视觉模型，识别推文第一张图片并追加描述。",
+    "hint": "开启后会按 vision_probability 概率调用视觉模型识别已下载图片。识图结果不会直接发出，主要提供给 AI 评论使用；未启用 AI 评论时仅记录到处理日志。",
     "invisible": true
   },
   "vision_provider_id": {

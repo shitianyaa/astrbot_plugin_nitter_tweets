@@ -268,13 +268,13 @@ flowchart TD
 | `comment_probability` | 每条推文触发 AI 评论的概率，范围 `0-1`。 |
 | `comment_max_chars` | 发送给评论模型的单条推文最大正文长度。 |
 | `comment_prompt` | 评论提示词，可使用 `{text}`、`{translation}`、`{image_caption}`、`{link}`。 |
-| `vision_enabled` | 是否启用 AI 识图。 |
+| `vision_enabled` | 是否启用 AI 识图。识图结果不单独显示，主要作为 AI 评论上下文；未启用 AI 评论时，成功结果只会出现在处理日志中。 |
 | `vision_provider_id` | AI 识图使用的视觉模型。 |
 | `vision_probability` | 每条推文触发 AI 识图的概率，范围 `0-1`。 |
 | `vision_max_images` | 每条推文最多识别几张图片，范围 `1-12`。 |
 | `vision_prompt` | 识图提示词。 |
 
-AI 处理顺序为：翻译 → 媒体下载 → 识图 → 评论。评论不会仅凭原文触发；必须先有翻译结果或识图结果，且 `comment_enabled=true`、评论 provider 可用、`comment_probability` 命中，才会调用评论模型。`vision_max_images` 大于 1 时，同一条推文内的多张图片会并发识别；不同推文之间仍按当前流程逐条处理。
+AI 处理顺序为：翻译 → 媒体下载 → 识图 → 评论。识图结果默认不作为单独段落发送，主要用于给 AI 评论提供图片上下文；如果没有开启 AI 评论，识图成功不会改变推文消息内容，只会进入处理日志。评论不会仅凭原文触发；必须先有翻译结果或识图结果，且 `comment_enabled=true`、评论 provider 可用、`comment_probability` 命中，才会调用评论模型。`vision_max_images` 大于 1 时，同一条推文内的多张图片会并发识别；不同推文之间仍按当前流程逐条处理。
 
 ## 行为说明
 

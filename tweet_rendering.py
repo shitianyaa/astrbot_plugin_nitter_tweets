@@ -149,9 +149,25 @@ class TweetMessageRenderer:
                             tweet,
                             source=instance,
                             exclude_videos=exclude_videos,
+                            include_videos=False,
                         ),
                     )
                 )
+                if not exclude_videos and self.send_video_attachments:
+                    for media in tweet.media:
+                        if media.path and media.is_video:
+                            nodes.nodes.append(
+                                Node(
+                                    uin=uin,
+                                    name=f"@{username}",
+                                    content=self.build_video_node_components(
+                                        index,
+                                        username,
+                                        tweet,
+                                        media,
+                                    ),
+                                )
+                            )
                 index += 1
         return nodes
 
@@ -187,7 +203,7 @@ class TweetMessageRenderer:
                     instance,
                     tweet,
                     exclude_videos=exclude_videos,
-                    include_videos=True,
+                    include_videos=False,
                 )
                 items.append(
                     {
@@ -196,6 +212,21 @@ class TweetMessageRenderer:
                         "content": content,
                     }
                 )
+                if not exclude_videos and self.send_video_attachments:
+                    for media in tweet.media:
+                        if media.path and media.is_video:
+                            items.append(
+                                {
+                                    "name": f"@{username}",
+                                    "uin": str(uin),
+                                    "content": self._build_onebot_video_content(
+                                        index,
+                                        username,
+                                        tweet,
+                                        media,
+                                    ),
+                                }
+                            )
                 index += 1
 
         return [
@@ -295,6 +326,7 @@ class TweetMessageRenderer:
     def build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",
         exclude_videos: bool = False,
+        include_videos: bool = True,
     ):
         text = self.format_tweet_with_source(index, username, tweet, source)
         components = [Plain(text)]
@@ -322,11 +354,25 @@ class TweetMessageRenderer:
                     )
                     video_notice_added = True
                 continue
+            if media.is_video and not include_videos:
+                continue
             if media.is_image and self.send_image_attachments:
                 components.append(Image.fromFileSystem(str(media.path)))
             elif media.is_video:
                 components.append(Video.fromFileSystem(str(media.path)))
         return components
+
+    def build_video_node_components(
+        self,
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        media: TweetMedia,
+    ):
+        return [
+            Plain(self.format_video_attachment_text(index, username, tweet)),
+            Video.fromFileSystem(str(media.path)),
+        ]
 
     def build_onebot_nodes(
         self,
@@ -365,9 +411,24 @@ class TweetMessageRenderer:
                 username,
                 instance,
                 tweet,
-                include_videos=True,
+                include_videos=False,
             )
             items.append({"name": f"@{username}", "uin": uin, "content": content})
+            if self.send_video_attachments:
+                for media in tweet.media:
+                    if media.path and media.is_video:
+                        items.append(
+                            {
+                                "name": f"@{username}",
+                                "uin": uin,
+                                "content": self._build_onebot_video_content(
+                                    index,
+                                    username,
+                                    tweet,
+                                    media,
+                                ),
+                            }
+                        )
 
         return [
             {
@@ -391,6 +452,18 @@ class TweetMessageRenderer:
         if media.is_image:
             return {"type": "image", "data": {"file": uri}}
         return {"type": "video", "data": {"file": uri}}
+
+    def _build_onebot_video_content(
+        self,
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        media: TweetMedia,
+    ) -> list[dict]:
+        return [
+            self.raw_text(self.format_video_attachment_text(index, username, tweet)),
+            self.raw_media(media),
+        ]
 
     def _build_onebot_tweet_content(
         self,
@@ -560,6 +633,18 @@ class TweetMessageRenderer:
             blocks.append(f"Nitter：{TweetMessageRenderer.format_instance_label(source)}")
 
         return "\n\n".join(blocks)
+
+    @staticmethod
+    def format_video_attachment_text(
+        index: int,
+        username: str,
+        tweet: TweetItem,
+    ) -> str:
+        original_link = tweet.x_url or tweet.link
+        lines = [f"#{index} @{username}", "视频/GIF 附件"]
+        if original_link:
+            lines.append(f"原帖：\n{original_link}")
+        return "\n".join(lines)
 
     @classmethod
     def format_header(
