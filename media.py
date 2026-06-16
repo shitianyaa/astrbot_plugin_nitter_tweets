@@ -114,6 +114,7 @@ class XdownMediaCandidate:
     url: str
     label: str = ""
     resolution: int | None = None
+    duration_seconds: float | None = None
 
 
 @dataclass(slots=True)
@@ -142,6 +143,14 @@ class MediaService:
         self.video_resolution_preference = str(
             config_get(config, "video_resolution_preference", "highest") or "highest"
         ).strip().lower()
+        self.max_video_duration_seconds = int(
+            clamp_float(
+                config_get(config, "max_video_duration_minutes", 8.0),
+                1.0,
+                8.0,
+            )
+            * 60
+        )
         self.timeout = clamp_float(
             config_get(config, "media_timeout", 25.0), 5.0, 120.0
         )
@@ -517,6 +526,7 @@ class MediaService:
                     url=full_url,
                     label=label,
                     resolution=self._extract_video_resolution(label, full_url),
+                    duration_seconds=self._extract_video_duration(label, full_url),
                 )
             )
         return result
@@ -543,9 +553,22 @@ class MediaService:
                     "[NitterTweets] skipping image media because video/GIF was "
                     f"detected: skipped={skipped_images}, tweet={tweet.x_url}"
                 )
-            return [TweetMedia(selected.kind, selected.url)]
+            return [
+                TweetMedia(
+                    selected.kind,
+                    selected.url,
+                    duration_seconds=selected.duration_seconds,
+                )
+            ]
 
-        return [TweetMedia(item.kind, item.url) for item in candidates]
+        return [
+            TweetMedia(
+                item.kind,
+                item.url,
+                duration_seconds=item.duration_seconds,
+            )
+            for item in candidates
+        ]
 
     def _select_video_candidate(
         self,
@@ -554,6 +577,11 @@ class MediaService:
     ) -> XdownMediaCandidate | None:
         if not candidates:
             return None
+
+        allowed_candidates = self._filter_video_duration_candidates(tweet, candidates)
+        if not allowed_candidates:
+            return None
+        candidates = allowed_candidates
 
         preference = self.video_resolution_preference or "highest"
         known = [item for item in candidates if item.resolution is not None]
@@ -594,6 +622,39 @@ class MediaService:
         )
         return selected
 
+    def _filter_video_duration_candidates(
+        self,
+        tweet: TweetItem,
+        candidates: list[XdownMediaCandidate],
+    ) -> list[XdownMediaCandidate]:
+        max_seconds = self.max_video_duration_seconds
+        allowed = []
+        skipped_durations: list[float] = []
+        for item in candidates:
+            duration = item.duration_seconds
+            if duration is None:
+                duration = self._probe_remote_video_duration(item.url)
+                item.duration_seconds = duration
+            if duration is not None and duration > max_seconds:
+                skipped_durations.append(duration)
+                continue
+            allowed.append(item)
+
+        if skipped_durations and not allowed:
+            self._add_media_warning(
+                tweet,
+                "视频/GIF 时长超过配置上限 "
+                f"{self._format_duration(max_seconds)}，已跳过下载并保留原文链接",
+            )
+        elif skipped_durations:
+            longest = max(skipped_durations)
+            logger.info(
+                "[NitterTweets] skipped long video candidates: "
+                f"longest={self._format_duration(longest)}, "
+                f"limit={self._format_duration(max_seconds)}, tweet={tweet.x_url}"
+            )
+        return allowed
+
     @staticmethod
     def _parse_resolution_preference(value: str) -> int | None:
         match = re.search(r"(\d{3,4})\s*p?", str(value or "").lower())
@@ -625,6 +686,155 @@ class MediaService:
         if size_matches:
             return max(size_matches)
         return None
+
+    @classmethod
+    def _extract_video_duration(cls, label: str, url: str) -> float | None:
+        token_payload = cls._xdown_token_payload(url)
+        duration = cls._duration_from_mapping(token_payload)
+        if duration is not None:
+            return duration
+
+        text = " ".join(
+            [
+                label or "",
+                url or "",
+                str(token_payload.get("filename") or ""),
+                str(token_payload.get("url") or ""),
+            ]
+        )
+        return cls._duration_from_text(text)
+
+    @classmethod
+    def _duration_from_mapping(cls, data: dict) -> float | None:
+        for key in (
+            "duration",
+            "duration_seconds",
+            "durationSeconds",
+            "length",
+            "length_seconds",
+        ):
+            duration = cls._coerce_duration_seconds(data.get(key))
+            if duration is not None:
+                return duration
+        return None
+
+    @classmethod
+    def _duration_from_text(cls, text: str) -> float | None:
+        text = str(text or "")
+        for match in re.finditer(r"(?<!\d)(\d{1,2}):(\d{2})(?::(\d{2}))?(?!\d)", text):
+            parts = [int(value) for value in match.groups(default="0")]
+            if match.group(3) is None:
+                minutes, seconds = parts[0], parts[1]
+                return float(minutes * 60 + seconds)
+            hours, minutes, seconds = parts
+            return float(hours * 3600 + minutes * 60 + seconds)
+
+        match = re.search(
+            r"(?i)(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m)\b",
+            text,
+        )
+        if not match:
+            return None
+        value = float(match.group(1))
+        unit = match.group(2).lower()
+        if unit.startswith("m") and unit != "ms":
+            return value * 60
+        return value
+
+    @staticmethod
+    def _coerce_duration_seconds(value) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            number = float(value)
+            return number if number > 0 else None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return MediaService._duration_from_text(text)
+        return number if number > 0 else None
+
+    @classmethod
+    def _probe_mp4_duration(cls, data: bytes) -> float | None:
+        if not data:
+            return None
+        return cls._find_mp4_duration(data, 0, len(data))
+
+    @classmethod
+    def _find_mp4_duration(cls, data: bytes, start: int, end: int) -> float | None:
+        offset = start
+        container_types = {b"moov", b"trak", b"mdia"}
+        while offset + 8 <= end:
+            size = int.from_bytes(data[offset : offset + 4], "big")
+            box_type = data[offset + 4 : offset + 8]
+            header_size = 8
+            if size == 1 and offset + 16 <= end:
+                size = int.from_bytes(data[offset + 8 : offset + 16], "big")
+                header_size = 16
+            elif size == 0:
+                size = end - offset
+            if size < header_size or offset + size > end:
+                break
+
+            box_start = offset + header_size
+            box_end = offset + size
+            if box_type == b"mvhd":
+                return cls._parse_mvhd_duration(data[box_start:box_end])
+            if box_type in container_types:
+                duration = cls._find_mp4_duration(data, box_start, box_end)
+                if duration is not None:
+                    return duration
+            offset += size
+        return None
+
+    @staticmethod
+    def _parse_mvhd_duration(payload: bytes) -> float | None:
+        if len(payload) < 20:
+            return None
+        version = payload[0]
+        if version == 0:
+            if len(payload) < 20:
+                return None
+            timescale = int.from_bytes(payload[12:16], "big")
+            duration = int.from_bytes(payload[16:20], "big")
+        elif version == 1:
+            if len(payload) < 32:
+                return None
+            timescale = int.from_bytes(payload[20:24], "big")
+            duration = int.from_bytes(payload[24:32], "big")
+        else:
+            return None
+        if timescale <= 0 or duration <= 0:
+            return None
+        return duration / timescale
+
+    def _probe_remote_video_duration(self, url: str) -> float | None:
+        request = Request(
+            url,
+            headers={
+                "User-Agent": self.user_agent,
+                "Referer": "https://xdown.app/",
+                "Range": "bytes=0-1048575",
+            },
+        )
+        try:
+            with urlopen(request, timeout=min(self.timeout, 10.0)) as response:
+                data = response.read(1_048_576)
+        except Exception as exc:
+            logger.debug(f"[NitterTweets] failed to probe video duration: {exc}")
+            return None
+        return self._probe_mp4_duration(data)
+
+    @staticmethod
+    def _format_duration(seconds: float | int) -> str:
+        total = max(0, int(round(float(seconds))))
+        minutes, seconds = divmod(total, 60)
+        if minutes:
+            return f"{minutes}分{seconds:02d}秒"
+        return f"{seconds}秒"
 
     @staticmethod
     def _xdown_token_payload(url: str) -> dict:

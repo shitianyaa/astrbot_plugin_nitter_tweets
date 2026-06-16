@@ -1056,6 +1056,10 @@ class NitterTweetScheduler:
                         if batch_summary_tracker is not None
                         else ""
                     )
+                    tweet_start_index = self._scheduled_tweet_start_index(
+                        batch,
+                        batch_progress,
+                    )
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -1065,6 +1069,7 @@ class NitterTweetScheduler:
                         group_label=group_label,
                         header_text=header_text,
                         batch_summary=target_batch_summary,
+                        tweet_start_index=tweet_start_index,
                     )
                     if outcome.success:
                         success += 1
@@ -1118,6 +1123,17 @@ class NitterTweetScheduler:
             lines.append(f"所有账号：{batch.account_index}/{batch.account_total}")
         lines.append(f"该账号推文：{tweet_index}/{tweet_total}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _scheduled_tweet_start_index(
+        batch: PendingTweetBatch,
+        batch_progress: tuple[int, int] | None = None,
+    ) -> int:
+        if batch_progress and batch_progress[0] > 0:
+            return batch_progress[0]
+        if batch.tweet_index > 0:
+            return max(batch.tweet_index - len(batch.tweets) + 1, 1)
+        return 1
 
     def _log_ai_process_results(
         self,

@@ -130,6 +130,7 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         header_text: str = "",
+        tweet_start_index: int = 1,
     ) -> bool:
         if self._should_use_lark_for_event(event):
             return await self._send_lark_event(
@@ -139,6 +140,7 @@ class TweetSender:
                 tweets,
                 notices=notices,
                 header_text=header_text,
+                tweet_start_index=tweet_start_index,
             )
 
         if not self._should_use_forward_for_event(
@@ -151,15 +153,18 @@ class TweetSender:
                 tweets,
                 notices=notices,
                 header_text=header_text,
+                tweet_start_index=tweet_start_index,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
             return await self._send_event_forward_chunks(
-                event, username, instance, tweets, notices=notices
+                event, username, instance, tweets, notices=notices,
+                tweet_start_index=tweet_start_index,
             )
 
         return await self._send_event_forward_chunk(
-            event, username, instance, tweets, notices=notices
+            event, username, instance, tweets, notices=notices,
+            tweet_start_index=tweet_start_index,
         )
 
     def should_merge_for_event(self, event, tweet_count: int) -> bool:
@@ -175,11 +180,23 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         notices: list[str] | None = None,
+        tweet_start_index: int = 1,
     ) -> bool:
+        chunks = self._tweet_chunks(tweets)
+        indexed_chunks = []
+        index = tweet_start_index
+        for chunk in chunks:
+            indexed_chunks.append((index, chunk))
+            index += len(chunk)
         return await self._send_chunked_bool(
-            self._tweet_chunks(tweets),
-            lambda chunk: self._send_event_forward_chunk(
-                event, username, instance, chunk, notices=notices
+            indexed_chunks,
+            lambda item: self._send_event_forward_chunk(
+                event,
+                username,
+                instance,
+                item[1],
+                notices=notices,
+                tweet_start_index=item[0],
             ),
         )
 
@@ -190,12 +207,15 @@ class TweetSender:
         instance: str,
         tweets: list[TweetItem],
         notices: list[str] | None = None,
+        tweet_start_index: int = 1,
     ) -> bool:
         nodes = self.renderer.build_nodes(
-            event, username, instance, tweets, notices=notices
+            event, username, instance, tweets, notices=notices,
+            start_index=tweet_start_index,
         )
         raw_nodes = self.renderer.build_onebot_nodes(
-            event, username, instance, tweets, notices=notices
+            event, username, instance, tweets, notices=notices,
+            start_index=tweet_start_index,
         )
         try:
             await event.send(event.chain_result([nodes]))
@@ -213,7 +233,8 @@ class TweetSender:
             try:
                 nodes_nv = self.renderer.build_nodes(
                     event, username, instance, tweets,
-                    exclude_videos=True, notices=notices
+                    exclude_videos=True, notices=notices,
+                    start_index=tweet_start_index,
                 )
                 await event.send(event.chain_result([nodes_nv]))
                 logger.info("Sent forwarded tweets without videos after initial failure")
@@ -249,6 +270,7 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> bool:
         return (
             await self.send_to_umo_with_outcome(
@@ -260,6 +282,7 @@ class TweetSender:
                 group_label,
                 header_text,
                 batch_summary,
+                tweet_start_index,
             )
         ).success
 
@@ -273,6 +296,7 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> SendOutcome:
         if self._should_use_lark_for_umo(context, umo):
             return await self._send_lark_to_umo(
@@ -284,6 +308,7 @@ class TweetSender:
                 group_label,
                 header_text,
                 batch_summary,
+                tweet_start_index,
             )
 
         if not self._should_use_forward_for_umo(
@@ -298,6 +323,7 @@ class TweetSender:
                 group_label,
                 header_text,
                 batch_summary,
+                tweet_start_index,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
@@ -310,6 +336,7 @@ class TweetSender:
                 group_label,
                 header_text,
                 batch_summary,
+                tweet_start_index,
             )
 
         return await self._send_forward_chunk_to_umo(
@@ -321,6 +348,7 @@ class TweetSender:
             group_label,
             header_text,
             batch_summary,
+            tweet_start_index,
         )
 
     async def _send_forward_chunks_to_umo(
@@ -333,18 +361,26 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> SendOutcome:
+        chunks = self._tweet_chunks(tweets)
+        indexed_chunks = []
+        index = tweet_start_index
+        for chunk in chunks:
+            indexed_chunks.append((index, chunk))
+            index += len(chunk)
         return await self._send_chunked_outcomes(
-            self._tweet_chunks(tweets),
-            lambda chunk: self._send_forward_chunk_to_umo(
+            indexed_chunks,
+            lambda item: self._send_forward_chunk_to_umo(
                 context,
                 umo,
                 username,
                 instance,
-                chunk,
+                item[1],
                 group_label,
                 header_text,
                 batch_summary,
+                item[0],
             ),
             lambda error, warning: SendOutcome(
                 success=True, error=error, warning=warning
@@ -366,12 +402,14 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> SendOutcome:
         nodes = self.renderer.build_nodes_for_uin(
             10000,
             username,
             instance,
             tweets,
+            start_index=tweet_start_index,
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
@@ -395,6 +433,7 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
+                start_index=tweet_start_index,
                 exclude_videos=True,
                 group_label=group_label,
                 header_text=header_text,
@@ -429,6 +468,7 @@ class TweetSender:
                             username,
                             instance,
                             tweets,
+                            start_index=tweet_start_index,
                             group_label=group_label,
                             header_text=header_text,
                             batch_summary=batch_summary,
@@ -488,15 +528,20 @@ class TweetSender:
             nonlocal omitted_videos
             omitted_videos += outcome.omitted_videos
 
-        chunked_batches = list(enumerate(self._batch_chunks(batches)))
+        chunked_batches = []
+        start_index = 1
+        for chunk_index, chunk in enumerate(self._batch_chunks(batches)):
+            chunked_batches.append((chunk_index, start_index, chunk))
+            start_index += self._count_batch_tweets(chunk)
         return await self._send_chunked_outcomes(
             chunked_batches,
             lambda indexed_chunk: self._send_merged_forward_chunk_to_umo(
                 context,
                 umo,
-                indexed_chunk[1],
+                indexed_chunk[2],
                 group_label,
                 batch_summary if indexed_chunk[0] == 0 else "",
+                tweet_start_index=indexed_chunk[1],
             ),
             lambda error, warning: MergedSendOutcome(
                 success=True,
@@ -522,6 +567,7 @@ class TweetSender:
         batches: list[TweetBatch],
         group_label: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
         has_video = self._merged_forward_has_video(batches)
@@ -535,7 +581,11 @@ class TweetSender:
         )
         if raw_forward_available:
             raw_nodes = self.renderer.build_merged_onebot_nodes_for_uin(
-                10000, batches, group_label=group_label, batch_summary=batch_summary
+                10000,
+                batches,
+                start_index=tweet_start_index,
+                group_label=group_label,
+                batch_summary=batch_summary,
             )
             attempt = await self._send_onebot_umo_forward(
                 context, umo, raw_nodes, "merged scheduled tweets"
@@ -553,7 +603,11 @@ class TweetSender:
 
         if not raw_forward_available:
             nodes = self.renderer.build_merged_nodes_for_uin(
-                10000, batches, group_label=group_label, batch_summary=batch_summary
+                10000,
+                batches,
+                start_index=tweet_start_index,
+                group_label=group_label,
+                batch_summary=batch_summary,
             )
             attempt = await self._send_context_message(
                 context, umo, MessageChain([nodes]), "merged scheduled tweets"
@@ -573,6 +627,7 @@ class TweetSender:
             raw_nodes_nv = self.renderer.build_merged_onebot_nodes_for_uin(
                 10000,
                 batches,
+                start_index=tweet_start_index,
                 exclude_videos=True,
                 group_label=group_label,
                 batch_summary=batch_summary,
@@ -607,6 +662,7 @@ class TweetSender:
             nodes_nv = self.renderer.build_merged_nodes_for_uin(
                 10000,
                 batches,
+                start_index=tweet_start_index,
                 exclude_videos=True,
                 group_label=group_label,
                 batch_summary=batch_summary,
@@ -647,7 +703,10 @@ class TweetSender:
                 [
                     Plain(
                         self.renderer.format_merged_plain(
-                            batches, group_label, batch_summary
+                            batches,
+                            start_index=tweet_start_index,
+                            group_label=group_label,
+                            batch_summary=batch_summary,
                         )
                     )
                 ]
@@ -677,6 +736,7 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         header_text: str = "",
+        tweet_start_index: int = 1,
     ) -> bool:
         try:
             await event.send(
@@ -685,6 +745,7 @@ class TweetSender:
                         username,
                         instance,
                         tweets,
+                        start_index=tweet_start_index,
                         notices=notices,
                         header_text=header_text,
                     )
@@ -705,6 +766,7 @@ class TweetSender:
                     MessageChain(
                         self.renderer.build_direct_components(
                             username, instance, tweets,
+                            start_index=tweet_start_index,
                             exclude_videos=True,
                             notices=notices,
                             header_text=header_text,
@@ -736,6 +798,7 @@ class TweetSender:
                                 username,
                                 instance,
                                 tweets,
+                                start_index=tweet_start_index,
                                 notices=notices,
                                 header_text=header_text,
                             )
@@ -763,6 +826,7 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> SendOutcome:
         attempt = await self._send_context_message(
             context,
@@ -772,6 +836,7 @@ class TweetSender:
                     username,
                     instance,
                     tweets,
+                    start_index=tweet_start_index,
                     group_label=group_label,
                     header_text=header_text,
                     batch_summary=batch_summary,
@@ -797,6 +862,7 @@ class TweetSender:
                         username,
                         instance,
                         tweets,
+                        start_index=tweet_start_index,
                         exclude_videos=True,
                         group_label=group_label,
                         header_text=header_text,
@@ -829,6 +895,7 @@ class TweetSender:
                             username,
                             instance,
                             tweets,
+                            start_index=tweet_start_index,
                             group_label=group_label,
                             header_text=header_text,
                             batch_summary=batch_summary,
@@ -851,6 +918,7 @@ class TweetSender:
         batches: list[TweetBatch],
         group_label: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
         attempt = await self._send_context_message(
@@ -859,6 +927,7 @@ class TweetSender:
             MessageChain(
                 self.renderer.build_merged_direct_components(
                     batches,
+                    start_index=tweet_start_index,
                     group_label=group_label,
                     batch_summary=batch_summary,
                 )
@@ -883,6 +952,7 @@ class TweetSender:
                 MessageChain(
                     self.renderer.build_merged_direct_components(
                         batches,
+                        start_index=tweet_start_index,
                         exclude_videos=True,
                         group_label=group_label,
                         batch_summary=batch_summary,
@@ -920,7 +990,10 @@ class TweetSender:
                 [
                     Plain(
                         self.renderer.format_merged_plain(
-                            batches, group_label, batch_summary
+                            batches,
+                            start_index=tweet_start_index,
+                            group_label=group_label,
+                            batch_summary=batch_summary,
                         )
                     )
                 ]
@@ -950,11 +1023,13 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         header_text: str = "",
+        tweet_start_index: int = 1,
     ) -> bool:
         components = self.renderer.build_direct_components(
             username,
             instance,
             tweets,
+            start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
         )
@@ -968,6 +1043,7 @@ class TweetSender:
                 tweets,
                 notices=notices,
                 header_text=header_text,
+                tweet_start_index=tweet_start_index,
             )
 
         text = plain_text_from_components(components)
@@ -1083,11 +1159,13 @@ class TweetSender:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        tweet_start_index: int = 1,
     ) -> SendOutcome:
         components = self.renderer.build_direct_components(
             username,
             instance,
             tweets,
+            start_index=tweet_start_index,
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
@@ -1110,6 +1188,7 @@ class TweetSender:
                 group_label,
                 header_text,
                 batch_summary,
+                tweet_start_index,
             )
 
         post_attempt = await send_lark_post(

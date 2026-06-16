@@ -42,6 +42,7 @@ def _video(resolution: int) -> XdownMediaCandidate:
         f"https://example.test/video_{resolution}p.mp4",
         f"Download {resolution}p MP4",
         resolution,
+        60.0,
     )
 
 
@@ -99,6 +100,75 @@ class MediaResolutionTest(unittest.TestCase):
 
         self.assertEqual(len(media), 1)
         self.assertIn("568p", media[0].url)
+
+    def test_long_video_is_skipped_before_download(self):
+        service = MediaService({"max_video_duration_minutes": 3})
+        tweet = _tweet()
+
+        media = service._normalize_media_candidates(
+            tweet,
+            [
+                XdownMediaCandidate(
+                    "video",
+                    "https://example.test/long.mp4",
+                    "Download 1280p MP4 04:30",
+                    1280,
+                    270.0,
+                ),
+            ],
+        )
+
+        self.assertEqual(media, [])
+        self.assertIn("3分00秒", tweet.media_warnings[0])
+
+    def test_long_highest_video_falls_back_to_allowed_resolution(self):
+        service = MediaService({"video_resolution_preference": "highest"})
+
+        media = service._normalize_media_candidates(
+            _tweet(),
+            [
+                XdownMediaCandidate(
+                    "video",
+                    "https://example.test/1280p.mp4",
+                    "Download 1280p MP4",
+                    1280,
+                    600.0,
+                ),
+                XdownMediaCandidate(
+                    "video",
+                    "https://example.test/852p.mp4",
+                    "Download 852p MP4",
+                    852,
+                    120.0,
+                ),
+            ],
+        )
+
+        self.assertEqual(len(media), 1)
+        self.assertIn("852p", media[0].url)
+        self.assertEqual(media[0].duration_seconds, 120.0)
+
+    def test_extracts_duration_from_token_payload(self):
+        token = (
+            "header."
+            "eyJkdXJhdGlvbl9zZWNvbmRzIjo5MH0"
+            ".signature"
+        )
+
+        duration = MediaService._extract_video_duration(
+            "",
+            f"https://xdown.app/download?token={token}",
+        )
+
+        self.assertEqual(duration, 90.0)
+
+    def test_extracts_duration_from_label(self):
+        duration = MediaService._extract_video_duration(
+            "Download 1280p MP4 02:15",
+            "https://example.test/video.mp4",
+        )
+
+        self.assertEqual(duration, 135.0)
 
     def test_image_only_candidates_are_unchanged(self):
         service = MediaService({})

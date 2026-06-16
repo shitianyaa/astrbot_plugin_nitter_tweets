@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 媒体设置新增 `max_video_duration_minutes`，视频/GIF 能读取到时长且超过配置上限时会跳过下载并保留原文链接；`scripts/test_video_download.py` 同步新增 `--max-duration-minutes` 验证参数。
+
 ## [0.10.0] - 2026-06-15
 
 ### Added

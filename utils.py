@@ -22,6 +22,7 @@ class TweetMedia:
     kind: str
     url: str
     path: Path | None = None
+    duration_seconds: float | None = None
 
     @property
     def is_image(self) -> bool:

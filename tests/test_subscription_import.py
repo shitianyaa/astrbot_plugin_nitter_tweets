@@ -300,9 +300,17 @@ class _LLMContext:
 
 
 class _ManualRenderer:
-    def format_plain(self, username, instance, tweets, notices=None, header_text=""):
+    def format_plain(
+        self,
+        username,
+        instance,
+        tweets,
+        start_index=1,
+        notices=None,
+        header_text="",
+    ):
         ids = ",".join(tweet.status_id for tweet in tweets)
-        return f"fallback:{username}:{ids}:{header_text}"
+        return f"fallback:{username}:{ids}:{header_text}:{start_index}"
 
 
 class _ManualSender:
@@ -310,15 +318,24 @@ class _ManualSender:
         self.events = events
         self.renderer = _ManualRenderer()
         self._should_merge = should_merge
+        self.start_indexes = []
 
     def should_merge_for_event(self, event, tweet_count):
         return self._should_merge
 
     async def send(
-        self, event, username, instance, tweets, notices=None, header_text=""
+        self,
+        event,
+        username,
+        instance,
+        tweets,
+        notices=None,
+        header_text="",
+        tweet_start_index=1,
     ):
         ids = ",".join(tweet.status_id for tweet in tweets)
         self.events.append(f"send:{username}:{ids}:{header_text}")
+        self.start_indexes.append(tweet_start_index)
         return True
 
 
@@ -864,6 +881,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
                 "cleanup:102",
             ],
         )
+        self.assertEqual(plugin.sender.start_indexes, [1, 2])
 
     async def test_mirror_probe_uses_default_limit_without_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))

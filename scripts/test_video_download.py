@@ -53,6 +53,7 @@ def _build_config(args: argparse.Namespace) -> dict:
         "max_media_per_tweet": args.max_media,
         "media_timeout": args.timeout,
         "media_max_size_mb": args.max_size_mb,
+        "max_video_duration_minutes": args.max_duration_minutes,
         "media_cache_retention_days": args.retention_days,
         "xdown_api_url": args.xdown_url,
         "media_user_agent": args.user_agent,
@@ -68,8 +69,13 @@ def _print_candidates(label: str, candidates) -> None:
         return
     for index, item in enumerate(candidates, start=1):
         resolution = f" resolution={item.resolution}p" if item.resolution else ""
+        duration = (
+            f" duration={item.duration_seconds:.1f}s"
+            if item.duration_seconds is not None
+            else ""
+        )
         print(
-            f"  {index}. kind={item.kind}{resolution} "
+            f"  {index}. kind={item.kind}{resolution}{duration} "
             f"label={item.label!r} url={item.url}"
         )
 
@@ -81,7 +87,12 @@ def _print_media(label: str, media_items) -> None:
         print("  none")
         return
     for index, item in enumerate(media_items, start=1):
-        print(f"  {index}. kind={item.kind} url={item.url}")
+        duration = (
+            f" duration={item.duration_seconds:.1f}s"
+            if item.duration_seconds is not None
+            else ""
+        )
+        print(f"  {index}. kind={item.kind}{duration} url={item.url}")
         if item.path:
             path = Path(item.path)
             size = path.stat().st_size if path.exists() else 0
@@ -132,6 +143,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"cache_dir={service.cache_dir}")
     print(f"xdown_api={service.xdown_url}")
     print(f"resolution={service.video_resolution_preference}")
+    print(f"max_video_duration={service.max_video_duration_seconds}s")
 
     try:
         candidates = await asyncio.to_thread(service._resolve_media_candidates, tweet)
@@ -181,6 +193,12 @@ def _parse_args() -> argparse.Namespace:
         help="Video resolution preference: highest, lowest, 1280p, 852p, 568p, etc.",
     )
     parser.add_argument("--max-media", type=int, default=4)
+    parser.add_argument(
+        "--max-duration-minutes",
+        type=float,
+        default=8.0,
+        help="Skip videos longer than this many minutes; range is clamped to 1-8.",
+    )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--max-size-mb", type=float, default=100.0)
     parser.add_argument("--retention-days", type=float, default=3.0)

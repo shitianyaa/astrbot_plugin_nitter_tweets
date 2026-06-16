@@ -329,6 +329,7 @@ class _Sender:
         self.headers = []
         self.batch_summaries = []
         self.merged_batch_summaries = []
+        self.tweet_start_indexes = []
         self.success = success
         self.failed_targets = set(failed_targets or [])
         self.merge_targets = set(merge_targets or [])
@@ -347,12 +348,14 @@ class _Sender:
         group_label="",
         header_text="",
         batch_summary="",
+        tweet_start_index=1,
     ):
         self.events.append(f"send:{umo}:{username}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         self.group_labels.append((umo, username, group_label))
         self.headers.append((umo, username, header_text))
         self.batch_summaries.append((umo, username, batch_summary))
+        self.tweet_start_indexes.append((umo, username, tweet_start_index))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
@@ -391,6 +394,7 @@ class _CancelingSender(_Sender):
         group_label="",
         header_text="",
         batch_summary="",
+        tweet_start_index=1,
     ):
         self.events.append(f"cancel:{umo}:{username}")
         raise scheduler_module.asyncio.CancelledError()
@@ -407,6 +411,7 @@ class _RecordingSender(_Sender):
         group_label="",
         header_text="",
         batch_summary="",
+        tweet_start_index=1,
     ):
         status_ids = ",".join(tweet.status_id for tweet in tweets)
         self.events.append(f"send:{umo}:{username}:{status_ids}")
@@ -414,6 +419,7 @@ class _RecordingSender(_Sender):
         self.group_labels.append((umo, username, group_label))
         self.headers.append((umo, username, header_text))
         self.batch_summaries.append((umo, username, batch_summary))
+        self.tweet_start_indexes.append((umo, username, tweet_start_index))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
@@ -592,6 +598,21 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("分组：Tech", header)
         self.assertIn("分组：Tech", merged_header)
 
+    def test_plain_tweet_body_uses_start_index_and_source(self):
+        header = TweetMessageRenderer.format_header(
+            "NASA", "https://nitter.test", 1, group_label="Tech"
+        )
+        text = TweetMessageRenderer().format_plain(
+            "NASA",
+            "https://nitter.test",
+            [self._make_tweet("NASA", "101")],
+            start_index=5,
+        )
+
+        self.assertNotIn("nitter.test", header)
+        self.assertIn("#5 @NASA", text)
+        self.assertIn("nitter.test", text)
+
     def test_tweet_rendering_omits_image_caption_block(self):
         tweet = self._make_tweet("NASA", "101")
         tweet.image_caption = "一张火箭照片"
@@ -650,6 +671,14 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertNotIn("最近 1 条推文", "\n".join(item[2] for item in sender.headers))
+
+        self.assertEqual(
+            sender.tweet_start_indexes,
+            [
+                ("telegram:FriendMessage:1", "NASA", 1),
+                ("telegram:FriendMessage:1", "NASA", 2),
+            ],
+        )
 
     async def _enqueue_deferred_tweets(self, scheduler, tweets_by_user):
         for username, tweets in tweets_by_user.items():
@@ -1249,6 +1278,7 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
                 self,
                 uin,
                 batches,
+                start_index=1,
                 exclude_videos=False,
                 group_label="",
                 batch_summary="",
@@ -1309,12 +1339,20 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome.mode, "raw_forward")
         self.assertEqual(calls[0][0], "send_group_forward_msg")
         self.assertEqual(calls[0][1]["group_id"], 123456)
-        node_contents = [
-            segment
-            for node in calls[0][1]["messages"]
-            for segment in node["data"]["content"]
-        ]
-        self.assertTrue(any(segment["type"] == "video" for segment in node_contents))
+        messages = calls[0][1]["messages"]
+        self.assertEqual(len(messages), 3)
+        text_segments = messages[1]["data"]["content"]
+        video_segments = messages[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual([segment["type"] for segment in video_segments], ["video"])
+        text = "\n".join(
+            segment["data"]["text"]
+            for segment in text_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("#1 @NASA", text)
+        self.assertIn("nitter.test", text)
 
     async def test_qq_raw_video_retry_keeps_omitted_video_notice(self):
         sender = TweetSender({"send_video_attachments": True})
@@ -1364,6 +1402,35 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("视频/GIF 附件未作为消息发送", retry_text)
         self.assertIn(tweet.x_url, retry_text)
+
+    async def test_qq_direct_forward_fallback_splits_video_nodes(self):
+        sender = TweetSender({"send_video_attachments": True})
+
+        class _Event:
+            def get_group_id(self):
+                return "123456"
+
+        tweet = self._make_tweet("NASA", "103")
+        video_path = Path(self.temp_dir.name) / "clip-direct.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-direct.mp4", video_path)
+        )
+
+        raw_nodes = sender.renderer.build_onebot_nodes(
+            _Event(),
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+            start_index=1,
+        )
+
+        self.assertEqual(len(raw_nodes), 3)
+        text_segments = raw_nodes[1]["data"]["content"]
+        video_segments = raw_nodes[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual([segment["type"] for segment in video_segments], ["video"])
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
         events = []
@@ -1425,6 +1492,15 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.pushed_target_attempts, 4)
         self.assertEqual(sender.merged_sent, [])
         self.assertEqual(media.cleaned, 2)
+        self.assertEqual(
+            sender.tweet_start_indexes,
+            [
+                ("telegram:FriendMessage:1", "NASA", 1),
+                ("telegram:FriendMessage:1", "NASAHubble", 1),
+                ("aiocqhttp:GroupMessage:1", "NASA", 1),
+                ("aiocqhttp:GroupMessage:1", "NASAHubble", 1),
+            ],
+        )
 
     async def test_push_stats_do_not_merge_different_batches_with_same_count(self):
         sender = _Sender()

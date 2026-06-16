@@ -265,6 +265,7 @@ class NitterTweetsPlugin(Star):
                     [tweet],
                     notices=notices,
                     header_text=f"@{username} 本次结果 {index}/{total}",
+                    tweet_start_index=index,
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
@@ -322,6 +323,7 @@ class NitterTweetsPlugin(Star):
         tweets,
         notices: list[str] | None = None,
         header_text: str = "",
+        tweet_start_index: int = 1,
     ) -> None:
         notices = notices or []
         if await self.sender.send(
@@ -331,12 +333,14 @@ class NitterTweetsPlugin(Star):
             tweets,
             notices=notices,
             header_text=header_text,
+            tweet_start_index=tweet_start_index,
         ):
             return
         fallback_text = self.sender.renderer.format_plain(
             username,
             instance,
             tweets,
+            start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
         )

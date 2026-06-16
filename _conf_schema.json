@@ -67,6 +67,12 @@
         "default": "highest",
         "hint": "视频/GIF 有多个分辨率时只下载一个。填写 highest 使用最高分辨率，lowest 使用最低分辨率，也可填写 1280p、852p、568p 等目标分辨率；目标不存在时选择不超过目标的最接近分辨率。"
       },
+      "max_video_duration_minutes": {
+        "description": "视频最长下载分钟数",
+        "type": "float",
+        "default": 8.0,
+        "hint": "检测到视频/GIF 时会尽量读取时长；超过该分钟数则跳过下载并保留原文链接。范围 1-8 分钟，读不到时长时不会拦截，仍按大小上限处理。"
+      },
       "max_media_per_tweet": {
         "description": "单条推文最大媒体数",
         "type": "int",
@@ -570,6 +576,13 @@
     "type": "string",
     "default": "highest",
     "hint": "视频/GIF 有多个分辨率时只下载一个。填写 highest 使用最高分辨率，lowest 使用最低分辨率，也可填写 1280p、852p、568p 等目标分辨率；目标不存在时选择不超过目标的最接近分辨率。",
+    "invisible": true
+  },
+  "max_video_duration_minutes": {
+    "description": "视频最长下载分钟数",
+    "type": "float",
+    "default": 8.0,
+    "hint": "检测到视频/GIF 时会尽量读取时长；超过该分钟数则跳过下载并保留原文链接。范围 1-8 分钟，读不到时长时不会拦截，仍按大小上限处理。",
     "invisible": true
   },
   "max_media_per_tweet": {
