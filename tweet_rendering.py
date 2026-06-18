@@ -106,10 +106,30 @@ class TweetMessageRenderer:
                     uin=uin,
                     name=f"@{username}",
                     content=self.build_components(
-                        index, username, tweet, exclude_videos=exclude_videos
+                        index,
+                        username,
+                        tweet,
+                        exclude_videos=exclude_videos,
+                        include_videos=False,
                     ),
                 )
             )
+            if not exclude_videos and self.send_video_attachments:
+                for media in tweet.media:
+                    if media.path and media.is_video:
+                        nodes.nodes.append(
+                            Node(
+                                uin=uin,
+                                name=f"@{username}",
+                                content=self.build_video_node_components(
+                                    index,
+                                    username,
+                                    tweet,
+                                    media,
+                                    source=instance,
+                                ),
+                            )
+                        )
         return nodes
 
     def build_merged_nodes_for_uin(
@@ -250,6 +270,7 @@ class TweetMessageRenderer:
         tweets: list[TweetItem],
         start_index: int = 1,
         exclude_videos: bool = False,
+        include_videos: bool = True,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
@@ -276,6 +297,7 @@ class TweetMessageRenderer:
                     username,
                     tweet,
                     exclude_videos=exclude_videos,
+                    include_videos=include_videos,
                 )
             )
         return components
@@ -313,6 +335,7 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         source: str = "",
         exclude_videos: bool = False,
+        include_videos: bool = True,
     ):
         components = self.build_components(
             index,
@@ -320,10 +343,34 @@ class TweetMessageRenderer:
             tweet,
             source=source,
             exclude_videos=exclude_videos,
+            include_videos=include_videos,
         )
         if components and isinstance(components[0], Plain):
             components[0].text = "\n\n" + components[0].text
         return components
+
+    def build_direct_video_components(self, tweets: list[TweetItem]):
+        components = []
+        for tweet in tweets:
+            for media in tweet.media:
+                if media.path and media.is_video:
+                    components.append(Video.fromFileSystem(str(media.path)))
+        return components
+
+    def build_video_omitted_notice_components(self, tweets: list[TweetItem]):
+        lines = []
+        seen_links = set()
+        for tweet in tweets:
+            if not any(media.path and media.is_video for media in tweet.media):
+                continue
+            original_link = tweet.x_url or tweet.link
+            if original_link in seen_links:
+                continue
+            seen_links.add(original_link)
+            lines.append(f"视频/GIF 附件未作为消息发送，请打开原文查看：{original_link}")
+        if not lines:
+            return []
+        return [Plain("\n".join(lines))]
 
     def build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",

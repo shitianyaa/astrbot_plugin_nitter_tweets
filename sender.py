@@ -102,6 +102,14 @@ class MergedSendOutcome:
 class TweetSender:
     # AstrBot 的 Node/Nodes 合并转发主要由 OneBot v11 实现。
     FORWARD_MESSAGE_PLATFORMS = {"aiocqhttp"}
+    QQ_DIRECT_VIDEO_SPLIT_PLATFORMS = FORWARD_MESSAGE_PLATFORMS | {
+        "qq",
+        "qq_official",
+        "qqofficial",
+        "onebot",
+        "onebot_v11",
+        "napcat",
+    }
     FORWARD_TWEET_CHUNK_SIZE = 8
     UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
@@ -738,6 +746,17 @@ class TweetSender:
         header_text: str = "",
         tweet_start_index: int = 1,
     ) -> bool:
+        if self._should_split_qq_direct_videos(event, tweets):
+            return await self._send_split_qq_direct_event(
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
+                header_text=header_text,
+                tweet_start_index=tweet_start_index,
+            )
+
         try:
             await event.send(
                 MessageChain(
@@ -816,6 +835,124 @@ class TweetSender:
             logger.warning(f"Failed to send direct tweet fallback: {exc}")
             return False
 
+    async def _send_split_qq_direct_event(
+        self,
+        event,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+        header_text: str = "",
+        tweet_start_index: int = 1,
+    ) -> bool:
+        text_components = self.renderer.build_direct_components(
+            username,
+            instance,
+            tweets,
+            start_index=tweet_start_index,
+            include_videos=False,
+            notices=notices,
+            header_text=header_text,
+        )
+        video_components = self.renderer.build_direct_video_components(tweets)
+
+        try:
+            await event.send(MessageChain(text_components))
+        except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual QQ direct text before videos",
+                    self._event_target(event),
+                    exc,
+                )
+                return True
+            logger.warning(f"Failed to send QQ direct tweet text before videos: {exc}")
+            return await self._send_direct_event_fallback(
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
+                header_text=header_text,
+                tweet_start_index=tweet_start_index,
+            )
+
+        if not video_components:
+            return True
+
+        for offset, video_component in enumerate(video_components, start=1):
+            try:
+                await event.send(MessageChain([video_component]))
+            except Exception as exc:
+                if self._is_uncertain_delivery_error(exc):
+                    self._log_uncertain_delivery(
+                        "manual QQ direct videos",
+                        self._event_target(event),
+                        exc,
+                    )
+                    return True
+                logger.warning(
+                    f"Failed to send QQ direct tweet video {offset}/"
+                    f"{len(video_components)}: {exc}"
+                )
+                break
+        else:
+            return True
+
+        notice_components = self.renderer.build_video_omitted_notice_components(tweets)
+        if not notice_components:
+            return True
+        try:
+            await event.send(MessageChain(notice_components))
+            return True
+        except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual QQ direct video omitted notice",
+                    self._event_target(event),
+                    exc,
+                )
+                return True
+            logger.warning(f"Failed to send QQ direct video omitted notice: {exc}")
+            return True
+
+    async def _send_direct_event_fallback(
+        self,
+        event,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+        header_text: str = "",
+        tweet_start_index: int = 1,
+    ) -> bool:
+        try:
+            await event.send(
+                MessageChain(
+                    [
+                        Plain(
+                            self.renderer.format_plain(
+                                username,
+                                instance,
+                                tweets,
+                                start_index=tweet_start_index,
+                                notices=notices,
+                                header_text=header_text,
+                            )
+                        )
+                    ]
+                )
+            )
+            return True
+        except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual direct tweet fallback", self._event_target(event), exc
+                )
+                return True
+            logger.warning(f"Failed to send direct tweet fallback: {exc}")
+            return False
+
     async def _send_direct_to_umo(
         self,
         context,
@@ -828,6 +965,19 @@ class TweetSender:
         batch_summary: str = "",
         tweet_start_index: int = 1,
     ) -> SendOutcome:
+        if self._should_split_qq_direct_videos_for_umo(context, umo, tweets):
+            return await self._send_split_qq_direct_to_umo(
+                context,
+                umo,
+                username,
+                instance,
+                tweets,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+            )
+
         attempt = await self._send_context_message(
             context,
             umo,
@@ -909,6 +1059,72 @@ class TweetSender:
             success=fallback.success or fallback.uncertain,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
+        )
+
+    async def _send_split_qq_direct_to_umo(
+        self,
+        context,
+        umo: str,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        group_label: str = "",
+        header_text: str = "",
+        batch_summary: str = "",
+        tweet_start_index: int = 1,
+    ) -> SendOutcome:
+        text_attempt = await self._send_context_message(
+            context,
+            umo,
+            MessageChain(
+                self.renderer.build_direct_components(
+                    username,
+                    instance,
+                    tweets,
+                    start_index=tweet_start_index,
+                    include_videos=False,
+                    group_label=group_label,
+                    header_text=header_text,
+                    batch_summary=batch_summary,
+                )
+            ),
+            "QQ direct scheduled tweet text before videos",
+        )
+        if not text_attempt.success:
+            return SendOutcome(
+                success=text_attempt.uncertain,
+                error=text_attempt.error,
+                warning=text_attempt.warning,
+            )
+
+        video_components = self.renderer.build_direct_video_components(tweets)
+        video_error = ""
+        video_warning = ""
+        for offset, video_component in enumerate(video_components, start=1):
+            video_attempt = await self._send_context_message(
+                context,
+                umo,
+                MessageChain([video_component]),
+                f"QQ direct scheduled tweet video {offset}/{len(video_components)}",
+            )
+            if video_attempt.success or video_attempt.uncertain:
+                video_warning = video_warning or video_attempt.warning
+                continue
+            video_error = video_attempt.error
+            break
+        else:
+            return SendOutcome(success=True, warning=video_warning)
+
+        notice_attempt = await self._send_context_message(
+            context,
+            umo,
+            MessageChain(notice_components),
+            "QQ direct scheduled video omitted notice",
+        )
+        return SendOutcome(
+            success=True,
+            error=video_error,
+            warning=notice_attempt.warning or video_warning,
         )
 
     async def _send_merged_direct_to_umo(
@@ -1402,6 +1618,25 @@ class TweetSender:
             media.is_video for tweet in tweets for media in tweet.media if media.path
         )
 
+    def _should_split_qq_direct_videos(self, event, tweets: list[TweetItem]) -> bool:
+        return bool(
+            self.send_video_attachments
+            and self._has_attached_videos(tweets)
+            and self._should_split_direct_videos_for_event(event)
+        )
+
+    def _should_split_qq_direct_videos_for_umo(
+        self,
+        context,
+        umo: str,
+        tweets: list[TweetItem],
+    ) -> bool:
+        return bool(
+            self.send_video_attachments
+            and self._has_attached_videos(tweets)
+            and self._should_split_direct_videos_for_umo(context, umo)
+        )
+
     def _merged_forward_has_video(self, batches: list[TweetBatch]) -> bool:
         return bool(
             self.send_video_attachments
@@ -1482,6 +1717,19 @@ class TweetSender:
         return self._should_use_forward_for_umo(context, umo)
 
     @classmethod
+    def _should_split_direct_videos_for_umo(cls, context, umo: str) -> bool:
+        platform = cls._platform_from_umo(umo)
+        if cls._is_qq_direct_video_split_platform(platform):
+            return True
+        return cls._is_qq_direct_video_split_platform(
+            cls._platform_type_from_context(context, platform)
+        )
+
+    @classmethod
+    def _should_split_direct_videos_for_event(cls, event) -> bool:
+        return cls._is_qq_direct_video_split_platform(cls._event_platform(event))
+
+    @classmethod
     def _should_use_lark_for_umo(cls, context, umo: str) -> bool:
         platform = cls._platform_from_umo(umo)
         if cls._is_lark_platform(platform):
@@ -1509,7 +1757,15 @@ class TweetSender:
 
     @classmethod
     def _is_forward_platform(cls, platform: str) -> bool:
-        return str(platform or "").strip().lower() in cls.FORWARD_MESSAGE_PLATFORMS
+        return cls._normalize_platform(platform) in cls.FORWARD_MESSAGE_PLATFORMS
+
+    @classmethod
+    def _is_qq_direct_video_split_platform(cls, platform: str) -> bool:
+        return cls._normalize_platform(platform) in cls.QQ_DIRECT_VIDEO_SPLIT_PLATFORMS
+
+    @staticmethod
+    def _normalize_platform(platform: str) -> str:
+        return str(platform or "").strip().lower().replace("-", "_")
 
     @staticmethod
     def _platform_from_umo(umo: str) -> str:
