@@ -237,6 +237,7 @@ class MediaService:
                             f"{self._format_size_mb(self.max_bytes)}，"
                             "已跳过下载并保留原文链接",
                         )
+                        continue
                     else:
                         self._add_media_warning(
                             tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"

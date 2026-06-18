@@ -1115,6 +1115,10 @@ class TweetSender:
         else:
             return SendOutcome(success=True, warning=video_warning)
 
+        notice_components = self.renderer.build_video_omitted_notice_components(tweets)
+        if not notice_components:
+            return SendOutcome(success=True, error=video_error, warning=video_warning)
+
         notice_attempt = await self._send_context_message(
             context,
             umo,
