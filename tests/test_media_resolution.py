@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 import unittest
@@ -24,8 +25,8 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-from media import MediaService, XdownMediaCandidate
-from utils import TweetItem
+from media import MEDIA_SIZE_LIMIT_ERROR, MediaService, XdownMediaCandidate
+from utils import TweetItem, TweetMedia
 
 
 def _tweet() -> TweetItem:
@@ -202,6 +203,29 @@ class MediaResolutionTest(unittest.TestCase):
 
         self.assertEqual(len(media), 1)
         self.assertTrue(media[0].is_video)
+
+    def test_video_size_limit_warning_is_user_facing(self):
+        service = MediaService(
+            {"send_video_attachments": True, "media_max_size_mb": 3}
+        )
+        tweet = _tweet()
+
+        def resolve_media_urls(_tweet):
+            return [TweetMedia("video", "https://example.test/large.mp4")]
+
+        def fail_size_limit(_media):
+            raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)
+
+        service._resolve_media_urls = resolve_media_urls
+        service._download = fail_size_limit
+
+        media = asyncio.run(service.resolve_and_download(tweet))
+
+        self.assertEqual(media, [])
+        self.assertEqual(len(tweet.media_warnings), 1)
+        self.assertIn("视频/GIF 超过单个媒体大小上限 3 MB", tweet.media_warnings[0])
+        self.assertIn("已跳过下载并保留原文链接", tweet.media_warnings[0])
+        self.assertNotIn(MEDIA_SIZE_LIMIT_ERROR, tweet.media_warnings[0])
 
     def test_extracts_resolution_from_twimg_size(self):
         resolution = MediaService._extract_video_resolution(

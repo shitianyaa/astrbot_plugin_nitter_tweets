@@ -165,6 +165,7 @@ class TweetMessageRenderer:
                                         username,
                                         tweet,
                                         media,
+                                        source=instance,
                                     ),
                                 )
                             )
@@ -224,6 +225,7 @@ class TweetMessageRenderer:
                                         username,
                                         tweet,
                                         media,
+                                        source=instance,
                                     ),
                                 }
                             )
@@ -368,9 +370,10 @@ class TweetMessageRenderer:
         username: str,
         tweet: TweetItem,
         media: TweetMedia,
+        source: str = "",
     ):
         return [
-            Plain(self.format_video_attachment_text(index, username, tweet)),
+            Plain(self.format_video_attachment_text(index, username, tweet, source)),
             Video.fromFileSystem(str(media.path)),
         ]
 
@@ -426,6 +429,7 @@ class TweetMessageRenderer:
                                     username,
                                     tweet,
                                     media,
+                                    source=instance,
                                 ),
                             }
                         )
@@ -459,9 +463,12 @@ class TweetMessageRenderer:
         username: str,
         tweet: TweetItem,
         media: TweetMedia,
+        source: str = "",
     ) -> list[dict]:
         return [
-            self.raw_text(self.format_video_attachment_text(index, username, tweet)),
+            self.raw_text(
+                self.format_video_attachment_text(index, username, tweet, source)
+            ),
             self.raw_media(media),
         ]
 
@@ -639,12 +646,17 @@ class TweetMessageRenderer:
         index: int,
         username: str,
         tweet: TweetItem,
+        source: str = "",
     ) -> str:
-        original_link = tweet.x_url or tweet.link
-        lines = [f"#{index} @{username}", "视频/GIF 附件"]
-        if original_link:
-            lines.append(f"原帖：\n{original_link}")
-        return "\n".join(lines)
+        text = TweetMessageRenderer.format_tweet(
+            index,
+            username,
+            tweet,
+            source=source,
+        )
+        if text:
+            return f"{text}\n\n视频/GIF 附件"
+        return f"#{index} @{username}\n视频/GIF 附件"
 
     @classmethod
     def format_header(

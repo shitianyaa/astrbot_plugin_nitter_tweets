@@ -31,6 +31,7 @@ except ImportError:
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
+MEDIA_SIZE_LIMIT_ERROR = "media exceeds size limit"
 
 
 def _plugin_data_dir() -> Path:
@@ -229,9 +230,17 @@ class MediaService:
                 media.path = await asyncio.to_thread(self._download, media)
             except Exception as exc:
                 if media.is_video:
-                    self._add_media_warning(
-                        tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
-                    )
+                    if str(exc) == MEDIA_SIZE_LIMIT_ERROR:
+                        self._add_media_warning(
+                            tweet,
+                            "视频/GIF 超过单个媒体大小上限 "
+                            f"{self._format_size_mb(self.max_bytes)}，"
+                            "已跳过下载并保留原文链接",
+                        )
+                    else:
+                        self._add_media_warning(
+                            tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
+                        )
                 logger.warning(f"Failed to download media {media.url}: {exc}")
                 continue
             downloaded.append(media)
@@ -837,6 +846,11 @@ class MediaService:
         return f"{seconds}秒"
 
     @staticmethod
+    def _format_size_mb(byte_count: int) -> str:
+        size = byte_count / 1024 / 1024
+        return f"{size:g} MB"
+
+    @staticmethod
     def _xdown_token_payload(url: str) -> dict:
         token = (parse_qs(urlparse(url).query).get("token") or [""])[0]
         if not token:
@@ -895,7 +909,7 @@ class MediaService:
             with urlopen(request, timeout=self.timeout) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > self.max_bytes:
-                    raise RuntimeError("media exceeds size limit")
+                    raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)
 
                 downloaded = 0
                 with temp_path.open("wb") as file:
@@ -905,7 +919,7 @@ class MediaService:
                             break
                         downloaded += len(chunk)
                         if downloaded > self.max_bytes:
-                            raise RuntimeError("media exceeds size limit")
+                            raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)
                         file.write(chunk)
 
             if temp_path.stat().st_size <= 0:

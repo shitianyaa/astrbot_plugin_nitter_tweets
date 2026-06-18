@@ -1361,6 +1361,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("#1 @NASA", text)
         self.assertIn("nitter.test", text)
+        self.assertIn("queued 101", video_text)
+        self.assertIn("nitter.test", video_text)
         self.assertIn("视频/GIF 附件", video_text)
         self.assertIn(tweet.x_url, video_text)
 
@@ -1450,6 +1452,8 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             if segment["type"] == "text"
         )
         self.assertIn("视频/GIF 附件", video_text)
+        self.assertIn("queued 103", video_text)
+        self.assertIn("nitter.test", video_text)
         self.assertIn(tweet.x_url, video_text)
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
