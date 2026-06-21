@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
 
@@ -100,6 +101,61 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             calls[1],
             "https://nitter.example/nasa/rss?cursor=84",
         )
+
+    async def test_fetch_tweets_retries_transient_http_errors(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if len(calls) < 3:
+                raise HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, None
+                )
+            return _FakeResponse(_rss_page(100, 1))
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            instance, tweets = await client.fetch_tweets("nasa", 1)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://nitter.example")
+        self.assertEqual(len(tweets), 1)
+        self.assertEqual(len(calls), 3)
+
+    async def test_fetch_tweets_does_not_retry_non_transient_http_errors(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            raise HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 404"):
+                await client.fetch_tweets("nasa", 1)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

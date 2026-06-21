@@ -4,7 +4,9 @@ import asyncio
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 
 if "astrbot.api" not in sys.modules:
@@ -288,6 +290,51 @@ class MediaResolutionTest(unittest.TestCase):
         )
 
         self.assertEqual(resolution, 852)
+
+    def test_media_download_retries_transient_errors(self):
+        service = MediaService({"send_image_attachments": True})
+        service.download_retry_delay_seconds = 0
+        tweet = _tweet()
+        calls = []
+
+        def resolve_media_urls(_tweet):
+            return [TweetMedia("image", "https://example.test/image.jpg")]
+
+        def flaky_download(_media):
+            calls.append(_media.url)
+            if len(calls) < 3:
+                raise URLError("temporary network failure")
+            return Path("image.jpg")
+
+        service._resolve_media_urls = resolve_media_urls
+        service._download = flaky_download
+
+        media = asyncio.run(service.resolve_and_download(tweet))
+
+        self.assertEqual(len(media), 1)
+        self.assertEqual(media[0].path, Path("image.jpg"))
+        self.assertEqual(len(calls), 3)
+
+    def test_media_download_does_not_retry_non_transient_http_errors(self):
+        service = MediaService({"send_image_attachments": True})
+        service.download_retry_delay_seconds = 0
+        tweet = _tweet()
+        calls = []
+
+        def resolve_media_urls(_tweet):
+            return [TweetMedia("image", "https://example.test/image.jpg")]
+
+        def fail_not_found(_media):
+            calls.append(_media.url)
+            raise HTTPError(_media.url, 404, "Not Found", {}, None)
+
+        service._resolve_media_urls = resolve_media_urls
+        service._download = fail_not_found
+
+        media = asyncio.run(service.resolve_and_download(tweet))
+
+        self.assertEqual(media, [])
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

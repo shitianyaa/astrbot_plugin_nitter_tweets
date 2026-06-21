@@ -202,14 +202,43 @@ class NitterTweetScheduler:
             for group in self._schedule_groups(log_invalid_targets=False)
         )
 
+    @property
+    def brief_log_enabled(self) -> bool:
+        return bool(config_get(self.config, "brief_log_enabled", True))
+
+    def _log_verbose_info(self, message: str) -> None:
+        if not self.brief_log_enabled:
+            logger.info(message)
+
+    def _log_check_result(self, result: ScheduledCheckResult) -> None:
+        if self.brief_log_enabled and not result.skipped_reason:
+            lines = result.format_brief_log_lines()
+            if not lines:
+                return
+            logger.info(lines[0])
+            for line in lines[1:]:
+                logger.warning(line)
+            return
+
+        logger.info(result.format_log_summary())
+        self._log_delivery_warning_count(result)
+
+    @staticmethod
+    def _log_delivery_warning_count(result: ScheduledCheckResult) -> None:
+        if result.delivery_warnings:
+            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
+            logger.warning(
+                f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
+            )
+
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
             return
         self._last_enabled_state = enabled
         if enabled:
-            logger.info("[NitterTweets] scheduler active: schedule_enabled=true")
+            self._log_verbose_info("[NitterTweets] scheduler active: schedule_enabled=true")
         else:
-            logger.info("[NitterTweets] scheduler idle: schedule_enabled=false")
+            self._log_verbose_info("[NitterTweets] scheduler idle: schedule_enabled=false")
 
     async def _tick(self) -> None:
         now = dt.datetime.now(CN_TZ)
@@ -218,7 +247,7 @@ class NitterTweetScheduler:
                 continue
             reasons = self._scheduled_reasons(group, now)
             if reasons:
-                logger.info(
+                self._log_verbose_info(
                     "[NitterTweets] scheduled check triggered: "
                     f"group={group.group_id}, reasons={', '.join(reasons)}"
                 )
@@ -228,7 +257,7 @@ class NitterTweetScheduler:
                 )
             publish_reasons = self._deferred_publish_reasons(group, now)
             if publish_reasons:
-                logger.info(
+                self._log_verbose_info(
                     "[NitterTweets] deferred publish triggered: "
                     f"group={group.group_id}, reasons={', '.join(publish_reasons)}"
                 )
@@ -247,7 +276,7 @@ class NitterTweetScheduler:
             self._startup_schedule_seeded.add(group_id)
             if not group.check_on_startup:
                 self._seed_schedule_slots(group, now)
-                logger.info(
+                self._log_verbose_info(
                     "[NitterTweets] startup scheduled check skipped: "
                     f"group={group_id}, check_on_startup=false"
                 )
@@ -383,11 +412,11 @@ class NitterTweetScheduler:
         immediate_batches_sent = 0
         if not users:
             result.skipped_reason = "no_watch_users"
-            logger.info(result.format_log_summary())
+            self._log_check_result(result)
             return result
         if not targets:
             result.skipped_reason = "no_push_targets"
-            logger.info(result.format_log_summary())
+            self._log_check_result(result)
             return result
 
         seen_map = await self._get_seen_map(group.group_id)
@@ -397,7 +426,7 @@ class NitterTweetScheduler:
         target_interval = group.send_target_interval
         user_interval = group.send_user_interval
         group_label = self._push_group_label(group)
-        logger.info(
+        self._log_verbose_info(
             "[NitterTweets] scheduled check started: "
             f"group={group.group_id}, reason={reason}, "
             f"users={len(users)}, targets={len(targets)}, "
@@ -417,7 +446,7 @@ class NitterTweetScheduler:
             tweets = [tweet for tweet in tweets if tweet.status_id]
             if not tweets:
                 result.empty_users.append(username)
-                logger.info(
+                self._log_verbose_info(
                     f"[NitterTweets] scheduled check @{username}: no valid status ids"
                 )
                 continue
@@ -429,7 +458,7 @@ class NitterTweetScheduler:
                 seen_map[username] = self.storage.initial_seen_ids(fetched_ids)
                 await self._put_seen_map(group.group_id, seen_map)
                 result.initialized_users[username] = len(fetched_ids)
-                logger.info(
+                self._log_verbose_info(
                     "[NitterTweets] initialized "
                     f"group={group.group_id} @{username} with "
                     f"{len(fetched_ids)} seen tweets"
@@ -456,7 +485,7 @@ class NitterTweetScheduler:
                 )
             else:
                 result.no_new_users.append(username)
-                logger.info(
+                self._log_verbose_info(
                     f"[NitterTweets] scheduled check group={group.group_id} "
                     f"@{username}: no new tweets"
                 )
@@ -616,7 +645,7 @@ class NitterTweetScheduler:
                             await asyncio.to_thread(
                                 self.media.cleanup_after_send, batch.tweets
                             )
-            logger.info(
+            self._log_verbose_info(
                 f"[NitterTweets] prepared @{username} {prepared_count}/"
                 f"{len(new_tweets)} "
                 "new tweets for scheduled push"
@@ -630,7 +659,7 @@ class NitterTweetScheduler:
         if deferred_enabled:
             for batch in pending_batches:
                 await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
-            logger.info(result.format_log_summary())
+            self._log_check_result(result)
             if self._should_notify_no_updates(result, notify_no_updates, group):
                 await self._send_no_update_notice(result, target_interval)
             return result
@@ -652,12 +681,7 @@ class NitterTweetScheduler:
                 for batch in pending_batches:
                     await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
 
-        logger.info(result.format_log_summary())
-        if result.delivery_warnings:
-            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
-            logger.warning(
-                f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
-            )
+        self._log_check_result(result)
         if self._should_notify_no_updates(result, notify_no_updates, group):
             await self._send_no_update_notice(result, target_interval)
         return result
@@ -808,7 +832,7 @@ class NitterTweetScheduler:
                 )
             if target_index < len(result.targets) - 1 and target_interval > 0:
                 await asyncio.sleep(target_interval)
-        logger.info(
+        self._log_verbose_info(
             f"[NitterTweets] no-update notice sent to {success}/{len(result.targets)} targets"
         )
 
@@ -878,7 +902,7 @@ class NitterTweetScheduler:
                 progress_text = f" progress={batch_index + 1}/{len(batches)}"
             else:
                 progress_text = ""
-            logger.info(
+            self._log_verbose_info(
                 f"[NitterTweets] pushed{progress_text} "
                 f"@{batch.username} {len(batch.tweets)} new tweets "
                 f"to {success}/{len(targets)} targets"
@@ -928,6 +952,8 @@ class NitterTweetScheduler:
     ) -> None:
         total = progress_total or len(tweets)
         start = progress_index or 1
+        if self.brief_log_enabled:
+            return
         for offset, tweet in enumerate(tweets):
             logger.info(
                 format_ai_tweet_summary(
@@ -1004,7 +1030,7 @@ class NitterTweetScheduler:
                         "raw_forward_without_videos",
                         "uncertain_delivery",
                     }:
-                        logger.info(
+                        self._log_verbose_info(
                             f"[NitterTweets] QQ 合并推送使用普通发送路径：mode={outcome.mode}"
                         )
                 else:
@@ -1021,7 +1047,7 @@ class NitterTweetScheduler:
 
         result.merged_push_success_targets = success
         result.merged_push_total_targets = len(targets)
-        logger.info(
+        self._log_verbose_info(
             f"[NitterTweets] pushed {result.new_tweet_count} merged new tweets "
             f"from {len(batches)} users to {success}/{len(targets)} QQ targets"
         )
@@ -1041,7 +1067,7 @@ class NitterTweetScheduler:
             )
             if queued:
                 result.queued_tweets[batch.username] = queued
-            logger.info(
+            self._log_verbose_info(
                 "[NitterTweets] queued deferred tweets: "
                 f"group={group.group_id}, user=@{batch.username}, "
                 f"queued={queued}, prepared={len(batch.tweets)}"
@@ -1095,7 +1121,7 @@ class NitterTweetScheduler:
         result.fetch_limit = group.deferred_publish_batch_limit
         if not group.targets:
             result.skipped_reason = "no_push_targets"
-            logger.info(result.format_log_summary())
+            self._log_check_result(result)
             return result
 
         records = await self.storage.get_pending_tweets(
@@ -1104,7 +1130,7 @@ class NitterTweetScheduler:
         )
         if not records:
             result.skipped_reason = "no_pending_tweets"
-            logger.info(result.format_log_summary())
+            self._log_check_result(result)
             return result
 
         batches = self._pending_records_to_batches(records)
@@ -1163,12 +1189,7 @@ class NitterTweetScheduler:
                 f"group={group.group_id}, error={exc}"
             )
 
-        logger.info(result.format_log_summary())
-        if result.delivery_warnings:
-            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
-            logger.warning(
-                f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
-            )
+        self._log_check_result(result)
         return result
 
     def _pending_records_to_batches(self, records) -> list[PendingTweetBatch]:

@@ -493,6 +493,19 @@
       }
     }
   },
+  "logging": {
+    "description": "日志设置",
+    "type": "object",
+    "hint": "控制插件写入 AstrBot 后台日志的详细程度；不影响群聊/私聊中的推送内容和命令返回。",
+    "items": {
+      "brief_log_enabled": {
+        "description": "后台日志简略模式",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后只保留每轮检查或暂存发布的结果摘要、失败详情、推送成功率和关键 warning/error；关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
+      }
+    }
+  },
   "performance": {
     "description": "并发与限流",
     "type": "object",

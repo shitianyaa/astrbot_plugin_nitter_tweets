@@ -150,6 +150,62 @@ class ScheduledCheckResult:
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
         )
 
+    def format_brief_log_lines(self) -> list[str]:
+        if self.skipped_reason:
+            return [self.format_log_summary()]
+
+        lines = [
+            "[NitterTweets] 推送结果: "
+            f"group={self.group_name}({self.group_id}), "
+            f"reason={self.reason}, "
+            f"mode={self.push_mode}, "
+            f"checked={self.checked_user_count}, "
+            f"new={self.new_tweet_count}, "
+            f"queued={self.queued_tweet_count}, "
+            f"push_success={self.pushed_target_successes}/"
+            f"{self.pushed_target_attempts}, "
+            f"failed={len(self.failed_users)}, "
+            f"invalid_targets={len(self.invalid_targets)}, "
+            f"warnings={len(self.delivery_warnings)}"
+        ]
+        if self.failed_users:
+            failed_items = [
+                f"{self._failure_label(user)}: {error}"
+                for user, error in self.failed_users.items()
+            ]
+            lines.append(
+                "[NitterTweets] 失败详情: "
+                + _format_limited_values(failed_items, limit=5, separator="; ")
+            )
+        if self.invalid_targets:
+            lines.append(
+                "[NitterTweets] 无效推送目标: "
+                + _format_limited_values(
+                    list(dict.fromkeys(self.invalid_targets)),
+                    limit=5,
+                    separator="; ",
+                )
+            )
+        if self.delivery_warnings:
+            lines.append(
+                "[NitterTweets] 发送状态提示: "
+                + _format_limited_values(
+                    list(dict.fromkeys(self.delivery_warnings)),
+                    limit=5,
+                    separator="; ",
+                )
+            )
+        return lines
+
+    @staticmethod
+    def _failure_label(user: str) -> str:
+        user = str(user or "").strip()
+        if user == "publish":
+            return user
+        if user.startswith("@"):
+            return user
+        return f"@{user}"
+
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [
             title,

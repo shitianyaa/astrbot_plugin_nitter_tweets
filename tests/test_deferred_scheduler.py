@@ -130,66 +130,29 @@ astrbot_core_message_components_module = sys.modules.get(
 )
 
 
-if not hasattr(astrbot_api_module, "logger"):
-    astrbot_api_module.logger = _Logger()
-astrbot_api_all_module.At = getattr(astrbot_api_all_module, "At", _At)
-astrbot_api_all_module.AstrBotConfig = getattr(
-    astrbot_api_all_module, "AstrBotConfig", dict
-)
-astrbot_api_all_module.Context = getattr(
-    astrbot_api_all_module, "Context", object
-)
-astrbot_api_all_module.MessageChain = getattr(
-    astrbot_api_all_module, "MessageChain", _MessageChain
-)
-astrbot_api_all_module.Plain = getattr(astrbot_api_all_module, "Plain", _Plain)
-astrbot_api_all_module.Star = getattr(astrbot_api_all_module, "Star", _Star)
+astrbot_api_module.logger = _Logger()
+astrbot_api_all_module.At = _At
+astrbot_api_all_module.AstrBotConfig = dict
+astrbot_api_all_module.Context = object
+astrbot_api_all_module.MessageChain = _MessageChain
+astrbot_api_all_module.Plain = _Plain
+astrbot_api_all_module.Star = _Star
 astrbot_api_all_module.logger = astrbot_api_module.logger
-astrbot_api_event_module.MessageChain = getattr(
-    astrbot_api_event_module, "MessageChain", _MessageChain
-)
-astrbot_api_event_module.AstrMessageEvent = getattr(
-    astrbot_api_event_module, "AstrMessageEvent", object
-)
-astrbot_api_event_module.filter = getattr(
-    astrbot_api_event_module, "filter", _Filter
-)
-astrbot_api_message_components_module.Plain = getattr(
-    astrbot_api_message_components_module, "Plain", _Plain
-)
-astrbot_api_message_components_module.Image = getattr(
-    astrbot_api_message_components_module, "Image", _Image
-)
-astrbot_api_message_components_module.Video = getattr(
-    astrbot_api_message_components_module, "Video", _Video
-)
-astrbot_api_message_components_module.Node = getattr(
-    astrbot_api_message_components_module, "Node", _Node
-)
-astrbot_api_message_components_module.Nodes = getattr(
-    astrbot_api_message_components_module, "Nodes", _Nodes
-)
-astrbot_api_star_module.register = getattr(
-    astrbot_api_star_module, "register", _register
-)
-astrbot_core_command_module.GreedyStr = getattr(
-    astrbot_core_command_module, "GreedyStr", str
-)
-astrbot_core_message_components_module.Image = getattr(
-    astrbot_core_message_components_module, "Image", _Image
-)
-astrbot_core_message_components_module.Video = getattr(
-    astrbot_core_message_components_module, "Video", _Video
-)
-astrbot_core_message_components_module.Node = getattr(
-    astrbot_core_message_components_module, "Node", _Node
-)
-astrbot_core_message_components_module.Nodes = getattr(
-    astrbot_core_message_components_module, "Nodes", _Nodes
-)
-astrbot_core_message_components_module.Plain = getattr(
-    astrbot_core_message_components_module, "Plain", _Plain
-)
+astrbot_api_event_module.MessageChain = _MessageChain
+astrbot_api_event_module.AstrMessageEvent = object
+astrbot_api_event_module.filter = _Filter
+astrbot_api_message_components_module.Plain = _Plain
+astrbot_api_message_components_module.Image = _Image
+astrbot_api_message_components_module.Video = _Video
+astrbot_api_message_components_module.Node = _Node
+astrbot_api_message_components_module.Nodes = _Nodes
+astrbot_api_star_module.register = _register
+astrbot_core_command_module.GreedyStr = str
+astrbot_core_message_components_module.Image = _Image
+astrbot_core_message_components_module.Video = _Video
+astrbot_core_message_components_module.Node = _Node
+astrbot_core_message_components_module.Nodes = _Nodes
+astrbot_core_message_components_module.Plain = _Plain
 sys.modules["astrbot"] = astrbot_module
 sys.modules["astrbot.api"] = astrbot_api_module
 sys.modules["astrbot.api.all"] = astrbot_api_all_module
@@ -202,6 +165,14 @@ sys.modules["astrbot.core.message.components"] = (
     astrbot_core_message_components_module
 )
 sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
+
+if "tweet_rendering" in sys.modules:
+    tweet_rendering_module = sys.modules["tweet_rendering"]
+    tweet_rendering_module.Plain = _Plain
+    tweet_rendering_module.Image = _Image
+    tweet_rendering_module.Video = _Video
+    tweet_rendering_module.Node = _Node
+    tweet_rendering_module.Nodes = _Nodes
 
 
 import scheduler as scheduler_module  # noqa: E402
@@ -1901,6 +1872,116 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.new_tweet_count, 2)
         self.assertEqual(result.pushed_target_successes, 2)
         self.assertEqual(result.pushed_target_attempts, 2)
+
+    async def test_brief_log_enabled_defaults_to_true_and_reads_grouped_value(self):
+        scheduler = self._create_scheduler({})
+        self.assertTrue(scheduler.brief_log_enabled)
+
+        scheduler = self._create_scheduler(
+            {"logging": {"brief_log_enabled": False}}
+        )
+        self.assertFalse(scheduler.brief_log_enabled)
+
+    async def test_scheduled_result_brief_log_lines_include_result_details(self):
+        result = scheduler_module.ScheduledCheckResult(
+            reason="interval:30m",
+            group_id="tech",
+            group_name="科技",
+            users=["NASA", "OpenAI"],
+            targets=["telegram:FriendMessage:1", "aiocqhttp:GroupMessage:1"],
+            invalid_targets=["bad-target"],
+            failed_users={"NASA": "fetch failed", "publish": "send failed"},
+            push_mode="mixed",
+            delivery_warnings=["uncertain delivery", "uncertain delivery"],
+        )
+        result.pushes.append(
+            scheduler_module.ScheduledPushResult(
+                username="OpenAI",
+                new_count=2,
+                success_targets=1,
+                total_targets=2,
+            )
+        )
+        result.merged_push_success_targets = 1
+        result.merged_push_total_targets = 1
+
+        lines = result.format_brief_log_lines()
+
+        self.assertIn("group=科技(tech)", lines[0])
+        self.assertIn("reason=interval:30m", lines[0])
+        self.assertIn("mode=mixed", lines[0])
+        self.assertIn("new=2", lines[0])
+        self.assertIn("push_success=2/3", lines[0])
+        self.assertIn("failed=2", lines[0])
+        self.assertTrue(any("失败详情" in line and "@NASA" in line for line in lines))
+        self.assertTrue(any("publish: send failed" in line for line in lines))
+        self.assertTrue(any("无效推送目标" in line for line in lines))
+        self.assertTrue(any("发送状态提示" in line for line in lines))
+
+    async def test_brief_mode_logs_summary_without_verbose_push_info(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            sender=sender,
+        )
+        result = scheduler_module.ScheduledCheckResult(reason="test_brief")
+        batch = scheduler_module.PendingTweetBatch(
+            username="NASA",
+            instance="https://nitter.test",
+            tweets=[self._make_tweet("NASA", "101")],
+            fetched_ids=["101"],
+            seen_ids=[],
+        )
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            await scheduler._send_per_user_updates(
+                [batch],
+                result,
+                ["telegram:FriendMessage:1"],
+                0.0,
+                0.0,
+            )
+            scheduler._log_check_result(result)
+
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("推送结果", logged)
+        self.assertNotIn("pushed @NASA", logged)
+
+    async def test_detailed_mode_keeps_verbose_push_info(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "logging": {"brief_log_enabled": False},
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            sender=sender,
+        )
+        result = scheduler_module.ScheduledCheckResult(reason="test_verbose")
+        batch = scheduler_module.PendingTweetBatch(
+            username="NASA",
+            instance="https://nitter.test",
+            tweets=[self._make_tweet("NASA", "101")],
+            fetched_ids=["101"],
+            seen_ids=[],
+        )
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            await scheduler._send_per_user_updates(
+                [batch],
+                result,
+                ["telegram:FriendMessage:1"],
+                0.0,
+                0.0,
+            )
+
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("pushed @NASA", logged)
 
     async def test_immediate_send_cleanup_on_cancel_without_buffered_targets(self):
         media = _Media()

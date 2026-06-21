@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
+import time
 from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -23,6 +25,10 @@ except ImportError:
 from .network import compat_urlopen
 
 
+class TransientFetchError(RuntimeError):
+    pass
+
+
 class NitterClient:
     def __init__(self, config):
         self.instances = load_instances(config_get(config, "instances"))
@@ -33,6 +39,8 @@ class NitterClient:
             config,
             "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
+        self.retry_attempts = 3
+        self.retry_delay_seconds = 5.0
 
     async def fetch_tweets(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
         errors: list[str] = []
@@ -92,7 +100,7 @@ class NitterClient:
 
         while len(tweets) < limit:
             try:
-                page_tweets, next_cursor = self._fetch_page_from_instance(
+                page_tweets, next_cursor = self._fetch_page_with_retries(
                     instance, username, cursor, limit,
                 )
             except Exception:
@@ -129,6 +137,32 @@ class NitterClient:
 
         return tweets
 
+    def _fetch_page_with_retries(
+        self, instance: str, username: str, cursor: str, limit: int,
+    ) -> tuple[list[TweetItem], str]:
+        attempts = max(1, int(self.retry_attempts))
+        delay = max(0.0, float(self.retry_delay_seconds))
+        last_error: TransientFetchError | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._fetch_page_from_instance(instance, username, cursor, limit)
+            except TransientFetchError as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                logger.warning(
+                    "[NitterTweets] RSS fetch failed, retrying: "
+                    f"instance={instance}, username={username}, "
+                    f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
+                )
+                if delay > 0:
+                    time.sleep(delay)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("RSS fetch failed")
+
     def _fetch_page_from_instance(
         self, instance: str, username: str, cursor: str, limit: int,
     ) -> tuple[list[TweetItem], str]:
@@ -145,10 +179,19 @@ class NitterClient:
                 data = response.read(2_000_000)
                 next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:
-            raise RuntimeError(f"HTTP {exc.code}") from exc
+            message = f"HTTP {exc.code}"
+            if self._is_retryable_http_status(exc.code):
+                raise TransientFetchError(message) from exc
+            raise RuntimeError(message) from exc
         except URLError as exc:
-            raise RuntimeError(str(getattr(exc, "reason", exc))) from exc
+            raise TransientFetchError(str(getattr(exc, "reason", exc))) from exc
+        except (TimeoutError, ssl.SSLError) as exc:
+            raise TransientFetchError(str(exc)) from exc
         return self._parse_rss(data, instance, limit), next_cursor
+
+    @staticmethod
+    def _is_retryable_http_status(status_code: int) -> bool:
+        return status_code in {408, 429, 500, 502, 503, 504, 520, 522, 523, 524}
 
     @staticmethod
     def _rss_url(instance: str, username: str, cursor: str = "") -> str:

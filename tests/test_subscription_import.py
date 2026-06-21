@@ -89,9 +89,17 @@ if "astrbot.api.all" not in sys.modules:
         def __init__(self, *args, **kwargs):
             pass
 
+        @classmethod
+        def fromFileSystem(cls, path):
+            return cls(path)
+
     class _Video:
         def __init__(self, *args, **kwargs):
             pass
+
+        @classmethod
+        def fromFileSystem(cls, path):
+            return cls(path)
 
     class _Node:
         def __init__(self, *args, **kwargs):
@@ -99,7 +107,7 @@ if "astrbot.api.all" not in sys.modules:
 
     class _Nodes:
         def __init__(self, *args, **kwargs):
-            pass
+            self.nodes = []
 
     astrbot_api_module.logger = _Logger()
     astrbot_api_all_module.At = _At
@@ -392,7 +400,7 @@ class ConfigCompatTest(unittest.TestCase):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            list(schema)[:9],
+            list(schema)[:10],
             [
                 "basic",
                 "media",
@@ -402,6 +410,7 @@ class ConfigCompatTest(unittest.TestCase):
                 "schedule",
                 "deferred",
                 "push",
+                "logging",
                 "performance",
             ],
         )
@@ -411,6 +420,10 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("watch_users", schema["push"]["items"])
         self.assertIn("vision_prompt", schema["ai_vision"]["items"])
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
+        self.assertIn("brief_log_enabled", schema["logging"]["items"])
+
+    def test_brief_log_config_defaults_enabled_for_old_configs(self):
+        self.assertIs(config_get({}, "brief_log_enabled", True), True)
 
     def test_config_get_prefers_grouped_value(self):
         config = {
@@ -419,6 +432,11 @@ class ConfigCompatTest(unittest.TestCase):
         }
 
         self.assertIs(config_get(config, "translate_enabled", False), True)
+
+    def test_config_get_reads_grouped_brief_log_value(self):
+        config = {"logging": {"brief_log_enabled": False}}
+
+        self.assertIs(config_get(config, "brief_log_enabled", True), False)
 
     def test_config_get_falls_back_to_flat_value(self):
         config = {"push_targets": ["telegram:FriendMessage:1"]}

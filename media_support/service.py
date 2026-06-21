@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
@@ -99,6 +101,8 @@ class MediaService(MediaCacheMixin):
         self.cache_dir = _plugin_data_dir() / "cache"
         self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.download_retry_attempts = 3
+        self.download_retry_delay_seconds = 5.0
 
     @property
     def enabled(self) -> bool:
@@ -148,7 +152,9 @@ class MediaService(MediaCacheMixin):
                     video_disabled_warned = True
                 continue
             try:
-                media.path = await asyncio.to_thread(self._download, media)
+                media.path = await asyncio.to_thread(
+                    self._download_with_retries, media
+                )
             except Exception as exc:
                 if media.is_video:
                     if str(exc) == MEDIA_SIZE_LIMIT_ERROR:
@@ -167,6 +173,32 @@ class MediaService(MediaCacheMixin):
                 continue
             downloaded.append(media)
         return downloaded
+
+    def _download_with_retries(self, media: TweetMedia) -> Path:
+        attempts = max(1, int(self.download_retry_attempts))
+        delay = max(0.0, float(self.download_retry_delay_seconds))
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._download(media)
+            except Exception as exc:
+                if str(exc) == MEDIA_SIZE_LIMIT_ERROR or not self._is_retryable_download_error(exc):
+                    raise
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                logger.warning(
+                    "[NitterTweets] media download failed, retrying: "
+                    f"url={media.url}, attempt={attempt}/{attempts}, "
+                    f"delay={delay:g}s, error={exc}"
+                )
+                if delay > 0:
+                    time.sleep(delay)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("media download failed")
 
     @staticmethod
     def _add_media_warning(
@@ -483,3 +515,15 @@ class MediaService(MediaCacheMixin):
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise
+
+    @classmethod
+    def _is_retryable_download_error(cls, exc: Exception) -> bool:
+        if isinstance(exc, HTTPError):
+            return cls._is_retryable_http_status(exc.code)
+        if isinstance(exc, (URLError, TimeoutError, ssl.SSLError, ConnectionError)):
+            return True
+        return False
+
+    @staticmethod
+    def _is_retryable_http_status(status_code: int) -> bool:
+        return status_code in {408, 429, 500, 502, 503, 504, 520, 522, 523, 524}

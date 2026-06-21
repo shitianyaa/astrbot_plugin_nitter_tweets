@@ -69,6 +69,7 @@ CONFIG_GROUP_BY_KEY = {
     "deferred_prefetch_media": "deferred",
     "deferred_media_retention_hours": "deferred",
     "deferred_media_download_interval_seconds": "deferred",
+    "brief_log_enabled": "logging",
     "merge_tweet_threshold": "push",
     "merge_scheduled_updates": "push",
     "send_target_interval": "push",
