@@ -50,6 +50,35 @@ def _video(resolution: int) -> XdownMediaCandidate:
 
 
 class MediaResolutionTest(unittest.TestCase):
+    def test_media_service_respects_media_urlopen_compat_patch(self):
+        service = MediaService({})
+        calls = []
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self, limit=-1):
+                del limit
+                return b'{"status":"ok","data":""}'
+
+        def fake_urlopen(request, timeout):
+            calls.append((request.full_url, timeout))
+            return _FakeResponse()
+
+        original_urlopen = media_module.urlopen
+        media_module.urlopen = fake_urlopen
+        try:
+            candidates = service._resolve_media_candidates(_tweet())
+        finally:
+            media_module.urlopen = original_urlopen
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(calls[0][0], service.xdown_url)
+
     def test_default_highest_keeps_one_video_and_ignores_images(self):
         service = MediaService({})
         tweet = _tweet()

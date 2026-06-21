@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 
 from astrbot.api import logger
 
@@ -28,75 +27,40 @@ except ImportError:
 
 try:
     from .config_compat import config_get
-    from .lark_delivery import (
-        is_lark_platform,
-        lark_client_and_target,
-        lark_client_from_event,
-        lark_event_target,
-        lark_reply_message_id,
-        lark_tweet_post_title,
-        media_components,
-        plain_text_from_components,
-        send_lark_event_media_with_retry,
-        send_lark_post,
-        send_lark_text,
-        send_lark_umo_media_with_retry,
-        video_components,
-    )
+    from .lark_delivery import is_lark_platform
     from .utils import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
     )
+    from .delivery import (
+        MergedSendOutcome,
+        OneBotDeliveryAdapter,
+        PlatformDeliveryRegistry,
+        PlatformResolver,
+        SendAttempt,
+        SendOutcome,
+        normalize_platform,
+    )
     from .tweet_rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
     from config_compat import config_get
-    from lark_delivery import (
-        is_lark_platform,
-        lark_client_and_target,
-        lark_client_from_event,
-        lark_event_target,
-        lark_reply_message_id,
-        lark_tweet_post_title,
-        media_components,
-        plain_text_from_components,
-        send_lark_event_media_with_retry,
-        send_lark_post,
-        send_lark_text,
-        send_lark_umo_media_with_retry,
-        video_components,
-    )
+    from lark_delivery import is_lark_platform
     from utils import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
     )
+    from delivery import (
+        MergedSendOutcome,
+        OneBotDeliveryAdapter,
+        PlatformDeliveryRegistry,
+        PlatformResolver,
+        SendAttempt,
+        SendOutcome,
+        normalize_platform,
+    )
     from tweet_rendering import TweetBatch, TweetMessageRenderer
-
-
-@dataclass(slots=True)
-class SendAttempt:
-    success: bool
-    retryable: bool = False
-    uncertain: bool = False
-    error: str = ""
-    warning: str = ""
-
-
-@dataclass(slots=True)
-class SendOutcome:
-    success: bool
-    error: str = ""
-    warning: str = ""
-
-
-@dataclass(slots=True)
-class MergedSendOutcome:
-    success: bool
-    mode: str
-    omitted_videos: int = 0
-    error: str = ""
-    warning: str = ""
 
 
 class TweetSender:
@@ -129,6 +93,8 @@ class TweetSender:
             send_image_attachments=self.send_image_attachments,
             send_video_attachments=self.send_video_attachments,
         )
+        self.platform_resolver = PlatformResolver()
+        self.delivery_registry = PlatformDeliveryRegistry()
 
     async def send(
         self,
@@ -140,7 +106,8 @@ class TweetSender:
         header_text: str = "",
         tweet_start_index: int = 1,
     ) -> bool:
-        if self._should_use_lark_for_event(event):
+        adapter = self._delivery_adapter_for_event(event)
+        if adapter.is_lark:
             return await self._send_lark_event(
                 event,
                 username,
@@ -151,9 +118,9 @@ class TweetSender:
                 tweet_start_index=tweet_start_index,
             )
 
-        if not self._should_use_forward_for_event(
-            event
-        ) or not self._should_use_merge_for_count(len(tweets)):
+        if not adapter.supports_merged_forward or not self._should_use_merge_for_count(
+            len(tweets)
+        ):
             return await self._send_direct_event(
                 event,
                 username,
@@ -177,7 +144,7 @@ class TweetSender:
 
     def should_merge_for_event(self, event, tweet_count: int) -> bool:
         return (
-            self._should_use_forward_for_event(event)
+            self._delivery_adapter_for_event(event).supports_merged_forward
             and self._should_use_merge_for_count(tweet_count)
         )
 
@@ -306,7 +273,8 @@ class TweetSender:
         batch_summary: str = "",
         tweet_start_index: int = 1,
     ) -> SendOutcome:
-        if self._should_use_lark_for_umo(context, umo):
+        adapter = self._delivery_adapter_for_umo(context, umo)
+        if adapter.is_lark:
             return await self._send_lark_to_umo(
                 context,
                 umo,
@@ -319,9 +287,9 @@ class TweetSender:
                 tweet_start_index,
             )
 
-        if not self._should_use_forward_for_umo(
-            context, umo
-        ) or not self._should_use_merge_for_count(len(tweets)):
+        if not adapter.supports_merged_forward or not self._should_use_merge_for_count(
+            len(tweets)
+        ):
             return await self._send_direct_to_umo(
                 context,
                 umo,
@@ -506,9 +474,7 @@ class TweetSender:
                 context, umo, batches, group_label, batch_summary
             )
 
-        if not self._should_use_forward_for_umo(
-            context, umo
-        ):
+        if not self._delivery_adapter_for_umo(context, umo).supports_merged_forward:
             return await self._send_merged_direct_to_umo(
                 context, umo, batches, group_label, batch_summary
             )
@@ -1245,129 +1211,15 @@ class TweetSender:
         header_text: str = "",
         tweet_start_index: int = 1,
     ) -> bool:
-        components = self.renderer.build_direct_components(
+        return await self._delivery_adapter_for_event(event).send_event(
+            event,
             username,
             instance,
             tweets,
-            start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
+            tweet_start_index=tweet_start_index,
         )
-        client = lark_client_from_event(event, self._platform_inst_from_context)
-        if client is None:
-            logger.warning("[NitterTweets] Lark client not found; using generic send")
-            return await self._send_direct_event(
-                event,
-                username,
-                instance,
-                tweets,
-                notices=notices,
-                header_text=header_text,
-                tweet_start_index=tweet_start_index,
-            )
-
-        text = plain_text_from_components(components)
-        reply_message_id = lark_reply_message_id(event)
-        receive_id_type, receive_id = lark_event_target(event)
-        post_attempt = await send_lark_post(
-            client,
-            lark_tweet_post_title(username, len(tweets), header_text),
-            components,
-            "manual Lark tweet post",
-            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-            log_uncertain_delivery=self._log_uncertain_delivery,
-            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-            reply_message_id=reply_message_id,
-            receive_id=receive_id,
-            receive_id_type=receive_id_type,
-        )
-        if (
-            not (post_attempt.success or post_attempt.uncertain)
-            and reply_message_id
-            and receive_id
-            and receive_id_type
-        ):
-            logger.warning(
-                "[NitterTweets] Lark reply post failed; retrying current session "
-                f"send: {post_attempt.error}"
-            )
-            post_attempt = await send_lark_post(
-                client,
-                lark_tweet_post_title(username, len(tweets), header_text),
-                components,
-                "manual Lark tweet post fallback",
-                is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-                log_uncertain_delivery=self._log_uncertain_delivery,
-                uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-                receive_id=receive_id,
-                receive_id_type=receive_id_type,
-            )
-        if post_attempt.uncertain:
-            return True
-        if post_attempt.success:
-            video_attempt = await send_lark_event_media_with_retry(
-                event,
-                video_components(components),
-                "manual Lark tweet video media",
-                self._send_event_chain,
-            )
-            if not (video_attempt.success or video_attempt.uncertain):
-                logger.warning(
-                    "[NitterTweets] Lark post sent but video media failed: "
-                    f"{video_attempt.error}"
-                )
-            return True
-
-        logger.warning(
-            "[NitterTweets] Lark post failed; falling back to text/media: "
-            f"{post_attempt.error}"
-        )
-        text_attempt = await send_lark_text(
-            client,
-            text,
-            "manual Lark tweet text",
-            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-            log_uncertain_delivery=self._log_uncertain_delivery,
-            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-            reply_message_id=reply_message_id,
-            receive_id=receive_id,
-            receive_id_type=receive_id_type,
-        )
-        if (
-            not (text_attempt.success or text_attempt.uncertain)
-            and reply_message_id
-            and receive_id
-            and receive_id_type
-        ):
-            logger.warning(
-                "[NitterTweets] Lark reply text failed; retrying current session "
-                f"send: {text_attempt.error}"
-            )
-            text_attempt = await send_lark_text(
-                client,
-                text,
-                "manual Lark tweet text fallback",
-                is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-                log_uncertain_delivery=self._log_uncertain_delivery,
-                uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-                receive_id=receive_id,
-                receive_id_type=receive_id_type,
-            )
-        if not (text_attempt.success or text_attempt.uncertain):
-            return False
-
-        media_attempt = await send_lark_event_media_with_retry(
-            event,
-            media_components(components),
-            "manual Lark tweet media",
-            self._send_event_chain,
-        )
-        if not (media_attempt.success or media_attempt.uncertain):
-            logger.warning(
-                "[NitterTweets] Lark tweet text sent but media failed: "
-                f"{media_attempt.error}"
-            )
-        return True
 
     async def _send_lark_to_umo(
         self,
@@ -1381,98 +1233,17 @@ class TweetSender:
         batch_summary: str = "",
         tweet_start_index: int = 1,
     ) -> SendOutcome:
-        components = self.renderer.build_direct_components(
+        return await self._delivery_adapter_for_umo(context, umo).send_to_umo(
+            context,
+            umo,
             username,
             instance,
             tweets,
-            start_index=tweet_start_index,
-            group_label=group_label,
-            header_text=header_text,
-            batch_summary=batch_summary,
+            group_label,
+            header_text,
+            batch_summary,
+            tweet_start_index,
         )
-        text = plain_text_from_components(components)
-        client, receive_id_type, receive_id = lark_client_and_target(
-            context, umo, self._platform_inst_from_context
-        )
-        if client is None or not receive_id_type or not receive_id:
-            logger.warning(
-                f"[NitterTweets] Lark client or target not found for {umo}; "
-                "using generic send"
-            )
-            return await self._send_direct_to_umo(
-                context,
-                umo,
-                username,
-                instance,
-                tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
-            )
-
-        post_attempt = await send_lark_post(
-            client,
-            lark_tweet_post_title(username, len(tweets), header_text),
-            components,
-            "scheduled Lark tweet post",
-            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-            log_uncertain_delivery=self._log_uncertain_delivery,
-            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-            receive_id=receive_id,
-            receive_id_type=receive_id_type,
-        )
-        if post_attempt.uncertain:
-            return SendOutcome(success=True, warning=post_attempt.warning)
-        if post_attempt.success:
-            video_attempt = await send_lark_umo_media_with_retry(
-                context,
-                umo,
-                video_components(components),
-                "scheduled Lark tweet video media",
-                self._send_context_message,
-            )
-            warning = post_attempt.warning or video_attempt.warning
-            if not (video_attempt.success or video_attempt.uncertain):
-                warning = video_attempt.error
-                logger.warning(
-                    f"[NitterTweets] Lark post sent to {umo} but video media failed: "
-                    f"{video_attempt.error}"
-                )
-            return SendOutcome(success=True, warning=warning)
-
-        logger.warning(
-            f"[NitterTweets] Lark post failed for {umo}; falling back to "
-            f"text/media: {post_attempt.error}"
-        )
-        text_attempt = await send_lark_text(
-            client,
-            text,
-            "scheduled Lark tweet text",
-            is_uncertain_delivery_error=self._is_uncertain_delivery_error,
-            log_uncertain_delivery=self._log_uncertain_delivery,
-            uncertain_delivery_warning=self.UNCERTAIN_DELIVERY_WARNING,
-            receive_id=receive_id,
-            receive_id_type=receive_id_type,
-        )
-        if not (text_attempt.success or text_attempt.uncertain):
-            return SendOutcome(success=False, error=text_attempt.error)
-
-        media_attempt = await send_lark_umo_media_with_retry(
-            context,
-            umo,
-            media_components(components),
-            "scheduled Lark tweet media",
-            self._send_context_message,
-        )
-        warning = text_attempt.warning or media_attempt.warning
-        if not (media_attempt.success or media_attempt.uncertain):
-            warning = media_attempt.error
-            logger.warning(
-                f"[NitterTweets] Lark tweet text sent to {umo} but media failed: "
-                f"{media_attempt.error}"
-            )
-        return SendOutcome(success=True, warning=warning)
 
     async def _send_context_message(
         self,
@@ -1718,31 +1489,33 @@ class TweetSender:
         return chunks
 
     def supports_merged_forward_for_umo(self, context, umo: str) -> bool:
-        return self._should_use_forward_for_umo(context, umo)
+        return self._delivery_adapter_for_umo(context, umo).supports_merged_forward
+
+    def _delivery_adapter_for_umo(self, context, umo: str):
+        profile = self.platform_resolver.from_umo(context, umo)
+        return self.delivery_registry.adapter_for(self, profile)
+
+    def _delivery_adapter_for_event(self, event):
+        profile = self.platform_resolver.from_event(event)
+        return self.delivery_registry.adapter_for(self, profile)
 
     @classmethod
     def _should_split_direct_videos_for_umo(cls, context, umo: str) -> bool:
-        platform = cls._platform_from_umo(umo)
-        if cls._is_qq_direct_video_split_platform(platform):
-            return True
-        return cls._is_qq_direct_video_split_platform(
-            cls._platform_type_from_context(context, platform)
-        )
+        profile = PlatformResolver().from_umo(context, umo)
+        return profile.should_split_qq_direct_videos
 
     @classmethod
     def _should_split_direct_videos_for_event(cls, event) -> bool:
-        return cls._is_qq_direct_video_split_platform(cls._event_platform(event))
+        profile = PlatformResolver().from_event(event)
+        return profile.should_split_qq_direct_videos
 
     @classmethod
     def _should_use_lark_for_umo(cls, context, umo: str) -> bool:
-        platform = cls._platform_from_umo(umo)
-        if cls._is_lark_platform(platform):
-            return True
-        return cls._is_lark_platform(cls._platform_type_from_context(context, platform))
+        return PlatformResolver().from_umo(context, umo).is_lark
 
     @classmethod
     def _should_use_lark_for_event(cls, event) -> bool:
-        return cls._is_lark_platform(cls._event_platform(event))
+        return PlatformResolver().from_event(event).is_lark
 
     @classmethod
     def _is_lark_platform(cls, platform: str) -> bool:
@@ -1750,26 +1523,23 @@ class TweetSender:
 
     @classmethod
     def _should_use_forward_for_umo(cls, context, umo: str) -> bool:
-        platform = cls._platform_from_umo(umo)
-        if cls._is_forward_platform(platform):
-            return True
-        return cls._is_forward_platform(cls._platform_type_from_context(context, platform))
+        return PlatformResolver().from_umo(context, umo).is_onebot
 
     @classmethod
     def _should_use_forward_for_event(cls, event) -> bool:
-        return cls._is_forward_platform(cls._event_platform(event))
+        return PlatformResolver().from_event(event).is_onebot
 
     @classmethod
     def _is_forward_platform(cls, platform: str) -> bool:
-        return cls._normalize_platform(platform) in cls.FORWARD_MESSAGE_PLATFORMS
+        return normalize_platform(platform) in cls.FORWARD_MESSAGE_PLATFORMS
 
     @classmethod
     def _is_qq_direct_video_split_platform(cls, platform: str) -> bool:
-        return cls._normalize_platform(platform) in cls.QQ_DIRECT_VIDEO_SPLIT_PLATFORMS
+        return normalize_platform(platform) in cls.QQ_DIRECT_VIDEO_SPLIT_PLATFORMS
 
     @staticmethod
     def _normalize_platform(platform: str) -> str:
-        return str(platform or "").strip().lower().replace("-", "_")
+        return normalize_platform(platform)
 
     @staticmethod
     def _platform_from_umo(umo: str) -> str:
@@ -1777,108 +1547,29 @@ class TweetSender:
 
     @classmethod
     def _platform_inst_from_context(cls, context, platform_id: str):
-        if not platform_id:
-            return None
-
-        get_platform_inst = getattr(context, "get_platform_inst", None)
-        if callable(get_platform_inst):
-            try:
-                platform = get_platform_inst(platform_id)
-                if platform is not None:
-                    return platform
-            except Exception as exc:
-                logger.debug(
-                    f"[NitterTweets] platform lookup failed for {platform_id}: {exc}"
-                )
-
-        manager = getattr(context, "platform_manager", None)
-        for candidate in getattr(manager, "platform_insts", []) or []:
-            meta = cls._safe_platform_meta(candidate)
-            if str(getattr(meta, "id", "") or "") == platform_id:
-                return candidate
-
-        return None
+        return PlatformResolver().platform_inst_from_context(context, platform_id)
 
     @classmethod
     def _platform_type_from_context(cls, context, platform_id: str) -> str:
-        platform = cls._platform_inst_from_context(context, platform_id)
-        if platform is None:
-            return ""
-
-        meta = cls._safe_platform_meta(platform)
-        for attr in ("name", "id"):
-            value = getattr(meta, attr, None)
-            if value:
-                return str(value)
-
-        config = getattr(platform, "config", None)
-        if isinstance(config, dict):
-            return str(config.get("type") or "")
-        return ""
+        profile = PlatformResolver().from_umo(context, f"{platform_id}:GroupMessage:")
+        return profile.platform_types[0] if profile.platform_types else ""
 
     @staticmethod
     def _safe_platform_meta(platform):
-        meta = getattr(platform, "meta", None)
-        if not callable(meta):
-            return None
-        try:
-            return meta()
-        except Exception:
-            return None
+        return PlatformResolver.safe_platform_meta(platform)
 
     @classmethod
     def _event_platform(cls, event) -> str:
-        for method_name in ("get_platform_name", "get_platform_id"):
-            value = safe_call(event, method_name)
-            if value:
-                return str(value)
-
-        meta = getattr(event, "platform_meta", None)
-        for attr in ("name", "id"):
-            value = getattr(meta, attr, None)
-            if value:
-                return str(value)
-
-        try:
-            umo = getattr(event, "unified_msg_origin", "")
-        except Exception:
-            umo = ""
-        return cls._platform_from_umo(str(umo))
+        profile = PlatformResolver().from_event(event)
+        return profile.platform_id or (profile.platform_types[0] if profile.platform_types else "")
 
     async def _send_onebot_forward(self, event, raw_nodes: list[dict]) -> bool:
-        client = getattr(event, "bot", None)
-        if client is None:
+        send_forward = getattr(
+            self._delivery_adapter_for_event(event), "send_event_forward", None
+        )
+        if not callable(send_forward):
             return False
-
-        call_action = None
-        if hasattr(client, "api") and hasattr(client.api, "call_action"):
-            call_action = client.api.call_action
-        elif hasattr(client, "call_action"):
-            call_action = client.call_action
-        if call_action is None:
-            return False
-
-        group_id = safe_call(event, "get_group_id")
-        if group_id:
-            await self._call_forward_action(
-                call_action,
-                "send_group_forward_msg",
-                {"group_id": int(group_id)},
-                raw_nodes,
-            )
-            return True
-
-        user_id = safe_call(event, "get_sender_id")
-        if user_id:
-            await self._call_forward_action(
-                call_action,
-                "send_private_forward_msg",
-                {"user_id": int(user_id)},
-                raw_nodes,
-            )
-            return True
-
-        return False
+        return await send_forward(event, raw_nodes)
 
     async def _send_onebot_umo_forward(
         self,
@@ -1887,82 +1578,24 @@ class TweetSender:
         raw_nodes: list[dict],
         label: str,
     ) -> SendAttempt:
-        call_action = self._onebot_call_action_for_umo(context, umo)
-        if call_action is None:
+        send_forward = getattr(
+            self._delivery_adapter_for_umo(context, umo), "send_umo_forward", None
+        )
+        if not callable(send_forward):
             return SendAttempt(
                 success=False,
                 retryable=True,
                 error="OneBot call_action unavailable for proactive merged forward",
             )
-
-        message_type, session_id = self._onebot_target_from_umo(umo)
-        if not session_id:
-            return SendAttempt(
-                success=False,
-                retryable=True,
-                error=f"invalid OneBot target UMO: {umo}",
-            )
-
-        action = "send_group_forward_msg"
-        base_payload = {"group_id": session_id}
-        if message_type in {"private", "friend", "friendmessage", "privatemessage"}:
-            action = "send_private_forward_msg"
-            base_payload = {"user_id": session_id}
-
-        try:
-            await self._call_forward_action(
-                call_action,
-                action,
-                base_payload,
-                raw_nodes,
-            )
-        except Exception as exc:
-            error = str(exc)
-            if self._is_uncertain_delivery_error(exc):
-                warning = self.UNCERTAIN_DELIVERY_WARNING
-                self._log_uncertain_delivery(label, umo, exc)
-                return SendAttempt(
-                    success=False,
-                    retryable=False,
-                    uncertain=True,
-                    error=error,
-                    warning=warning,
-                )
-            logger.warning(f"Failed to send {label} via OneBot action to {umo}: {error}")
-            return SendAttempt(success=False, retryable=True, error=error)
-
-        return SendAttempt(success=True)
+        return await send_forward(context, umo, raw_nodes, label)
 
     @classmethod
     def _onebot_call_action_for_umo(cls, context, umo: str):
-        platform = cls._platform_inst_from_context(context, cls._platform_from_umo(umo))
-        for candidate in (
-            getattr(platform, "bot", None),
-            getattr(platform, "client", None),
-            getattr(platform, "adapter", None),
-            platform,
-        ):
-            if candidate is None:
-                continue
-            api = getattr(candidate, "api", None)
-            call_action = getattr(api, "call_action", None)
-            if callable(call_action):
-                return call_action
-            call_action = getattr(candidate, "call_action", None)
-            if callable(call_action):
-                return call_action
-        return None
+        return PlatformResolver().from_umo(context, umo).call_action
 
     @staticmethod
     def _onebot_target_from_umo(umo: str) -> tuple[str, int | str]:
-        parts = str(umo or "").split(":", 2)
-        message_type = parts[1].strip().lower() if len(parts) >= 2 else ""
-        raw_session_id = parts[2].strip() if len(parts) >= 3 else ""
-        try:
-            session_id: int | str = int(raw_session_id)
-        except (TypeError, ValueError):
-            session_id = raw_session_id
-        return message_type, session_id
+        return OneBotDeliveryAdapter.onebot_target_from_umo(umo)
 
     @staticmethod
     async def _call_forward_action(
@@ -1971,7 +1604,6 @@ class TweetSender:
         base_payload: dict,
         raw_nodes: list[dict],
     ) -> None:
-        try:
-            await call_action(action, **base_payload, messages=raw_nodes)
-        except TypeError:
-            await call_action(action, **base_payload, message=raw_nodes)
+        await OneBotDeliveryAdapter.call_forward_action(
+            call_action, action, base_payload, raw_nodes
+        )

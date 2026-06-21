@@ -205,6 +205,7 @@ sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
 
 
 import scheduler as scheduler_module  # noqa: E402
+from delivery import PlatformResolver  # noqa: E402
 from scheduler import NitterTweetScheduler  # noqa: E402
 from sender import SendAttempt, TweetSender  # noqa: E402
 from sqlite_storage import SQLiteStorage  # noqa: E402
@@ -1307,6 +1308,236 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(outcome.success)
         self.assertEqual(captured_summaries, ["overall summary", ""])
+
+    async def test_custom_platform_id_uses_metadata_type_for_onebot_forward(self):
+        class _Meta:
+            id = "cat"
+            type = "aiocqhttp"
+            name = "cat"
+
+        class _Platform:
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        resolver = PlatformResolver()
+        profile = resolver.from_umo(_Context(), "cat:FriendMessage:2519706243")
+
+        self.assertIn("aiocqhttp", profile.platform_types)
+        self.assertTrue(profile.is_onebot)
+        self.assertTrue(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "cat:FriendMessage:2519706243"
+            )
+        )
+
+    async def test_custom_platform_id_uses_call_action_as_onebot_capability(self):
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        profile = PlatformResolver().from_umo(_Context(), "cat:GroupMessage:123456")
+
+        self.assertTrue(callable(profile.call_action))
+        self.assertTrue(profile.is_onebot)
+        self.assertTrue(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "cat:GroupMessage:123456"
+            )
+        )
+
+    async def test_custom_onebot_event_uses_platform_call_action(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Meta:
+            id = "cat"
+            type = "onebot"
+            name = "cat"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Event:
+            platform = _Platform()
+            bot = None
+
+            def get_platform_id(self):
+                return "cat"
+
+            def get_group_id(self):
+                return "123456"
+
+        sent = await sender._send_onebot_forward(_Event(), [{"type": "node"}])
+
+        self.assertTrue(sent)
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+
+    async def test_known_non_onebot_platforms_do_not_use_call_action_fallback(self):
+        class _Meta:
+            id = "telegram"
+            type = "telegram"
+            name = "telegram"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "telegram" else None
+
+        profile = PlatformResolver().from_umo(
+            _Context(), "telegram:FriendMessage:1"
+        )
+
+        self.assertTrue(callable(profile.call_action))
+        self.assertFalse(profile.is_onebot)
+        self.assertFalse(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "telegram:FriendMessage:1"
+            )
+        )
+
+    async def test_custom_onebot_private_merged_video_uses_raw_forward(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Meta:
+            id = "cat"
+            type = "onebot"
+            name = "cat"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        tweet = self._make_tweet("NASA", "107")
+        video_path = Path(self.temp_dir.name) / "clip-cat-private.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-private.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="cat:FriendMessage:2519706243",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_private_forward_msg")
+        self.assertEqual(calls[0][1]["user_id"], 2519706243)
+
+    async def test_custom_onebot_group_merged_video_uses_raw_forward(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        tweet = self._make_tweet("NASA", "108")
+        video_path = Path(self.temp_dir.name) / "clip-cat-group.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-group.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="cat:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+
+    async def test_custom_onebot_direct_umo_splits_text_and_videos(self):
+        sender = TweetSender(
+            {"send_video_attachments": True, "merge_tweet_threshold": 0}
+        )
+        sent_chains = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+            async def send_message(self, umo, chain):
+                sent_chains.append((umo, chain))
+
+        tweet = self._make_tweet("NASA", "109")
+        video_path = Path(self.temp_dir.name) / "clip-cat-direct.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-direct.mp4", video_path)
+        )
+
+        outcome = await sender._send_direct_to_umo(
+            _Context(),
+            "cat:GroupMessage:123456",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual([umo for umo, _ in sent_chains], ["cat:GroupMessage:123456"] * 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0][1].components))
+        self.assertFalse(any(isinstance(c, _Video) for c in sent_chains[0][1].components))
+        self.assertEqual(len(sent_chains[1][1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1][1].components[0], _Video))
 
     async def test_qq_merged_forward_with_video_uses_onebot_raw_nodes(self):
         sender = TweetSender({"send_video_attachments": True})
