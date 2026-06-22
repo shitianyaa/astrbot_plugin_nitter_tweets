@@ -421,9 +421,13 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("vision_prompt", schema["ai_vision"]["items"])
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
+        self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
 
     def test_brief_log_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "brief_log_enabled", True), True)
+
+    def test_filter_reposts_config_defaults_enabled_for_old_configs(self):
+        self.assertIs(config_get({}, "filter_reposts_enabled", True), True)
 
     def test_config_get_prefers_grouped_value(self):
         config = {
@@ -437,6 +441,11 @@ class ConfigCompatTest(unittest.TestCase):
         config = {"logging": {"brief_log_enabled": False}}
 
         self.assertIs(config_get(config, "brief_log_enabled", True), False)
+
+    def test_config_get_reads_grouped_filter_reposts_value(self):
+        config = {"basic": {"filter_reposts_enabled": False}}
+
+        self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
 
     def test_config_get_falls_back_to_flat_value(self):
         config = {"push_targets": ["telegram:FriendMessage:1"]}

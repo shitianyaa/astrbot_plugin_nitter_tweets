@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 import time
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -29,6 +30,12 @@ class TransientFetchError(RuntimeError):
     pass
 
 
+@dataclass(slots=True)
+class InstanceFetchResult:
+    tweets: list[TweetItem]
+    saw_items: bool = False
+
+
 class NitterClient:
     def __init__(self, config):
         self.instances = load_instances(config_get(config, "instances"))
@@ -41,19 +48,22 @@ class NitterClient:
         )
         self.retry_attempts = 3
         self.retry_delay_seconds = 5.0
+        self.filter_reposts_enabled = bool(
+            config_get(config, "filter_reposts_enabled", True)
+        )
 
     async def fetch_tweets(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
         errors: list[str] = []
         for instance in self.instances:
             try:
-                tweets = await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     self._fetch_from_instance, instance, username, limit,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
                 continue
-            if tweets:
-                return instance, tweets
+            if result.tweets or result.saw_items:
+                return instance, result.tweets
             errors.append(f"{instance}: empty feed")
         raise RuntimeError(self._format_fetch_errors(errors))
 
@@ -61,12 +71,12 @@ class NitterClient:
         self, instance: str, username: str, limit: int,
     ) -> tuple[str, list[TweetItem]]:
         normalized = load_instances([instance])[0]
-        tweets = await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._fetch_from_instance, normalized, username, limit,
         )
-        if not tweets:
+        if not result.tweets and not result.saw_items:
             raise RuntimeError(f"{normalized}: empty feed")
-        return normalized, tweets
+        return normalized, result.tweets
 
     def _format_fetch_errors(self, errors: list[str]) -> str:
         if not errors:
@@ -89,14 +99,15 @@ class NitterClient:
 
     def _fetch_from_instance(
         self, instance: str, username: str, limit: int,
-    ) -> list[TweetItem]:
+    ) -> InstanceFetchResult:
         if limit <= 0:
-            return []
+            return InstanceFetchResult([])
 
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         seen_cursors: set[str] = set()
         cursor = ""
+        saw_items = False
 
         while len(tweets) < limit:
             try:
@@ -115,6 +126,12 @@ class NitterClient:
             if not page_tweets:
                 break
 
+            saw_items = True
+            page_tweets, page_filtered_reposts = self._filter_reposts(
+                page_tweets, username
+            )
+            skipped_only_reposts = page_filtered_reposts > 0 and not page_tweets
+
             added = 0
             for tweet in page_tweets:
                 key = self._tweet_identity(tweet)
@@ -132,10 +149,34 @@ class NitterClient:
                 break
             seen_cursors.add(next_cursor)
             cursor = next_cursor
-            if added == 0:
+            if added == 0 and not skipped_only_reposts:
                 break
 
-        return tweets
+        return InstanceFetchResult(
+            tweets=tweets,
+            saw_items=saw_items,
+        )
+
+    def _filter_reposts(
+        self, tweets: list[TweetItem], username: str,
+    ) -> tuple[list[TweetItem], int]:
+        if not self.filter_reposts_enabled:
+            return tweets, 0
+
+        kept: list[TweetItem] = []
+        filtered = 0
+        for tweet in tweets:
+            if self._is_repost(tweet, username):
+                filtered += 1
+                continue
+            kept.append(tweet)
+        return kept, filtered
+
+    @staticmethod
+    def _is_repost(tweet: TweetItem, username: str) -> bool:
+        watched = str(username or "").strip().lstrip("@").lower()
+        author = str(tweet.username or "").strip().lstrip("@").lower()
+        return bool(watched and author and author != watched)
 
     def _fetch_page_with_retries(
         self, instance: str, username: str, cursor: str, limit: int,
@@ -187,7 +228,7 @@ class NitterClient:
             raise TransientFetchError(str(getattr(exc, "reason", exc))) from exc
         except (TimeoutError, ssl.SSLError) as exc:
             raise TransientFetchError(str(exc)) from exc
-        return self._parse_rss(data, instance, limit), next_cursor
+        return self._parse_rss(data, instance, 0), next_cursor
 
     @staticmethod
     def _is_retryable_http_status(status_code: int) -> bool:
@@ -228,8 +269,10 @@ class NitterClient:
             published = self._format_pub_date(self._node_text(item, "pubDate"))
             if not text and not link:
                 continue
-            tweets.append(TweetItem(text=text or "(无正文)", link=link, published=published))
-            if len(tweets) >= limit:
+            tweets.append(
+                TweetItem(text=text or "(无正文)", link=link, published=published)
+            )
+            if limit > 0 and len(tweets) >= limit:
                 break
         return tweets
 

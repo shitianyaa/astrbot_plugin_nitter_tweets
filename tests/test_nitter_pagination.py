@@ -63,6 +63,27 @@ def _rss_page(start_id: int, count: int) -> bytes:
     ).encode("utf-8")
 
 
+def _rss_from_links(links: list[str]) -> bytes:
+    items = []
+    for index, link in enumerate(links, 1):
+        items.append(
+            f"""
+            <item>
+              <title>tweet {index}</title>
+              <description>tweet {index}</description>
+              <link>{link}</link>
+              <pubDate>Mon, 08 Jun 2026 12:00:00 GMT</pubDate>
+            </item>
+            """
+        )
+    return (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<rss><channel>"
+        + "".join(items)
+        + "</channel></rss>"
+    ).encode("utf-8")
+
+
 class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_tweets_paginates_after_nitter_first_page_limit(self):
         client = NitterClient(
@@ -101,6 +122,134 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             calls[1],
             "https://nitter.example/nasa/rss?cursor=84",
         )
+
+    async def test_fetch_tweets_filters_reposts_by_item_author(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(
+                _rss_from_links(
+                    [
+                        "/nasa/status/100",
+                        "/BBCWorld/status/200",
+                        "/NaSa/status/101",
+                        "https://example.test/unparsed-link",
+                    ]
+                )
+            )
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            instance, tweets = await client.fetch_tweets("NASA", 10)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://nitter.example")
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101", ""])
+        self.assertEqual(tweets[-1].link, "https://example.test/unparsed-link")
+
+    async def test_fetch_tweets_keeps_reposts_when_filter_is_disabled(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+                "basic": {"filter_reposts_enabled": False},
+            }
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(
+                _rss_from_links(["/nasa/status/100", "/BBCWorld/status/200"])
+            )
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.username for tweet in tweets], ["nasa", "BBCWorld"])
+
+    async def test_fetch_tweets_continues_after_page_filtered_to_reposts(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            parsed = urlparse(request.full_url)
+            cursor = parse_qs(parsed.query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_from_links(["/BBCWorld/status/200"]), {"Min-Id": "next"})
+            if cursor == "next":
+                return _FakeResponse(_rss_from_links(["/nasa/status/100"]))
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 5)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
+
+    async def test_fetch_tweets_returns_empty_when_all_items_are_filtered(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(_rss_from_links(["/BBCWorld/status/200"]))
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            instance, tweets = await client.fetch_tweets("nasa", 5)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://nitter.example")
+        self.assertEqual(tweets, [])
+
+    async def test_fetch_tweets_still_rejects_truly_empty_feed(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(b"<rss><channel></channel></rss>")
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            with self.assertRaisesRegex(RuntimeError, "empty feed"):
+                await client.fetch_tweets("nasa", 5)
+        finally:
+            media.urlopen = original_urlopen
 
     async def test_fetch_tweets_retries_transient_http_errors(self):
         client = NitterClient(

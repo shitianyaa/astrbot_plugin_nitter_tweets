@@ -27,6 +27,7 @@ CONFIG_GROUP_BY_KEY = {
     "request_timeout": "basic",
     "cooldown_seconds": "basic",
     "user_agent": "basic",
+    "filter_reposts_enabled": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "video_resolution_preference": "media",
