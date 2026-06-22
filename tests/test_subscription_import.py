@@ -882,6 +882,63 @@ class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(context.calls), 1)
         self.assertEqual(tweet.ai_comment, "这是一句评论")
 
+    async def test_comment_prompt_without_placeholders_appends_context(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                    "comment_prompt": "请用活泼但克制的语气点评一句。",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/303",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        prompt = context.calls[0]["prompt"]
+        self.assertIn("请用活泼但克制的语气点评一句。", prompt)
+        self.assertIn("推文：plain text tweet", prompt)
+        self.assertIn("中文翻译：一条中文翻译", prompt)
+        self.assertIn("链接：https://x.com/NASA/status/303", prompt)
+
+    async def test_comment_prompt_with_only_link_appends_content_context(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                    "comment_prompt": "请结合原帖链接点评一句：{link}",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="another plain tweet",
+            link="https://x.com/NASA/status/304",
+            published="",
+            translation="另一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        prompt = context.calls[0]["prompt"]
+        self.assertIn("请结合原帖链接点评一句：https://x.com/NASA/status/304", prompt)
+        self.assertIn("推文：another plain tweet", prompt)
+        self.assertIn("中文翻译：另一条中文翻译", prompt)
+
     async def test_translation_retries_until_success_without_warning(self):
         context = _QueuedLLMContext([
             TimeoutError("slow"),

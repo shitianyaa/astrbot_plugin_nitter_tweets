@@ -17,7 +17,7 @@
 - 媒体抓取、xdown 解析、缓存清理和视频探测拆入 `media_support/`，`media.py` 保持旧导出兼容。
 - 调度结果模型与格式化逻辑拆入 `scheduler_models.py` 和 `scheduler_formatting.py`，主调度状态机保持原行为。
 - 命令处理拆入 `command_handlers/`，`main.py` 保留插件生命周期与命令注册编排。
-- Nitter RSS 抓取和媒体下载遇到 SSL EOF、HTTP 5xx、429 等临时错误时会按 5 秒间隔最多重试 3 次。
+- Nitter RSS 抓取遇到 SSL EOF、HTTP 5xx、429 等临时错误时，同一实例初次请求失败后最多再重试 1 次，仍失败则尝试下一个实例；媒体下载仍会按 5 秒间隔最多尝试 3 次。
 - 转发过滤后如果当前 RSS 页全被过滤且存在下一页游标，会继续翻页查找更旧原创；如果 RSS 可用但全是转发，会返回空列表而不是把账号标记为抓取失败。
 
 ### Fixed

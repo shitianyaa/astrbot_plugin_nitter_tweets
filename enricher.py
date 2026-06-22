@@ -601,10 +601,16 @@ class TweetEnricher:
             "image_caption": caption or "无",
             "link": link or "",
         }
+        template = self.comment_prompt_template
+        if not re.search(r"\{(text|translation|image_caption)\}", template):
+            template = (
+                f"{template}\n\n"
+                "推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}\n链接：{link}"
+            )
         return re.sub(
             r"\{(text|translation|image_caption|link)\}",
             lambda m: mapping[m.group(1)],
-            self.comment_prompt_template,
+            template,
         )
 
     # ──────────────────────────────────────────────────────────────────

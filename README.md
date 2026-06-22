@@ -111,6 +111,7 @@ telegram:FriendMessage:123456789
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | Nitter 实例列表，按顺序尝试，建议把自建实例放在第一位。 |
+| `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数。 |
 | `filter_reposts_enabled` | 是否过滤博主转发他人的推文，默认开启。 |
 | `schedule_enabled` | 后台检查总开关；关闭后不会触发分组间隔检查和每日检查。 |

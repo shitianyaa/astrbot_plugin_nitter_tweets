@@ -28,7 +28,7 @@
         "description": "单个 Nitter 实例超时秒数",
         "type": "float",
         "default": 12.0,
-        "hint": "某个实例超时后会自动尝试下一个实例。"
+        "hint": "单次 RSS 请求等待该实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。"
       },
       "cooldown_seconds": {
         "description": "用户请求冷却秒数",
@@ -559,7 +559,7 @@
     "description": "单个 Nitter 实例超时秒数",
     "type": "float",
     "default": 12.0,
-    "hint": "某个实例超时后会自动尝试下一个实例。",
+    "hint": "单次 RSS 请求等待该实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。",
     "invisible": true
   },
   "cooldown_seconds": {
