@@ -4,7 +4,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 `filter_reposts_enabled`，默认过滤博主转发他人的推文；手动 `/推文`、`/镜像测试` 和定时推送都会按 RSS item 主链接作者判断，博主自己发布的引用或评论推文仍会保留。
+- 新增 `brief_log_enabled` 后台日志简略模式，默认只输出每轮检查/暂存发布结果摘要、失败详情、推送成功率和关键 warning/error。
+- 新增 `scripts/probe_nitter_fetch.py`，可在本地复用插件抓取与转发过滤逻辑测试指定账号的 Nitter RSS 返回。
 - 媒体设置新增 `max_video_duration_minutes`，视频/GIF 能读取到时长且超过配置上限时会跳过下载并保留原文链接；`scripts/test_video_download.py` 同步新增 `--max-duration-minutes` 验证参数。
+
+### Changed
+
+- 发送层拆分为平台 delivery adapters，`TweetSender` 保留公开入口并减少平台分支；后续 Telegram 等平台优化可集中在对应适配器中处理。
+- 媒体抓取、xdown 解析、缓存清理和视频探测拆入 `media_support/`，`media.py` 保持旧导出兼容。
+- 调度结果模型与格式化逻辑拆入 `scheduler_models.py` 和 `scheduler_formatting.py`，主调度状态机保持原行为。
+- 命令处理拆入 `command_handlers/`，`main.py` 保留插件生命周期与命令注册编排。
+- Nitter RSS 抓取和媒体下载遇到 SSL EOF、HTTP 5xx、429 等临时错误时会按 5 秒间隔最多重试 3 次。
+- 转发过滤后如果当前 RSS 页全被过滤且存在下一页游标，会继续翻页查找更旧原创；如果 RSS 可用但全是转发，会返回空列表而不是把账号标记为抓取失败。
+
+### Fixed
+
+- 修复自定义 QQ/OneBot 平台实例 ID（例如 `cat:FriendMessage:*`、`cat:GroupMessage:*`）无法稳定识别真实平台类型的问题。
+- 修复 QQ 合并转发视频节点和直接视频发送路径的多个兼容问题，避免纯视频节点、重复降级提示或错误回退导致的异常推送。
+- 收敛媒体大小限制等重复日志，减少后台出现重复的大段媒体处理输出。
 
 ## [0.10.0] - 2026-06-15
 
