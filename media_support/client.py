@@ -46,26 +46,49 @@ class NitterClient:
             config,
             "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
-        self.retry_attempts = 3
+        self.retry_attempts = 2
         self.retry_delay_seconds = 5.0
         self.filter_reposts_enabled = bool(
             config_get(config, "filter_reposts_enabled", True)
         )
+        self.brief_log_enabled = bool(config_get(config, "brief_log_enabled", True))
 
     async def fetch_tweets(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
         errors: list[str] = []
-        for instance in self.instances:
+        for index, instance in enumerate(self.instances):
             try:
                 result = await asyncio.to_thread(
                     self._fetch_from_instance, instance, username, limit,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
+                self._log_instance_fetch_failure(index, instance, username, exc)
                 continue
             if result.tweets or result.saw_items:
                 return instance, result.tweets
             errors.append(f"{instance}: empty feed")
+            self._log_instance_fetch_failure(index, instance, username, "empty feed")
         raise RuntimeError(self._format_fetch_errors(errors))
+
+    def _log_instance_fetch_failure(
+        self, index: int, instance: str, username: str, error,
+    ) -> None:
+        total = len(self.instances)
+        if total <= 1:
+            return
+
+        if index + 1 < total:
+            logger.warning(
+                "[NitterTweets] RSS instance failed, trying next: "
+                f"instance={instance}, next_instance={self.instances[index + 1]}, "
+                f"username={username}, error={error}"
+            )
+            return
+
+        logger.warning(
+            "[NitterTweets] RSS instance failed, no more instances configured: "
+            f"instance={instance}, username={username}, error={error}"
+        )
 
     async def fetch_tweets_from_instance(
         self, instance: str, username: str, limit: int,
@@ -192,11 +215,12 @@ class NitterClient:
                 last_error = exc
                 if attempt >= attempts:
                     break
-                logger.warning(
-                    "[NitterTweets] RSS fetch failed, retrying: "
-                    f"instance={instance}, username={username}, "
-                    f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
-                )
+                if not self.brief_log_enabled:
+                    logger.warning(
+                        "[NitterTweets] RSS fetch failed, retrying: "
+                        f"instance={instance}, username={username}, "
+                        f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
+                    )
                 if delay > 0:
                     time.sleep(delay)
 

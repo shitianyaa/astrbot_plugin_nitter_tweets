@@ -5,6 +5,7 @@ import types
 import unittest
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
+from unittest.mock import patch
 
 
 if "astrbot.api" not in sys.modules:
@@ -24,6 +25,7 @@ if "astrbot.api" not in sys.modules:
 
 
 import media
+import media_support.client as client_module
 from media import NitterClient
 
 
@@ -264,7 +266,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
         def fake_urlopen(request, timeout):
             del timeout
             calls.append(request.full_url)
-            if len(calls) < 3:
+            if len(calls) < 2:
                 raise HTTPError(
                     request.full_url, 503, "Service Unavailable", {}, None
                 )
@@ -279,7 +281,107 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual(len(tweets), 1)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 2)
+
+    async def test_brief_log_suppresses_transient_retry_warning(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if len(calls) < 2:
+                raise HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, None
+                )
+            return _FakeResponse(_rss_page(100, 1))
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            with patch.object(client_module.logger, "warning") as warning_log:
+                await client.fetch_tweets("nasa", 1)
+        finally:
+            media.urlopen = original_urlopen
+
+        warning_log.assert_not_called()
+
+    async def test_detailed_log_keeps_transient_retry_warning(self):
+        client = NitterClient(
+            {
+                "instances": ["https://nitter.example"],
+                "request_timeout": 12,
+                "logging": {"brief_log_enabled": False},
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if len(calls) < 2:
+                raise HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, None
+                )
+            return _FakeResponse(_rss_page(100, 1))
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            with patch.object(client_module.logger, "warning") as warning_log:
+                await client.fetch_tweets("nasa", 1)
+        finally:
+            media.urlopen = original_urlopen
+
+        logged = "\n".join(str(call.args[0]) for call in warning_log.call_args_list)
+        self.assertIn("RSS fetch failed, retrying", logged)
+
+    async def test_fetch_tweets_tries_next_instance_after_transient_errors(self):
+        client = NitterClient(
+            {
+                "instances": [
+                    "https://broken.example",
+                    "https://working.example",
+                ],
+                "request_timeout": 12,
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if request.full_url.startswith("https://broken.example/"):
+                raise HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, None
+                )
+            return _FakeResponse(_rss_page(100, 1))
+
+        original_urlopen = media.urlopen
+        media.urlopen = fake_urlopen
+        try:
+            instance, tweets = await client.fetch_tweets("nasa", 1)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://working.example")
+        self.assertEqual(len(tweets), 1)
+        self.assertEqual(
+            calls,
+            [
+                "https://broken.example/nasa/rss",
+                "https://broken.example/nasa/rss",
+                "https://working.example/nasa/rss",
+            ],
+        )
 
     async def test_fetch_tweets_does_not_retry_non_transient_http_errors(self):
         client = NitterClient(
