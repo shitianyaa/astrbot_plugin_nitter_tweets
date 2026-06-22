@@ -394,6 +394,31 @@ def _group_config(config, group_id: str):
     raise AssertionError(f"group not found: {group_id}")
 
 
+class CommandMetadataTest(unittest.TestCase):
+    def test_command_handlers_have_ui_descriptions(self):
+        command_methods = [
+            "cmd_tweets",
+            "cmd_mirror_probe",
+            "cmd_tweets_status",
+            "cmd_tweets_check",
+            "cmd_tweets_clear_cache",
+            "cmd_tweets_clear_seen",
+            "cmd_tweets_queue",
+            "cmd_tweets_publish",
+            "cmd_tweets_list",
+            "cmd_tweets_export_subscriptions",
+            "cmd_tweets_delete_subscriptions",
+            "cmd_tweets_dedup",
+            "cmd_tweets_import",
+        ]
+
+        for method_name in command_methods:
+            with self.subTest(method_name=method_name):
+                doc = getattr(NitterTweetsPlugin, method_name).__doc__
+                self.assertIsNotNone(doc)
+                self.assertTrue(doc.strip())
+
+
 class ConfigCompatTest(unittest.TestCase):
     def test_conf_schema_is_grouped(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
