@@ -83,8 +83,8 @@ class NitterTweetsPlugin(
 
     async def initialize(self):
         logger.info(
-            "Nitter tweets plugin loaded: "
-            f"{len(self.nitter.instances)} instances, "
+            "[NitterTweets] 插件已加载: "
+            f"instances={len(self.nitter.instances)}, "
             "media="
             f"image:{'on' if self.media.send_image_attachments else 'off'},"
             f"video:{'on' if self.media.send_video_attachments else 'off'}, "

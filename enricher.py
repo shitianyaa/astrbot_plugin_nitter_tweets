@@ -60,8 +60,8 @@ VISION_UNAVAILABLE_NOTICE = (
     "或在 AstrBot 中设置全局图片描述模型。"
 )
 VISION_UNAVAILABLE_LOG = (
-    "AI vision skipped: no vision provider available. "
-    "Set vision_provider_id or provider_settings.default_image_caption_provider_id."
+    "AI 识图已跳过：没有可用视觉模型。请设置 vision_provider_id "
+    "或 provider_settings.default_image_caption_provider_id。"
 )
 VISION_FAILED_NOTICE = (
     "AI识图调用失败：当前模型可能不支持图片，或模型配置已失效。"
@@ -136,14 +136,14 @@ async def _llm_generate_with_retry(
         except TimeoutError as exc:
             last_error = f"timeout({LLM_CALL_TIMEOUT_SECONDS:g}s)"
             logger.warning(
-                f"{LOG_PREFIX} AI {purpose} timed out: status={status_id}, "
+                f"{LOG_PREFIX} AI {purpose} 调用超时: status={status_id}, "
                 f"provider={provider_id}, attempt={attempt}/{LLM_CALL_MAX_ATTEMPTS}, "
                 f"error={exc}"
             )
         except Exception as exc:
             last_error = type(exc).__name__ or "exception"
             logger.warning(
-                f"{LOG_PREFIX} AI {purpose} failed: status={status_id}, "
+                f"{LOG_PREFIX} AI {purpose} 调用失败: status={status_id}, "
                 f"provider={provider_id}, attempt={attempt}/{LLM_CALL_MAX_ATTEMPTS}, "
                 f"error={exc}"
             )
@@ -166,7 +166,7 @@ def format_ai_tweet_summary(
     status_id = tweet.status_id or f"index-{index}"
     progress = f", progress={index}/{total}" if total > 1 else ""
     return (
-        f"{LOG_PREFIX} AI processed @{username} status={status_id}{progress}: "
+        f"{LOG_PREFIX} AI 处理完成: username={username}, status={status_id}{progress}, "
         f"translation={_format_translation_result(translation_report, status_id)}, "
         f"media={_format_media_result(tweet)}, "
         f"vision={_format_vision_result(enrichment_report, status_id)}, "
@@ -301,7 +301,7 @@ class TweetEnricher:
     ) -> EnrichmentReport:
         report = EnrichmentReport()
         if not self.enabled:
-            logger.debug(f"{LOG_PREFIX} AI enrich skipped: disabled")
+            logger.debug(f"{LOG_PREFIX} AI 增强已跳过: disabled")
             report.tweet_results = [
                 EnrichmentTweetResult(
                     status_id=tweet.status_id or f"index-{index}",
@@ -312,7 +312,7 @@ class TweetEnricher:
             ]
             return report
         if not tweets:
-            logger.debug(f"{LOG_PREFIX} AI enrich skipped: no tweets")
+            logger.debug(f"{LOG_PREFIX} AI 增强已跳过: no_tweets")
             return report
 
         # ── 解析模型 ──
@@ -327,7 +327,7 @@ class TweetEnricher:
             if v_pid:
                 provider_key = f"{v_pid}:{v_source}"
                 if provider_key != self._logged_vision_provider:
-                    logger.info(f"{LOG_PREFIX} AI vision provider: {v_pid} ({v_source})")
+                    logger.info(f"{LOG_PREFIX} AI 识图模型: {v_pid} ({v_source})")
                     self._logged_vision_provider = provider_key
             else:
                 report.vision_unavailable = True
@@ -345,11 +345,11 @@ class TweetEnricher:
             if c_pid:
                 provider_key = f"{c_pid}:{c_source}"
                 if provider_key != self._logged_comment_provider:
-                    logger.info(f"{LOG_PREFIX} AI comment provider: {c_pid} ({c_source})")
+                    logger.info(f"{LOG_PREFIX} AI 评论模型: {c_pid} ({c_source})")
                     self._logged_comment_provider = provider_key
             else:
                 if not self._warned_comment_unavailable:
-                    logger.warning(f"{LOG_PREFIX} AI comment enabled but no provider available")
+                    logger.warning(f"{LOG_PREFIX} AI 评论已启用但没有可用模型")
                     self._warned_comment_unavailable = True
 
         # ── 逐条处理 ──
@@ -455,14 +455,14 @@ class TweetEnricher:
         ):
             report.notice = VISION_FAILED_NOTICE
             logger.warning(
-                f"{LOG_PREFIX} AI vision failed for all attempted tweets: "
+                f"{LOG_PREFIX} AI 识图尝试的推文全部失败: "
                 f"provider={report.vision_provider_id} "
                 f"source={report.vision_provider_source}"
             )
 
         if len(tweets) > 1:
             logger.info(
-                f"{LOG_PREFIX} AI enrich finished: tweets={len(tweets)}, "
+                f"{LOG_PREFIX} AI 增强完成: tweets={len(tweets)}, "
                 f"captioned={captioned}, commented={commented}, "
                 f"skipped={skipped}, failed={failed}"
             )
@@ -489,7 +489,7 @@ class TweetEnricher:
             )
             if resp is None:
                 logger.warning(
-                    f"{LOG_PREFIX} AI vision failed after retries: "
+                    f"{LOG_PREFIX} AI 识图重试后仍失败: "
                     f"status={status_id} img={idx}, error={error}"
                 )
                 return ""
@@ -524,7 +524,7 @@ class TweetEnricher:
         )
         if resp is None:
             logger.warning(
-                f"{LOG_PREFIX} AI comment failed after retries: "
+                f"{LOG_PREFIX} AI 评论重试后仍失败: "
                 f"status={status_id}, error={error}"
             )
             return "", error or "exception"
@@ -694,7 +694,7 @@ class TweetTranslator:
     ) -> TranslationReport:
         report = TranslationReport()
         if not self.enabled:
-            logger.debug(f"{LOG_PREFIX} translation skipped: translate_enabled=false")
+            logger.debug(f"{LOG_PREFIX} 翻译已跳过: translate_enabled=false")
             report.tweet_results = [
                 TranslationTweetResult(
                     status_id=tweet.status_id or f"index-{index}",
@@ -704,7 +704,7 @@ class TweetTranslator:
             ]
             return report
         if not tweets:
-            logger.debug(f"{LOG_PREFIX} translation skipped: no tweets")
+            logger.debug(f"{LOG_PREFIX} 翻译已跳过: no_tweets")
             return report
 
         provider_id, source = await self._resolve_provider(umo)
@@ -712,7 +712,7 @@ class TweetTranslator:
         report.provider_source = source
         if not provider_id:
             if not self._warned_no_provider:
-                logger.warning(f"{LOG_PREFIX} translation enabled but no provider available")
+                logger.warning(f"{LOG_PREFIX} 翻译已启用但没有可用模型")
                 self._warned_no_provider = True
             report.tweet_results = [
                 TranslationTweetResult(
@@ -723,7 +723,7 @@ class TweetTranslator:
             ]
             return report
         if len(tweets) > 1:
-            logger.info(f"{LOG_PREFIX} translation started: tweets={len(tweets)}, provider={provider_id} ({source})")
+            logger.info(f"{LOG_PREFIX} 翻译开始: tweets={len(tweets)}, provider={provider_id} ({source})")
 
         translated = skipped = failed = 0
         for index, tweet in enumerate(tweets, 1):
@@ -759,7 +759,7 @@ class TweetTranslator:
         report.skipped = skipped
         report.failed = failed
         if len(tweets) > 1:
-            logger.info(f"{LOG_PREFIX} translation finished: translated={translated}, skipped={skipped}, failed={failed}")
+            logger.info(f"{LOG_PREFIX} 翻译完成: translated={translated}, skipped={skipped}, failed={failed}")
         return report
 
     # ── 判断是否需要翻译 ──
@@ -800,7 +800,7 @@ class TweetTranslator:
         if resp is None:
             _append_ai_warning(tweet, AI_TRANSLATION_FAILED_WARNING)
             logger.warning(
-                f"{LOG_PREFIX} translation failed after retries: "
+                f"{LOG_PREFIX} 翻译重试后仍失败: "
                 f"status={status_id}, error={error}"
             )
             return ""

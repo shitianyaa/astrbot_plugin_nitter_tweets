@@ -58,7 +58,7 @@ class ManualCommandMixin:
         try:
             instance, tweets = await self.nitter.fetch_tweets(username, limit)
         except Exception as exc:
-            logger.warning(f"Failed to fetch tweets for @{username}: {exc}")
+            logger.warning(f"[NitterTweets] 手动获取 @{username} 推文失败: {exc}")
             await event.send(
                 event.plain_result(
                     f"获取 @{username} 推文失败：Nitter 实例暂时不可用或该用户无公开 RSS。"
@@ -100,7 +100,8 @@ class ManualCommandMixin:
             )
         except Exception as exc:
             logger.warning(
-                f"Failed to test Nitter instance {instance_text} for @{username}: {exc}"
+                f"[NitterTweets] 测试 Nitter 实例失败: instance={instance_text}, "
+                f"username={username}, error={exc}"
             )
             await event.send(
                 event.plain_result(
@@ -251,7 +252,7 @@ class ManualCommandMixin:
         try:
             await event.send(MessageChain([Plain(fallback_text)]))
         except Exception as exc:
-            logger.warning(f"Failed to send manual tweet fallback: {exc}")
+            logger.warning(f"[NitterTweets] 发送手动推文降级消息失败: {exc}")
             try:
                 await event.send(
                     MessageChain(
@@ -265,7 +266,7 @@ class ManualCommandMixin:
                 )
             except Exception as notice_exc:
                 logger.warning(
-                    "Failed to send manual tweet failure notice: "
+                    "[NitterTweets] 发送手动推文失败提示失败: "
                     f"{notice_exc}"
                 )
 

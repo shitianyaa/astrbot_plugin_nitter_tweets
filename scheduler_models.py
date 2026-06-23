@@ -27,6 +27,7 @@ class PendingTweetBatch:
     fetched_ids: list[str]
     seen_ids: list[str]
     pending_ids: list[int] = field(default_factory=list)
+    delivered_targets: set[str] = field(default_factory=set)
     account_index: int = 0
     account_total: int = 0
     tweet_index: int = 0
@@ -127,7 +128,7 @@ class ScheduledCheckResult:
     def format_log_summary(self) -> str:
         if self.skipped_reason:
             return (
-                "[NitterTweets] scheduled check skipped: "
+                "[NitterTweets] 定时检查已跳过: "
                 f"group={self.group_id}, reason={self.skipped_reason}, "
                 f"users={len(self.users)}, "
                 f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
@@ -138,7 +139,7 @@ class ScheduledCheckResult:
             if self.delivery_warnings else ""
         )
         return (
-            "[NitterTweets] scheduled check finished: "
+            "[NitterTweets] 定时检查完成: "
             f"group={self.group_id}, reason={self.reason}, "
             f"users={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "

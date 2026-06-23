@@ -47,19 +47,19 @@ class MediaCacheMixin:
                 except OSError as exc:
                     failed += 1
                     logger.warning(
-                        f"[NitterTweets] failed to delete media file {path}: {exc}"
+                        f"[NitterTweets] 删除媒体文件失败: path={path}, error={exc}"
                     )
 
         if failed:
             logger.warning(
-                "[NitterTweets] media cleanup after send finished: "
+                "[NitterTweets] 发送后媒体清理完成: "
                 f"removed={removed}, failed={failed}"
             )
         elif removed:
             debug_log = getattr(logger, "debug", None)
             if debug_log:
                 debug_log(
-                    "[NitterTweets] media cleanup after send finished: "
+                    "[NitterTweets] 发送后媒体清理完成: "
                     f"removed={removed}, failed={failed}"
                 )
 
@@ -110,7 +110,7 @@ class MediaCacheMixin:
                     media.path = target_path
                 except OSError as exc:
                     logger.warning(
-                        "[NitterTweets] failed to move media into staged cache: "
+                        "[NitterTweets] 移动媒体到暂存缓存失败: "
                         f"user={username}, status={status_id}, path={source_path}, "
                         f"error={exc}"
                     )
@@ -137,13 +137,13 @@ class MediaCacheMixin:
                 except OSError as exc:
                     failed += 1
                     logger.warning(
-                        f"[NitterTweets] failed to delete staged media file {path}: {exc}"
+                        f"[NitterTweets] 删除暂存媒体文件失败: path={path}, error={exc}"
                     )
         for directory in sorted(touched_dirs, key=lambda item: len(item.parts), reverse=True):
             self._remove_empty_staged_dirs(directory)
         if removed or failed:
             logger.info(
-                "[NitterTweets] staged media cleanup finished: "
+                "[NitterTweets] 暂存媒体清理完成: "
                 f"removed={removed}, failed={failed}"
             )
 
@@ -180,13 +180,13 @@ class MediaCacheMixin:
             except OSError as exc:
                 result.failed += 1
                 logger.warning(
-                    f"[NitterTweets] failed to clean expired staged media {path}: {exc}"
+                    f"[NitterTweets] 清理过期暂存媒体失败: path={path}, error={exc}"
                 )
         for directory in sorted(touched_dirs, key=lambda item: len(item.parts), reverse=True):
             self._remove_empty_staged_dirs(directory)
         if result.removed or result.failed:
             logger.info(
-                "[NitterTweets] expired staged media cleanup finished: "
+                "[NitterTweets] 过期暂存媒体清理完成: "
                 f"removed={result.removed}, failed={result.failed}, "
                 f"retention_hours={retention_hours:g}"
             )
@@ -205,7 +205,7 @@ class MediaCacheMixin:
             seen_dirs.add(resolved)
             self._clear_non_staged_cache_dir(cache_dir, result)
         logger.info(
-            "[NitterTweets] non-staged media cache clear finished: "
+            "[NitterTweets] 非暂存媒体缓存清理完成: "
             f"removed={result.removed}, failed={result.failed}, "
             f"skipped_dirs={result.skipped_dirs}"
         )
@@ -230,7 +230,7 @@ class MediaCacheMixin:
             except OSError as exc:
                 result.failed += 1
                 logger.warning(
-                    f"[NitterTweets] failed to clear media cache file {path}: {exc}"
+                    f"[NitterTweets] 清理媒体缓存文件失败: path={path}, error={exc}"
                 )
 
     @property
@@ -279,11 +279,11 @@ class MediaCacheMixin:
                     removed += 1
             except OSError as exc:
                 failed += 1
-                logger.warning(f"[NitterTweets] failed to clean cache file {path}: {exc}")
+                logger.warning(f"[NitterTweets] 清理缓存文件失败: path={path}, error={exc}")
 
         if removed or failed:
             logger.info(
-                "[NitterTweets] media cache cleanup finished: "
+                "[NitterTweets] 媒体缓存清理完成: "
                 f"removed={removed}, failed={failed}, retention_days={self.cache_retention_days:g}"
             )
 

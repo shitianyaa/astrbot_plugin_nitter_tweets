@@ -248,8 +248,8 @@ async def send_lark_post(
     receive_id_type: str | None = None,
 ) -> LarkSendAttempt:
     if client is None or getattr(client, "im", None) is None:
-        error = "Lark API client is unavailable"
-        logger.warning(f"Failed to send {label}: {error}")
+        error = "Lark API 客户端不可用"
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=False, error=error)
 
     try:
@@ -260,8 +260,8 @@ async def send_lark_post(
             ReplyMessageRequestBody,
         )
     except Exception as exc:
-        error = f"lark_oapi is unavailable: {exc}"
-        logger.warning(f"Failed to send {label}: {error}")
+        error = f"lark_oapi 不可用: {exc}"
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=True, error=error)
 
     text_len = sum(
@@ -270,8 +270,8 @@ async def send_lark_post(
         if isinstance(component, Plain) and component.text
     )
     if text_len > LARK_TEXT_CHUNK_SIZE:
-        error = "Lark post text is too long"
-        logger.warning(f"Failed to send {label}: {error}")
+        error = "Lark post 文本过长"
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=True, error=error)
 
     try:
@@ -284,8 +284,8 @@ async def send_lark_post(
             if isinstance(component, Image):
                 image_path = _local_image_path(component)
                 if image_path is None:
-                    error = "Lark post image is not a local file"
-                    logger.warning(f"Failed to send {label}: {error}")
+                    error = "Lark post 图片不是本地文件"
+                    logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
                     return LarkSendAttempt(
                         success=False, retryable=True, error=error
                     )
@@ -319,8 +319,8 @@ async def send_lark_post(
             response = await client.im.v1.message.areply(request)
         else:
             if not receive_id or not receive_id_type:
-                error = "Lark receive_id or receive_id_type is missing"
-                logger.warning(f"Failed to send {label}: {error}")
+                error = "Lark receive_id 或 receive_id_type 缺失"
+                logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
                 return LarkSendAttempt(success=False, retryable=True, error=error)
             request = (
                 CreateMessageRequest.builder()
@@ -341,7 +341,7 @@ async def send_lark_post(
                 f"Lark API returned {getattr(response, 'code', '')}: "
                 f"{getattr(response, 'msg', '')}"
             )
-            logger.warning(f"Failed to send {label}: {error}")
+            logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
             return LarkSendAttempt(success=False, retryable=True, error=error)
     except Exception as exc:
         error = str(exc)
@@ -355,7 +355,7 @@ async def send_lark_post(
                 error=error,
                 warning=uncertain_delivery_warning,
             )
-        logger.warning(f"Failed to send {label}: {error}")
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=True, error=error)
 
     return LarkSendAttempt(success=True)
@@ -374,7 +374,7 @@ async def send_lark_event_media_with_retry(
         components,
         label,
         send_chain,
-        "[NitterTweets] sent media without video/GIF attachments after initial failure",
+        "[NitterTweets] 初次失败后已发送去除视频/GIF 的媒体消息",
     )
 
 
@@ -392,8 +392,7 @@ async def send_lark_umo_media_with_retry(
         components,
         label,
         send_chain,
-        f"[NitterTweets] sent media to {umo} without video/GIF attachments "
-        "after initial failure",
+        f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频/GIF 的媒体消息",
     )
 
 
@@ -450,8 +449,8 @@ async def send_lark_text(
     if not text:
         return LarkSendAttempt(success=True)
     if client is None or getattr(client, "im", None) is None:
-        error = "Lark API client is unavailable"
-        logger.warning(f"Failed to send {label}: {error}")
+        error = "Lark API 客户端不可用"
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=False, error=error)
 
     try:
@@ -462,8 +461,8 @@ async def send_lark_text(
             ReplyMessageRequestBody,
         )
     except Exception as exc:
-        error = f"lark_oapi is unavailable: {exc}"
-        logger.warning(f"Failed to send {label}: {error}")
+        error = f"lark_oapi 不可用: {exc}"
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=True, error=error)
 
     try:
@@ -484,8 +483,8 @@ async def send_lark_text(
                 response = await client.im.v1.message.areply(request)
             else:
                 if not receive_id or not receive_id_type:
-                    error = "Lark receive_id or receive_id_type is missing"
-                    logger.warning(f"Failed to send {label}: {error}")
+                    error = "Lark receive_id 或 receive_id_type 缺失"
+                    logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
                     return LarkSendAttempt(
                         success=False, retryable=True, error=error
                     )
@@ -508,7 +507,7 @@ async def send_lark_text(
                     f"Lark API returned {getattr(response, 'code', '')}: "
                     f"{getattr(response, 'msg', '')}"
                 )
-                logger.warning(f"Failed to send {label}: {error}")
+                logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
                 return LarkSendAttempt(success=False, retryable=True, error=error)
     except Exception as exc:
         error = str(exc)
@@ -522,7 +521,7 @@ async def send_lark_text(
                 error=error,
                 warning=uncertain_delivery_warning,
             )
-        logger.warning(f"Failed to send {label}: {error}")
+        logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return LarkSendAttempt(success=False, retryable=True, error=error)
 
     return LarkSendAttempt(success=True)

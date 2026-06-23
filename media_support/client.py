@@ -79,14 +79,14 @@ class NitterClient:
 
         if index + 1 < total:
             logger.warning(
-                "[NitterTweets] RSS instance failed, trying next: "
+                "[NitterTweets] RSS 实例失败，尝试下一个实例: "
                 f"instance={instance}, next_instance={self.instances[index + 1]}, "
                 f"username={username}, error={error}"
             )
             return
 
         logger.warning(
-            "[NitterTweets] RSS instance failed, no more instances configured: "
+            "[NitterTweets] RSS 实例失败，已无更多实例可尝试: "
             f"instance={instance}, username={username}, error={error}"
         )
 
@@ -103,21 +103,19 @@ class NitterClient:
 
     def _format_fetch_errors(self, errors: list[str]) -> str:
         if not errors:
-            return "no Nitter instance configured"
+            return "未配置 Nitter 实例"
 
         shown_errors = errors[-3:]
         hidden_count = len(errors) - len(shown_errors)
         total_count = len(self.instances)
-        summary = (
-            f"tried {len(errors)}/{total_count} Nitter instances; no usable feed"
-        )
+        summary = f"已尝试 {len(errors)}/{total_count} 个 Nitter 实例，未获得可用 RSS"
         if hidden_count > 0:
             summary += (
-                f"; showing last {len(shown_errors)} errors "
-                f"({hidden_count} earlier omitted)"
+                f"；仅显示最后 {len(shown_errors)} 个错误"
+                f"（已省略前 {hidden_count} 个）"
             )
         else:
-            summary += "; errors"
+            summary += "；错误"
         return f"{summary}: {'; '.join(shown_errors)}"
 
     def _fetch_from_instance(
@@ -141,7 +139,7 @@ class NitterClient:
                 if not tweets:
                     raise
                 logger.warning(
-                    "[NitterTweets] paged RSS fetch failed after partial results: "
+                    "[NitterTweets] RSS 分页抓取在已有部分结果后失败: "
                     f"instance={instance}, username={username}, fetched={len(tweets)}"
                 )
                 break
@@ -217,7 +215,7 @@ class NitterClient:
                     break
                 if not self.brief_log_enabled:
                     logger.warning(
-                        "[NitterTweets] RSS fetch failed, retrying: "
+                        "[NitterTweets] RSS 抓取失败，准备重试: "
                         f"instance={instance}, username={username}, "
                         f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
                     )
@@ -226,7 +224,7 @@ class NitterClient:
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError("RSS fetch failed")
+        raise RuntimeError("RSS 抓取失败")
 
     def _fetch_page_from_instance(
         self, instance: str, username: str, cursor: str, limit: int,

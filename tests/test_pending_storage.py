@@ -136,6 +136,51 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(failed_summary.failed_count, 1)
             self.assertEqual(sent_summary.pending_count, 0)
 
+    async def test_pending_queue_records_delivered_targets_until_publish(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                tweet = TweetItem(
+                    text="hello",
+                    link="https://x.com/NASA/status/111",
+                    published="",
+                )
+                await asyncio.to_thread(
+                    storage.enqueue_pending_tweets,
+                    "global",
+                    "NASA",
+                    "",
+                    [tweet],
+                )
+                records = await asyncio.to_thread(
+                    storage.get_pending_tweets, "global", 10
+                )
+                pending_id = records[0].id
+                await asyncio.to_thread(
+                    storage.mark_pending_tweets_delivered,
+                    [pending_id],
+                    "telegram:FriendMessage:1",
+                )
+                delivered_records = await asyncio.to_thread(
+                    storage.get_pending_tweets, "global", 10
+                )
+                await asyncio.to_thread(
+                    storage.mark_pending_tweets_published, [pending_id]
+                )
+                sent_summary = await asyncio.to_thread(
+                    storage.get_pending_queue_summary, "global"
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual(
+                delivered_records[0].delivered_targets,
+                ("telegram:FriendMessage:1",),
+            )
+            self.assertEqual(sent_summary.pending_count, 0)
+
     async def test_pending_queue_summary_groups_unsent_tweets_by_username(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
@@ -299,9 +344,10 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "3")
+            self.assertEqual(version, "4")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].instance, "")
+            self.assertEqual(records[0].delivered_targets, ())
 
     async def test_schema_v2_global_group_rows_merge_to_default(self):
         with TemporaryDirectory() as temp_dir:
@@ -469,7 +515,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "3")
+            self.assertEqual(version, "4")
             self.assertEqual(users, ["ESA", "NASA"])
             self.assertEqual(
                 targets,

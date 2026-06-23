@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from astrbot.api import logger
 
-from .base import DeliveryAdapter
+from .default import DefaultDeliveryAdapter
 from .outcomes import SendAttempt
 
 try:
@@ -11,7 +11,7 @@ except ImportError:
     from utils import safe_call
 
 
-class OneBotDeliveryAdapter(DeliveryAdapter):
+class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
     name = "onebot"
 
     @property
@@ -102,7 +102,10 @@ class OneBotDeliveryAdapter(DeliveryAdapter):
                     error=error,
                     warning=warning,
                 )
-            logger.warning(f"Failed to send {label} via OneBot action to {umo}: {error}")
+            logger.warning(
+                f"[NitterTweets] 通过 OneBot action 发送失败: "
+                f"label={label}, target={umo}, error={error}"
+            )
             return SendAttempt(success=False, retryable=True, error=error)
 
         return SendAttempt(success=True)

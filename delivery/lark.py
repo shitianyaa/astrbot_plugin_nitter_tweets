@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from astrbot.api import logger
 
-from .base import DeliveryAdapter
+from .default import DefaultDeliveryAdapter
 from .outcomes import SendOutcome
 
 try:
@@ -37,7 +37,7 @@ except ImportError:
     )
 
 
-class LarkDeliveryAdapter(DeliveryAdapter):
+class LarkDeliveryAdapter(DefaultDeliveryAdapter):
     name = "lark"
     is_lark = True
 
@@ -62,8 +62,8 @@ class LarkDeliveryAdapter(DeliveryAdapter):
         )
         client = lark_client_from_event(event, sender._platform_inst_from_context)
         if client is None:
-            logger.warning("[NitterTweets] Lark client not found; using generic send")
-            return await sender._send_direct_event(
+            logger.warning("[NitterTweets] 未找到 Lark 客户端，改用通用发送")
+            return await sender._send_default_direct_event(
                 event,
                 username,
                 instance,
@@ -95,8 +95,8 @@ class LarkDeliveryAdapter(DeliveryAdapter):
             and receive_id_type
         ):
             logger.warning(
-                "[NitterTweets] Lark reply post failed; retrying current session "
-                f"send: {post_attempt.error}"
+                "[NitterTweets] Lark 回复 post 发送失败，改用当前会话重试: "
+                f"{post_attempt.error}"
             )
             post_attempt = await send_lark_post(
                 client,
@@ -120,13 +120,13 @@ class LarkDeliveryAdapter(DeliveryAdapter):
             )
             if not (video_attempt.success or video_attempt.uncertain):
                 logger.warning(
-                    "[NitterTweets] Lark post sent but video media failed: "
+                    "[NitterTweets] Lark post 已发送，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
             return True
 
         logger.warning(
-            "[NitterTweets] Lark post failed; falling back to text/media: "
+            "[NitterTweets] Lark post 发送失败，降级为文本/媒体发送: "
             f"{post_attempt.error}"
         )
         text_attempt = await send_lark_text(
@@ -147,8 +147,8 @@ class LarkDeliveryAdapter(DeliveryAdapter):
             and receive_id_type
         ):
             logger.warning(
-                "[NitterTweets] Lark reply text failed; retrying current session "
-                f"send: {text_attempt.error}"
+                "[NitterTweets] Lark 回复文本发送失败，改用当前会话重试: "
+                f"{text_attempt.error}"
             )
             text_attempt = await send_lark_text(
                 client,
@@ -171,7 +171,7 @@ class LarkDeliveryAdapter(DeliveryAdapter):
         )
         if not (media_attempt.success or media_attempt.uncertain):
             logger.warning(
-                "[NitterTweets] Lark tweet text sent but media failed: "
+                "[NitterTweets] Lark 推文文本已发送，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
         return True
@@ -204,10 +204,10 @@ class LarkDeliveryAdapter(DeliveryAdapter):
         )
         if client is None or not receive_id_type or not receive_id:
             logger.warning(
-                f"[NitterTweets] Lark client or target not found for {umo}; "
-                "using generic send"
+                f"[NitterTweets] 未找到 Lark 客户端或目标: target={umo}，"
+                "改用通用发送"
             )
-            return await sender._send_direct_to_umo(
+            return await sender._send_default_direct_to_umo(
                 context,
                 umo,
                 username,
@@ -244,14 +244,14 @@ class LarkDeliveryAdapter(DeliveryAdapter):
             if not (video_attempt.success or video_attempt.uncertain):
                 warning = video_attempt.error
                 logger.warning(
-                    f"[NitterTweets] Lark post sent to {umo} but video media failed: "
+                    f"[NitterTweets] Lark post 已发送到 {umo}，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
             return SendOutcome(success=True, warning=warning)
 
         logger.warning(
-            f"[NitterTweets] Lark post failed for {umo}; falling back to "
-            f"text/media: {post_attempt.error}"
+            f"[NitterTweets] Lark post 发送到 {umo} 失败，降级为文本/媒体发送: "
+            f"{post_attempt.error}"
         )
         text_attempt = await send_lark_text(
             client,
@@ -277,7 +277,7 @@ class LarkDeliveryAdapter(DeliveryAdapter):
         if not (media_attempt.success or media_attempt.uncertain):
             warning = media_attempt.error
             logger.warning(
-                f"[NitterTweets] Lark tweet text sent to {umo} but media failed: "
+                f"[NitterTweets] Lark 推文文本已发送到 {umo}，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
         return SendOutcome(success=True, warning=warning)

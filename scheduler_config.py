@@ -123,8 +123,8 @@ class SchedulerConfigReader:
             raw_groups = [raw_groups]
         elif not isinstance(raw_groups, list):
             logger.warning(
-                "[NitterTweets] tweet_groups must be a list, "
-                f"got {type(raw_groups).__name__}"
+                "[NitterTweets] tweet_groups 必须是列表: "
+                f"type={type(raw_groups).__name__}"
             )
             return groups
 
@@ -140,7 +140,7 @@ class SchedulerConfigReader:
             normalized_group_id = normalize_group_id(group.group_id)
             if normalized_group_id in seen_group_ids:
                 logger.warning(
-                    "[NitterTweets] duplicate tweet group ignored: "
+                    "[NitterTweets] 已忽略重复推文分组: "
                     f"{group.name} ({group.group_id})"
                 )
                 continue
@@ -157,7 +157,7 @@ class SchedulerConfigReader:
     ) -> ScheduleGroup | None:
         if not isinstance(raw_group, dict):
             logger.warning(
-                "[NitterTweets] invalid tweet_groups item ignored: "
+                "[NitterTweets] 已忽略无效 tweet_groups 项: "
                 f"{raw_group!r}"
             )
             return None
@@ -345,7 +345,7 @@ class SchedulerConfigReader:
                 result.invalid_targets.append(invalid)
                 if log_invalid:
                     logger.warning(
-                        "[NitterTweets] invalid push target: "
+                        "[NitterTweets] 无效推送目标: "
                         f"group={group_id}, target={invalid}"
                     )
                 continue
@@ -358,7 +358,7 @@ class SchedulerConfigReader:
                 result.invalid_targets.append(raw)
                 if log_invalid:
                     logger.warning(
-                        "[NitterTweets] invalid push target: "
+                        "[NitterTweets] 无效推送目标: "
                         f"group={group_id}, target={raw!r}"
                     )
                 continue
@@ -386,7 +386,7 @@ class SchedulerConfigReader:
                 if platform_id:
                     return platform_id
         except Exception as exc:
-            logger.debug(f"[NitterTweets] platform auto-detect failed: {exc}")
+            logger.debug(f"[NitterTweets] 平台自动检测失败: {exc}")
 
         try:
             manager = getattr(self.context, "platform_manager", None)
@@ -396,7 +396,7 @@ class SchedulerConfigReader:
             if platform_id:
                 return platform_id
         except Exception as exc:
-            logger.debug(f"[NitterTweets] platform manager lookup failed: {exc}")
+            logger.debug(f"[NitterTweets] 平台管理器查找失败: {exc}")
 
         return ""
 
@@ -494,12 +494,12 @@ class SchedulerConfigReader:
                 hour_s, minute_s = value.split(":", 1)
                 hour, minute = int(hour_s), int(minute_s)
             except (TypeError, ValueError):
-                logger.warning(f"[NitterTweets] invalid daily_check_times entry: {raw!r}")
+                logger.warning(f"[NitterTweets] 无效每日检查时间: {raw!r}")
                 continue
             if 0 <= hour < 24 and 0 <= minute < 60:
                 times.append((hour, minute))
             else:
-                logger.warning(f"[NitterTweets] daily_check_times out of range: {raw!r}")
+                logger.warning(f"[NitterTweets] 每日检查时间超出范围: {raw!r}")
         return times
 
     @staticmethod

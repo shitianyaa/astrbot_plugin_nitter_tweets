@@ -341,7 +341,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             media.urlopen = original_urlopen
 
         logged = "\n".join(str(call.args[0]) for call in warning_log.call_args_list)
-        self.assertIn("RSS fetch failed, retrying", logged)
+        self.assertIn("RSS 抓取失败，准备重试", logged)
 
     async def test_fetch_tweets_tries_next_instance_after_transient_errors(self):
         client = NitterClient(

@@ -156,7 +156,9 @@ class SubscriptionCommandMixin:
                     save_config()
                 except Exception as exc:
                     save_error = str(exc)
-                    logger.warning(f"Failed to save deleted watch_users: {save_error}")
+                    logger.warning(
+                        f"[NitterTweets] 保存订阅删除结果失败: {save_error}"
+                    )
             else:
                 save_error = "当前配置对象不支持 save_config()"
             sync_error = await self._sync_import_config_groups()
@@ -292,7 +294,7 @@ class SubscriptionCommandMixin:
                 except Exception as exc:
                     save_error = str(exc)
                     logger.warning(
-                        f"Failed to save imported watch_users: {save_error}"
+                        f"[NitterTweets] 保存订阅导入结果失败: {save_error}"
                     )
             else:
                 save_error = "当前配置对象不支持 save_config()"
@@ -532,7 +534,7 @@ class SubscriptionCommandMixin:
             )
             await self.scheduler.storage.migrate_and_sync(schedule_groups)
         except Exception as exc:
-            logger.warning(f"Failed to sync imported watch_users: {exc}")
+            logger.warning(f"[NitterTweets] 同步导入订阅失败: {exc}")
             return str(exc)
         return ""
 

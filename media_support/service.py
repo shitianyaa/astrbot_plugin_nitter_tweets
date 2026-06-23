@@ -169,7 +169,7 @@ class MediaService(MediaCacheMixin):
                         self._add_media_warning(
                             tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
                         )
-                logger.warning(f"Failed to download media {media.url}: {exc}")
+                logger.warning(f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}")
                 continue
             downloaded.append(media)
         return downloaded
@@ -189,7 +189,7 @@ class MediaService(MediaCacheMixin):
                 if attempt >= attempts:
                     break
                 logger.warning(
-                    "[NitterTweets] media download failed, retrying: "
+                    "[NitterTweets] 媒体下载失败，准备重试: "
                     f"url={media.url}, attempt={attempt}/{attempts}, "
                     f"delay={delay:g}s, error={exc}"
                 )
@@ -198,7 +198,7 @@ class MediaService(MediaCacheMixin):
 
         if last_error is not None:
             raise last_error
-        raise RuntimeError("media download failed")
+        raise RuntimeError("媒体下载失败")
 
     @staticmethod
     def _add_media_warning(
@@ -246,7 +246,7 @@ class MediaService(MediaCacheMixin):
             if not kind:
                 kind = XdownMediaParser._detect_kind("", full_url)
             if not kind:
-                logger.info(f"[NitterTweets] skipping unclassified media: {full_url}")
+                logger.info(f"[NitterTweets] 跳过无法识别类型的媒体: url={full_url}")
                 continue
             result.append(
                 XdownMediaCandidate(
@@ -278,8 +278,8 @@ class MediaService(MediaCacheMixin):
             skipped_images = sum(1 for item in candidates if item.kind == "image")
             if skipped_images:
                 logger.info(
-                    "[NitterTweets] skipping image media because video/GIF was "
-                    f"detected: skipped={skipped_images}, tweet={tweet.x_url}"
+                    "[NitterTweets] 检测到视频/GIF，跳过同条推文中的图片候选: "
+                    f"skipped={skipped_images}, tweet={tweet.x_url}"
                 )
             return [
                 TweetMedia(
@@ -377,7 +377,7 @@ class MediaService(MediaCacheMixin):
         elif skipped_durations:
             longest = max(skipped_durations)
             logger.info(
-                "[NitterTweets] skipped long video candidates: "
+                "[NitterTweets] 跳过超长视频候选: "
                 f"longest={self._format_duration(longest)}, "
                 f"limit={self._format_duration(max_seconds)}, tweet={tweet.x_url}"
             )
@@ -432,7 +432,7 @@ class MediaService(MediaCacheMixin):
             with compat_urlopen(request, min(self.timeout, 10.0)) as response:
                 data = response.read(1_048_576)
         except Exception as exc:
-            logger.debug(f"[NitterTweets] failed to probe video duration: {exc}")
+            logger.debug(f"[NitterTweets] 探测视频时长失败: {exc}")
             return None
         return self._probe_mp4_duration(data)
 
