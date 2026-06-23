@@ -368,12 +368,27 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
         original_urlopen = media.urlopen
         media.urlopen = fake_urlopen
         try:
-            instance, tweets = await client.fetch_tweets("nasa", 1)
+            with (
+                patch.object(client_module.logger, "warning") as warning_log,
+                patch.object(client_module.logger, "info") as info_log,
+            ):
+                instance, tweets = await client.fetch_tweets("nasa", 1)
         finally:
             media.urlopen = original_urlopen
 
         self.assertEqual(instance, "https://working.example")
         self.assertEqual(len(tweets), 1)
+        warning_text = "\n".join(
+            str(call.args[0]) for call in warning_log.call_args_list
+        )
+        info_text = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("RSS 实例失败，尝试下一个实例", warning_text)
+        self.assertIn("instance=https://broken.example", warning_text)
+        self.assertIn("next_instance=https://working.example", warning_text)
+        self.assertIn("error=HTTP 503", warning_text)
+        self.assertIn("RSS 实例成功，已完成实例切换", info_text)
+        self.assertIn("instance=https://working.example", info_text)
+        self.assertIn("tweets=1", info_text)
         self.assertEqual(
             calls,
             [

@@ -65,6 +65,7 @@ class NitterClient:
                 self._log_instance_fetch_failure(index, instance, username, exc)
                 continue
             if result.tweets or result.saw_items:
+                self._log_instance_fetch_success(index, instance, username, result)
                 return instance, result.tweets
             errors.append(f"{instance}: empty feed")
             self._log_instance_fetch_failure(index, instance, username, "empty feed")
@@ -88,6 +89,17 @@ class NitterClient:
         logger.warning(
             "[NitterTweets] RSS 实例失败，已无更多实例可尝试: "
             f"instance={instance}, username={username}, error={error}"
+        )
+
+    def _log_instance_fetch_success(
+        self, index: int, instance: str, username: str, result: InstanceFetchResult,
+    ) -> None:
+        if index <= 0:
+            return
+
+        logger.info(
+            "[NitterTweets] RSS 实例成功，已完成实例切换: "
+            f"instance={instance}, username={username}, tweets={len(result.tweets)}"
         )
 
     async def fetch_tweets_from_instance(
