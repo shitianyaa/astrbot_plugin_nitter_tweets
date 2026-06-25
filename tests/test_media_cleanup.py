@@ -72,6 +72,26 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertIn("发送后媒体清理完成", logged)
             self.assertIn("图片 1", logged)
 
+    def test_cleanup_after_send_prefers_media_metadata_over_suffix(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "image-named-like-video.mp4"
+            path.write_bytes(b"image")
+            media = TweetMedia("image", "https://example.test/image.jpg", path)
+            tweet = TweetItem(
+                text="tweet",
+                link="https://x.com/example/status/1",
+                published="",
+                media=[media],
+            )
+            service = MediaService({"media_cache_retention_days": 0})
+
+            with patch.object(cache_module.logger, "info") as info_log:
+                service.cleanup_after_send([tweet])
+
+            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+            self.assertIn("图片 1", logged)
+            self.assertIn("视频 0", logged)
+
     def test_positive_retention_keeps_downloaded_media_after_send(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"

@@ -25,6 +25,7 @@ except ImportError:
     )
 
 from .cache import MediaCacheMixin
+from .extensions import MEDIA_IMAGE_SUFFIXES
 from . import video_probe
 from .network import compat_urlopen
 from .xdown import XdownMediaCandidate, XdownMediaParser
@@ -474,7 +475,7 @@ class MediaService(MediaCacheMixin):
             return False
 
         suffix = Path(left_path).suffix.lower()
-        return suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"}
+        return suffix in MEDIA_IMAGE_SUFFIXES
 
     def _download(self, media: TweetMedia) -> Path:
         default_suffix = ".mp4" if media.is_video else ".jpg"

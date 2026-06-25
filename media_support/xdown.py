@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+from .extensions import (
+    ANIMATED_IMAGE_SUFFIXES,
+    IMAGE_SUFFIXES,
+    VIDEO_SUFFIXES,
+    suffix_matches,
+)
+
 
 class XdownMediaParser(HTMLParser):
     def __init__(self):
@@ -53,14 +60,11 @@ class XdownMediaParser(HTMLParser):
             return "image"
 
         # 按 URL 扩展名兜底判断
-        url_lower = url.lower().split("?")[0].split("#")[0]
-        if url_lower.endswith((".mp4", ".m4v", ".mov", ".webm")):
+        if suffix_matches(url, VIDEO_SUFFIXES):
             return "video"
-        if url_lower.endswith(".gif"):
+        if suffix_matches(url, ANIMATED_IMAGE_SUFFIXES):
             return "dynamic"
-        if url_lower.endswith((
-            ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"
-        )):
+        if suffix_matches(url, IMAGE_SUFFIXES):
             return "image"
         return ""
 

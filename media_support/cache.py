@@ -8,6 +8,8 @@ from pathlib import Path
 
 from astrbot.api import logger
 
+from .extensions import classify_media_path
+
 try:
     from ..utils import TweetItem, TweetMedia, generate_file_name
 except ImportError:
@@ -312,10 +314,10 @@ class MediaCacheMixin:
                 result.removed_videos += 1
                 return
 
-        suffixes = {suffix.lower() for suffix in path.suffixes}
-        if suffixes & {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        media_type = classify_media_path(path)
+        if media_type == "image":
             result.removed_images += 1
-        elif suffixes & {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}:
+        elif media_type == "video":
             result.removed_videos += 1
         else:
             result.removed_other += 1
