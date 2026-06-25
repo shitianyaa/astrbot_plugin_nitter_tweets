@@ -6,6 +6,7 @@ import unittest
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 
 if "astrbot.api" not in sys.modules:
@@ -28,6 +29,7 @@ if "astrbot.api" not in sys.modules:
 
 
 from media import MediaService
+import media_support.cache as cache_module
 from utils import TweetItem, TweetMedia
 
 
@@ -49,6 +51,26 @@ class MediaCleanupTest(unittest.TestCase):
 
             self.assertFalse(path.exists())
             self.assertIsNone(media.path)
+
+    def test_zero_retention_cleanup_after_send_logs_removed_image_count(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "image.jpg"
+            path.write_bytes(b"image")
+            media = TweetMedia("image", "https://example.test/image.jpg", path)
+            tweet = TweetItem(
+                text="tweet",
+                link="https://x.com/example/status/1",
+                published="",
+                media=[media],
+            )
+            service = MediaService({"media_cache_retention_days": 0})
+
+            with patch.object(cache_module.logger, "info") as info_log:
+                service.cleanup_after_send([tweet])
+
+            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+            self.assertIn("发送后媒体清理完成", logged)
+            self.assertIn("图片 1", logged)
 
     def test_positive_retention_keeps_downloaded_media_after_send(self):
         with TemporaryDirectory() as temp_dir:
@@ -219,6 +241,36 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertEqual(result.removed, 1)
             self.assertTrue(protected.exists())
             self.assertFalse(expired.exists())
+
+    def test_expired_cache_cleanup_logs_media_type_counts(self):
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            cache_dir.mkdir()
+            image = cache_dir / "old.jpg"
+            video = cache_dir / "old.mp4"
+            other = cache_dir / "old.bin"
+            fresh = cache_dir / "fresh.jpg"
+            for path in (image, video, other, fresh):
+                path.write_bytes(b"data")
+            old_time = 1
+            for path in (image, video, other):
+                os.utime(path, (old_time, old_time))
+            service = MediaService({"media_cache_retention_days": 1})
+            service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
+
+            with patch.object(cache_module.logger, "info") as info_log:
+                service.cleanup_cache(force=True)
+
+            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+            self.assertIn("媒体缓存清理完成", logged)
+            self.assertIn("图片 1", logged)
+            self.assertIn("视频 1", logged)
+            self.assertIn("其他 1", logged)
+            self.assertFalse(image.exists())
+            self.assertFalse(video.exists())
+            self.assertFalse(other.exists())
+            self.assertTrue(fresh.exists())
 
 
 if __name__ == "__main__":
