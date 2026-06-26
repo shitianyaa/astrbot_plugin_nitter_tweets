@@ -8,7 +8,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from .extensions import classify_media_path
+from .extensions import MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, classify_media_path
 
 try:
     from ..utils import TweetItem, TweetMedia, generate_file_name
@@ -315,9 +315,9 @@ class MediaCacheMixin:
                 return
 
         media_type = classify_media_path(path)
-        if media_type == "image":
+        if media_type == MEDIA_TYPE_IMAGE:
             result.removed_images += 1
-        elif media_type == "video":
+        elif media_type == MEDIA_TYPE_VIDEO:
             result.removed_videos += 1
         else:
             result.removed_other += 1

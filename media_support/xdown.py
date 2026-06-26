@@ -6,6 +6,9 @@ from html.parser import HTMLParser
 from .extensions import (
     ANIMATED_IMAGE_SUFFIXES,
     IMAGE_SUFFIXES,
+    MEDIA_TYPE_DYNAMIC,
+    MEDIA_TYPE_IMAGE,
+    MEDIA_TYPE_VIDEO,
     VIDEO_SUFFIXES,
     suffix_matches,
 )
@@ -53,19 +56,19 @@ class XdownMediaParser(HTMLParser):
     def _detect_kind(text: str, url: str = "") -> str:
         lowered = text.lower()
         if "mp4" in lowered or "video" in lowered:
-            return "video"
+            return MEDIA_TYPE_VIDEO
         if "gif" in lowered:
-            return "dynamic"
+            return MEDIA_TYPE_DYNAMIC
         if "图片" in text or "image" in lowered or "photo" in lowered:
-            return "image"
+            return MEDIA_TYPE_IMAGE
 
         # 按 URL 扩展名兜底判断
         if suffix_matches(url, VIDEO_SUFFIXES):
-            return "video"
+            return MEDIA_TYPE_VIDEO
         if suffix_matches(url, ANIMATED_IMAGE_SUFFIXES):
-            return "dynamic"
+            return MEDIA_TYPE_DYNAMIC
         if suffix_matches(url, IMAGE_SUFFIXES):
-            return "image"
+            return MEDIA_TYPE_IMAGE
         return ""
 
 

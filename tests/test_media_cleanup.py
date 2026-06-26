@@ -262,6 +262,41 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertTrue(protected.exists())
             self.assertFalse(expired.exists())
 
+    def test_expired_staged_cleanup_logs_media_type_and_empty_dir_counts(self):
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            image_dir = cache_dir / "staged" / "images" / "nested"
+            video_dir = cache_dir / "staged" / "videos" / "nested"
+            other_dir = cache_dir / "staged" / "other" / "nested"
+            for directory in (image_dir, video_dir, other_dir):
+                directory.mkdir(parents=True)
+
+            image = image_dir / "expired.jpg"
+            video = video_dir / "expired.mp4"
+            other = other_dir / "expired.bin"
+            for path in (image, video, other):
+                path.write_bytes(b"data")
+                os.utime(path, (1, 1))
+
+            service = MediaService({})
+            service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
+
+            with patch.object(cache_module.logger, "info") as info_log:
+                result = service.cleanup_expired_staged_media(retention_hours=1)
+
+            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+            self.assertIn("过期暂存媒体清理完成", logged)
+            self.assertIn("图片 1", logged)
+            self.assertIn("视频 1", logged)
+            self.assertIn("其他 1", logged)
+            self.assertRegex(logged, r"空目录 [1-9]\d* 个")
+            self.assertEqual(result.removed, 3)
+            self.assertGreater(result.removed_empty_dirs, 0)
+            self.assertFalse(image.exists())
+            self.assertFalse(video.exists())
+            self.assertFalse(other.exists())
+
     def test_expired_cache_cleanup_logs_media_type_counts(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
