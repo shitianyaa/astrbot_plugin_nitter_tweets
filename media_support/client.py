@@ -43,6 +43,7 @@ _AUTHOR_MEDIA_RE = re.compile(
 class InstanceFetchResult:
     tweets: list[TweetItem]
     saw_items: bool = False
+    plain_text_filtered: int = 0
 
 
 class NitterClient:
@@ -68,6 +69,17 @@ class NitterClient:
         limit: int,
         skip_plain_text: bool = False,
     ) -> tuple[str, list[TweetItem]]:
+        instance, tweets, _ = await self.fetch_tweets_with_stats(
+            username, limit, skip_plain_text=skip_plain_text
+        )
+        return instance, tweets
+
+    async def fetch_tweets_with_stats(
+        self,
+        username: str,
+        limit: int,
+        skip_plain_text: bool = False,
+    ) -> tuple[str, list[TweetItem], int]:
         errors: list[str] = []
         for index, instance in enumerate(self.instances):
             try:
@@ -81,7 +93,7 @@ class NitterClient:
                 continue
             if result.tweets or result.saw_items:
                 self._log_instance_fetch_success(index, instance, username, result)
-                return instance, result.tweets
+                return instance, result.tweets, result.plain_text_filtered
             errors.append(f"{instance}: empty feed")
             self._log_instance_fetch_failure(index, instance, username, "empty feed")
         raise RuntimeError(self._format_fetch_errors(errors))
@@ -165,6 +177,7 @@ class NitterClient:
         seen_cursors: set[str] = set()
         cursor = ""
         saw_items = False
+        plain_text_filtered_total = 0
 
         while len(tweets) < limit:
             try:
@@ -188,6 +201,7 @@ class NitterClient:
                 break
 
             saw_items = True
+            plain_text_filtered_total += plain_text_filtered
             page_tweets, page_filtered_reposts = self._filter_reposts(
                 page_tweets, username
             )
@@ -220,6 +234,7 @@ class NitterClient:
         return InstanceFetchResult(
             tweets=tweets,
             saw_items=saw_items,
+            plain_text_filtered=plain_text_filtered_total,
         )
 
     def _filter_reposts(

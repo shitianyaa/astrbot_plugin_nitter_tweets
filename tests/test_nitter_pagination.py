@@ -615,6 +615,36 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101"])
 
+    async def test_skip_plain_text_stats_returns_filtered_count(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    ("/nasa/status/100", "t1", "纯文本无图"),
+                    (
+                        "/nasa/status/101",
+                        "t2",
+                        '<img src="https://nitter.net/pic/media%2Fabcd.jpg" />',
+                    ),
+                    ("/nasa/status/102", "t3", "也无图"),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets, plain_text_filtered = await client.fetch_tweets_with_stats(
+                "nasa", 10, skip_plain_text=True
+            )
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
+        self.assertEqual(plain_text_filtered, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

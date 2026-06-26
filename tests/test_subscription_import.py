@@ -447,16 +447,16 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
-        self.assertIn("filter_plain_text_enabled", schema["basic"]["items"])
+        self.assertIn(
+            "filter_plain_text_enabled",
+            schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"],
+        )
 
     def test_brief_log_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "brief_log_enabled", True), True)
 
     def test_filter_reposts_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "filter_reposts_enabled", True), True)
-
-    def test_filter_plain_text_config_defaults_disabled_for_old_configs(self):
-        self.assertIs(config_get({}, "filter_plain_text_enabled", False), False)
 
     def test_config_get_prefers_grouped_value(self):
         config = {
@@ -475,11 +475,6 @@ class ConfigCompatTest(unittest.TestCase):
         config = {"basic": {"filter_reposts_enabled": False}}
 
         self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
-
-    def test_config_get_reads_grouped_filter_plain_text_value(self):
-        config = {"basic": {"filter_plain_text_enabled": True}}
-
-        self.assertIs(config_get(config, "filter_plain_text_enabled", False), True)
 
     def test_config_get_falls_back_to_flat_value(self):
         config = {"push_targets": ["telegram:FriendMessage:1"]}
@@ -734,6 +729,7 @@ with TemporaryDirectory() as temp_dir:
                         "scheduled_fetch_limit": 19,
                         "send_target_interval": 9,
                         "deferred_publish_times": ["23:59"],
+                        "filter_plain_text_enabled": True,
                     }
                 ],
             },
@@ -767,6 +763,7 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(tech_group.send_user_interval, 0.5)
         self.assertEqual(tech_group.deferred_publish_times, [(20, 0)])
         self.assertTrue(tech_group.deferred_publish_enabled)
+        self.assertTrue(tech_group.filter_plain_text_enabled)
 
     def test_scheduler_reader_keeps_deferred_switch_per_group(self):
         config = {
@@ -788,6 +785,29 @@ with TemporaryDirectory() as temp_dir:
 
         self.assertTrue(default_group.deferred_publish_enabled)
         self.assertFalse(tech_group.deferred_publish_enabled)
+        self.assertFalse(default_group.filter_plain_text_enabled)
+        self.assertFalse(tech_group.filter_plain_text_enabled)
+
+    def test_scheduler_reader_keeps_plain_text_switch_per_group(self):
+        config = {
+            "filter_plain_text_enabled": True,
+            "watch_users": ["NASA"],
+            "push_targets": ["telegram:FriendMessage:1"],
+            "tweet_groups": [
+                {
+                    "name": "Tech",
+                    "group_id": "tech",
+                    "watch_users": ["OpenAI"],
+                    "push_targets": ["telegram:FriendMessage:2"],
+                }
+            ],
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        default_group, tech_group = reader.schedule_groups(log_invalid_targets=False)
+
+        self.assertTrue(default_group.filter_plain_text_enabled)
+        self.assertFalse(tech_group.filter_plain_text_enabled)
 
 
 class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):

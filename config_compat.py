@@ -28,7 +28,6 @@ CONFIG_GROUP_BY_KEY = {
     "cooldown_seconds": "basic",
     "user_agent": "basic",
     "filter_reposts_enabled": "basic",
-    "filter_plain_text_enabled": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "video_resolution_preference": "media",
@@ -89,7 +88,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "request_timeout",
     "cooldown_seconds",
     "user_agent",
-    "filter_plain_text_enabled",
     "send_image_attachments",
     "send_video_attachments",
     "video_resolution_preference",
@@ -144,6 +142,7 @@ DEFAULT_GROUP_MIGRATION_KEYS = {
     "daily_check_enabled",
     "daily_check_times",
     "deferred_publish_enabled",
+    "filter_plain_text_enabled",
 }
 
 LIST_MERGE_KEYS = {
