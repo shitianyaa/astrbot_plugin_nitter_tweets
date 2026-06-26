@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import ssl
 import time
 from dataclasses import dataclass
@@ -30,6 +31,14 @@ class TransientFetchError(RuntimeError):
     pass
 
 
+# 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
+# /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 包成
+# <video> 标签。只认这两类，用于源头过滤纯文本推文。
+_AUTHOR_MEDIA_RE = re.compile(
+    r'(?i)<img[^>]+src=["\'][^"\']*?/pic/media[^"\']*["\']|<video\b'
+)
+
+
 @dataclass(slots=True)
 class InstanceFetchResult:
     tweets: list[TweetItem]
@@ -53,12 +62,18 @@ class NitterClient:
         )
         self.brief_log_enabled = bool(config_get(config, "brief_log_enabled", True))
 
-    async def fetch_tweets(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
+    async def fetch_tweets(
+        self,
+        username: str,
+        limit: int,
+        skip_plain_text: bool = False,
+    ) -> tuple[str, list[TweetItem]]:
         errors: list[str] = []
         for index, instance in enumerate(self.instances):
             try:
                 result = await asyncio.to_thread(
-                    self._fetch_from_instance, instance, username, limit,
+                    self._fetch_from_instance,
+                    instance, username, limit, skip_plain_text,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
@@ -103,11 +118,16 @@ class NitterClient:
         )
 
     async def fetch_tweets_from_instance(
-        self, instance: str, username: str, limit: int,
+        self,
+        instance: str,
+        username: str,
+        limit: int,
+        skip_plain_text: bool = False,
     ) -> tuple[str, list[TweetItem]]:
         normalized = load_instances([instance])[0]
         result = await asyncio.to_thread(
-            self._fetch_from_instance, normalized, username, limit,
+            self._fetch_from_instance,
+            normalized, username, limit, skip_plain_text,
         )
         if not result.tweets and not result.saw_items:
             raise RuntimeError(f"{normalized}: empty feed")
@@ -131,7 +151,11 @@ class NitterClient:
         return f"{summary}: {'; '.join(shown_errors)}"
 
     def _fetch_from_instance(
-        self, instance: str, username: str, limit: int,
+        self,
+        instance: str,
+        username: str,
+        limit: int,
+        skip_plain_text: bool = False,
     ) -> InstanceFetchResult:
         if limit <= 0:
             return InstanceFetchResult([])
@@ -144,8 +168,10 @@ class NitterClient:
 
         while len(tweets) < limit:
             try:
-                page_tweets, next_cursor = self._fetch_page_with_retries(
-                    instance, username, cursor, limit,
+                page_tweets, next_cursor, plain_text_filtered = (
+                    self._fetch_page_with_retries(
+                        instance, username, cursor, limit, skip_plain_text,
+                    )
                 )
             except Exception:
                 if not tweets:
@@ -156,14 +182,20 @@ class NitterClient:
                 )
                 break
 
-            if not page_tweets:
+            # 只有"真正空页"（既无推文也无被过滤的 item）才结束分页；
+            # 整页被纯文本/转发过滤掉时仍要继续翻页，否则会漏掉后面的带媒体推文。
+            if not page_tweets and plain_text_filtered == 0:
                 break
 
             saw_items = True
             page_tweets, page_filtered_reposts = self._filter_reposts(
                 page_tweets, username
             )
-            skipped_only_reposts = page_filtered_reposts > 0 and not page_tweets
+            # 本页 RSS 有 item 但全被过滤（纯文本或转发），过滤后 page_tweets 为空
+            page_all_filtered = (
+                (plain_text_filtered > 0 or page_filtered_reposts > 0)
+                and not page_tweets
+            )
 
             added = 0
             for tweet in page_tweets:
@@ -182,7 +214,7 @@ class NitterClient:
                 break
             seen_cursors.add(next_cursor)
             cursor = next_cursor
-            if added == 0 and not skipped_only_reposts:
+            if added == 0 and not page_all_filtered:
                 break
 
         return InstanceFetchResult(
@@ -212,15 +244,22 @@ class NitterClient:
         return bool(watched and author and author != watched)
 
     def _fetch_page_with_retries(
-        self, instance: str, username: str, cursor: str, limit: int,
-    ) -> tuple[list[TweetItem], str]:
+        self,
+        instance: str,
+        username: str,
+        cursor: str,
+        limit: int,
+        skip_plain_text: bool = False,
+    ) -> tuple[list[TweetItem], str, int]:
         attempts = max(1, int(self.retry_attempts))
         delay = max(0.0, float(self.retry_delay_seconds))
         last_error: TransientFetchError | None = None
 
         for attempt in range(1, attempts + 1):
             try:
-                return self._fetch_page_from_instance(instance, username, cursor, limit)
+                return self._fetch_page_from_instance(
+                    instance, username, cursor, limit, skip_plain_text,
+                )
             except TransientFetchError as exc:
                 last_error = exc
                 if attempt >= attempts:
@@ -239,8 +278,13 @@ class NitterClient:
         raise RuntimeError("RSS 抓取失败")
 
     def _fetch_page_from_instance(
-        self, instance: str, username: str, cursor: str, limit: int,
-    ) -> tuple[list[TweetItem], str]:
+        self,
+        instance: str,
+        username: str,
+        cursor: str,
+        limit: int,
+        skip_plain_text: bool = False,
+    ) -> tuple[list[TweetItem], str, int]:
         rss_url = self._rss_url(instance, username, cursor)
         request = Request(
             rss_url,
@@ -262,7 +306,10 @@ class NitterClient:
             raise TransientFetchError(str(getattr(exc, "reason", exc))) from exc
         except (TimeoutError, ssl.SSLError) as exc:
             raise TransientFetchError(str(exc)) from exc
-        return self._parse_rss(data, instance, 0), next_cursor
+        tweets, plain_text_filtered = self._parse_rss(
+            data, instance, 0, skip_plain_text,
+        )
+        return tweets, next_cursor, plain_text_filtered
 
     @staticmethod
     def _is_retryable_http_status(status_code: int) -> bool:
@@ -289,15 +336,28 @@ class NitterClient:
     def _tweet_identity(tweet: TweetItem) -> str:
         return tweet.status_id or tweet.link or f"{tweet.published}:{tweet.text}"
 
-    def _parse_rss(self, data: bytes, instance: str, limit: int) -> list[TweetItem]:
+    def _parse_rss(
+        self,
+        data: bytes,
+        instance: str,
+        limit: int,
+        skip_plain_text: bool = False,
+    ) -> tuple[list[TweetItem], int]:
         root = ET.fromstring(data)
         channel = root.find("channel") if root.tag.lower().endswith("rss") else root
         if channel is None:
-            return []
+            return [], 0
         tweets: list[TweetItem] = []
+        plain_text_filtered = 0
         for item in channel.findall("item"):
             title = self._node_text(item, "title")
             description = self._node_text(item, "description")
+            # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
+            # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
+            #（/pic/card_img）不算作者媒体，只有 /pic/media 和 <video> 算。
+            if skip_plain_text and not _AUTHOR_MEDIA_RE.search(description or ""):
+                plain_text_filtered += 1
+                continue
             text = normalize_external_links(clean_text(description or title))
             link = self._normalize_link(self._node_text(item, "link"), instance)
             published = self._format_pub_date(self._node_text(item, "pubDate"))
@@ -308,7 +368,7 @@ class NitterClient:
             )
             if limit > 0 and len(tweets) >= limit:
                 break
-        return tweets
+        return tweets, plain_text_filtered
 
     @staticmethod
     def _node_text(node: ET.Element, name: str) -> str:

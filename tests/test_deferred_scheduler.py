@@ -206,7 +206,7 @@ class _Nitter:
             ),
         ]
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         return "https://nitter.test", self.tweets[:limit]
 
 
@@ -215,7 +215,7 @@ class _MultiUserNitter:
         self.tweets_by_user = tweets_by_user
         self.events = events if events is not None else []
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
 
@@ -225,7 +225,7 @@ class _PartiallyFailingNitter(_MultiUserNitter):
         super().__init__(tweets_by_user, events=events)
         self.failures_by_user = failures_by_user
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])

@@ -436,9 +436,14 @@ class NitterTweetScheduler:
         )
 
         discovered_batches: list[PendingTweetBatch] = []
+        skip_plain_text = bool(
+            config_get(self.config, "filter_plain_text_enabled", False)
+        )
         for username in users:
             try:
-                instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
+                instance, tweets = await self.nitter.fetch_tweets(
+                    username, fetch_limit, skip_plain_text=skip_plain_text
+                )
             except Exception as exc:
                 result.failed_users[username] = str(exc)
                 logger.warning(f"[NitterTweets] 定时抓取 @{username} 失败: {exc}")
