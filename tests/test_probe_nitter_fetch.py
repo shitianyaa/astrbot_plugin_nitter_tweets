@@ -28,7 +28,6 @@ class ProbeNitterFetchArgsTest(unittest.TestCase):
             args = probe_nitter_fetch._parse_args()
 
         self.assertFalse(args.skip_plain_text)
-        self.assertFalse(args.include_plain_text)
 
     def test_skip_plain_text_flag_can_be_enabled(self):
         argv = ["probe_nitter_fetch.py", "nasa", "5", "--skip-plain-text"]
@@ -37,7 +36,14 @@ class ProbeNitterFetchArgsTest(unittest.TestCase):
             args = probe_nitter_fetch._parse_args()
 
         self.assertTrue(args.skip_plain_text)
-        self.assertFalse(args.include_plain_text)
+
+    def test_include_plain_text_flag_keeps_filter_disabled(self):
+        argv = ["probe_nitter_fetch.py", "nasa", "5", "--include-plain-text"]
+
+        with patch.object(sys, "argv", argv):
+            args = probe_nitter_fetch._parse_args()
+
+        self.assertFalse(args.skip_plain_text)
 
 
 if __name__ == "__main__":

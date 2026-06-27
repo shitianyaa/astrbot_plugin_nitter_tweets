@@ -62,14 +62,17 @@ def _parse_args() -> argparse.Namespace:
     plain_text_group = parser.add_mutually_exclusive_group()
     plain_text_group.add_argument(
         "--skip-plain-text",
+        dest="skip_plain_text",
         action="store_true",
         help="启用纯文本推文过滤（模拟定时推送行为）：跳过没有作者上传媒体的推文。",
     )
     plain_text_group.add_argument(
         "--include-plain-text",
-        action="store_true",
+        dest="skip_plain_text",
+        action="store_false",
         help="显式关闭纯文本过滤（默认行为，与手动命令一致）。",
     )
+    parser.set_defaults(skip_plain_text=False)
     parser.add_argument("--timeout", type=float, default=12.0)
     parser.add_argument("--retry-delay", type=float, default=0.0)
     return parser.parse_args()
