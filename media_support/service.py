@@ -25,6 +25,12 @@ except ImportError:
     )
 
 from .cache import MediaCacheMixin
+from .extensions import (
+    MEDIA_IMAGE_SUFFIXES,
+    MEDIA_TYPE_DYNAMIC,
+    MEDIA_TYPE_IMAGE,
+    MEDIA_TYPE_VIDEO,
+)
 from . import video_probe
 from .network import compat_urlopen
 from .xdown import XdownMediaCandidate, XdownMediaParser
@@ -269,13 +275,17 @@ class MediaService(MediaCacheMixin):
         candidates: list[XdownMediaCandidate],
     ) -> list[TweetMedia]:
         video_candidates = [
-            item for item in candidates if item.kind in {"video", "dynamic"}
+            item
+            for item in candidates
+            if item.kind in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_DYNAMIC}
         ]
         if video_candidates:
             selected = self._select_video_candidate(tweet, video_candidates)
             if selected is None:
                 return []
-            skipped_images = sum(1 for item in candidates if item.kind == "image")
+            skipped_images = sum(
+                1 for item in candidates if item.kind == MEDIA_TYPE_IMAGE
+            )
             if skipped_images:
                 logger.info(
                     "[NitterTweets] 检测到视频/GIF，跳过同条推文中的图片候选: "
@@ -474,7 +484,7 @@ class MediaService(MediaCacheMixin):
             return False
 
         suffix = Path(left_path).suffix.lower()
-        return suffix in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".svg"}
+        return suffix in MEDIA_IMAGE_SUFFIXES
 
     def _download(self, media: TweetMedia) -> Path:
         default_suffix = ".mp4" if media.is_video else ".jpg"

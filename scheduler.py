@@ -427,22 +427,35 @@ class NitterTweetScheduler:
         target_interval = group.send_target_interval
         user_interval = group.send_user_interval
         group_label = self._push_group_label(group)
+        skip_plain_text = bool(group.filter_plain_text_enabled)
         self._log_verbose_info(
             "[NitterTweets] 定时检查开始: "
             f"group={group.group_id}, reason={reason}, "
             f"users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
-            f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}"
+            f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}, "
+            f"skip_plain_text={skip_plain_text}"
         )
-
         discovered_batches: list[PendingTweetBatch] = []
+        group_plain_text_filtered_total = 0
         for username in users:
             try:
-                instance, tweets = await self.nitter.fetch_tweets(username, fetch_limit)
+                instance, tweets, plain_text_filtered = (
+                    await self.nitter.fetch_tweets_with_stats(
+                        username, fetch_limit, skip_plain_text=skip_plain_text
+                    )
+                )
             except Exception as exc:
                 result.failed_users[username] = str(exc)
                 logger.warning(f"[NitterTweets] 定时抓取 @{username} 失败: {exc}")
                 continue
+
+            if skip_plain_text and plain_text_filtered > 0:
+                group_plain_text_filtered_total += plain_text_filtered
+                self._log_verbose_info(
+                    f"[NitterTweets] 定时检查 @{username}: "
+                    f"已过滤 {plain_text_filtered} 条纯文本推文（无作者上传媒体）"
+                )
 
             tweets = [tweet for tweet in tweets if tweet.status_id]
             if not tweets:
@@ -492,6 +505,14 @@ class NitterTweetScheduler:
                 )
                 seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
                 await self._put_seen_map(group.group_id, seen_map)
+
+        if skip_plain_text and group_plain_text_filtered_total > 0:
+            result.plain_text_filtered = group_plain_text_filtered_total
+            self._log_verbose_info(
+                "[NitterTweets] 定时检查已过滤纯文本推文: "
+                f"group={group.group_id}, "
+                f"filtered={group_plain_text_filtered_total}"
+            )
 
         push_account_total = len(discovered_batches)
         fetch_failures = dict(result.failed_users)
