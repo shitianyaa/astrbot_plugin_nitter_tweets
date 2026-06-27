@@ -6,6 +6,7 @@ import ssl
 import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
@@ -33,10 +34,88 @@ class TransientFetchError(RuntimeError):
 
 # 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
 # /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 包成
-# <video> 标签。只认这两类，用于源头过滤纯文本推文。
-_AUTHOR_MEDIA_RE = re.compile(
-    r'(?i)<img[^>]+src=["\'][^"\']*?/pic/media[^"\']*["\']|<video\b'
+# <video> 标签。引用推文里的媒体也不算当前作者上传的媒体。
+_MEDIA_SRC_RE = re.compile(r"(?i)/pic/media")
+_HTML_VOID_TAGS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
 )
+
+
+class _AuthorMediaDetector(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.has_author_media = False
+        self._ignored_stack: list[tuple[str, bool]] = []
+
+    @property
+    def _inside_ignored_container(self) -> bool:
+        return bool(self._ignored_stack and self._ignored_stack[-1][1])
+
+    def handle_starttag(self, tag: str, attrs):
+        tag = tag.lower()
+        ignored = self._inside_ignored_container or self._is_ignored_container(attrs)
+        if not ignored:
+            self._detect_media(tag, attrs)
+        if tag in _HTML_VOID_TAGS:
+            return
+        self._ignored_stack.append((tag, ignored))
+
+    def handle_startendtag(self, tag: str, attrs):
+        if self._inside_ignored_container or self._is_ignored_container(attrs):
+            return
+        self._detect_media(tag, attrs)
+
+    def handle_endtag(self, tag: str):
+        tag = tag.lower()
+        if tag in _HTML_VOID_TAGS:
+            return
+        for index in range(len(self._ignored_stack) - 1, -1, -1):
+            if self._ignored_stack[index][0] == tag:
+                del self._ignored_stack[index:]
+                return
+
+    def _detect_media(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        if tag == "video":
+            self.has_author_media = True
+            return
+        if tag != "img":
+            return
+        src = str(dict(attrs).get("src") or "")
+        if _MEDIA_SRC_RE.search(src):
+            self.has_author_media = True
+
+    @staticmethod
+    def _is_ignored_container(attrs) -> bool:
+        classes = {
+            item.lower()
+            for item in str(dict(attrs).get("class") or "").replace("_", "-").split()
+        }
+        return any("quote" in item for item in classes)
+
+
+def _has_author_media(description: str) -> bool:
+    if not description:
+        return False
+    detector = _AuthorMediaDetector()
+    detector.feed(description)
+    detector.close()
+    return detector.has_author_media
 
 
 @dataclass(slots=True)
@@ -370,7 +449,7 @@ class NitterClient:
             # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
             # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
             #（/pic/card_img）不算作者媒体，只有 /pic/media 和 <video> 算。
-            if skip_plain_text and not _AUTHOR_MEDIA_RE.search(description or ""):
+            if skip_plain_text and not _has_author_media(description):
                 plain_text_filtered += 1
                 continue
             text = normalize_external_links(clean_text(description or title))

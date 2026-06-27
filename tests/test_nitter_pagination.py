@@ -521,6 +521,123 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
+    async def test_skip_plain_text_filters_quote_media_only(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "t1",
+                        "主推文本"
+                        '<div class="quote">'
+                        '<img src="https://nitter.net/pic/media%2Fquoted.jpg" />'
+                        "</div>",
+                    ),
+                    (
+                        "/nasa/status/101",
+                        "t2",
+                        '<img src="https://nitter.net/pic/media%2Fown.jpg" />',
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
+
+    async def test_skip_plain_text_keeps_own_media_before_quote(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "t1",
+                        '<img src="https://nitter.net/pic/media%2Fown.jpg" />'
+                        '<div class="quote">引用文本</div>',
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
+
+    async def test_skip_plain_text_keeps_own_media_after_quote_img(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "t1",
+                        '<div class="quote">'
+                        '<img src="https://nitter.net/pic/media%2Fquoted.jpg">'
+                        "</div>"
+                        '<img src="https://nitter.net/pic/media%2Fown.jpg">',
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
+
+    async def test_skip_plain_text_ignores_extra_img_endtag_inside_quote(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "t1",
+                        "主推文本"
+                        '<div class="quote">'
+                        '<img src="https://nitter.net/pic/media%2Fquoted1.jpg">'
+                        "</img>"
+                        '<img src="https://nitter.net/pic/media%2Fquoted2.jpg">'
+                        "</div>",
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual(tweets, [])
+
     async def test_skip_plain_text_filters_pure_text(self):
         client = NitterClient(
             {"instances": ["https://nitter.example"], "request_timeout": 12}
