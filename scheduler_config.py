@@ -64,6 +64,7 @@ class ScheduleGroup:
     deferred_prefetch_media: bool
     deferred_media_retention_hours: float
     deferred_media_download_interval_seconds: float
+    filter_plain_text_enabled: bool
     users_info: WatchUsersInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
@@ -107,6 +108,7 @@ class SchedulerConfigReader:
             deferred_prefetch_media=True,
             deferred_media_retention_hours=72.0,
             deferred_media_download_interval_seconds=0.5,
+            filter_plain_text_enabled=False,
             users_info=self.parse_watch_users([]),
             target_info=self.parse_push_targets(
                 [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
@@ -197,6 +199,9 @@ class SchedulerConfigReader:
         deferred_publish_default = self.default_group_legacy_config(
             group_id, "deferred_publish_enabled", False
         )
+        filter_plain_text_default = self.default_group_legacy_config(
+            group_id, "filter_plain_text_enabled", False
+        )
 
         return ScheduleGroup(
             group_id=group_id,
@@ -252,6 +257,12 @@ class SchedulerConfigReader:
                 ),
                 0.0,
                 60.0,
+            ),
+            filter_plain_text_enabled=self.parse_bool(
+                raw_group.get(
+                    "filter_plain_text_enabled", filter_plain_text_default
+                ),
+                False,
             ),
             users_info=self.parse_watch_users(raw_group.get("watch_users", [])),
             target_info=self.parse_push_targets(

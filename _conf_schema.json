@@ -412,6 +412,12 @@
                 "default": false,
                 "hint": "开启后，该分组检查发现的新推文先写入 SQLite 暂存队列；发布时间、批量上限、媒体预下载和清理策略使用全局暂存发布配置。"
               },
+              "filter_plain_text_enabled": {
+                "description": "过滤纯文本推文",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图不算媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+              },
               "aliases": {
                 "description": "分组别名",
                 "type": "list",

@@ -72,6 +72,7 @@ class ScheduledCheckResult:
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
     queued_tweets: dict[str, int] = field(default_factory=dict)
+    plain_text_filtered: int = 0
 
     @property
     def new_tweet_count(self) -> int:
@@ -138,6 +139,10 @@ class ScheduledCheckResult:
             f", warnings={len(self.delivery_warnings)}"
             if self.delivery_warnings else ""
         )
+        filtered_part = (
+            f", filtered={self.plain_text_filtered}"
+            if self.plain_text_filtered else ""
+        )
         return (
             "[NitterTweets] 定时检查完成: "
             f"group={self.group_id}, reason={self.reason}, "
@@ -148,7 +153,7 @@ class ScheduledCheckResult:
             f"push_mode={self.push_mode}, "
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
-            f"invalid_targets={len(self.invalid_targets)}{warning_part}"
+            f"invalid_targets={len(self.invalid_targets)}{warning_part}{filtered_part}"
         )
 
     def format_brief_log_lines(self) -> list[str]:
@@ -169,6 +174,8 @@ class ScheduledCheckResult:
             f"invalid_targets={len(self.invalid_targets)}, "
             f"warnings={len(self.delivery_warnings)}"
         ]
+        if self.plain_text_filtered:
+            lines[0] += f", filtered={self.plain_text_filtered}"
         if self.failed_users:
             failed_items = [
                 f"{self._failure_label(user)}: {error}"

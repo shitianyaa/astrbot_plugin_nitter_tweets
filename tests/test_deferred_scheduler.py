@@ -206,8 +206,13 @@ class _Nitter:
             ),
         ]
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         return "https://nitter.test", self.tweets[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        return "https://nitter.test", self.tweets[:limit], 0
 
 
 class _MultiUserNitter:
@@ -215,9 +220,15 @@ class _MultiUserNitter:
         self.tweets_by_user = tweets_by_user
         self.events = events if events is not None else []
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        self.events.append(f"fetch:{username}")
+        return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
 class _PartiallyFailingNitter(_MultiUserNitter):
@@ -225,11 +236,19 @@ class _PartiallyFailingNitter(_MultiUserNitter):
         super().__init__(tweets_by_user, events=events)
         self.failures_by_user = failures_by_user
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        self.events.append(f"fetch:{username}")
+        if username in self.failures_by_user:
+            raise RuntimeError(self.failures_by_user[username])
+        return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
 class _Media:
@@ -530,6 +549,49 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.initialized_users, {"NASA": 2})
         self.assertEqual(result.seen_users, 1)
         self.assertIn("已记录账号索引: 1 个", result.format_message())
+
+    async def test_plain_text_filtered_count_surfaces_in_brief_summary(self):
+        nitter = _Nitter()
+        nitter.tweets = [
+            TweetItem(
+                text="new",
+                link="https://x.com/NASA/status/101",
+                published="",
+            )
+        ]
+
+        async def fetch_tweets_with_stats(username, limit, skip_plain_text=False):
+            return "https://nitter.test", nitter.tweets[:limit], 3
+
+        nitter.fetch_tweets_with_stats = fetch_tweets_with_stats
+
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+                "tweet_groups": [
+                    {
+                        "name": "Default",
+                        "group_id": "global",
+                        "filter_plain_text_enabled": True,
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            },
+            nitter=nitter,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        result = await scheduler.run_check(reason="test_plain_text_filter")
+
+        self.assertEqual(result.plain_text_filtered, 3)
+        self.assertIn("filtered=3", result.format_log_summary())
+        self.assertIn("filtered=3", result.format_brief_log_lines()[0])
 
     async def _create_scheduler_with_deferred_publish_enabled(
         self,

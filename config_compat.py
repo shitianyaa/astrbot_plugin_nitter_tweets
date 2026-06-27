@@ -142,6 +142,7 @@ DEFAULT_GROUP_MIGRATION_KEYS = {
     "daily_check_enabled",
     "daily_check_times",
     "deferred_publish_enabled",
+    "filter_plain_text_enabled",
 }
 
 LIST_MERGE_KEYS = {

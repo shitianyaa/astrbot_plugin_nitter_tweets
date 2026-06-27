@@ -59,6 +59,20 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable repost filtering for this probe.",
     )
+    plain_text_group = parser.add_mutually_exclusive_group()
+    plain_text_group.add_argument(
+        "--skip-plain-text",
+        dest="skip_plain_text",
+        action="store_true",
+        help="启用纯文本推文过滤（模拟定时推送行为）：跳过没有作者上传媒体的推文。",
+    )
+    plain_text_group.add_argument(
+        "--include-plain-text",
+        dest="skip_plain_text",
+        action="store_false",
+        help="显式关闭纯文本过滤（默认行为，与手动命令一致）。",
+    )
+    parser.set_defaults(skip_plain_text=False)
     parser.add_argument("--timeout", type=float, default=12.0)
     parser.add_argument("--retry-delay", type=float, default=0.0)
     return parser.parse_args()
@@ -70,6 +84,7 @@ async def _main() -> None:
     from media import NitterClient
 
     args = _parse_args()
+    skip_plain_text = args.skip_plain_text
     config = {
         "instances": args.instances or ["https://nitter.net", "http://nitter.top"],
         "request_timeout": args.timeout,
@@ -78,10 +93,13 @@ async def _main() -> None:
     client = NitterClient(config)
     client.retry_delay_seconds = args.retry_delay
 
-    instance, tweets = await client.fetch_tweets(args.username, args.limit)
+    instance, tweets = await client.fetch_tweets(
+        args.username, args.limit, skip_plain_text=skip_plain_text
+    )
     print(f"INSTANCE {instance}")
     print(f"COUNT {len(tweets)}")
     print(f"FILTER_REPOSTS {client.filter_reposts_enabled}")
+    print(f"SKIP_PLAIN_TEXT {skip_plain_text}")
     for index, tweet in enumerate(tweets, 1):
         print(
             f"#{index} author={tweet.username} "
