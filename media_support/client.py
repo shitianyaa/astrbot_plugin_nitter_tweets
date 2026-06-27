@@ -96,17 +96,33 @@ class _AuthorMediaDetector(HTMLParser):
             return
         if tag != "img":
             return
-        src = str(dict(attrs).get("src") or "")
+        src = self._first_attr_value(attrs, "src")
         if _MEDIA_SRC_RE.search(src):
             self.has_author_media = True
 
     @staticmethod
     def _is_ignored_container(attrs) -> bool:
+        class_text = " ".join(
+            _AuthorMediaDetector._attr_values(attrs, "class")
+        )
         classes = {
             item.lower()
-            for item in str(dict(attrs).get("class") or "").replace("_", "-").split()
+            for item in class_text.replace("_", "-").split()
         }
         return any("quote" in item for item in classes)
+
+    @staticmethod
+    def _first_attr_value(attrs, name: str) -> str:
+        return next(iter(_AuthorMediaDetector._attr_values(attrs, name)), "")
+
+    @staticmethod
+    def _attr_values(attrs, name: str) -> list[str]:
+        normalized_name = name.lower()
+        return [
+            str(value or "")
+            for attr_name, value in attrs
+            if str(attr_name or "").lower() == normalized_name
+        ]
 
 
 def _has_author_media(description: str) -> bool:

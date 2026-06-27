@@ -59,12 +59,13 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable repost filtering for this probe.",
     )
-    parser.add_argument(
+    plain_text_group = parser.add_mutually_exclusive_group()
+    plain_text_group.add_argument(
         "--skip-plain-text",
         action="store_true",
         help="启用纯文本推文过滤（模拟定时推送行为）：跳过没有作者上传媒体的推文。",
     )
-    parser.add_argument(
+    plain_text_group.add_argument(
         "--include-plain-text",
         action="store_true",
         help="显式关闭纯文本过滤（默认行为，与手动命令一致）。",
@@ -80,7 +81,7 @@ async def _main() -> None:
     from media import NitterClient
 
     args = _parse_args()
-    skip_plain_text = args.skip_plain_text and not args.include_plain_text
+    skip_plain_text = args.skip_plain_text
     config = {
         "instances": args.instances or ["https://nitter.net", "http://nitter.top"],
         "request_timeout": args.timeout,
