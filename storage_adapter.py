@@ -47,11 +47,11 @@ class StorageAdapter:
         if configured_backend and configured_backend != "sqlite":
             logger.info(
                 "[NitterTweets] "
-                f"storage_backend={configured_backend} is no longer supported; "
-                "using SQLite and importing legacy KV seen IDs only"
+                f"storage_backend={configured_backend} 已不再支持；"
+                "将使用 SQLite，并仅导入旧 KV seen ID"
             )
 
-        logger.info("[NitterTweets] Using SQLite storage backend")
+        logger.info("[NitterTweets] 使用 SQLite 存储后端")
         self.sqlite: SQLiteStorage | None = self._init_sqlite()
         self.seen_store = SeenStore(owner)
 
@@ -120,8 +120,7 @@ class StorageAdapter:
         delete_kv_data = getattr(self.owner, "delete_kv_data", None)
         if not callable(delete_kv_data):
             logger.warning(
-                "[NitterTweets] legacy KV seen data exists but "
-                "owner does not support delete_kv_data()"
+                "[NitterTweets] 检测到旧 KV seen 数据，但 owner 不支持 delete_kv_data()"
             )
             return False
 
@@ -129,7 +128,7 @@ class StorageAdapter:
             for key in (self.seen_store.key, KV_KEY_SEEN_BY_TARGET):
                 await delete_kv_data(key)
         except Exception as exc:
-            logger.warning(f"[NitterTweets] failed to delete legacy KV seen data: {exc}")
+            logger.warning(f"[NitterTweets] 删除旧 KV seen 数据失败: {exc}")
             return False
         return True
 
@@ -180,6 +179,15 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
             sqlite.mark_pending_tweets_published, pending_ids
+        )
+
+    async def mark_pending_tweets_delivered(
+        self, pending_ids: list[int], target: str
+    ) -> None:
+        """Record that pending tweets reached one configured target."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.mark_pending_tweets_delivered, pending_ids, target
         )
 
     async def mark_pending_tweets_failed(

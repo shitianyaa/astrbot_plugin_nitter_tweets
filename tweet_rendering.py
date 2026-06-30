@@ -45,20 +45,24 @@ class TweetMessageRenderer:
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        start_index: int = 1,
         exclude_videos: bool = False,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         return self.build_nodes_for_uin(
             node_uin(event),
             username,
             instance,
             tweets,
-            exclude_videos,
-            notices,
-            group_label,
-            header_text,
+            start_index=start_index,
+            exclude_videos=exclude_videos,
+            notices=notices,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
         )
 
     def build_nodes_for_uin(
@@ -67,10 +71,12 @@ class TweetMessageRenderer:
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        start_index: int = 1,
         exclude_videos: bool = False,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         nodes = Nodes([])
         nodes.nodes.append(
@@ -86,41 +92,71 @@ class TweetMessageRenderer:
                             notices,
                             group_label,
                             header_text,
+                            batch_summary,
                         )
                     )
                 ],
             )
         )
 
-        for index, tweet in enumerate(tweets, 1):
+        for offset, tweet in enumerate(tweets):
+            index = start_index + offset
             nodes.nodes.append(
                 Node(
                     uin=uin,
                     name=f"@{username}",
                     content=self.build_components(
-                        index, username, tweet, exclude_videos=exclude_videos
+                        index,
+                        username,
+                        tweet,
+                        exclude_videos=exclude_videos,
+                        include_videos=False,
                     ),
                 )
             )
+            if not exclude_videos and self.send_video_attachments:
+                for media in tweet.media:
+                    if media.path and media.is_video:
+                        nodes.nodes.append(
+                            Node(
+                                uin=uin,
+                                name=f"@{username}",
+                                content=self.build_video_node_components(
+                                    index,
+                                    username,
+                                    tweet,
+                                    media,
+                                    source=instance,
+                                ),
+                            )
+                        )
         return nodes
 
     def build_merged_nodes_for_uin(
         self,
         uin,
         batches: list[TweetBatch],
+        start_index: int = 1,
         exclude_videos: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
     ):
         nodes = Nodes([])
         nodes.nodes.append(
             Node(
                 uin=uin,
                 name="Nitter",
-                content=[Plain(self.format_merged_header(batches, group_label))],
+                content=[
+                    Plain(
+                        self.format_merged_header(
+                            batches, group_label, batch_summary
+                        )
+                    )
+                ],
             )
         )
 
-        index = 1
+        index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
                 nodes.nodes.append(
@@ -133,21 +169,112 @@ class TweetMessageRenderer:
                             tweet,
                             source=instance,
                             exclude_videos=exclude_videos,
+                            include_videos=False,
                         ),
                     )
                 )
+                if not exclude_videos and self.send_video_attachments:
+                    for media in tweet.media:
+                        if media.path and media.is_video:
+                            nodes.nodes.append(
+                                Node(
+                                    uin=uin,
+                                    name=f"@{username}",
+                                    content=self.build_video_node_components(
+                                        index,
+                                        username,
+                                        tweet,
+                                        media,
+                                        source=instance,
+                                    ),
+                                )
+                            )
                 index += 1
         return nodes
+
+    def build_merged_onebot_nodes_for_uin(
+        self,
+        uin,
+        batches: list[TweetBatch],
+        start_index: int = 1,
+        exclude_videos: bool = False,
+        group_label: str = "",
+        batch_summary: str = "",
+    ) -> list[dict]:
+        items = [
+            {
+                "name": "Nitter",
+                "uin": str(uin),
+                "content": [
+                    self.raw_text(
+                        self.format_merged_header(
+                            batches, group_label, batch_summary
+                        )
+                    )
+                ],
+            }
+        ]
+
+        index = start_index
+        for username, instance, tweets in batches:
+            for tweet in tweets:
+                content = self._build_onebot_tweet_content(
+                    index,
+                    username,
+                    instance,
+                    tweet,
+                    exclude_videos=exclude_videos,
+                    include_videos=False,
+                )
+                items.append(
+                    {
+                        "name": f"@{username}",
+                        "uin": str(uin),
+                        "content": content,
+                    }
+                )
+                if not exclude_videos and self.send_video_attachments:
+                    for media in tweet.media:
+                        if media.path and media.is_video:
+                            items.append(
+                                {
+                                    "name": f"@{username}",
+                                    "uin": str(uin),
+                                    "content": self._build_onebot_video_content(
+                                        index,
+                                        username,
+                                        tweet,
+                                        media,
+                                        source=instance,
+                                    ),
+                                }
+                            )
+                index += 1
+
+        return [
+            {
+                "type": "node",
+                "data": {
+                    "name": item["name"],
+                    "uin": item["uin"],
+                    "content": item["content"],
+                },
+            }
+            for item in items
+        ]
 
     def build_direct_components(
         self,
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        start_index: int = 1,
         exclude_videos: bool = False,
+        include_videos: bool = True,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ):
         components = [
             Plain(
@@ -158,16 +285,19 @@ class TweetMessageRenderer:
                     notices,
                     group_label,
                     header_text,
+                    batch_summary,
                 )
             )
         ]
-        for index, tweet in enumerate(tweets, 1):
+        for offset, tweet in enumerate(tweets):
+            index = start_index + offset
             components.extend(
                 self.build_direct_tweet_components(
                     index,
                     username,
                     tweet,
                     exclude_videos=exclude_videos,
+                    include_videos=include_videos,
                 )
             )
         return components
@@ -175,11 +305,15 @@ class TweetMessageRenderer:
     def build_merged_direct_components(
         self,
         batches: list[TweetBatch],
+        start_index: int = 1,
         exclude_videos: bool = False,
         group_label: str = "",
+        batch_summary: str = "",
     ):
-        components = [Plain(self.format_merged_header(batches, group_label))]
-        index = 1
+        components = [
+            Plain(self.format_merged_header(batches, group_label, batch_summary))
+        ]
+        index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
                 components.extend(
@@ -201,6 +335,7 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         source: str = "",
         exclude_videos: bool = False,
+        include_videos: bool = True,
     ):
         components = self.build_components(
             index,
@@ -208,14 +343,39 @@ class TweetMessageRenderer:
             tweet,
             source=source,
             exclude_videos=exclude_videos,
+            include_videos=include_videos,
         )
         if components and isinstance(components[0], Plain):
             components[0].text = "\n\n" + components[0].text
         return components
 
+    def build_direct_video_components(self, tweets: list[TweetItem]):
+        components = []
+        for tweet in tweets:
+            for media in tweet.media:
+                if media.path and media.is_video:
+                    components.append(Video.fromFileSystem(str(media.path)))
+        return components
+
+    def build_video_omitted_notice_components(self, tweets: list[TweetItem]):
+        lines = []
+        seen_links = set()
+        for tweet in tweets:
+            if not any(media.path and media.is_video for media in tweet.media):
+                continue
+            original_link = tweet.x_url or tweet.link
+            if original_link in seen_links:
+                continue
+            seen_links.add(original_link)
+            lines.append(f"视频/GIF 附件未作为消息发送，请打开原文查看：{original_link}")
+        if not lines:
+            return []
+        return [Plain("\n".join(lines))]
+
     def build_components(
         self, index: int, username: str, tweet: TweetItem, source: str = "",
         exclude_videos: bool = False,
+        include_videos: bool = True,
     ):
         text = self.format_tweet_with_source(index, username, tweet, source)
         components = [Plain(text)]
@@ -243,11 +403,26 @@ class TweetMessageRenderer:
                     )
                     video_notice_added = True
                 continue
+            if media.is_video and not include_videos:
+                continue
             if media.is_image and self.send_image_attachments:
                 components.append(Image.fromFileSystem(str(media.path)))
             elif media.is_video:
                 components.append(Video.fromFileSystem(str(media.path)))
         return components
+
+    def build_video_node_components(
+        self,
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        media: TweetMedia,
+        source: str = "",
+    ):
+        return [
+            Plain(self.format_video_attachment_text(index, username, tweet, source)),
+            Video.fromFileSystem(str(media.path)),
+        ]
 
     def build_onebot_nodes(
         self,
@@ -255,6 +430,7 @@ class TweetMessageRenderer:
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        start_index: int = 1,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
@@ -278,18 +454,32 @@ class TweetMessageRenderer:
                 ],
             }
         ]
-        for index, tweet in enumerate(tweets, 1):
-            content = [self.raw_text(self.format_tweet(index, username, tweet))]
-            content.extend(
-                self.raw_media(media)
-                for media in tweet.media
-                if media.path
-                and (
-                    (media.is_image and self.send_image_attachments)
-                    or (media.is_video and self.send_video_attachments)
-                )
+        for offset, tweet in enumerate(tweets):
+            index = start_index + offset
+            content = self._build_onebot_tweet_content(
+                index,
+                username,
+                instance,
+                tweet,
+                include_videos=False,
             )
             items.append({"name": f"@{username}", "uin": uin, "content": content})
+            if self.send_video_attachments:
+                for media in tweet.media:
+                    if media.path and media.is_video:
+                        items.append(
+                            {
+                                "name": f"@{username}",
+                                "uin": uin,
+                                "content": self._build_onebot_video_content(
+                                    index,
+                                    username,
+                                    tweet,
+                                    media,
+                                    source=instance,
+                                ),
+                            }
+                        )
 
         return [
             {
@@ -314,14 +504,68 @@ class TweetMessageRenderer:
             return {"type": "image", "data": {"file": uri}}
         return {"type": "video", "data": {"file": uri}}
 
+    def _build_onebot_video_content(
+        self,
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        media: TweetMedia,
+        source: str = "",
+    ) -> list[dict]:
+        return [
+            self.raw_text(
+                self.format_video_attachment_text(index, username, tweet, source)
+            ),
+            self.raw_media(media),
+        ]
+
+    def _build_onebot_tweet_content(
+        self,
+        index: int,
+        username: str,
+        instance: str,
+        tweet: TweetItem,
+        exclude_videos: bool = False,
+        include_videos: bool = True,
+    ) -> list[dict]:
+        content = [
+            self.raw_text(self.format_tweet_with_source(index, username, tweet, instance))
+        ]
+        video_notice_added = False
+        for media in tweet.media:
+            if not media.path:
+                continue
+            if media.is_video and exclude_videos:
+                if not video_notice_added:
+                    content.append(
+                        self.raw_text(
+                            "视频/GIF 附件未作为消息发送，请打开原文查看："
+                            f"{tweet.x_url}"
+                        )
+                    )
+                    video_notice_added = True
+                continue
+            if media.is_image and self.send_image_attachments:
+                content.append(self.raw_media(media))
+            elif (
+                media.is_video
+                and self.send_video_attachments
+                and not exclude_videos
+                and include_videos
+            ):
+                content.append(self.raw_media(media))
+        return content
+
     def format_plain(
         self,
         username: str,
         instance: str,
         tweets: list[TweetItem],
+        start_index: int = 1,
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ) -> str:
         blocks = [
             self.format_header(
@@ -331,22 +575,27 @@ class TweetMessageRenderer:
                 notices,
                 group_label,
                 header_text,
+                batch_summary,
             )
         ]
         notice_text = self.format_notices(notices)
         if notice_text and notice_text not in blocks[0]:
             blocks.append(notice_text)
         blocks.extend(
-            self.format_tweet(index, username, tweet)
-            for index, tweet in enumerate(tweets, 1)
+            self.format_tweet_with_source(start_index + offset, username, tweet, instance)
+            for offset, tweet in enumerate(tweets)
         )
         return "\n\n".join(blocks)
 
     def format_merged_plain(
-        self, batches: list[TweetBatch], group_label: str = ""
+        self,
+        batches: list[TweetBatch],
+        start_index: int = 1,
+        group_label: str = "",
+        batch_summary: str = "",
     ) -> str:
-        blocks = [self.format_merged_header(batches, group_label)]
-        index = 1
+        blocks = [self.format_merged_header(batches, group_label, batch_summary)]
+        index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
                 blocks.append(
@@ -357,7 +606,19 @@ class TweetMessageRenderer:
 
     @staticmethod
     def format_merged_header(
-        batches: list[TweetBatch], group_label: str = ""
+        batches: list[TweetBatch],
+        group_label: str = "",
+        batch_summary: str = "",
+    ) -> str:
+        if batch_summary.strip():
+            return batch_summary.strip()
+        return TweetMessageRenderer.format_batch_summary(batches, group_label)
+
+    @staticmethod
+    def format_batch_summary(
+        batches: list[TweetBatch],
+        group_label: str = "",
+        action_text: str = "本次检查发现",
     ) -> str:
         total = sum(len(tweets) for _, _, tweets in batches)
         counts: dict[str, int] = {}
@@ -366,10 +627,11 @@ class TweetMessageRenderer:
         accounts = "，".join(
             f"@{username} {count} 条" for username, count in counts.items()
         )
-        lines = [f"Nitter 本次检查发现 {total} 条新推文"]
+        lines = [f"Nitter {action_text} {total} 条新推文"]
         if group_label:
             lines.append(f"分组：{group_label}")
-        lines.append(f"更新账号：{accounts}")
+        if accounts:
+            lines.append(f"更新账号：{accounts}")
         return "\n".join(lines)
 
     @staticmethod
@@ -401,6 +663,12 @@ class TweetMessageRenderer:
         if ai_comment:
             blocks.append(f"评论：\n{ai_comment}")
 
+        if tweet.ai_warnings:
+            blocks.append(
+                "AI提示：\n"
+                + "\n".join(f"- {warning}" for warning in tweet.ai_warnings if warning)
+            )
+
         original_link = tweet.x_url or tweet.link
         if original_link:
             blocks.append(f"原帖：\n{original_link}")
@@ -420,6 +688,23 @@ class TweetMessageRenderer:
 
         return "\n\n".join(blocks)
 
+    @staticmethod
+    def format_video_attachment_text(
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        source: str = "",
+    ) -> str:
+        text = TweetMessageRenderer.format_tweet(
+            index,
+            username,
+            tweet,
+            source=source,
+        )
+        if text:
+            return f"{text}\n\n视频/GIF 附件"
+        return f"#{index} @{username}\n视频/GIF 附件"
+
     @classmethod
     def format_header(
         cls,
@@ -429,14 +714,15 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        batch_summary: str = "",
     ) -> str:
-        lines = [
-            header_text.strip() or f"@{username} 最近 {tweet_count} 条推文",
-        ]
-        if group_label:
+        summary = batch_summary.strip()
+        lines = []
+        if summary:
+            lines.append(summary)
+        lines.append(header_text.strip() or f"@{username} 最近 {tweet_count} 条推文")
+        if group_label and f"分组：{group_label}" not in summary:
             lines.append(f"分组：{group_label}")
-        if instance:
-            lines.append(f"Nitter：{cls.format_instance_label(instance)}")
         notice_text = cls.format_notices(notices)
         if notice_text:
             lines.append(notice_text)

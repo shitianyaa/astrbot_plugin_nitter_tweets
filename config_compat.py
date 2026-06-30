@@ -1,6 +1,24 @@
 from __future__ import annotations
 
+try:
+    from .group_ids import (
+        DEFAULT_GROUP_ALIASES,
+        DEFAULT_GROUP_ID,
+        DEFAULT_GROUP_NAME,
+        normalize_group_id,
+    )
+except ImportError:
+    from group_ids import (
+        DEFAULT_GROUP_ALIASES,
+        DEFAULT_GROUP_ID,
+        DEFAULT_GROUP_NAME,
+        normalize_group_id,
+    )
+
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
+DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
+TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
+TWEET_GROUP_TEMPLATE_KEY = "group"
 
 CONFIG_GROUP_BY_KEY = {
     "storage_backend": "basic",
@@ -9,8 +27,10 @@ CONFIG_GROUP_BY_KEY = {
     "request_timeout": "basic",
     "cooldown_seconds": "basic",
     "user_agent": "basic",
+    "filter_reposts_enabled": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
+    "video_resolution_preference": "media",
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
@@ -50,6 +70,7 @@ CONFIG_GROUP_BY_KEY = {
     "deferred_prefetch_media": "deferred",
     "deferred_media_retention_hours": "deferred",
     "deferred_media_download_interval_seconds": "deferred",
+    "brief_log_enabled": "logging",
     "merge_tweet_threshold": "push",
     "merge_scheduled_updates": "push",
     "send_target_interval": "push",
@@ -69,6 +90,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "user_agent",
     "send_image_attachments",
     "send_video_attachments",
+    "video_resolution_preference",
     "max_media_per_tweet",
     "media_timeout",
     "media_max_size_mb",
@@ -113,6 +135,24 @@ MIGRATABLE_CONFIG_KEYS = {
     "tweet_groups",
 }
 
+DEFAULT_GROUP_MIGRATION_KEYS = {
+    "watch_users",
+    "push_targets",
+    "interval_check_enabled",
+    "daily_check_enabled",
+    "daily_check_times",
+    "deferred_publish_enabled",
+    "filter_plain_text_enabled",
+}
+
+LIST_MERGE_KEYS = {
+    "watch_users",
+    "push_targets",
+    "daily_check_times",
+    "deferred_publish_times",
+    "aliases",
+}
+
 
 def config_get(config, key: str, default=None):
     group_name = CONFIG_GROUP_BY_KEY.get(key)
@@ -153,6 +193,139 @@ def migrate_legacy_grouped_config(config) -> bool:
     return changed
 
 
+def migrate_default_group_config(config, *, save: bool = True) -> bool:
+    if bool(_dict_get(config, DEFAULT_GROUP_CONFIG_MIGRATION_KEY, False)):
+        return ensure_tweet_group_template_keys(config, save=save)
+
+    raw_groups = config_get(config, "tweet_groups", []) or []
+    if isinstance(raw_groups, dict):
+        groups = [raw_groups]
+        changed = True
+    elif isinstance(raw_groups, list):
+        groups = raw_groups
+        changed = False
+    else:
+        groups = []
+        changed = bool(raw_groups)
+
+    default_group = None
+    merged_groups: list = []
+    for group in groups:
+        if not isinstance(group, dict):
+            merged_groups.append(group)
+            continue
+        group_id = normalize_group_id(group.get("group_id") or group.get("name") or "")
+        if group_id == DEFAULT_GROUP_ID:
+            if default_group is None:
+                default_group = group
+                merged_groups.append(default_group)
+            else:
+                _merge_default_group_into(default_group, group)
+                changed = True
+                continue
+
+            if str(default_group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
+                default_group["group_id"] = DEFAULT_GROUP_ID
+                changed = True
+            if _is_legacy_default_name(default_group.get("name")):
+                default_group["name"] = DEFAULT_GROUP_NAME
+                changed = True
+        else:
+            merged_groups.append(group)
+    if len(merged_groups) != len(groups):
+        groups = merged_groups
+        changed = True
+
+    if default_group is not None:
+        for group in groups:
+            if group is not default_group or not isinstance(group, dict):
+                continue
+            if str(group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
+                group["group_id"] = DEFAULT_GROUP_ID
+                changed = True
+            break
+
+    legacy_values = {
+        key: config_get(config, key)
+        for key in DEFAULT_GROUP_MIGRATION_KEYS
+        if _has_non_empty_config(config, key)
+    }
+    should_create_default = (
+        default_group is not None
+        or _has_non_empty_config(config, "watch_users")
+        or _has_non_empty_config(config, "push_targets")
+    )
+    if should_create_default and default_group is None:
+        default_group = {
+            TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
+            "name": DEFAULT_GROUP_NAME,
+            "group_id": DEFAULT_GROUP_ID,
+        }
+        groups.insert(0, default_group)
+        changed = True
+
+    if default_group is not None:
+        if _ensure_tweet_group_template_key(default_group):
+            changed = True
+        if not str(default_group.get("name") or "").strip():
+            default_group["name"] = DEFAULT_GROUP_NAME
+            changed = True
+        aliases = _merge_list_values(
+            default_group.get("aliases", []), DEFAULT_GROUP_ALIASES
+        )
+        if aliases != _normalize_list(default_group.get("aliases", [])):
+            default_group["aliases"] = aliases
+            changed = True
+
+        for key, value in legacy_values.items():
+            if key in LIST_MERGE_KEYS:
+                merged = _merge_list_values(default_group.get(key, []), value)
+                if merged != _normalize_list(default_group.get(key, [])):
+                    default_group[key] = merged
+                    changed = True
+            elif key not in default_group or _is_empty_value(default_group.get(key)):
+                default_group[key] = value
+                changed = True
+
+    if _ensure_tweet_group_template_keys(groups):
+        changed = True
+
+    if not changed:
+        return False
+
+    config_set(config, "tweet_groups", groups)
+    config[DEFAULT_GROUP_CONFIG_MIGRATION_KEY] = True
+
+    save_config = getattr(config, "save_config", None)
+    if save and callable(save_config):
+        save_config()
+    return changed
+
+
+def ensure_tweet_group_template_keys(config, *, save: bool = True) -> bool:
+    raw_groups = config_get(config, "tweet_groups", []) or []
+    if isinstance(raw_groups, dict):
+        groups = [raw_groups]
+        changed = True
+    elif isinstance(raw_groups, list):
+        groups = raw_groups
+        changed = False
+    else:
+        return False
+
+    if _ensure_tweet_group_template_keys(groups):
+        changed = True
+
+    if not changed:
+        return False
+
+    config_set(config, "tweet_groups", groups)
+    save_config = getattr(config, "save_config", None)
+    if save and callable(save_config):
+        save_config()
+    return True
+
+
 def config_set(config, key: str, value) -> None:
     group_name = CONFIG_GROUP_BY_KEY.get(key)
     if not group_name:
@@ -177,3 +350,80 @@ def _dict_has(config, key: str) -> bool:
         return key in config
     except TypeError:
         return _dict_get(config, key, None) is not None
+
+
+def _has_non_empty_config(config, key: str) -> bool:
+    if not _dict_has(config, key):
+        group_name = CONFIG_GROUP_BY_KEY.get(key)
+        group = _dict_get(config, group_name, {}) if group_name else {}
+        if not isinstance(group, dict) or key not in group:
+            return False
+    return not _is_empty_value(config_get(config, key))
+
+
+def _is_empty_value(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def _normalize_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = value.replace("，", ",").split(",")
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _merge_list_values(existing, incoming) -> list:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in [*_normalize_list(existing), *_normalize_list(incoming)]:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _merge_default_group_into(target: dict, source: dict) -> None:
+    for key, value in source.items():
+        if key == "group_id":
+            continue
+        if key == "name" and _is_legacy_default_name(value):
+            continue
+        if key in LIST_MERGE_KEYS:
+            target[key] = _merge_list_values(target.get(key, []), value)
+        elif key not in target or _is_empty_value(target.get(key)):
+            target[key] = value
+
+
+def _is_legacy_default_name(value) -> bool:
+    text = str(value or "").strip()
+    return text in {"", "global", "Global", "GLOBAL", "全局", "全局分组"}
+
+
+def _ensure_tweet_group_template_keys(groups: list) -> bool:
+    changed = False
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        if _ensure_tweet_group_template_key(group):
+            changed = True
+    return changed
+
+
+def _ensure_tweet_group_template_key(group: dict) -> bool:
+    if group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) == TWEET_GROUP_TEMPLATE_KEY:
+        return False
+    group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
+    return True

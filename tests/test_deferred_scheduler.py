@@ -5,7 +5,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 astrbot_module = sys.modules.get("astrbot", types.ModuleType("astrbot"))
@@ -60,7 +60,10 @@ class _Video:
 
 class _Node:
     def __init__(self, *args, **kwargs):
-        pass
+        self.args = args
+        self.uin = kwargs.get("uin")
+        self.name = kwargs.get("name")
+        self.content = kwargs.get("content", [])
 
 
 class _Nodes:
@@ -127,66 +130,29 @@ astrbot_core_message_components_module = sys.modules.get(
 )
 
 
-if not hasattr(astrbot_api_module, "logger"):
-    astrbot_api_module.logger = _Logger()
-astrbot_api_all_module.At = getattr(astrbot_api_all_module, "At", _At)
-astrbot_api_all_module.AstrBotConfig = getattr(
-    astrbot_api_all_module, "AstrBotConfig", dict
-)
-astrbot_api_all_module.Context = getattr(
-    astrbot_api_all_module, "Context", object
-)
-astrbot_api_all_module.MessageChain = getattr(
-    astrbot_api_all_module, "MessageChain", _MessageChain
-)
-astrbot_api_all_module.Plain = getattr(astrbot_api_all_module, "Plain", _Plain)
-astrbot_api_all_module.Star = getattr(astrbot_api_all_module, "Star", _Star)
+astrbot_api_module.logger = _Logger()
+astrbot_api_all_module.At = _At
+astrbot_api_all_module.AstrBotConfig = dict
+astrbot_api_all_module.Context = object
+astrbot_api_all_module.MessageChain = _MessageChain
+astrbot_api_all_module.Plain = _Plain
+astrbot_api_all_module.Star = _Star
 astrbot_api_all_module.logger = astrbot_api_module.logger
-astrbot_api_event_module.MessageChain = getattr(
-    astrbot_api_event_module, "MessageChain", _MessageChain
-)
-astrbot_api_event_module.AstrMessageEvent = getattr(
-    astrbot_api_event_module, "AstrMessageEvent", object
-)
-astrbot_api_event_module.filter = getattr(
-    astrbot_api_event_module, "filter", _Filter
-)
-astrbot_api_message_components_module.Plain = getattr(
-    astrbot_api_message_components_module, "Plain", _Plain
-)
-astrbot_api_message_components_module.Image = getattr(
-    astrbot_api_message_components_module, "Image", _Image
-)
-astrbot_api_message_components_module.Video = getattr(
-    astrbot_api_message_components_module, "Video", _Video
-)
-astrbot_api_message_components_module.Node = getattr(
-    astrbot_api_message_components_module, "Node", _Node
-)
-astrbot_api_message_components_module.Nodes = getattr(
-    astrbot_api_message_components_module, "Nodes", _Nodes
-)
-astrbot_api_star_module.register = getattr(
-    astrbot_api_star_module, "register", _register
-)
-astrbot_core_command_module.GreedyStr = getattr(
-    astrbot_core_command_module, "GreedyStr", str
-)
-astrbot_core_message_components_module.Image = getattr(
-    astrbot_core_message_components_module, "Image", _Image
-)
-astrbot_core_message_components_module.Video = getattr(
-    astrbot_core_message_components_module, "Video", _Video
-)
-astrbot_core_message_components_module.Node = getattr(
-    astrbot_core_message_components_module, "Node", _Node
-)
-astrbot_core_message_components_module.Nodes = getattr(
-    astrbot_core_message_components_module, "Nodes", _Nodes
-)
-astrbot_core_message_components_module.Plain = getattr(
-    astrbot_core_message_components_module, "Plain", _Plain
-)
+astrbot_api_event_module.MessageChain = _MessageChain
+astrbot_api_event_module.AstrMessageEvent = object
+astrbot_api_event_module.filter = _Filter
+astrbot_api_message_components_module.Plain = _Plain
+astrbot_api_message_components_module.Image = _Image
+astrbot_api_message_components_module.Video = _Video
+astrbot_api_message_components_module.Node = _Node
+astrbot_api_message_components_module.Nodes = _Nodes
+astrbot_api_star_module.register = _register
+astrbot_core_command_module.GreedyStr = str
+astrbot_core_message_components_module.Image = _Image
+astrbot_core_message_components_module.Video = _Video
+astrbot_core_message_components_module.Node = _Node
+astrbot_core_message_components_module.Nodes = _Nodes
+astrbot_core_message_components_module.Plain = _Plain
 sys.modules["astrbot"] = astrbot_module
 sys.modules["astrbot.api"] = astrbot_api_module
 sys.modules["astrbot.api.all"] = astrbot_api_all_module
@@ -200,13 +166,24 @@ sys.modules["astrbot.core.message.components"] = (
 )
 sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
 
+if "tweet_rendering" in sys.modules:
+    tweet_rendering_module = sys.modules["tweet_rendering"]
+    tweet_rendering_module.Plain = _Plain
+    tweet_rendering_module.Image = _Image
+    tweet_rendering_module.Video = _Video
+    tweet_rendering_module.Node = _Node
+    tweet_rendering_module.Nodes = _Nodes
+
 
 import scheduler as scheduler_module  # noqa: E402
+import delivery.telegram as telegram_delivery_module  # noqa: E402
+from delivery import PlatformResolver  # noqa: E402
 from scheduler import NitterTweetScheduler  # noqa: E402
+from sender import SendAttempt, TweetSender  # noqa: E402
 from sqlite_storage import SQLiteStorage  # noqa: E402
 from storage_adapter import StorageAdapter  # noqa: E402
 from tweet_rendering import TweetMessageRenderer  # noqa: E402
-from utils import TweetItem  # noqa: E402
+from utils import TweetItem, TweetMedia  # noqa: E402
 
 
 class _Owner:
@@ -229,8 +206,13 @@ class _Nitter:
             ),
         ]
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         return "https://nitter.test", self.tweets[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        return "https://nitter.test", self.tweets[:limit], 0
 
 
 class _MultiUserNitter:
@@ -238,9 +220,35 @@ class _MultiUserNitter:
         self.tweets_by_user = tweets_by_user
         self.events = events if events is not None else []
 
-    async def fetch_tweets(self, username, limit):
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        self.events.append(f"fetch:{username}")
+        return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
+
+
+class _PartiallyFailingNitter(_MultiUserNitter):
+    def __init__(self, tweets_by_user, failures_by_user, events=None):
+        super().__init__(tweets_by_user, events=events)
+        self.failures_by_user = failures_by_user
+
+    async def fetch_tweets(self, username, limit, skip_plain_text=False):
+        self.events.append(f"fetch:{username}")
+        if username in self.failures_by_user:
+            raise RuntimeError(self.failures_by_user[username])
+        return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
+
+    async def fetch_tweets_with_stats(
+        self, username, limit, skip_plain_text=False
+    ):
+        self.events.append(f"fetch:{username}")
+        if username in self.failures_by_user:
+            raise RuntimeError(self.failures_by_user[username])
+        return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
 class _Media:
@@ -326,6 +334,10 @@ class _Sender:
         self.group_labels = []
         self.merged_group_labels = []
         self.headers = []
+        self.summary_sends = []
+        self.batch_summaries = []
+        self.merged_batch_summaries = []
+        self.tweet_start_indexes = []
         self.success = success
         self.failed_targets = set(failed_targets or [])
         self.merge_targets = set(merge_targets or [])
@@ -334,17 +346,40 @@ class _Sender:
     def supports_merged_forward_for_umo(self, context, umo):
         return umo in self.merge_targets
 
+    async def send_summary_to_umo(self, context, umo, summary):
+        del context
+        self.summary_sends.append((umo, summary))
+        success = self.success and umo not in self.failed_targets
+        return types.SimpleNamespace(
+            success=success,
+            warning="",
+            error="" if success else "send failed",
+        )
+
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label="", header_text=""
+        self,
+        context,
+        umo,
+        username,
+        instance,
+        tweets,
+        group_label="",
+        header_text="",
+        batch_summary="",
+        tweet_start_index=1,
     ):
         self.events.append(f"send:{umo}:{username}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         self.group_labels.append((umo, username, group_label))
         self.headers.append((umo, username, header_text))
+        self.batch_summaries.append((umo, username, batch_summary))
+        self.tweet_start_indexes.append((umo, username, tweet_start_index))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
-    async def send_merged_to_umo(self, context, umo, batches, group_label=""):
+    async def send_merged_to_umo(
+        self, context, umo, batches, group_label="", batch_summary=""
+    ):
         self.events.append(f"merged:{umo}")
         self.merged_sent.append(
             (
@@ -356,6 +391,7 @@ class _Sender:
             )
         )
         self.merged_group_labels.append((umo, group_label))
+        self.merged_batch_summaries.append((umo, batch_summary))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(
             success=success,
@@ -367,7 +403,16 @@ class _Sender:
 
 class _CancelingSender(_Sender):
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label="", header_text=""
+        self,
+        context,
+        umo,
+        username,
+        instance,
+        tweets,
+        group_label="",
+        header_text="",
+        batch_summary="",
+        tweet_start_index=1,
     ):
         self.events.append(f"cancel:{umo}:{username}")
         raise scheduler_module.asyncio.CancelledError()
@@ -375,13 +420,24 @@ class _CancelingSender(_Sender):
 
 class _RecordingSender(_Sender):
     async def send_to_umo_with_outcome(
-        self, context, umo, username, instance, tweets, group_label="", header_text=""
+        self,
+        context,
+        umo,
+        username,
+        instance,
+        tweets,
+        group_label="",
+        header_text="",
+        batch_summary="",
+        tweet_start_index=1,
     ):
         status_ids = ",".join(tweet.status_id for tweet in tweets)
         self.events.append(f"send:{umo}:{username}:{status_ids}")
         self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
         self.group_labels.append((umo, username, group_label))
         self.headers.append((umo, username, header_text))
+        self.batch_summaries.append((umo, username, batch_summary))
+        self.tweet_start_indexes.append((umo, username, tweet_start_index))
         success = self.success and umo not in self.failed_targets
         return types.SimpleNamespace(success=success, warning="")
 
@@ -428,6 +484,53 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.schedulers.append(scheduler)
         return scheduler
 
+    async def test_global_schedule_switch_gates_group_interval_and_daily_checks(self):
+        config = {
+            "schedule_enabled": False,
+            "tweet_groups": [
+                {
+                    "name": "Tech",
+                    "group_id": "tech",
+                    "enabled": True,
+                    "watch_users": ["NASA"],
+                    "push_targets": ["telegram:FriendMessage:1"],
+                    "interval_check_enabled": True,
+                    "daily_check_times": ["08:00"],
+                }
+            ],
+        }
+        scheduler = self._create_scheduler(config)
+        scheduler._migration_done = True
+
+        async def cancel_after_first_loop_sleep(_seconds):
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                raise scheduler_module.asyncio.CancelledError()
+
+        scheduler._tick = AsyncMock()
+        sleep_calls = 0
+        with patch.object(
+            scheduler_module.asyncio,
+            "sleep",
+            side_effect=cancel_after_first_loop_sleep,
+        ):
+            with self.assertRaises(scheduler_module.asyncio.CancelledError):
+                await scheduler._loop()
+        scheduler._tick.assert_not_awaited()
+
+        config["schedule_enabled"] = True
+        scheduler._tick = AsyncMock()
+        sleep_calls = 0
+        with patch.object(
+            scheduler_module.asyncio,
+            "sleep",
+            side_effect=cancel_after_first_loop_sleep,
+        ):
+            with self.assertRaises(scheduler_module.asyncio.CancelledError):
+                await scheduler._loop()
+        scheduler._tick.assert_awaited_once()
+
     async def test_check_result_seen_count_refreshes_after_initialization(self):
         scheduler = self._create_scheduler(
             {
@@ -446,6 +549,49 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.initialized_users, {"NASA": 2})
         self.assertEqual(result.seen_users, 1)
         self.assertIn("已记录账号索引: 1 个", result.format_message())
+
+    async def test_plain_text_filtered_count_surfaces_in_brief_summary(self):
+        nitter = _Nitter()
+        nitter.tweets = [
+            TweetItem(
+                text="new",
+                link="https://x.com/NASA/status/101",
+                published="",
+            )
+        ]
+
+        async def fetch_tweets_with_stats(username, limit, skip_plain_text=False):
+            return "https://nitter.test", nitter.tweets[:limit], 3
+
+        nitter.fetch_tweets_with_stats = fetch_tweets_with_stats
+
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+                "tweet_groups": [
+                    {
+                        "name": "Default",
+                        "group_id": "global",
+                        "filter_plain_text_enabled": True,
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+            },
+            nitter=nitter,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        result = await scheduler.run_check(reason="test_plain_text_filter")
+
+        self.assertEqual(result.plain_text_filtered, 3)
+        self.assertIn("filtered=3", result.format_log_summary())
+        self.assertIn("filtered=3", result.format_brief_log_lines()[0])
 
     async def _create_scheduler_with_deferred_publish_enabled(
         self,
@@ -513,6 +659,21 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("分组：Tech", header)
         self.assertIn("分组：Tech", merged_header)
 
+    def test_plain_tweet_body_uses_start_index_and_source(self):
+        header = TweetMessageRenderer.format_header(
+            "NASA", "https://nitter.test", 1, group_label="Tech"
+        )
+        text = TweetMessageRenderer().format_plain(
+            "NASA",
+            "https://nitter.test",
+            [self._make_tweet("NASA", "101")],
+            start_index=5,
+        )
+
+        self.assertNotIn("nitter.test", header)
+        self.assertIn("#5 @NASA", text)
+        self.assertIn("nitter.test", text)
+
     def test_tweet_rendering_omits_image_caption_block(self):
         tweet = self._make_tweet("NASA", "101")
         tweet.image_caption = "一张火箭照片"
@@ -571,6 +732,14 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertNotIn("最近 1 条推文", "\n".join(item[2] for item in sender.headers))
+
+        self.assertEqual(
+            sender.tweet_start_indexes,
+            [
+                ("telegram:FriendMessage:1", "NASA", 1),
+                ("telegram:FriendMessage:1", "NASA", 2),
+            ],
+        )
 
     async def _enqueue_deferred_tweets(self, scheduler, tweets_by_user):
         for username, tweets in tweets_by_user.items():
@@ -1063,6 +1232,756 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(media.cleaned, 2)
+        self.assertEqual(len(sender.merged_batch_summaries), 1)
+        merged_summary = sender.merged_batch_summaries[0][1]
+        self.assertIn("Nitter 本次检查发现 2 条新推文", merged_summary)
+        self.assertIn("分组：默认分组", merged_summary)
+        self.assertIn("更新账号：@NASA 1 条，@NASAHubble 1 条", merged_summary)
+
+    async def test_merged_batch_summary_includes_fetch_failures(self):
+        sender = _Sender(merge_targets={"aiocqhttp:GroupMessage:1"})
+        nitter = _PartiallyFailingNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+            },
+            {
+                "baamgu": (
+                    "已尝试 2/2 个 Nitter 实例，未获得可用 RSS；"
+                    "错误: https://nitter.net: HTTP 404; "
+                    "http://nitter.top: HTTP 404"
+                )
+            },
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "baamgu"],
+                "push_targets": ["aiocqhttp:GroupMessage:1"],
+                "scheduled_fetch_limit": 2,
+                "merge_tweet_threshold": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_fetch_failure_summary")
+
+        self.assertEqual(result.push_mode, "merged")
+        self.assertIn("baamgu", result.failed_users)
+        self.assertEqual(len(sender.merged_batch_summaries), 1)
+        merged_summary = sender.merged_batch_summaries[0][1]
+        self.assertIn("Nitter 本次检查发现 1 条新推文", merged_summary)
+        self.assertIn("更新账号：@NASA 1 条", merged_summary)
+        self.assertIn("抓取失败：@baamgu:", merged_summary)
+        self.assertIn("HTTP 404", merged_summary)
+
+    async def test_first_ordinary_push_includes_batch_summary_once(self):
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "200"),
+                    self._make_tweet("OpenAI", "201"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "OpenAI"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "OpenAI", ["200"])
+
+        result = await scheduler.run_check(reason="test_batch_summary")
+
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertEqual(len(sender.summary_sends), 1)
+        summary = sender.summary_sends[0][1]
+        self.assertIn("Nitter 本次检查发现 2 条新推文", summary)
+        self.assertIn("分组：默认分组", summary)
+        self.assertIn("更新账号：@NASA 1 条，@OpenAI 1 条", summary)
+        self.assertEqual(len(sender.batch_summaries), 2)
+        self.assertEqual([item[2] for item in sender.batch_summaries], ["", ""])
+
+    async def test_first_ordinary_push_header_includes_fetch_failures_once(self):
+        sender = _Sender()
+        nitter = _PartiallyFailingNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "200"),
+                    self._make_tweet("OpenAI", "201"),
+                ],
+            },
+            {"baamgu": "HTTP 404"},
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "baamgu", "OpenAI"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "OpenAI", ["200"])
+
+        result = await scheduler.run_check(reason="test_fetch_failure_header")
+
+        self.assertIn("baamgu", result.failed_users)
+        self.assertEqual(len(sender.summary_sends), 1)
+        summary = sender.summary_sends[0][1]
+        self.assertIn("Nitter 本次检查发现 2 条新推文", summary)
+        self.assertIn("更新账号：@NASA 1 条，@OpenAI 1 条", summary)
+        self.assertIn("抓取失败：@baamgu: HTTP 404", summary)
+        self.assertEqual(len(sender.batch_summaries), 2)
+        self.assertEqual([item[2] for item in sender.batch_summaries], ["", ""])
+
+    async def test_first_successful_ordinary_push_gets_batch_summary_after_prepare_failure(self):
+        events = []
+        media = _RecordingMedia(events)
+        sender = _RecordingSender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "102"),
+                ],
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "200"),
+                    self._make_tweet("OpenAI", "201"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "OpenAI"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+            translator=_RecordingTranslator(events),
+            enricher=_RecordingEnricher(events, fail_status_ids={"101"}),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "OpenAI", ["200"])
+
+        result = await scheduler.run_check(reason="test_batch_summary_after_failure")
+
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertIn("NASA:101", result.failed_users)
+        self.assertEqual(
+            [item[3] for item in sender.sent],
+            [["102"], ["201"]],
+        )
+        self.assertEqual(len(sender.summary_sends), 1)
+        summary = sender.summary_sends[0][1]
+        self.assertIn("Nitter 本次检查发现 3 条新推文", summary)
+        self.assertIn("更新账号：@NASA 2 条，@OpenAI 1 条", summary)
+        self.assertEqual([item[2] for item in sender.batch_summaries], ["", ""])
+
+    async def test_chunked_merged_forward_includes_batch_summary_only_once(self):
+        captured_summaries = []
+        sender = TweetSender({})
+
+        class _Renderer:
+            def build_merged_nodes_for_uin(
+                self,
+                uin,
+                batches,
+                start_index=1,
+                exclude_videos=False,
+                group_label="",
+                batch_summary="",
+            ):
+                captured_summaries.append(batch_summary)
+                return object()
+
+        sender.renderer = _Renderer()
+
+        async def send_success(context, umo, chain, label):
+            return SendAttempt(success=True)
+
+        sender._send_context_message = send_success
+        tweets = [self._make_tweet("NASA", str(index)) for index in range(1, 10)]
+
+        outcome = await sender._send_merged_forward_chunks_to_umo(
+            context=None,
+            umo="aiocqhttp:GroupMessage:1",
+            batches=[("NASA", "https://nitter.test", tweets)],
+            group_label="默认分组",
+            batch_summary="overall summary",
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(captured_summaries, ["overall summary", ""])
+
+    async def test_telegram_flood_control_waits_and_retries_same_message(self):
+        sender = TweetSender({})
+        calls = []
+        sleep_calls = []
+
+        class _Context:
+            async def send_message(self, umo, chain):
+                del chain
+                calls.append(umo)
+                if len(calls) == 1:
+                    raise RuntimeError("Flood control exceeded. Retry in 18 seconds")
+                return True
+
+        async def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        with patch.object(telegram_delivery_module.asyncio, "sleep", fake_sleep):
+            attempt = await sender._send_context_message(
+                _Context(),
+                "telegram:GroupMessage:-1001",
+                _MessageChain([_Plain("hello")]),
+                "direct scheduled tweets",
+            )
+
+        self.assertTrue(attempt.success)
+        self.assertEqual(calls, ["telegram:GroupMessage:-1001"] * 2)
+        self.assertEqual(sleep_calls, [19.0])
+
+    async def test_telegram_flood_control_retry_failure_skips_fallback(self):
+        sender = TweetSender({})
+        calls = []
+        sleep_calls = []
+
+        class _Context:
+            async def send_message(self, umo, chain):
+                del chain
+                calls.append(umo)
+                raise RuntimeError("Flood control exceeded. Retry in 18 seconds")
+
+        async def fake_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        with patch.object(telegram_delivery_module.asyncio, "sleep", fake_sleep):
+            outcome = await sender._send_direct_to_umo(
+                _Context(),
+                "telegram:GroupMessage:-1001",
+                "NASA",
+                "https://nitter.test",
+                [self._make_tweet("NASA", "110")],
+            )
+
+        self.assertFalse(outcome.success)
+        self.assertIn("Telegram 限流仍未解除", outcome.warning)
+        self.assertEqual(calls, ["telegram:GroupMessage:-1001"] * 2)
+        self.assertEqual(sleep_calls, [19.0])
+
+    async def test_custom_platform_id_uses_metadata_type_for_onebot_forward(self):
+        class _Meta:
+            id = "cat"
+            type = "aiocqhttp"
+            name = "cat"
+
+        class _Platform:
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        resolver = PlatformResolver()
+        profile = resolver.from_umo(_Context(), "cat:FriendMessage:2519706243")
+
+        self.assertIn("aiocqhttp", profile.platform_types)
+        self.assertTrue(profile.is_onebot)
+        self.assertTrue(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "cat:FriendMessage:2519706243"
+            )
+        )
+
+    async def test_custom_platform_id_uses_call_action_as_onebot_capability(self):
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        profile = PlatformResolver().from_umo(_Context(), "cat:GroupMessage:123456")
+
+        self.assertTrue(callable(profile.call_action))
+        self.assertTrue(profile.is_onebot)
+        self.assertTrue(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "cat:GroupMessage:123456"
+            )
+        )
+
+    async def test_custom_onebot_event_uses_platform_call_action(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Meta:
+            id = "cat"
+            type = "onebot"
+            name = "cat"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Event:
+            platform = _Platform()
+            bot = None
+
+            def get_platform_id(self):
+                return "cat"
+
+            def get_group_id(self):
+                return "123456"
+
+        sent = await sender._send_onebot_forward(_Event(), [{"type": "node"}])
+
+        self.assertTrue(sent)
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+
+    async def test_known_non_onebot_platforms_do_not_use_call_action_fallback(self):
+        class _Meta:
+            id = "telegram"
+            type = "telegram"
+            name = "telegram"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "telegram" else None
+
+        profile = PlatformResolver().from_umo(
+            _Context(), "telegram:FriendMessage:1"
+        )
+
+        self.assertTrue(callable(profile.call_action))
+        self.assertFalse(profile.is_onebot)
+        self.assertFalse(
+            TweetSender({}).supports_merged_forward_for_umo(
+                _Context(), "telegram:FriendMessage:1"
+            )
+        )
+
+    async def test_custom_onebot_private_merged_video_uses_raw_forward(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Meta:
+            id = "cat"
+            type = "onebot"
+            name = "cat"
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+            def meta(self):
+                return _Meta()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        tweet = self._make_tweet("NASA", "107")
+        video_path = Path(self.temp_dir.name) / "clip-cat-private.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-private.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="cat:FriendMessage:2519706243",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_private_forward_msg")
+        self.assertEqual(calls[0][1]["user_id"], 2519706243)
+
+    async def test_custom_onebot_group_merged_video_uses_raw_forward(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+        tweet = self._make_tweet("NASA", "108")
+        video_path = Path(self.temp_dir.name) / "clip-cat-group.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-group.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="cat:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+
+    async def test_custom_onebot_direct_umo_splits_text_and_videos(self):
+        sender = TweetSender(
+            {"send_video_attachments": True, "merge_tweet_threshold": 0}
+        )
+        sent_chains = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                return None
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "cat" else None
+
+            async def send_message(self, umo, chain):
+                sent_chains.append((umo, chain))
+
+        tweet = self._make_tweet("NASA", "109")
+        video_path = Path(self.temp_dir.name) / "clip-cat-direct.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-cat-direct.mp4", video_path)
+        )
+
+        outcome = await sender._send_direct_to_umo(
+            _Context(),
+            "cat:GroupMessage:123456",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual([umo for umo, _ in sent_chains], ["cat:GroupMessage:123456"] * 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0][1].components))
+        self.assertFalse(any(isinstance(c, _Video) for c in sent_chains[0][1].components))
+        self.assertEqual(len(sent_chains[1][1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1][1].components[0], _Video))
+
+    async def test_qq_merged_forward_with_video_uses_onebot_raw_nodes(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "aiocqhttp" else None
+
+        tweet = self._make_tweet("NASA", "101")
+        video_path = Path(self.temp_dir.name) / "clip.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="aiocqhttp:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+            group_label="榛樿鍒嗙粍",
+            batch_summary="overall summary",
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward")
+        self.assertEqual(calls[0][0], "send_group_forward_msg")
+        self.assertEqual(calls[0][1]["group_id"], 123456)
+        messages = calls[0][1]["messages"]
+        self.assertEqual(len(messages), 3)
+        text_segments = messages[1]["data"]["content"]
+        video_segments = messages[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual(
+            [segment["type"] for segment in video_segments],
+            ["text", "video"],
+        )
+        text = "\n".join(
+            segment["data"]["text"]
+            for segment in text_segments
+            if segment["type"] == "text"
+        )
+        video_text = "\n".join(
+            segment["data"]["text"]
+            for segment in video_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("#1 @NASA", text)
+        self.assertIn("nitter.test", text)
+        self.assertIn("queued 101", video_text)
+        self.assertIn("nitter.test", video_text)
+        self.assertIn("视频/GIF 附件", video_text)
+        self.assertIn(tweet.x_url, video_text)
+
+    async def test_qq_raw_video_retry_keeps_omitted_video_notice(self):
+        sender = TweetSender({"send_video_attachments": True})
+        calls = []
+
+        class _Bot:
+            async def call_action(self, action, **payload):
+                calls.append((action, payload))
+                if len(calls) == 1:
+                    raise RuntimeError("video forward failed")
+
+        class _Platform:
+            bot = _Bot()
+
+        class _Context:
+            def get_platform_inst(self, platform_id):
+                return _Platform() if platform_id == "aiocqhttp" else None
+
+        tweet = self._make_tweet("NASA", "102")
+        video_path = Path(self.temp_dir.name) / "clip-retry.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-retry.mp4", video_path)
+        )
+
+        outcome = await sender._send_merged_forward_chunk_to_umo(
+            context=_Context(),
+            umo="aiocqhttp:GroupMessage:123456",
+            batches=[("NASA", "https://nitter.test", [tweet])],
+            group_label="默认分组",
+            batch_summary="overall summary",
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(outcome.mode, "raw_forward_without_videos")
+        self.assertEqual(len(calls), 2)
+        retry_segments = [
+            segment
+            for node in calls[1][1]["messages"]
+            for segment in node["data"]["content"]
+        ]
+        self.assertFalse(any(segment["type"] == "video" for segment in retry_segments))
+        retry_text = "\n".join(
+            segment["data"]["text"]
+            for segment in retry_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("视频/GIF 附件未作为消息发送", retry_text)
+        self.assertIn(tweet.x_url, retry_text)
+
+    async def test_qq_direct_forward_fallback_labels_video_node(self):
+        sender = TweetSender({"send_video_attachments": True})
+
+        class _Event:
+            def get_group_id(self):
+                return "123456"
+
+        tweet = self._make_tweet("NASA", "103")
+        video_path = Path(self.temp_dir.name) / "clip-direct.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-direct.mp4", video_path)
+        )
+
+        raw_nodes = sender.renderer.build_onebot_nodes(
+            _Event(),
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+            start_index=1,
+        )
+
+        self.assertEqual(len(raw_nodes), 3)
+        text_segments = raw_nodes[1]["data"]["content"]
+        video_segments = raw_nodes[2]["data"]["content"]
+        self.assertTrue(any(segment["type"] == "text" for segment in text_segments))
+        self.assertFalse(any(segment["type"] == "video" for segment in text_segments))
+        self.assertEqual(
+            [segment["type"] for segment in video_segments],
+            ["text", "video"],
+        )
+        video_text = "\n".join(
+            segment["data"]["text"]
+            for segment in video_segments
+            if segment["type"] == "text"
+        )
+        self.assertIn("视频/GIF 附件", video_text)
+        self.assertIn("queued 103", video_text)
+        self.assertIn("nitter.test", video_text)
+        self.assertIn(tweet.x_url, video_text)
+
+    async def test_qq_forward_nodes_split_video_into_separate_node(self):
+        sender = TweetSender({"send_video_attachments": True})
+
+        tweet = self._make_tweet("NASA", "106")
+        video_path = Path(self.temp_dir.name) / "clip-node.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-node.mp4", video_path)
+        )
+
+        nodes = sender.renderer.build_nodes_for_uin(
+            10000,
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+            start_index=1,
+        )
+
+        self.assertEqual(len(nodes.nodes), 3)
+        text_components = nodes.nodes[1].content
+        video_components = nodes.nodes[2].content
+        self.assertTrue(any(isinstance(component, _Plain) for component in text_components))
+        self.assertFalse(any(isinstance(component, _Video) for component in text_components))
+        self.assertEqual(
+            [type(component) for component in video_components],
+            [_Plain, _Video],
+        )
+
+    async def test_qq_direct_event_splits_text_and_videos_without_forward(self):
+        sender = TweetSender(
+            {"send_video_attachments": True, "merge_tweet_threshold": 0}
+        )
+        sent_chains = []
+
+        class _Event:
+            def get_platform_name(self):
+                return "qq"
+
+            async def send(self, chain):
+                sent_chains.append(chain)
+
+        tweet = self._make_tweet("NASA", "104")
+        video_path = Path(self.temp_dir.name) / "clip-event.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-event.mp4", video_path)
+        )
+
+        ok = await sender._send_direct_event(
+            _Event(),
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(len(sent_chains), 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0].components))
+        self.assertFalse(any(isinstance(c, _Video) for c in sent_chains[0].components))
+        self.assertEqual(len(sent_chains[1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1].components[0], _Video))
+
+    async def test_qq_direct_umo_splits_text_and_videos_without_forward(self):
+        sender = TweetSender(
+            {"send_video_attachments": True, "merge_tweet_threshold": 0}
+        )
+        sent_chains = []
+
+        class _Context:
+            async def send_message(self, umo, chain):
+                sent_chains.append((umo, chain))
+
+        tweet = self._make_tweet("NASA", "105")
+        video_path = Path(self.temp_dir.name) / "clip-umo.mp4"
+        video_path.write_bytes(b"mp4")
+        tweet.media.append(
+            TweetMedia("video", "https://video.example.test/clip-umo.mp4", video_path)
+        )
+
+        outcome = await sender._send_direct_to_umo(
+            _Context(),
+            "qq:GroupMessage:123456",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual([umo for umo, _ in sent_chains], ["qq:GroupMessage:123456"] * 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0][1].components))
+        self.assertFalse(any(isinstance(c, _Video) for c in sent_chains[0][1].components))
+        self.assertEqual(len(sent_chains[1][1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1][1].components[0], _Video))
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
         events = []
@@ -1124,6 +2043,15 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.pushed_target_attempts, 4)
         self.assertEqual(sender.merged_sent, [])
         self.assertEqual(media.cleaned, 2)
+        self.assertEqual(
+            sender.tweet_start_indexes,
+            [
+                ("telegram:FriendMessage:1", "NASA", 1),
+                ("telegram:FriendMessage:1", "NASAHubble", 1),
+                ("aiocqhttp:GroupMessage:1", "NASA", 1),
+                ("aiocqhttp:GroupMessage:1", "NASAHubble", 1),
+            ],
+        )
 
     async def test_push_stats_do_not_merge_different_batches_with_same_count(self):
         sender = _Sender()
@@ -1172,6 +2100,116 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.new_tweet_count, 2)
         self.assertEqual(result.pushed_target_successes, 2)
         self.assertEqual(result.pushed_target_attempts, 2)
+
+    async def test_brief_log_enabled_defaults_to_true_and_reads_grouped_value(self):
+        scheduler = self._create_scheduler({})
+        self.assertTrue(scheduler.brief_log_enabled)
+
+        scheduler = self._create_scheduler(
+            {"logging": {"brief_log_enabled": False}}
+        )
+        self.assertFalse(scheduler.brief_log_enabled)
+
+    async def test_scheduled_result_brief_log_lines_include_result_details(self):
+        result = scheduler_module.ScheduledCheckResult(
+            reason="interval:30m",
+            group_id="tech",
+            group_name="科技",
+            users=["NASA", "OpenAI"],
+            targets=["telegram:FriendMessage:1", "aiocqhttp:GroupMessage:1"],
+            invalid_targets=["bad-target"],
+            failed_users={"NASA": "fetch failed", "publish": "send failed"},
+            push_mode="mixed",
+            delivery_warnings=["uncertain delivery", "uncertain delivery"],
+        )
+        result.pushes.append(
+            scheduler_module.ScheduledPushResult(
+                username="OpenAI",
+                new_count=2,
+                success_targets=1,
+                total_targets=2,
+            )
+        )
+        result.merged_push_success_targets = 1
+        result.merged_push_total_targets = 1
+
+        lines = result.format_brief_log_lines()
+
+        self.assertIn("group=科技(tech)", lines[0])
+        self.assertIn("reason=interval:30m", lines[0])
+        self.assertIn("mode=mixed", lines[0])
+        self.assertIn("new=2", lines[0])
+        self.assertIn("push_success=2/3", lines[0])
+        self.assertIn("failed=2", lines[0])
+        self.assertTrue(any("失败详情" in line and "@NASA" in line for line in lines))
+        self.assertTrue(any("publish: send failed" in line for line in lines))
+        self.assertTrue(any("无效推送目标" in line for line in lines))
+        self.assertTrue(any("发送状态提示" in line for line in lines))
+
+    async def test_brief_mode_logs_summary_without_verbose_push_info(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            sender=sender,
+        )
+        result = scheduler_module.ScheduledCheckResult(reason="test_brief")
+        batch = scheduler_module.PendingTweetBatch(
+            username="NASA",
+            instance="https://nitter.test",
+            tweets=[self._make_tweet("NASA", "101")],
+            fetched_ids=["101"],
+            seen_ids=[],
+        )
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            await scheduler._send_per_user_updates(
+                [batch],
+                result,
+                ["telegram:FriendMessage:1"],
+                0.0,
+                0.0,
+            )
+            scheduler._log_check_result(result)
+
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("推送结果", logged)
+        self.assertNotIn("推送完成: username=NASA", logged)
+
+    async def test_detailed_mode_keeps_verbose_push_info(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "logging": {"brief_log_enabled": False},
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            sender=sender,
+        )
+        result = scheduler_module.ScheduledCheckResult(reason="test_verbose")
+        batch = scheduler_module.PendingTweetBatch(
+            username="NASA",
+            instance="https://nitter.test",
+            tweets=[self._make_tweet("NASA", "101")],
+            fetched_ids=["101"],
+            seen_ids=[],
+        )
+
+        with patch.object(scheduler_module.logger, "info") as info_log:
+            await scheduler._send_per_user_updates(
+                [batch],
+                result,
+                ["telegram:FriendMessage:1"],
+                0.0,
+                0.0,
+            )
+
+        logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
+        self.assertIn("推送完成: username=NASA", logged)
 
     async def test_immediate_send_cleanup_on_cancel_without_buffered_targets(self):
         media = _Media()
@@ -1415,6 +2453,11 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             sender.sent,
             [("aiocqhttp:GroupMessage:1", "NASA", "https://nitter.test", ["102"])],
         )
+        self.assertEqual(len(sender.summary_sends), 1)
+        self.assertIn("Nitter 本次发布 1 条新推文", sender.summary_sends[0][1])
+        self.assertIn("更新账号：@NASA 1 条", sender.summary_sends[0][1])
+        self.assertEqual(len(sender.batch_summaries), 1)
+        self.assertEqual(sender.batch_summaries[0][2], "")
         self.assertEqual(media.staged_cleaned, 1)
 
     async def test_publish_pending_skipped_no_push_targets(self):
@@ -1628,18 +2671,53 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         result = await scheduler.publish_pending(reason="test_publish")
         summary = await scheduler.storage.get_pending_queue_summary("global")
+        records = await scheduler.storage.get_pending_tweets("global", 10)
 
         self.assertIn("publish", result.failed_users)
         self.assertEqual(result.pushed_target_successes, 1)
         self.assertEqual(result.pushed_target_attempts, 2)
         self.assertEqual(summary.pending_count, 1)
         self.assertEqual(summary.failed_count, 1)
+        self.assertEqual(records[0].delivered_targets, ("aiocqhttp:GroupMessage:1",))
         self.assertEqual(media.staged_cleaned, 0)
         self.assertEqual(
             sender.sent,
             [
                 (
                     "aiocqhttp:GroupMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["105"],
+                ),
+                (
+                    "aiocqhttp:GroupMessage:2",
+                    "NASA",
+                    "https://nitter.test",
+                    ["105"],
+                ),
+            ],
+        )
+
+        sender.failed_targets.clear()
+        retry_result = await scheduler.publish_pending(reason="test_publish_retry")
+        retry_summary = await scheduler.storage.get_pending_queue_summary("global")
+
+        self.assertNotIn("publish", retry_result.failed_users)
+        self.assertEqual(retry_result.pushed_target_successes, 1)
+        self.assertEqual(retry_result.pushed_target_attempts, 1)
+        self.assertEqual(retry_summary.pending_count, 0)
+        self.assertEqual(media.staged_cleaned, 1)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "aiocqhttp:GroupMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["105"],
+                ),
+                (
+                    "aiocqhttp:GroupMessage:2",
                     "NASA",
                     "https://nitter.test",
                     ["105"],

@@ -3,14 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 try:
+    from .group_ids import (
+        DEFAULT_GROUP_ID,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from .utils import normalize_username
 except ImportError:
+    from group_ids import (
+        DEFAULT_GROUP_ID,
+        GLOBAL_GROUP_ID,
+        normalize_group_id,
+    )
     from utils import normalize_username
 
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
 KV_KEY_SEEN_BY_TARGET = "nitter_seen_status_ids_by_target_v1"
-GLOBAL_GROUP_ID = "global"
 SEEN_LIMIT_PER_USER = 300
 
 
@@ -53,12 +62,12 @@ class SeenStore:
         target_value = await self.owner.get_kv_data(KV_KEY_SEEN_BY_TARGET, {})
         target_seen = self.normalize_seen_by_target(target_value)
         if target_seen:
-            global_seen = grouped.groups.setdefault(GLOBAL_GROUP_ID, {})
+            default_seen = grouped.groups.setdefault(DEFAULT_GROUP_ID, {})
             for seen_map in target_seen.values():
                 for username, status_ids in seen_map.items():
-                    global_seen[username] = self.merge_seen_ids(
+                    default_seen[username] = self.merge_seen_ids(
                         status_ids,
-                        global_seen.get(username, []),
+                        default_seen.get(username, []),
                     )
         return grouped
 
@@ -76,7 +85,7 @@ class SeenStore:
                 }
             )
 
-        return GroupedSeenMap(groups={GLOBAL_GROUP_ID: self.normalize_seen_map(value)})
+        return GroupedSeenMap(groups={DEFAULT_GROUP_ID: self.normalize_seen_map(value)})
 
     async def put_grouped_seen_map(self, grouped: GroupedSeenMap) -> None:
         await self.owner.put_kv_data(
@@ -129,8 +138,3 @@ class SeenStore:
             if len(merged) >= self.limit_per_user:
                 break
         return merged
-
-
-def normalize_group_id(value: str) -> str:
-    group_id = str(value or "").strip().lower()
-    return group_id or GLOBAL_GROUP_ID

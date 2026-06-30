@@ -22,6 +22,7 @@ class TweetMedia:
     kind: str
     url: str
     path: Path | None = None
+    duration_seconds: float | None = None
 
     @property
     def is_image(self) -> bool:
@@ -39,6 +40,7 @@ class TweetItem:
     published: str
     media: list[TweetMedia] = field(default_factory=list)
     media_warnings: list[str] = field(default_factory=list)
+    ai_warnings: list[str] = field(default_factory=list)
     translation: str = ""
     image_caption: str = ""
     ai_comment: str = ""
