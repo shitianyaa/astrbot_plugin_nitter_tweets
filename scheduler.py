@@ -448,13 +448,20 @@ class NitterTweetScheduler:
         user_interval = group.send_user_interval
         group_label = self._push_group_label(group)
         skip_plain_text = bool(group.filter_plain_text_enabled)
+        use_fetch_parallel = self._should_use_concurrent_fetch(group)
+        use_prepare_parallel = self._should_use_concurrent_prepare(group)
         self._log_verbose_info(
             "[NitterTweets] 定时检查开始: "
             f"group={group.group_id}, reason={reason}, "
             f"users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
             f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}, "
-            f"skip_plain_text={skip_plain_text}"
+            f"skip_plain_text={skip_plain_text}, "
+            f"拉取并发={'开' if use_fetch_parallel else '关'}, "
+            f"拉取数={group.fetch_concurrency}, "
+            f"专用镜像={len(group.concurrent_fetch_instances)}, "
+            f"准备并发={'开' if use_prepare_parallel else '关'}, "
+            f"准备数={group.prepare_concurrency}"
         )
         discovered_batches: list[PendingTweetBatch] = []
         group_plain_text_filtered_total = 0
