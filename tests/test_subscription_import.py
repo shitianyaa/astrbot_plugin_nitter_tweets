@@ -447,6 +447,21 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
+        performance_items = schema["performance"]["items"]
+        for key in [
+            "concurrent_fetch_enabled",
+            "fetch_concurrency",
+            "concurrent_fetch_instances",
+            "concurrent_prepare_enabled",
+            "prepare_concurrency",
+        ]:
+            self.assertIn(key, performance_items)
+            self.assertTrue(schema[key]["invisible"])
+        self.assertFalse(performance_items["concurrent_fetch_enabled"]["default"])
+        self.assertEqual(performance_items["fetch_concurrency"]["default"], 3)
+        self.assertEqual(performance_items["concurrent_fetch_instances"]["default"], [])
+        self.assertFalse(performance_items["concurrent_prepare_enabled"]["default"])
+        self.assertEqual(performance_items["prepare_concurrency"]["default"], 2)
         self.assertIn(
             "filter_plain_text_enabled",
             schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"],
@@ -475,6 +490,27 @@ class ConfigCompatTest(unittest.TestCase):
         config = {"basic": {"filter_reposts_enabled": False}}
 
         self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
+
+    def test_config_get_reads_grouped_performance_values(self):
+        config = {
+            "fetch_concurrency": 1,
+            "performance": {
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 4,
+                "concurrent_fetch_instances": ["https://mirror.example"],
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 3,
+            },
+        }
+
+        self.assertIs(config_get(config, "concurrent_fetch_enabled", False), True)
+        self.assertEqual(config_get(config, "fetch_concurrency", 1), 4)
+        self.assertEqual(
+            config_get(config, "concurrent_fetch_instances", []),
+            ["https://mirror.example"],
+        )
+        self.assertIs(config_get(config, "concurrent_prepare_enabled", False), True)
+        self.assertEqual(config_get(config, "prepare_concurrency", 1), 3)
 
     def test_config_get_falls_back_to_flat_value(self):
         config = {"push_targets": ["telegram:FriendMessage:1"]}
@@ -764,6 +800,39 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(tech_group.deferred_publish_times, [(20, 0)])
         self.assertTrue(tech_group.deferred_publish_enabled)
         self.assertTrue(tech_group.filter_plain_text_enabled)
+        self.assertFalse(global_group.concurrent_fetch_enabled)
+        self.assertEqual(global_group.fetch_concurrency, 3)
+        self.assertEqual(global_group.concurrent_fetch_instances, [])
+        self.assertFalse(global_group.concurrent_prepare_enabled)
+        self.assertEqual(global_group.prepare_concurrency, 2)
+
+    def test_scheduler_reader_reads_grouped_performance_config(self):
+        config = {
+            "watch_users": ["NASA"],
+            "push_targets": ["telegram:FriendMessage:1"],
+            "performance": {
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 99,
+                "concurrent_fetch_instances": [
+                    "mirror-a.example/",
+                    "https://mirror-b.example",
+                ],
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 0,
+            },
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        group = reader.schedule_groups(log_invalid_targets=False)[0]
+
+        self.assertTrue(group.concurrent_fetch_enabled)
+        self.assertEqual(group.fetch_concurrency, 8)
+        self.assertEqual(
+            group.concurrent_fetch_instances,
+            ["https://mirror-a.example", "https://mirror-b.example"],
+        )
+        self.assertTrue(group.concurrent_prepare_enabled)
+        self.assertEqual(group.prepare_concurrency, 1)
 
     def test_scheduler_reader_keeps_deferred_switch_per_group(self):
         config = {

@@ -12,6 +12,7 @@
 - `schedule`: 后台检查总开关和全局频率。
 - `deferred`: 暂存发布全局参数。
 - `push`: `tweet_groups`、推送间隔、合并阈值。
+- `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
 
 ## `tweet_groups`

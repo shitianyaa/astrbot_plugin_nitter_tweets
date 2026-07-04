@@ -35,7 +35,10 @@ class TransientFetchError(RuntimeError):
 # 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
 # /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 包成
 # <video> 标签。引用推文里的媒体也不算当前作者上传的媒体。
+# Twitter Article（长文）的封面图虽走 /pic/media，但包在 <a href="/i/article/...">
+# 里，属于文章卡片而非作者上传的媒体附件，不算作者媒体。
 _MEDIA_SRC_RE = re.compile(r"(?i)/pic/media")
+_ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
 _HTML_VOID_TAGS = frozenset(
     {
         "area",
@@ -68,7 +71,11 @@ class _AuthorMediaDetector(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs):
         tag = tag.lower()
-        ignored = self._inside_ignored_container or self._is_ignored_container(attrs)
+        ignored = (
+            self._inside_ignored_container
+            or self._is_ignored_container(attrs)
+            or self._is_article_link(tag, attrs)
+        )
         if not ignored:
             self._detect_media(tag, attrs)
         if tag in _HTML_VOID_TAGS:
@@ -76,7 +83,11 @@ class _AuthorMediaDetector(HTMLParser):
         self._ignored_stack.append((tag, ignored))
 
     def handle_startendtag(self, tag: str, attrs):
-        if self._inside_ignored_container or self._is_ignored_container(attrs):
+        if (
+            self._inside_ignored_container
+            or self._is_ignored_container(attrs)
+            or self._is_article_link(tag, attrs)
+        ):
             return
         self._detect_media(tag, attrs)
 
@@ -110,6 +121,13 @@ class _AuthorMediaDetector(HTMLParser):
             for item in class_text.replace("_", "-").split()
         }
         return any("quote" in item for item in classes)
+
+    @staticmethod
+    def _is_article_link(tag: str, attrs) -> bool:
+        if tag.lower() != "a":
+            return False
+        href = _AuthorMediaDetector._first_attr_value(attrs, "href")
+        return bool(_ARTICLE_LINK_RE.search(href))
 
     @staticmethod
     def _first_attr_value(attrs, name: str) -> str:
@@ -175,35 +193,88 @@ class NitterClient:
         limit: int,
         skip_plain_text: bool = False,
     ) -> tuple[str, list[TweetItem], int]:
+        return await self._fetch_tweets_with_stats_from_instances(
+            username,
+            limit,
+            self.instances,
+            skip_plain_text=skip_plain_text,
+            retry_attempts=self.retry_attempts,
+        )
+
+    async def fetch_tweets_with_stats_from_instances(
+        self,
+        username: str,
+        limit: int,
+        instances: list[str],
+        start_index: int = 0,
+        skip_plain_text: bool = False,
+        retry_attempts: int = 3,
+    ) -> tuple[str, list[TweetItem], int]:
+        ordered_instances = self._rotate_instances(instances, start_index)
+        if not ordered_instances:
+            raise RuntimeError("未配置并发专用 Nitter 实例")
+        return await self._fetch_tweets_with_stats_from_instances(
+            username,
+            limit,
+            ordered_instances,
+            skip_plain_text=skip_plain_text,
+            retry_attempts=retry_attempts,
+            total_retry_attempts_per_instance=True,
+        )
+
+    async def _fetch_tweets_with_stats_from_instances(
+        self,
+        username: str,
+        limit: int,
+        instances: list[str],
+        skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        total_retry_attempts_per_instance: bool = False,
+    ) -> tuple[str, list[TweetItem], int]:
         errors: list[str] = []
-        for index, instance in enumerate(self.instances):
+        for index, instance in enumerate(instances):
             try:
                 result = await asyncio.to_thread(
                     self._fetch_from_instance,
-                    instance, username, limit, skip_plain_text,
+                    instance,
+                    username,
+                    limit,
+                    skip_plain_text,
+                    retry_attempts,
+                    total_retry_attempts_per_instance,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
-                self._log_instance_fetch_failure(index, instance, username, exc)
+                self._log_instance_fetch_failure(
+                    index, instance, username, exc, instances
+                )
                 continue
             if result.tweets or result.saw_items:
                 self._log_instance_fetch_success(index, instance, username, result)
                 return instance, result.tweets, result.plain_text_filtered
             errors.append(f"{instance}: empty feed")
-            self._log_instance_fetch_failure(index, instance, username, "empty feed")
-        raise RuntimeError(self._format_fetch_errors(errors))
+            self._log_instance_fetch_failure(
+                index, instance, username, "empty feed", instances
+            )
+        raise RuntimeError(self._format_fetch_errors(errors, total_count=len(instances)))
 
     def _log_instance_fetch_failure(
-        self, index: int, instance: str, username: str, error,
+        self,
+        index: int,
+        instance: str,
+        username: str,
+        error,
+        instances: list[str] | None = None,
     ) -> None:
-        total = len(self.instances)
+        instances = instances or self.instances
+        total = len(instances)
         if total <= 1:
             return
 
         if index + 1 < total:
             logger.warning(
                 "[NitterTweets] RSS 实例失败，尝试下一个实例: "
-                f"instance={instance}, next_instance={self.instances[index + 1]}, "
+                f"instance={instance}, next_instance={instances[index + 1]}, "
                 f"username={username}, error={error}"
             )
             return
@@ -240,13 +311,15 @@ class NitterClient:
             raise RuntimeError(f"{normalized}: empty feed")
         return normalized, result.tweets
 
-    def _format_fetch_errors(self, errors: list[str]) -> str:
+    def _format_fetch_errors(
+        self, errors: list[str], total_count: int | None = None
+    ) -> str:
         if not errors:
             return "未配置 Nitter 实例"
 
         shown_errors = errors[-3:]
         hidden_count = len(errors) - len(shown_errors)
-        total_count = len(self.instances)
+        total_count = total_count if total_count is not None else len(self.instances)
         summary = f"已尝试 {len(errors)}/{total_count} 个 Nitter 实例，未获得可用 RSS"
         if hidden_count > 0:
             summary += (
@@ -263,6 +336,8 @@ class NitterClient:
         username: str,
         limit: int,
         skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        total_retry_attempts_per_instance: bool = False,
     ) -> InstanceFetchResult:
         if limit <= 0:
             return InstanceFetchResult([])
@@ -273,12 +348,25 @@ class NitterClient:
         cursor = ""
         saw_items = False
         plain_text_filtered_total = 0
+        attempt_budget = (
+            [self._retry_attempt_count(retry_attempts)]
+            if total_retry_attempts_per_instance
+            else None
+        )
 
         while len(tweets) < limit:
+            if attempt_budget is not None and attempt_budget[0] <= 0:
+                break
             try:
                 page_tweets, next_cursor, plain_text_filtered = (
                     self._fetch_page_with_retries(
-                        instance, username, cursor, limit, skip_plain_text,
+                        instance,
+                        username,
+                        cursor,
+                        limit,
+                        skip_plain_text,
+                        retry_attempts,
+                        attempt_budget,
                     )
                 )
             except Exception:
@@ -360,12 +448,20 @@ class NitterClient:
         cursor: str,
         limit: int,
         skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        attempt_budget: list[int] | None = None,
     ) -> tuple[list[TweetItem], str, int]:
-        attempts = max(1, int(self.retry_attempts))
+        attempts = self._retry_attempt_count(retry_attempts)
+        if attempt_budget is not None:
+            attempts = max(1, attempt_budget[0])
         delay = max(0.0, float(self.retry_delay_seconds))
         last_error: TransientFetchError | None = None
 
         for attempt in range(1, attempts + 1):
+            if attempt_budget is not None:
+                if attempt_budget[0] <= 0:
+                    break
+                attempt_budget[0] -= 1
             try:
                 return self._fetch_page_from_instance(
                     instance, username, cursor, limit, skip_plain_text,
@@ -386,6 +482,13 @@ class NitterClient:
         if last_error is not None:
             raise last_error
         raise RuntimeError("RSS 抓取失败")
+
+    def _retry_attempt_count(self, retry_attempts: int | None = None) -> int:
+        value = self.retry_attempts if retry_attempts is None else retry_attempts
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return max(1, int(self.retry_attempts))
 
     def _fetch_page_from_instance(
         self,
@@ -431,6 +534,22 @@ class NitterClient:
         if cursor:
             rss_url = f"{rss_url}?{urlencode({'cursor': cursor})}"
         return rss_url
+
+    @staticmethod
+    def _rotate_instances(instances: list[str], start_index: int = 0) -> list[str]:
+        normalized: list[str] = []
+        for instance in instances:
+            text = str(instance or "").strip().rstrip("/")
+            if not text:
+                continue
+            if not text.startswith(("http://", "https://")):
+                text = f"https://{text}"
+            if text not in normalized:
+                normalized.append(text)
+        if not normalized:
+            return []
+        offset = int(start_index or 0) % len(normalized)
+        return normalized[offset:] + normalized[:offset]
 
     @staticmethod
     def _header_value(headers, name: str) -> str:

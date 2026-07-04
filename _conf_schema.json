@@ -416,7 +416,7 @@
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图不算媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
               },
               "aliases": {
                 "description": "分组别名",
@@ -521,8 +521,39 @@
   "performance": {
     "description": "并发与限流",
     "type": "object",
-    "hint": "预留栏目：多并发抓取、翻译、评论和识图会在后续实现；当前版本仍按已有串行处理和发送间隔执行。",
-    "items": {}
+    "hint": "控制后台检查的并发抓取和并发准备。默认关闭；建议只在自建 Nitter 镜像和模型额度充足时开启。",
+    "items": {
+      "concurrent_fetch_enabled": {
+        "description": "启用后台并发拉取",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，只有同时配置了并发专用 Nitter 镜像且并发数大于 1，后台检查才会并发拉取多个账号；否则保持旧串行行为。手动 /推文、/镜像测试 不受影响。"
+      },
+      "fetch_concurrency": {
+        "description": "账号拉取并发数",
+        "type": "int",
+        "default": 3,
+        "hint": "后台检查同时拉取多少个账号 RSS，范围 1-8。公共 Nitter 镜像不建议高并发；建议配合自建镜像使用。"
+      },
+      "concurrent_fetch_instances": {
+        "description": "并发专用 Nitter 镜像",
+        "type": "list",
+        "default": [],
+        "hint": "仅供后台并发拉取使用，可填写多个自建 Nitter 镜像。留空时不会启用并发拉取，也不会回退到基础设置里的 instances。公共镜像容易限流或拒绝访问，不建议用于高并发。"
+      },
+      "concurrent_prepare_enabled": {
+        "description": "启用媒体和模型并发准备",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，后台检查发现的新推文会并发执行翻译、媒体下载、AI 识图和 AI 评论；发送和暂存入队仍按关注账号和推文顺序执行。"
+      },
+      "prepare_concurrency": {
+        "description": "推文准备并发数",
+        "type": "int",
+        "default": 2,
+        "hint": "后台检查同时准备多少条推文或账号批次，范围 1-8。数值越大，对 xdown、模型 provider 和本机网络压力越高。"
+      }
+    }
   },
   "_legacy_grouped_config_migrated": {
     "description": "Legacy grouped config migration completed",
@@ -864,6 +895,41 @@
     "type": "float",
     "default": 0.5,
     "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。",
+    "invisible": true
+  },
+  "concurrent_fetch_enabled": {
+    "description": "启用后台并发拉取",
+    "type": "bool",
+    "default": false,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "fetch_concurrency": {
+    "description": "账号拉取并发数",
+    "type": "int",
+    "default": 3,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "concurrent_fetch_instances": {
+    "description": "并发专用 Nitter 镜像",
+    "type": "list",
+    "default": [],
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "concurrent_prepare_enabled": {
+    "description": "启用媒体和模型并发准备",
+    "type": "bool",
+    "default": false,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "prepare_concurrency": {
+    "description": "推文准备并发数",
+    "type": "int",
+    "default": 2,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
     "invisible": true
   },
   "merge_tweet_threshold": {

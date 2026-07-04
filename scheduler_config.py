@@ -14,7 +14,7 @@ try:
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from .utils import clamp_float, clamp_int, normalize_username
+    from .utils import clamp_float, clamp_int, load_instances, normalize_username
 except ImportError:
     from config_compat import config_get, migrate_default_group_config
     from group_ids import (
@@ -24,7 +24,7 @@ except ImportError:
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from utils import clamp_float, clamp_int, normalize_username
+    from utils import clamp_float, clamp_int, load_instances, normalize_username
 
 
 @dataclass(slots=True)
@@ -64,6 +64,11 @@ class ScheduleGroup:
     deferred_prefetch_media: bool
     deferred_media_retention_hours: float
     deferred_media_download_interval_seconds: float
+    concurrent_fetch_enabled: bool
+    fetch_concurrency: int
+    concurrent_fetch_instances: list[str]
+    concurrent_prepare_enabled: bool
+    prepare_concurrency: int
     filter_plain_text_enabled: bool
     users_info: WatchUsersInfo
     target_info: PushTargetParseResult
@@ -108,6 +113,11 @@ class SchedulerConfigReader:
             deferred_prefetch_media=True,
             deferred_media_retention_hours=72.0,
             deferred_media_download_interval_seconds=0.5,
+            concurrent_fetch_enabled=False,
+            fetch_concurrency=3,
+            concurrent_fetch_instances=[],
+            concurrent_prepare_enabled=False,
+            prepare_concurrency=2,
             filter_plain_text_enabled=False,
             users_info=self.parse_watch_users([]),
             target_info=self.parse_push_targets(
@@ -257,6 +267,23 @@ class SchedulerConfigReader:
                 ),
                 0.0,
                 60.0,
+            ),
+            concurrent_fetch_enabled=self.parse_bool(
+                config_get(self.config, "concurrent_fetch_enabled", False),
+                False,
+            ),
+            fetch_concurrency=clamp_int(
+                config_get(self.config, "fetch_concurrency", 3), 1, 8
+            ),
+            concurrent_fetch_instances=self.parse_instances(
+                config_get(self.config, "concurrent_fetch_instances", [])
+            ),
+            concurrent_prepare_enabled=self.parse_bool(
+                config_get(self.config, "concurrent_prepare_enabled", False),
+                False,
+            ),
+            prepare_concurrency=clamp_int(
+                config_get(self.config, "prepare_concurrency", 2), 1, 8
             ),
             filter_plain_text_enabled=self.parse_bool(
                 raw_group.get(
@@ -524,6 +551,11 @@ class SchedulerConfigReader:
         else:
             raw_items = [value]
         return [str(item).strip() for item in raw_items if str(item).strip()]
+
+    @classmethod
+    def parse_instances(cls, value) -> list[str]:
+        items = cls.config_list(value)
+        return load_instances(items) if items else []
 
     @staticmethod
     def merge_unique_strings(left: list[str], right: list[str]) -> list[str]:

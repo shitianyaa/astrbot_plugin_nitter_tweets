@@ -23,6 +23,7 @@
 - 支持非中文推文翻译、AI 识图作为评论上下文、按概率追加 AI 评论。
 - 支持暂存定时发布、队列查看、手动发布、缓存清理和 seen 记录清理。
 - Nitter RSS 抓取和媒体下载遇到临时错误会重试。
+- 后台检查可选启用账号 RSS 并发拉取、媒体和模型并发准备；默认关闭，开启后仍按关注账号和推文顺序发送。
 
 ## 快速开始
 
@@ -122,6 +123,11 @@ telegram:FriendMessage:123456789
 | `send_target_interval` | 多个推送目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 | `deferred_publish_times` | 暂存队列发布时间列表，格式 `HH:MM`。 |
+| `concurrent_fetch_enabled` | 是否启用后台账号 RSS 并发拉取，默认关闭。 |
+| `fetch_concurrency` | 同时拉取账号数，范围 `1-8`，默认 `3`。 |
+| `concurrent_fetch_instances` | 后台并发拉取专用 Nitter 镜像池；留空时不启用并发，也不会回退到 `instances`。建议只填写自建镜像。 |
+| `concurrent_prepare_enabled` | 是否启用后台媒体、翻译、识图和评论并发准备，默认关闭。 |
+| `prepare_concurrency` | 同时准备的推文或账号批次数，范围 `1-8`，默认 `2`。 |
 | `send_image_attachments` | 是否发送图片附件，默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
 | `media_cache_retention_days` | 普通媒体缓存保留天数；设为 `0` 时发送流程结束后删除。 |
@@ -139,6 +145,9 @@ telegram:FriendMessage:123456789
 - QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
 - `brief_log_enabled` 只影响 AstrBot 后台日志，不影响聊天消息、命令返回或推送内容。
 - 媒体缓存存放在 AstrBot 插件数据目录，不写入插件源码目录；暂存队列媒体发布成功后会删除。
+- `scheduled_fetch_limit` 是每个账号本轮最多保留的有效推文数，默认 `5`、范围 `1-20`；Nitter RSS 会按 `Min-Id` 游标翻页，不是固定只拉一页。
+- 后台并发拉取只在 `concurrent_fetch_enabled=true`、`concurrent_fetch_instances` 非空且 `fetch_concurrency > 1` 时启用；手动 `/推文` 和 `/镜像测试` 不使用并发配置。
+- 即使拉取、媒体下载或模型处理并发完成，最终发送、暂存入队和 seen 更新仍按 `watch_users` 配置顺序以及推文从旧到新的顺序执行。
 
 ## 常见问题
 

@@ -219,6 +219,7 @@ class _MultiUserNitter:
     def __init__(self, tweets_by_user, events=None):
         self.tweets_by_user = tweets_by_user
         self.events = events if events is not None else []
+        self.concurrent_calls = []
 
     async def fetch_tweets(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
@@ -229,6 +230,21 @@ class _MultiUserNitter:
     ):
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
+
+    async def fetch_tweets_with_stats_from_instances(
+        self,
+        username,
+        limit,
+        instances,
+        start_index=0,
+        skip_plain_text=False,
+        retry_attempts=3,
+    ):
+        self.concurrent_calls.append(
+            (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
+        )
+        self.events.append(f"concurrent_fetch:{username}")
+        return "https://concurrent.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
 class _PartiallyFailingNitter(_MultiUserNitter):
@@ -249,6 +265,45 @@ class _PartiallyFailingNitter(_MultiUserNitter):
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
+
+
+class _ConcurrentNitter(_MultiUserNitter):
+    def __init__(self, tweets_by_user, events=None, failures_by_user=None, filtered=None):
+        super().__init__(tweets_by_user, events=events)
+        self.failures_by_user = failures_by_user or {}
+        self.filtered = filtered or {}
+        self.release_first = scheduler_module.asyncio.Event()
+
+    async def fetch_tweets_with_stats_from_instances(
+        self,
+        username,
+        limit,
+        instances,
+        start_index=0,
+        skip_plain_text=False,
+        retry_attempts=3,
+    ):
+        self.concurrent_calls.append(
+            (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
+        )
+        self.events.append(f"concurrent_fetch_start:{username}")
+        if username == "NASA":
+            await self.release_first.wait()
+        else:
+            self.release_first.set()
+        self.events.append(f"concurrent_fetch_done:{username}")
+        if username in self.failures_by_user:
+            raise RuntimeError(self.failures_by_user[username])
+        return (
+            "https://concurrent.test",
+            self.tweets_by_user.get(username, [])[:limit],
+            self.filtered.get(username, 0),
+        )
+
+
+class _NoConcurrentNitter(_MultiUserNitter):
+    async def fetch_tweets_with_stats_from_instances(self, *args, **kwargs):
+        raise AssertionError("concurrent fetch should not be used")
 
 
 class _Media:
@@ -302,6 +357,22 @@ class _RecordingTranslator(_Translator):
         self.events.append(
             "translate:" + ",".join(tweet.status_id for tweet in tweets)
         )
+        await super().attach_translations(tweets, target)
+
+
+class _OutOfOrderTranslator(_Translator):
+    def __init__(self, events):
+        self.events = events
+        self.release_first = scheduler_module.asyncio.Event()
+
+    async def attach_translations(self, tweets, target):
+        status_id = tweets[0].status_id
+        self.events.append(f"translate_start:{status_id}")
+        if status_id == "101":
+            await self.release_first.wait()
+        else:
+            self.release_first.set()
+        self.events.append(f"translate_done:{status_id}")
         await super().attach_translations(tweets, target)
 
 
@@ -592,6 +663,178 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.plain_text_filtered, 3)
         self.assertIn("filtered=3", result.format_log_summary())
         self.assertIn("filtered=3", result.format_brief_log_lines()[0])
+
+    async def test_concurrent_fetch_requires_enabled_pool_and_parallelism(self):
+        events = []
+        nitter = _NoConcurrentNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ]
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 3,
+                "concurrent_fetch_instances": [],
+            },
+            nitter=nitter,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_concurrent_fetch_disabled")
+
+        self.assertEqual(events[0], "fetch:NASA")
+        self.assertEqual(result.new_tweet_count, 1)
+
+    async def test_concurrent_fetch_preserves_watch_user_order_after_out_of_order_fetch(self):
+        events = []
+        media = _Media()
+        sender = _RecordingSender(events=events)
+        nitter = _ConcurrentNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+                "ESA": [
+                    self._make_tweet("ESA", "200"),
+                    self._make_tweet("ESA", "201"),
+                ],
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "300"),
+                    self._make_tweet("OpenAI", "301"),
+                ],
+            },
+            events=events,
+            filtered={"NASA": 1, "ESA": 2},
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "ESA", "OpenAI"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+                "tweet_groups": [
+                    {
+                        "name": "Default",
+                        "group_id": "global",
+                        "filter_plain_text_enabled": True,
+                        "watch_users": ["NASA", "ESA", "OpenAI"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                    }
+                ],
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 3,
+                "concurrent_fetch_instances": [
+                    "https://mirror-a.example",
+                    "https://mirror-b.example",
+                ],
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "ESA", ["200"])
+        await scheduler.storage.add_seen_ids("global", "OpenAI", ["300"])
+
+        result = await scheduler.run_check(reason="test_concurrent_fetch_order")
+
+        self.assertEqual(result.plain_text_filtered, 3)
+        self.assertEqual(
+            [item[1] for item in sender.sent],
+            ["NASA", "ESA", "OpenAI"],
+        )
+        self.assertEqual(
+            [call[:4] for call in nitter.concurrent_calls],
+            [
+                (
+                    "NASA",
+                    ("https://mirror-a.example", "https://mirror-b.example"),
+                    0,
+                    True,
+                ),
+                (
+                    "ESA",
+                    ("https://mirror-a.example", "https://mirror-b.example"),
+                    1,
+                    True,
+                ),
+                (
+                    "OpenAI",
+                    ("https://mirror-a.example", "https://mirror-b.example"),
+                    2,
+                    True,
+                ),
+            ],
+        )
+        self.assertTrue(
+            events.index("concurrent_fetch_done:ESA")
+            < events.index("concurrent_fetch_done:NASA")
+        )
+
+    async def test_concurrent_fetch_records_failures_in_watch_user_order(self):
+        events = []
+        nitter = _ConcurrentNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "100"),
+                    self._make_tweet("NASA", "101"),
+                ],
+                "ESA": [self._make_tweet("ESA", "200")],
+                "OpenAI": [
+                    self._make_tweet("OpenAI", "300"),
+                    self._make_tweet("OpenAI", "301"),
+                ],
+            },
+            events=events,
+            failures_by_user={"ESA": "RSS down"},
+        )
+        sender = _Sender(events=events)
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA", "ESA", "OpenAI"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 3,
+                "concurrent_fetch_instances": [
+                    "https://mirror-a.example",
+                    "https://mirror-b.example",
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.add_seen_ids("global", "ESA", ["200"])
+        await scheduler.storage.add_seen_ids("global", "OpenAI", ["300"])
+
+        result = await scheduler.run_check(reason="test_concurrent_fetch_failure")
+
+        self.assertEqual(list(result.failed_users), ["ESA"])
+        self.assertEqual(
+            [item[1] for item in sender.sent],
+            ["NASA", "OpenAI"],
+        )
 
     async def _create_scheduler_with_deferred_publish_enabled(
         self,
@@ -1110,6 +1353,65 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(media.cleaned, 2)
 
+    async def test_concurrent_prepare_preserves_send_order_after_out_of_order_prepare(self):
+        events = []
+        media = _RecordingMedia(events)
+        sender = _RecordingSender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "100"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 2,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+            translator=_OutOfOrderTranslator(events),
+            enricher=_RecordingEnricher(events),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_concurrent_prepare_order")
+
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertTrue(
+            events.index("translate_done:102")
+            < events.index("translate_done:101")
+        )
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                ),
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["102"],
+                ),
+            ],
+        )
+
     async def test_immediate_per_tweet_prepare_failure_does_not_mark_seen(self):
         events = []
         media = _RecordingMedia(events)
@@ -1149,6 +1451,59 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("NASA:102", result.failed_users)
         self.assertIn("101", seen_ids)
         self.assertIn("100", seen_ids)
+        self.assertNotIn("102", seen_ids)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["101"],
+                )
+            ],
+        )
+
+    async def test_concurrent_prepare_failure_does_not_mark_seen(self):
+        events = []
+        media = _RecordingMedia(events)
+        sender = _RecordingSender(events=events)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "100"),
+                ],
+            },
+            events=events,
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 2,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+            translator=_RecordingTranslator(events),
+            enricher=_RecordingEnricher(events, fail_status_ids={"102"}),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_concurrent_prepare_failure")
+        seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertIn("NASA:102", result.failed_users)
+        self.assertIn("101", seen_ids)
         self.assertNotIn("102", seen_ids)
         self.assertEqual(
             sender.sent,
