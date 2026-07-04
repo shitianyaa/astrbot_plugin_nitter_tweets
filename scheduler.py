@@ -4,8 +4,8 @@ import asyncio
 import datetime as dt
 import inspect
 import time
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger
@@ -22,7 +22,11 @@ except ImportError:
 
 try:
     from .config_compat import config_get, config_set, migrate_default_group_config
-    from .enricher import format_ai_tweet_summary
+    from .enricher import (
+        EnrichmentReport,
+        TranslationReport,
+        format_ai_tweet_summary,
+    )
     from .group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
@@ -57,7 +61,11 @@ try:
     )
 except ImportError:
     from config_compat import config_get, config_set, migrate_default_group_config
-    from enricher import format_ai_tweet_summary
+    from enricher import (
+        EnrichmentReport,
+        TranslationReport,
+        format_ai_tweet_summary,
+    )
     from group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
@@ -102,21 +110,31 @@ POLL_SECONDS = 30
 
 
 @dataclass(slots=True)
+class SchedulerTaskError:
+    message: str
+    kind: str = ""
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> "SchedulerTaskError":
+        return cls(message=str(exc), kind=type(exc).__name__)
+
+
+@dataclass(slots=True)
 class UserFetchResult:
     index: int
     username: str
     instance: str = ""
-    tweets: list[TweetItem] | None = None
+    tweets: list[TweetItem] = field(default_factory=list)
     plain_text_filtered: int = 0
-    error: str = ""
+    error: SchedulerTaskError | None = None
 
 
 @dataclass(slots=True)
 class PreparedBatchResult:
     batch: PendingTweetBatch
-    translation_report: Any = None
-    enrich_report: Any = None
-    error: str = ""
+    translation_report: TranslationReport | None = None
+    enrich_report: EnrichmentReport | None = None
+    error: SchedulerTaskError | None = None
 
 
 class NitterTweetScheduler:
@@ -469,15 +487,15 @@ class NitterTweetScheduler:
         for fetch_result in fetch_results:
             username = fetch_result.username
             if fetch_result.error:
-                result.failed_users[username] = fetch_result.error
+                result.failed_users[username] = fetch_result.error.message
                 logger.warning(
                     f"[NitterTweets] 定时抓取 @{username} 失败: "
-                    f"{fetch_result.error}"
+                    f"{fetch_result.error.message}"
                 )
                 continue
 
             instance = fetch_result.instance
-            tweets = fetch_result.tweets or []
+            tweets = fetch_result.tweets
             plain_text_filtered = fetch_result.plain_text_filtered
             if skip_plain_text and plain_text_filtered > 0:
                 group_plain_text_filtered_total += plain_text_filtered
@@ -827,7 +845,11 @@ class NitterTweetScheduler:
                     )
                 )
         except Exception as exc:
-            return UserFetchResult(index=index, username=username, error=str(exc))
+            return UserFetchResult(
+                index=index,
+                username=username,
+                error=SchedulerTaskError.from_exception(exc),
+            )
         return UserFetchResult(
             index=index,
             username=username,
@@ -982,6 +1004,26 @@ class NitterTweetScheduler:
             )
         return pending_batches, immediate_batches_sent
 
+    async def _prepare_batches_concurrently(
+        self,
+        batches: list[PendingTweetBatch],
+        concurrency: int,
+        prepare_one: Callable[[PendingTweetBatch], Awaitable[PreparedBatchResult]],
+    ) -> list[PreparedBatchResult]:
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def prepare(batch: PendingTweetBatch) -> PreparedBatchResult:
+            async with semaphore:
+                try:
+                    return await prepare_one(batch)
+                except Exception as exc:
+                    return PreparedBatchResult(
+                        batch=batch,
+                        error=SchedulerTaskError.from_exception(exc),
+                    )
+
+        return list(await asyncio.gather(*[prepare(batch) for batch in batches]))
+
     async def _prepare_deferred_batches_concurrently(
         self,
         group: ScheduleGroup,
@@ -989,36 +1031,24 @@ class NitterTweetScheduler:
         result: ScheduledCheckResult,
         target_umo: str,
     ) -> list[PendingTweetBatch]:
-        semaphore = asyncio.Semaphore(group.prepare_concurrency)
-
-        async def prepare(discovered_batch: PendingTweetBatch) -> PreparedBatchResult:
-            async with semaphore:
-                try:
-                    return await self._prepare_deferred_batch(
-                        group, discovered_batch, target_umo
-                    )
-                except Exception as exc:
-                    await asyncio.to_thread(
-                        self.media.cleanup_after_send, discovered_batch.tweets
-                    )
-                    return PreparedBatchResult(
-                        batch=discovered_batch,
-                        error=str(exc),
-                    )
-
-        prepared_results = await asyncio.gather(
-            *[prepare(batch) for batch in discovered_batches]
+        prepared_results = await self._prepare_batches_concurrently(
+            discovered_batches,
+            group.prepare_concurrency,
+            lambda batch: self._prepare_deferred_batch(group, batch, target_umo),
         )
         pending_batches: list[PendingTweetBatch] = []
         for prepared in prepared_results:
             batch = prepared.batch
             if prepared.error:
+                await asyncio.to_thread(
+                    self.media.cleanup_after_send, batch.tweets
+                )
                 result.failed_users[batch.username] = (
-                    f"推文准备失败: {prepared.error}"
+                    f"推文准备失败: {prepared.error.message}"
                 )
                 logger.warning(
                     f"[NitterTweets] 定时推送准备 @{batch.username} 失败: "
-                    f"{prepared.error}"
+                    f"{prepared.error.message}"
                 )
                 continue
             self._log_ai_process_results(
@@ -1061,26 +1091,18 @@ class NitterTweetScheduler:
                     )
                 )
 
-        semaphore = asyncio.Semaphore(group.prepare_concurrency)
-
-        async def prepare(batch: PendingTweetBatch) -> PreparedBatchResult:
-            async with semaphore:
-                try:
-                    return await self._prepare_immediate_batch(batch, target_umo)
-                except Exception as exc:
-                    return PreparedBatchResult(
-                        batch=batch,
-                        error=str(exc),
-                    )
-
-        prepared_results = await asyncio.gather(
-            *[prepare(batch) for batch in single_batches]
+        prepared_results = await self._prepare_batches_concurrently(
+            single_batches,
+            group.prepare_concurrency,
+            lambda batch: self._prepare_immediate_batch(batch, target_umo),
         )
         pending_batches: list[PendingTweetBatch] = []
         prepared_count_by_user: dict[str, int] = {}
-        total_by_user = {
-            batch.username: batch.tweet_total for batch in discovered_batches
-        }
+        total_by_user: dict[str, int] = {}
+        for batch in discovered_batches:
+            total_by_user[batch.username] = (
+                total_by_user.get(batch.username, 0) + len(batch.tweets)
+            )
         consumed_count = 0
         try:
             for prepared in prepared_results:
@@ -1095,7 +1117,7 @@ class NitterTweetScheduler:
                         tweet,
                         tweet_index,
                         batch.tweets,
-                        RuntimeError(prepared.error),
+                        prepared.error,
                     )
                     continue
 
@@ -1218,14 +1240,20 @@ class NitterTweetScheduler:
         tweet: TweetItem,
         tweet_index: int,
         tweets: list[TweetItem],
-        exc: Exception,
+        error: SchedulerTaskError | Exception,
     ) -> None:
         status_id = tweet.status_id or f"index-{tweet_index}"
+        if isinstance(error, SchedulerTaskError):
+            error_message = error.message
+        else:
+            error_message = str(error)
         await asyncio.to_thread(self.media.cleanup_after_send, tweets)
-        result.failed_users[f"{username}:{status_id}"] = f"推文准备失败: {exc}"
+        result.failed_users[f"{username}:{status_id}"] = (
+            f"推文准备失败: {error_message}"
+        )
         logger.warning(
             "[NitterTweets] 定时推送准备失败: "
-            f"username={username}, status={status_id}, error={exc}"
+            f"username={username}, status={status_id}, error={error_message}"
         )
 
     async def _send_or_buffer_immediate_batch(

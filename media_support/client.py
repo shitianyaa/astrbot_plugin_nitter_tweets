@@ -159,6 +159,28 @@ class InstanceFetchResult:
     plain_text_filtered: int = 0
 
 
+@dataclass(slots=True)
+class FetchAttemptBudget:
+    remaining: int | None = None
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining is not None and self.remaining <= 0
+
+    def attempts_for_page(self, default_attempts: int) -> int:
+        if self.remaining is None:
+            return default_attempts
+        return max(1, self.remaining)
+
+    def consume(self) -> bool:
+        if self.remaining is None:
+            return True
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        return True
+
+
 class NitterClient:
     def __init__(self, config):
         self.instances = load_instances(config_get(config, "instances"))
@@ -348,14 +370,14 @@ class NitterClient:
         cursor = ""
         saw_items = False
         plain_text_filtered_total = 0
-        attempt_budget = (
-            [self._retry_attempt_count(retry_attempts)]
+        attempt_budget = FetchAttemptBudget(
+            self._retry_attempt_count(retry_attempts)
             if total_retry_attempts_per_instance
             else None
         )
 
         while len(tweets) < limit:
-            if attempt_budget is not None and attempt_budget[0] <= 0:
+            if attempt_budget.exhausted:
                 break
             try:
                 page_tweets, next_cursor, plain_text_filtered = (
@@ -449,19 +471,17 @@ class NitterClient:
         limit: int,
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
-        attempt_budget: list[int] | None = None,
+        attempt_budget: FetchAttemptBudget | None = None,
     ) -> tuple[list[TweetItem], str, int]:
         attempts = self._retry_attempt_count(retry_attempts)
         if attempt_budget is not None:
-            attempts = max(1, attempt_budget[0])
+            attempts = attempt_budget.attempts_for_page(attempts)
         delay = max(0.0, float(self.retry_delay_seconds))
         last_error: TransientFetchError | None = None
 
         for attempt in range(1, attempts + 1):
-            if attempt_budget is not None:
-                if attempt_budget[0] <= 0:
-                    break
-                attempt_budget[0] -= 1
+            if attempt_budget is not None and not attempt_budget.consume():
+                break
             try:
                 return self._fetch_page_from_instance(
                     instance, username, cursor, limit, skip_plain_text,
