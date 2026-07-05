@@ -368,6 +368,7 @@ function updateGroupDraft(groupId, key, value) {
   }
   state.groupDrafts[groupId][key] = value;
   renderGroupList();
+  renderGroupEditor();
 }
 
 function groupDraft(group) {
@@ -896,13 +897,16 @@ async function reloadAll() {
       second: "2-digit",
     });
     els.lastUpdated.textContent = `更新于 ${state.lastUpdated}`;
+    setBusy(false);
     renderAll();
     return true;
   } catch (error) {
     showAlert(error.message || "加载失败", "error");
     return false;
   } finally {
-    setBusy(false);
+    if (state.loading) {
+      setBusy(false);
+    }
   }
 }
 
@@ -948,6 +952,7 @@ async function withAction(action, successText, options = {}) {
   try {
     const result = await action();
     const successMessage = successText || result.message || "操作完成";
+    state.actionBusy = false;
     if (options.reload !== false) {
       const reloaded = await reloadAll();
       if (reloaded === false) {
@@ -960,7 +965,9 @@ async function withAction(action, successText, options = {}) {
     showAlert(error.message || "操作失败", "error");
     return null;
   } finally {
-    state.actionBusy = false;
+    if (state.actionBusy) {
+      state.actionBusy = false;
+    }
     setBusy(false);
   }
 }

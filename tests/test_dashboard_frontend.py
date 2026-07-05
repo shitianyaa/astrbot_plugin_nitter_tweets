@@ -96,6 +96,30 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("groupDependentButtons.includes(button)", body)
         self.assertIn("noGroups", body)
 
+    def test_reload_renders_dynamic_controls_after_busy_state_clears(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "reloadAll")
+
+        self.assertLess(
+            body.index("setBusy(false);"),
+            body.index("renderAll();"),
+        )
+
+    def test_action_reload_happens_after_action_busy_state_clears(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "withAction")
+
+        self.assertLess(
+            body.index("state.actionBusy = false;", body.index("const successMessage =")),
+            body.index("const reloaded = await reloadAll();"),
+        )
+
+    def test_group_draft_updates_refresh_editor_controls(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "updateGroupDraft")
+
+        self.assertLess(
+            body.index("renderGroupList();"),
+            body.index("renderGroupEditor();"),
+        )
+
     def test_group_attention_items_are_rendered(self):
         source = APP_JS.read_text(encoding="utf-8")
         body = _function_body(source, "renderGroupList")
