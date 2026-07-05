@@ -717,6 +717,23 @@ button:focus-visible {
   font-size: 12px;
 }
 
+.chip-action {
+  min-height: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chip-action:hover {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chip-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .mono .chip {
   font-family: Consolas, "SFMono-Regular", monospace;
 }

@@ -317,6 +317,38 @@ function buildChipSection(title, values, className = "chip-list") {
   return el("div", {}, [el("b", { text: title }), list]);
 }
 
+function buildWatchUserSection(group) {
+  const users = Array.isArray(group.watch_users)
+    ? group.watch_users.filter(Boolean)
+    : [];
+  const list = el("div", { className: "chip-list" });
+  if (!users.length) {
+    list.appendChild(el("span", { className: "muted", text: "无" }));
+  } else {
+    list.append(
+      ...users.map((username) =>
+        el(
+          "button",
+          {
+            className: "chip chip-action",
+            attrs: {
+              type: "button",
+              title: `删除关注账号 ${username}`,
+            },
+            dataset: {
+              deleteWatchUser: username,
+              deleteWatchUserGroup: group.group_id,
+            },
+            disabled: state.loading || state.actionBusy,
+          },
+          username,
+        ),
+      ),
+    );
+  }
+  return el("div", {}, [el("b", { text: "关注账号" }), list]);
+}
+
 function buildAttentionBadge(item) {
   return el(
     "span",
@@ -368,11 +400,30 @@ function updateGroupDraft(groupId, key, value) {
   }
   state.groupDrafts[groupId][key] = value;
   renderGroupList();
-  renderGroupEditor();
+  syncGroupEditorControls(groupId);
 }
 
 function groupDraft(group) {
   return state.groupDrafts[group.group_id] || snapshotEditableGroup(group);
+}
+
+function syncGroupEditorControls(groupId) {
+  const group = state.groups.find((item) => item.group_id === groupId);
+  const draft = state.groupDrafts[groupId];
+  if (!group || !draft) return;
+  const saveButton = [...els.groupEditor.querySelectorAll("[data-save-group]")].find(
+    (node) => node.dataset.saveGroup === groupId,
+  );
+  if (saveButton) {
+    saveButton.disabled =
+      !isGroupDirty(groupId) || state.loading || state.actionBusy;
+  }
+  const title = [...els.groupEditor.querySelectorAll("[data-group-title]")].find(
+    (node) => node.dataset.groupTitle === groupId,
+  );
+  if (title) {
+    title.textContent = draft.name || group.name;
+  }
 }
 
 function editorField(label, control) {
@@ -587,7 +638,10 @@ function renderGroupEditor() {
     el("div", { className: "panel-head" }, [
       el("div", {}, [
         el("div", { className: "group-title-row" }, [
-          el("h2", { text: draft.name || group.name }),
+          el("h2", {
+            text: draft.name || group.name,
+            dataset: { groupTitle: group.group_id },
+          }),
           el("span", {
             className: `badge ${group.enabled ? "" : "warning"}`.trim(),
             text: group.enabled ? "启用中" : "已停用",
@@ -693,7 +747,7 @@ function renderGroupEditor() {
         ),
       ]),
       el("div", { className: "details-grid" }, [
-        buildChipSection("关注账号", group.watch_users),
+        buildWatchUserSection(group),
         buildChipSection("无效关注账号", group.invalid_watch_users, "chip-list bad"),
         buildChipSection("重复关注项", group.duplicate_watch_users, "chip-list warn"),
       ]),
@@ -1076,6 +1130,23 @@ function confirmDeleteSubscriptions(groupId = selectedGroupId()) {
   });
 }
 
+function confirmDeleteWatchUser(groupId, username) {
+  if (!groupId || !username) return;
+  openConfirm({
+    kicker: "删除关注账号",
+    title: `删除 ${username}？`,
+    desc: "只会从当前用户分组移除这个关注账号，不会删除推送目标、暂存队列或媒体文件。",
+    confirmText: "删除",
+    action: () =>
+      withAction(() =>
+        apiPost("web/subscriptions/delete", {
+          group_id: groupId,
+          entries: username,
+        }),
+      ),
+  });
+}
+
 async function importSubscriptions(groupId = selectedGroupId()) {
   const entries = subscriptionEntriesValue();
   if (!entries) {
@@ -1219,6 +1290,12 @@ function bindEvents() {
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);
     if (target.dataset.deleteSubscriptions) {
       confirmDeleteSubscriptions(target.dataset.deleteSubscriptions);
+    }
+    if (target.dataset.deleteWatchUser) {
+      confirmDeleteWatchUser(
+        target.dataset.deleteWatchUserGroup,
+        target.dataset.deleteWatchUser,
+      );
     }
   });
   els.groupEditor.addEventListener("input", (event) => {

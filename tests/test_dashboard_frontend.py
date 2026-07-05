@@ -112,13 +112,32 @@ class DashboardFrontendSourceTest(unittest.TestCase):
             body.index("const reloaded = await reloadAll();"),
         )
 
-    def test_group_draft_updates_refresh_editor_controls(self):
-        body = _function_body(APP_JS.read_text(encoding="utf-8"), "updateGroupDraft")
+    def test_group_draft_updates_do_not_rerender_active_editor(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "updateGroupDraft")
 
-        self.assertLess(
-            body.index("renderGroupList();"),
-            body.index("renderGroupEditor();"),
-        )
+        self.assertIn("renderGroupList();", body)
+        self.assertIn("syncGroupEditorControls(groupId);", body)
+        self.assertNotIn("renderGroupEditor();", body)
+
+    def test_checkbox_changes_still_refresh_editor_labels(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "bindEvents")
+
+        self.assertIn('target.dataset.fieldType === "checkbox"', body)
+        self.assertIn("renderGroupEditor();", body)
+
+    def test_watch_user_chips_can_delete_single_account(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        editor_body = _function_body(source, "renderGroupEditor")
+        section_body = _function_body(source, "buildWatchUserSection")
+        confirm_body = _function_body(source, "confirmDeleteWatchUser")
+
+        self.assertIn("buildWatchUserSection(group)", editor_body)
+        self.assertIn("deleteWatchUser", section_body)
+        self.assertIn("deleteWatchUserGroup", section_body)
+        self.assertIn("confirmDeleteWatchUser", source)
+        self.assertIn("web/subscriptions/delete", confirm_body)
+        self.assertIn("entries: username", confirm_body)
 
     def test_group_attention_items_are_rendered(self):
         source = APP_JS.read_text(encoding="utf-8")
