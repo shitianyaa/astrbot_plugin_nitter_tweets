@@ -120,6 +120,19 @@ class DashboardFrontendSourceTest(unittest.TestCase):
             body.index("state.actionBusy = false;", body.index("const successMessage =")),
             body.index("options.rerender();"),
         )
+        self.assertLess(
+            body.index("setBusy(false);", body.index("const successMessage =")),
+            body.index("options.rerender();"),
+        )
+
+    def test_history_pager_buttons_join_busy_state(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        busy_body = _function_body(source, "setBusy")
+        bind_body = _function_body(source, "bindEvents")
+
+        self.assertIn("els.historyPrevBtn", busy_body)
+        self.assertIn("els.historyNextBtn", busy_body)
+        self.assertIn("if (state.loading || state.actionBusy) return;", bind_body)
 
     def test_group_draft_updates_do_not_rerender_active_editor(self):
         source = APP_JS.read_text(encoding="utf-8")
@@ -198,9 +211,17 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         target_body = _function_body(source, "buildPushTargetEditor")
 
         self.assertIn("buildPushTargetEditor(group, draft)", editor_body)
-        self.assertIn("editPushTarget", target_body)
         self.assertIn("deletePushTarget", target_body)
         self.assertIn("confirmDeletePushTarget", source)
+        self.assertNotIn("editPushTarget", target_body)
+        self.assertNotIn("chip-delete", target_body)
+        self.assertNotIn("savePushTarget", target_body)
+
+    def test_history_empty_state_explains_new_history_only(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "renderHistory")
+
+        self.assertIn("新版本启用后成功送达", body)
 
     def test_recent_push_history_view_is_wired(self):
         source = APP_JS.read_text(encoding="utf-8")
@@ -208,9 +229,17 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
         self.assertIn('data-view="history"', html)
         self.assertIn('id="historyView"', html)
+        self.assertIn('id="historyPrevBtn"', html)
+        self.assertIn('id="historyNextBtn"', html)
+        self.assertIn('id="historyPageLabel"', html)
+        self.assertIn('id="historyLimit" type="number" min="1" max="50" value="10"', html)
         self.assertIn("最近推送", html)
         self.assertIn('apiGet("web/history"', source)
         self.assertIn('apiPost("web/history/replay"', source)
+        self.assertIn("historyOffset", source)
+        self.assertIn("offset: state.historyOffset", source)
+        self.assertIn("next_offset", source)
+        self.assertIn("prev_offset", source)
         self.assertIn("replayHistory", source)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):

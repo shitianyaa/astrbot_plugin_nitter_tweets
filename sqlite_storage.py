@@ -1219,27 +1219,38 @@ class SQLiteStorage:
         group_id: str = "",
         username: str = "",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[PushHistoryRecord]:
         """Return recent successful push history records."""
         assert self.conn is not None
         clauses: list[str] = []
         params: list[Any] = []
         normalized_group_id = normalize_group_id(group_id) if group_id else ""
-        normalized_username = normalize_username(username) if username else ""
+        username_query = str(username or "").strip().lstrip("@")
         if normalized_group_id:
             clauses.append("group_id = ?")
             params.append(normalized_group_id)
-        if normalized_username:
-            clauses.append("username = ?")
-            params.append(normalized_username)
+        if username_query:
+            escaped_username = (
+                username_query.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            clauses.append("username LIKE ? ESCAPE '\\' COLLATE NOCASE")
+            params.append(f"%{escaped_username}%")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
-        params.append(max(1, min(int(limit or 50), 200)))
+        params.extend(
+            [
+                max(1, min(int(limit or 50), 51)),
+                max(0, int(offset or 0)),
+            ]
+        )
         rows = self.conn.execute(
             f"""
             SELECT * FROM push_history
             {where}
             ORDER BY pushed_at DESC, id DESC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
             params,
         ).fetchall()

@@ -13,7 +13,8 @@ const state = {
   pendingGroupId: "",
   historyGroupId: "",
   historyUsername: "",
-  historyLimit: 50,
+  historyLimit: 10,
+  historyOffset: 0,
   seenGroupId: "",
   pendingAction: null,
   lastUpdated: "",
@@ -37,6 +38,9 @@ const els = {
   historyUsername: document.getElementById("historyUsername"),
   historyLimit: document.getElementById("historyLimit"),
   historyRefreshBtn: document.getElementById("historyRefreshBtn"),
+  historyPrevBtn: document.getElementById("historyPrevBtn"),
+  historyNextBtn: document.getElementById("historyNextBtn"),
+  historyPageLabel: document.getElementById("historyPageLabel"),
   historyContent: document.getElementById("historyContent"),
   mirrorForm: document.getElementById("mirrorForm"),
   mirrorUsername: document.getElementById("mirrorUsername"),
@@ -204,6 +208,8 @@ function setBusy(isBusy) {
     els.pendingRefreshBtn,
     els.publishSelectedBtn,
     els.historyRefreshBtn,
+    els.historyPrevBtn,
+    els.historyNextBtn,
   ];
   [
     els.refreshBtn,
@@ -211,6 +217,8 @@ function setBusy(isBusy) {
     els.pendingRefreshBtn,
     els.publishSelectedBtn,
     els.historyRefreshBtn,
+    els.historyPrevBtn,
+    els.historyNextBtn,
     els.mirrorProbeBtn,
     els.clearCacheBtn,
     els.clearSeenBtn,
@@ -384,40 +392,22 @@ function buildPushTargetEditor(group, draft) {
   } else {
     list.append(
       ...targets.map((target, index) =>
-        el("span", { className: "chip-edit-wrap" }, [
-          el(
-            "button",
-            {
-              className: "chip chip-action",
-              attrs: {
-                type: "button",
-                title: `编辑推送目标 ${target}`,
-              },
-              dataset: {
-                editPushTarget: String(index),
-                editPushTargetGroup: group.group_id,
-              },
-              disabled: state.loading || state.actionBusy,
+        el(
+          "button",
+          {
+            className: "chip chip-action",
+            attrs: {
+              type: "button",
+              title: `删除推送目标 ${target}`,
             },
-            target,
-          ),
-          el(
-            "button",
-            {
-              className: "chip-delete",
-              attrs: {
-                type: "button",
-                title: `删除推送目标 ${target}`,
-              },
-              dataset: {
-                deletePushTarget: String(index),
-                deletePushTargetGroup: group.group_id,
-              },
-              disabled: state.loading || state.actionBusy,
+            dataset: {
+              deletePushTarget: String(index),
+              deletePushTargetGroup: group.group_id,
             },
-            "×",
-          ),
-        ]),
+            disabled: state.loading || state.actionBusy,
+          },
+          target,
+        ),
       ),
     );
   }
@@ -440,18 +430,6 @@ function buildPushTargetEditor(group, draft) {
         dataset: { addPushTarget: group.group_id },
         disabled: state.loading || state.actionBusy,
       }, [iconSpan("plus"), "新增"]),
-      el("button", {
-        className: "button primary small",
-        attrs: { type: "button" },
-        dataset: { savePushTarget: group.group_id },
-        disabled: true,
-      }, "保存"),
-      el("button", {
-        className: "button secondary small",
-        attrs: { type: "button" },
-        dataset: { cancelPushTarget: group.group_id },
-        disabled: true,
-      }, "取消"),
     ]),
   ]);
 }
@@ -992,13 +970,16 @@ function renderPending() {
 
 function renderHistory() {
   const payload = state.history;
+  renderHistoryPager(payload);
   if (!payload) {
     els.historyContent.replaceChildren(emptyState("正在加载最近推送"));
     return;
   }
   const records = payload.records || [];
   if (!records.length) {
-    els.historyContent.replaceChildren(emptyState("暂无发送成功历史"));
+    els.historyContent.replaceChildren(
+      emptyState("暂无发送成功历史，新版本启用后成功送达的推送会显示在这里。"),
+    );
     return;
   }
   const tbody = el(
@@ -1059,6 +1040,13 @@ function renderHistory() {
   mountIcons(els.historyContent);
 }
 
+function renderHistoryPager(payload = state.history) {
+  const page = Math.max(1, Number(payload?.page || 1));
+  els.historyPageLabel.textContent = `第 ${page} 页`;
+  els.historyPrevBtn.disabled = state.loading || state.actionBusy || !payload?.has_prev;
+  els.historyNextBtn.disabled = state.loading || state.actionBusy || !payload?.has_next;
+}
+
 function renderMirrorBase() {
   const instances = state.overview?.instances || [];
   const fromGroups = state.groups.length ? state.groups : [];
@@ -1103,13 +1091,26 @@ async function loadPending(groupId = selectedPendingGroupId()) {
 async function loadHistory() {
   state.historyGroupId = selectedHistoryGroupId();
   state.historyUsername = els.historyUsername.value.trim();
-  state.historyLimit = Number(els.historyLimit.value || 50);
+  state.historyLimit = Math.max(1, Math.min(Number(els.historyLimit.value || 10), 50));
+  els.historyLimit.value = String(state.historyLimit);
+  state.historyOffset = Math.max(0, Number(state.historyOffset || 0));
   state.history = await apiGet("web/history", {
     group_id: state.historyGroupId,
     username: state.historyUsername,
     limit: state.historyLimit,
+    offset: state.historyOffset,
   });
+  state.historyOffset = Math.max(0, Number(state.history.offset || 0));
   renderHistory();
+}
+
+function resetHistoryPage() {
+  state.historyOffset = 0;
+}
+
+async function loadHistoryPage(offset) {
+  state.historyOffset = Math.max(0, Number(offset || 0));
+  await loadHistory();
 }
 
 async function reloadAll() {
@@ -1204,6 +1205,7 @@ async function withAction(action, successText, options = {}) {
         return result;
       }
     } else if (typeof options.rerender === "function") {
+      setBusy(false);
       options.rerender();
     }
     showAlert(successMessage, "success");
@@ -1276,20 +1278,6 @@ function pushTargetList(groupId) {
   return Array.isArray(draft?.push_targets) ? [...draft.push_targets] : [];
 }
 
-function setPushTargetInputMode(groupId, index = "") {
-  const input = pushTargetInput();
-  if (!input) return;
-  input.dataset.editPushTargetIndex = index === "" ? "" : String(index);
-  const saveButton = els.groupEditor.querySelector(`[data-save-push-target="${groupId}"]`);
-  const cancelButton = els.groupEditor.querySelector(`[data-cancel-push-target="${groupId}"]`);
-  if (saveButton) {
-    saveButton.disabled = index === "" || state.loading || state.actionBusy;
-  }
-  if (cancelButton) {
-    cancelButton.disabled = index === "" || state.loading || state.actionBusy;
-  }
-}
-
 function addPushTarget(groupId) {
   const input = pushTargetInput();
   const value = input?.value.trim() || "";
@@ -1301,39 +1289,6 @@ function addPushTarget(groupId) {
   targets.push(value);
   updateGroupDraft(groupId, "push_targets", targets);
   renderGroupEditor();
-}
-
-function editPushTarget(groupId, indexText) {
-  const input = pushTargetInput();
-  const index = Number(indexText);
-  const targets = pushTargetList(groupId);
-  if (!input || !Number.isInteger(index) || !targets[index]) return;
-  input.value = targets[index];
-  setPushTargetInputMode(groupId, index);
-  input.focus();
-}
-
-function savePushTargetEdit(groupId) {
-  const input = pushTargetInput();
-  const index = Number(input?.dataset.editPushTargetIndex || -1);
-  const value = input?.value.trim() || "";
-  const targets = pushTargetList(groupId);
-  if (!Number.isInteger(index) || index < 0 || index >= targets.length) return;
-  if (!value) {
-    showAlert("请填写推送目标", "error");
-    return;
-  }
-  targets[index] = value;
-  updateGroupDraft(groupId, "push_targets", targets);
-  renderGroupEditor();
-}
-
-function cancelPushTargetEdit(groupId) {
-  const input = pushTargetInput();
-  if (input) {
-    input.value = "";
-  }
-  setPushTargetInputMode(groupId, "");
 }
 
 function confirmDeletePushTarget(groupId, indexText) {
@@ -1577,30 +1532,64 @@ function bindEvents() {
     });
   });
   els.historyRefreshBtn.addEventListener("click", () =>
-    withAction(() => loadHistory(), "最近推送已刷新", {
+    withAction(() => {
+      resetHistoryPage();
+      return loadHistory();
+    }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
     }),
   );
   els.historyGroupSelect.addEventListener("change", (event) => {
     state.historyGroupId = event.target.value;
-    withAction(() => loadHistory(), "最近推送已刷新", {
+    withAction(() => {
+      resetHistoryPage();
+      return loadHistory();
+    }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
     });
   });
   els.historyUsername.addEventListener("change", () =>
-    withAction(() => loadHistory(), "最近推送已刷新", {
+    withAction(() => {
+      resetHistoryPage();
+      return loadHistory();
+    }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
     }),
   );
   els.historyLimit.addEventListener("change", () =>
-    withAction(() => loadHistory(), "最近推送已刷新", {
+    withAction(() => {
+      resetHistoryPage();
+      return loadHistory();
+    }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
     }),
   );
+  els.historyPrevBtn.addEventListener("click", () => {
+    if (state.loading || state.actionBusy) return;
+    withAction(
+      () => loadHistoryPage(state.history?.prev_offset || 0),
+      "最近推送已刷新",
+      {
+        reload: false,
+        rerender: renderHistory,
+      },
+    );
+  });
+  els.historyNextBtn.addEventListener("click", () => {
+    if (state.loading || state.actionBusy) return;
+    withAction(
+      () => loadHistoryPage(state.history?.next_offset || state.historyOffset),
+      "最近推送已刷新",
+      {
+        reload: false,
+        rerender: renderHistory,
+      },
+    );
+  });
   els.historyContent.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
@@ -1626,11 +1615,6 @@ function bindEvents() {
     if (target.dataset.deleteGroup) confirmDeleteGroup(target.dataset.deleteGroup);
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);
     if (target.dataset.addPushTarget) addPushTarget(target.dataset.addPushTarget);
-    if (target.dataset.editPushTarget) {
-      editPushTarget(target.dataset.editPushTargetGroup, target.dataset.editPushTarget);
-    }
-    if (target.dataset.savePushTarget) savePushTargetEdit(target.dataset.savePushTarget);
-    if (target.dataset.cancelPushTarget) cancelPushTargetEdit(target.dataset.cancelPushTarget);
     if (target.dataset.deletePushTarget) {
       confirmDeletePushTarget(
         target.dataset.deletePushTargetGroup,

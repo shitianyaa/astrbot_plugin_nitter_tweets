@@ -83,12 +83,21 @@
             </label>
             <label class="field compact">
               <span>数量</span>
-              <input id="historyLimit" type="number" min="1" max="200" value="50" />
+              <input id="historyLimit" type="number" min="1" max="50" value="10" />
             </label>
             <button id="historyRefreshBtn" class="button secondary" type="button">
               <span class="icon" data-icon="refresh"></span>
               查询
             </button>
+            <div class="pager" aria-label="最近推送翻页">
+              <button id="historyPrevBtn" class="button secondary small" type="button">
+                上一页
+              </button>
+              <span id="historyPageLabel" class="pager-label">第 1 页</span>
+              <button id="historyNextBtn" class="button secondary small" type="button">
+                下一页
+              </button>
+            </div>
           </div>
           <div id="historyContent" class="stack"></div>
         </section>

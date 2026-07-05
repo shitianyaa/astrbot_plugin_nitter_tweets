@@ -82,9 +82,12 @@ class NitterWebAPI:
             group_id = str(request.args.get("group_id", "") or "").strip()
             username = str(request.args.get("username", "") or "").strip()
             limit = self._parse_int(
-                request.args.get("limit"), 50, minimum=1, maximum=200
+                request.args.get("limit"), 10, minimum=1, maximum=50
             )
-            return await self.build_history(group_id, username, limit)
+            offset = self._parse_int(
+                request.args.get("offset"), 0, minimum=0, maximum=10_000_000
+            )
+            return await self.build_history(group_id, username, limit, offset)
 
         return await self._json_response(action)
 
@@ -327,24 +330,40 @@ class NitterWebAPI:
         self,
         group_id: str = "",
         username: str = "",
-        limit: int = 50,
+        limit: int = 10,
+        offset: int = 0,
     ) -> dict[str, Any]:
         group_id = str(group_id or "").strip()
-        username = normalize_username(username) if username else ""
+        username = str(username or "").strip().lstrip("@")
+        limit = max(1, min(int(limit or 10), 50))
+        offset = max(0, int(offset or 0))
         if group_id:
             group, error = self._resolve_group(group_id)
             if error:
                 return self._error(error)
             group_id = group.group_id
-        records = await self.storage.get_push_history(group_id, username, limit)
+        records = await self.storage.get_push_history(
+            group_id,
+            username,
+            limit + 1,
+            offset,
+        )
+        has_next = len(records) > limit
+        visible_records = records[:limit]
         group_names = {group.group_id: group.name for group in self._schedule_groups()}
         return self._ok(
             selected_group_id=group_id,
             selected_username=username,
-            limit=max(1, min(int(limit or 50), 200)),
+            limit=limit,
+            offset=offset,
+            page=(offset // limit) + 1,
+            has_prev=offset > 0,
+            has_next=has_next,
+            prev_offset=max(0, offset - limit),
+            next_offset=offset + limit if has_next else offset,
             records=[
                 self._serialize_history_record(record, group_names)
-                for record in records
+                for record in visible_records
             ],
             terminology=self._terminology(),
         )

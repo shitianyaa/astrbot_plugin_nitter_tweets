@@ -252,6 +252,7 @@ class StorageAdapter:
         group_id: str = "",
         username: str = "",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[PushHistoryRecord]:
         """Return recent successful push history."""
         sqlite = await self._ensure_sqlite_connected()
@@ -260,6 +261,7 @@ class StorageAdapter:
             group_id,
             username,
             limit,
+            offset,
         )
 
     async def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:

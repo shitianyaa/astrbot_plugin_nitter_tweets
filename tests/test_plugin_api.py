@@ -219,13 +219,15 @@ class _Storage:
             "pending_media_deleted": 3,
         }
 
-    async def get_push_history(self, group_id="", username="", limit=50):
+    async def get_push_history(self, group_id="", username="", limit=50, offset=0):
         rows = list(self.history)
         if group_id:
             rows = [row for row in rows if row.group_id == group_id]
         if username:
-            rows = [row for row in rows if row.username == username]
-        return rows[:limit]
+            query = username.lower().lstrip("@")
+            rows = [row for row in rows if query in row.username.lower()]
+        rows.sort(key=lambda row: (row.pushed_at, row.id), reverse=True)
+        return rows[offset : offset + limit]
 
 
 class _CheckResult:
@@ -1130,6 +1132,55 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["target_umo"], "telegram:FriendMessage:2")
         self.assertNotIn("media", row)
         self.assertNotIn("C:/tmp/a.jpg", repr(row))
+
+    async def test_push_history_paginates_and_partially_filters_usernames(self):
+        plugin = _plugin(_Config({}))
+        plugin.scheduler.storage.history = [
+            PushHistoryRecord(
+                id=index,
+                group_id="default",
+                username=username,
+                status_id=str(index),
+                original_link=f"https://x.com/{username}/status/{index}",
+                target_umo="telegram:FriendMessage:1",
+                source="scheduled",
+                instance="https://nitter.test",
+                pushed_at=1000 + index,
+                tweet=TweetItem(
+                    text=f"tweet {index}",
+                    link=f"https://x.com/{username}/status/{index}",
+                    published="",
+                ),
+            )
+            for index, username in enumerate(
+                ["Gongye_11", "OpenAI", "oioioi525", "mamania1008"], start=1
+            )
+        ]
+
+        first_page = await NitterWebAPI(plugin).build_history(limit=2, offset=0)
+        second_page = await NitterWebAPI(plugin).build_history(limit=2, offset=2)
+        filtered = await NitterWebAPI(plugin).build_history(username="@oi", limit=10)
+
+        self.assertEqual(first_page["limit"], 2)
+        self.assertEqual(first_page["offset"], 0)
+        self.assertEqual(first_page["page"], 1)
+        self.assertTrue(first_page["has_next"])
+        self.assertFalse(first_page["has_prev"])
+        self.assertEqual(first_page["next_offset"], 2)
+        self.assertEqual(
+            [row["username"] for row in first_page["records"]],
+            ["mamania1008", "oioioi525"],
+        )
+        self.assertEqual(second_page["page"], 2)
+        self.assertTrue(second_page["has_prev"])
+        self.assertFalse(second_page["has_next"])
+        self.assertEqual(second_page["prev_offset"], 0)
+        self.assertEqual(
+            [row["username"] for row in second_page["records"]],
+            ["OpenAI", "Gongye_11"],
+        )
+        self.assertEqual([row["username"] for row in filtered["records"]], ["oioioi525"])
+        self.assertEqual(filtered["selected_username"], "oi")
 
     async def test_replay_push_history_uses_scheduler_result(self):
         plugin = _plugin(_Config({}))

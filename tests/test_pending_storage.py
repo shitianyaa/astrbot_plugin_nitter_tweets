@@ -130,6 +130,124 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].status_id, "101")
 
+    async def test_push_history_supports_partial_username_and_offset(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                for index, username in enumerate(
+                    ["Gongye_11", "OpenAI", "oioioi525", "mamania1008"], start=1
+                ):
+                    await asyncio.to_thread(
+                        storage.record_push_history,
+                        "default",
+                        username,
+                        TweetItem(
+                            text=f"tweet {index}",
+                            link=f"https://x.com/{username}/status/{index}",
+                            published="",
+                        ),
+                        "telegram:FriendMessage:1",
+                        "scheduled",
+                        "https://nitter.test",
+                        1000 + index,
+                    )
+
+                gong_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    username="gong",
+                    limit=10,
+                )
+                oi_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    username="@oi",
+                    limit=10,
+                )
+                page_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    limit=2,
+                    offset=2,
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual([record.username for record in gong_records], ["Gongye_11"])
+            self.assertEqual([record.username for record in oi_records], ["oioioi525"])
+            self.assertEqual(
+                [record.username for record in page_records],
+                ["OpenAI", "Gongye_11"],
+            )
+
+    async def test_push_history_allows_one_extra_row_for_pagination_sentinel(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                for index in range(51):
+                    await asyncio.to_thread(
+                        storage.record_push_history,
+                        "default",
+                        "NASA",
+                        TweetItem(
+                            text=f"tweet {index}",
+                            link=f"https://x.com/NASA/status/{index}",
+                            published="",
+                        ),
+                        "telegram:FriendMessage:1",
+                        "scheduled",
+                        "https://nitter.test",
+                        1000 + index,
+                    )
+
+                records = await asyncio.to_thread(storage.get_push_history, limit=51)
+            finally:
+                storage.close()
+
+            self.assertEqual(len(records), 51)
+
+    async def test_push_history_treats_username_wildcards_as_literals(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                for index, username in enumerate(["Gongye_11", "GongyeA11"], start=1):
+                    await asyncio.to_thread(
+                        storage.record_push_history,
+                        "default",
+                        username,
+                        TweetItem(
+                            text=f"tweet {index}",
+                            link=f"https://x.com/{username}/status/{index}",
+                            published="",
+                        ),
+                        "telegram:FriendMessage:1",
+                        "scheduled",
+                        "https://nitter.test",
+                        1000 + index,
+                    )
+
+                underscore_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    username="Gongye_1",
+                    limit=10,
+                )
+                percent_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    username="%",
+                    limit=10,
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual(
+                [record.username for record in underscore_records],
+                ["Gongye_11"],
+            )
+            self.assertEqual(percent_records, [])
+
     async def test_delete_group_runtime_data_removes_only_target_group_rows(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
