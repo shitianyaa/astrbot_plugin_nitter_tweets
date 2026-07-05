@@ -1597,7 +1597,17 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(
             event.messages[-1],
-            "默认分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
+            "\n".join(
+                [
+                    "Nitter 订阅导出",
+                    "分组数: 3 个",
+                    "订阅账号: 4 个",
+                    "分组账号:",
+                    "默认分组 (default, 1 个): NASA",
+                    "科技 (tech, 2 个): OpenAI,SpaceX",
+                    "新闻 (news, 1 个): BBCWorld",
+                ]
+            ),
         )
 
     async def test_delete_subscriptions_without_group_removes_default_watch_users(self):
@@ -1624,7 +1634,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("删除分组: 默认分组 (default)", event.messages[-1])
         self.assertIn("删除: 1 个", event.messages[-1])
-        self.assertIn("未关注: 1 个", event.messages[-1])
+        self.assertIn("原本未关注: 1 个", event.messages[-1])
 
     async def test_delete_subscriptions_with_group_removes_that_group_watch_users(self):
         config = _Config(
@@ -1666,7 +1676,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.synced_groups, [])
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
         self.assertIn("删除: 0 个", event.messages[-1])
-        self.assertIn("保存结果: 没有删除账号。", event.messages[-1])
+        self.assertIn(
+            "保存结果: 未改动配置，没有匹配到可删除账号。",
+            event.messages[-1],
+        )
 
     async def test_delete_subscriptions_with_unknown_group_after_comma_list_is_rejected(self):
         config = _Config(
