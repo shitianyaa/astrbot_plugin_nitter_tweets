@@ -931,23 +931,18 @@ class NitterTweetScheduler:
                     prepared = await self._prepare_deferred_batch(
                         group, discovered_batch, target_umo
                     )
-                    self._log_ai_process_results(
-                        username,
-                        new_tweets,
-                        prepared.translation_report,
-                        prepared.enrich_report,
-                    )
                 except Exception as exc:
-                    await asyncio.to_thread(
-                        self.media.cleanup_after_send, new_tweets
+                    prepared = PreparedBatchResult(
+                        batch=discovered_batch,
+                        error=SchedulerTaskError.from_exception(exc),
                     )
-                    result.failed_users[username] = f"推文准备失败: {exc}"
-                    logger.warning(
-                        f"[NitterTweets] 定时推送准备 @{username} 失败: {exc}"
-                    )
+                prepared_batch = await self._handle_deferred_prepare_result(
+                    prepared, result
+                )
+                if prepared_batch is None:
                     continue
 
-                pending_batches.append(discovered_batch)
+                pending_batches.append(prepared_batch)
             else:
                 for tweet_index, tweet in enumerate(new_tweets, 1):
                     batch = self._single_tweet_batch(
@@ -960,27 +955,15 @@ class NitterTweetScheduler:
                         prepared = await self._prepare_immediate_batch(
                             batch, target_umo
                         )
-                        self._log_ai_process_results(
-                            username,
-                            [tweet],
-                            prepared.translation_report,
-                            prepared.enrich_report,
-                            progress_index=tweet_index,
-                            progress_total=len(new_tweets),
-                        )
                     except Exception as exc:
                         await self._record_prepare_failure(
                             result, username, tweet, tweet_index, [tweet], exc
                         )
                         continue
 
-                    if tweet.status_id:
-                        await self._store_incremental_seen_ids(
-                            group.group_id,
-                            username,
-                            [tweet.status_id],
-                            seen_map,
-                        )
+                    await self._handle_immediate_prepare_success(
+                        group, prepared, seen_map
+                    )
                     prepared_count += 1
                     pending_batches, immediate_batches_sent = (
                         await self._send_or_buffer_immediate_batch(
@@ -997,11 +980,7 @@ class NitterTweetScheduler:
                             batch_progress=(tweet_index, len(new_tweets)),
                         )
                     )
-            self._log_verbose_info(
-                f"[NitterTweets] prepared @{username} {prepared_count}/"
-                f"{len(new_tweets)} "
-                "new tweets for scheduled push"
-            )
+            self._log_prepare_progress(username, prepared_count, len(new_tweets))
         return pending_batches, immediate_batches_sent
 
     async def _prepare_batches_concurrently(
@@ -1038,30 +1017,11 @@ class NitterTweetScheduler:
         )
         pending_batches: list[PendingTweetBatch] = []
         for prepared in prepared_results:
-            batch = prepared.batch
-            if prepared.error:
-                await asyncio.to_thread(
-                    self.media.cleanup_after_send, batch.tweets
-                )
-                result.failed_users[batch.username] = (
-                    f"推文准备失败: {prepared.error.message}"
-                )
-                logger.warning(
-                    f"[NitterTweets] 定时推送准备 @{batch.username} 失败: "
-                    f"{prepared.error.message}"
-                )
+            batch = await self._handle_deferred_prepare_result(prepared, result)
+            if batch is None:
                 continue
-            self._log_ai_process_results(
-                batch.username,
-                batch.tweets,
-                prepared.translation_report,
-                prepared.enrich_report,
-            )
             pending_batches.append(batch)
-            self._log_verbose_info(
-                f"[NitterTweets] prepared @{batch.username} {len(batch.tweets)}/"
-                f"{len(batch.tweets)} new tweets for scheduled push"
-            )
+            self._log_prepare_progress(batch.username, len(batch.tweets), len(batch.tweets))
         return pending_batches
 
     async def _prepare_immediate_batches_concurrently(
@@ -1121,21 +1081,9 @@ class NitterTweetScheduler:
                     )
                     continue
 
-                self._log_ai_process_results(
-                    batch.username,
-                    batch.tweets,
-                    prepared.translation_report,
-                    prepared.enrich_report,
-                    progress_index=tweet_index,
-                    progress_total=batch.tweet_total,
+                await self._handle_immediate_prepare_success(
+                    group, prepared, seen_map
                 )
-                if tweet.status_id:
-                    await self._store_incremental_seen_ids(
-                        group.group_id,
-                        batch.username,
-                        [tweet.status_id],
-                        seen_map,
-                    )
                 prepared_count_by_user[batch.username] = (
                     prepared_count_by_user.get(batch.username, 0) + 1
                 )
@@ -1163,10 +1111,10 @@ class NitterTweetScheduler:
 
         for discovered_batch in discovered_batches:
             prepared_count = prepared_count_by_user.get(discovered_batch.username, 0)
-            self._log_verbose_info(
-                f"[NitterTweets] prepared @{discovered_batch.username} "
-                f"{prepared_count}/{total_by_user.get(discovered_batch.username, 0)} "
-                "new tweets for scheduled push"
+            self._log_prepare_progress(
+                discovered_batch.username,
+                prepared_count,
+                total_by_user.get(discovered_batch.username, 0),
             )
         return pending_batches, immediate_batches_sent
 
@@ -1254,6 +1202,76 @@ class NitterTweetScheduler:
         logger.warning(
             "[NitterTweets] 定时推送准备失败: "
             f"username={username}, status={status_id}, error={error_message}"
+        )
+
+    async def _handle_deferred_prepare_result(
+        self,
+        prepared: PreparedBatchResult,
+        result: ScheduledCheckResult,
+    ) -> PendingTweetBatch | None:
+        batch = prepared.batch
+        if prepared.error:
+            await self._record_deferred_prepare_failure(result, batch, prepared.error)
+            return None
+
+        self._log_ai_process_results(
+            batch.username,
+            batch.tweets,
+            prepared.translation_report,
+            prepared.enrich_report,
+        )
+        return batch
+
+    async def _record_deferred_prepare_failure(
+        self,
+        result: ScheduledCheckResult,
+        batch: PendingTweetBatch,
+        error: SchedulerTaskError | Exception,
+    ) -> None:
+        if isinstance(error, SchedulerTaskError):
+            error_message = error.message
+        else:
+            error_message = str(error)
+        await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+        result.failed_users[batch.username] = f"推文准备失败: {error_message}"
+        logger.warning(
+            f"[NitterTweets] 定时推送准备 @{batch.username} 失败: "
+            f"{error_message}"
+        )
+
+    async def _handle_immediate_prepare_success(
+        self,
+        group: ScheduleGroup,
+        prepared: PreparedBatchResult,
+        seen_map: dict[str, list[str]],
+    ) -> None:
+        batch = prepared.batch
+        tweet = batch.tweets[0]
+        self._log_ai_process_results(
+            batch.username,
+            batch.tweets,
+            prepared.translation_report,
+            prepared.enrich_report,
+            progress_index=batch.tweet_index,
+            progress_total=batch.tweet_total,
+        )
+        if tweet.status_id:
+            await self._store_incremental_seen_ids(
+                group.group_id,
+                batch.username,
+                [tweet.status_id],
+                seen_map,
+            )
+
+    def _log_prepare_progress(
+        self,
+        username: str,
+        prepared_count: int,
+        total_count: int,
+    ) -> None:
+        self._log_verbose_info(
+            f"[NitterTweets] prepared @{username} {prepared_count}/"
+            f"{total_count} new tweets for scheduled push"
         )
 
     async def _send_or_buffer_immediate_batch(

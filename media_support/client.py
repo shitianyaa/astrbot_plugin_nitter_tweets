@@ -164,6 +164,13 @@ class InstanceFetchResult:
 
 @dataclass(slots=True)
 class FetchAttemptBudget:
+    """Optional per-instance retry budget shared by all paginated RSS pages.
+
+    When ``remaining`` is ``None``, each page gets its own normal retry count.
+    When it is an integer, every page attempt consumes from the same budget so
+    one slow/broken instance cannot spend more than the configured total.
+    """
+
     remaining: int | None = None
 
     @property
@@ -235,6 +242,14 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int = 3,
     ) -> tuple[str, list[TweetItem], int]:
+        """Fetch using a dedicated instance pool rotated by ``start_index``.
+
+        ``retry_attempts`` is the total attempt budget for each instance in this
+        dedicated pool, shared across first-page and pagination requests. This
+        differs from ``fetch_tweets_with_stats()``, where the default instance
+        list gives each RSS page its own retry allowance.
+        """
+
         ordered_instances = self._rotate_instances(instances, start_index)
         if not ordered_instances:
             raise RuntimeError("未配置并发专用 Nitter 实例")
@@ -256,6 +271,15 @@ class NitterClient:
         retry_attempts: int | None = None,
         total_retry_attempts_per_instance: bool = False,
     ) -> tuple[str, list[TweetItem], int]:
+        """Try instances in order until one returns RSS items or tweets.
+
+        ``total_retry_attempts_per_instance=False`` means ``retry_attempts`` is
+        applied per page fetch, preserving the historic serial behavior.
+        ``True`` means ``retry_attempts`` is a per-instance total budget across
+        all pagination requests; this is used for concurrent dedicated pools so
+        pagination does not multiply the intended retry cost.
+        """
+
         errors: list[str] = []
         for index, instance in enumerate(instances):
             try:
@@ -373,6 +397,8 @@ class NitterClient:
         cursor = ""
         saw_items = False
         plain_text_filtered_total = 0
+        # Dedicated concurrent pools cap retries per instance across pagination;
+        # the default pool keeps the older per-page retry behavior.
         attempt_budget = FetchAttemptBudget(
             self._retry_attempt_count(retry_attempts)
             if total_retry_attempts_per_instance
