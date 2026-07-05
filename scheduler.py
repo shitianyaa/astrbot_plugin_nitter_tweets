@@ -526,10 +526,18 @@ class NitterTweetScheduler:
                 )
                 continue
 
-            seen_set = set(str(item) for item in seen_ids)
-            new_tweets = [
-                tweet for tweet in tweets if tweet.status_id not in seen_set
-            ]
+            new_tweets, historical_unseen_ids = (
+                self._select_new_tweets_after_seen_watermark(tweets, seen_ids)
+            )
+            if historical_unseen_ids:
+                seen_ids = self._merge_seen_ids(historical_unseen_ids, seen_ids)
+                seen_map[username] = seen_ids
+                await self._put_seen_map(group.group_id, seen_map)
+                self._log_verbose_info(
+                    "[NitterTweets] 定时检查忽略基准前历史推文: "
+                    f"group={group.group_id}, username={username}, "
+                    f"ignored={len(historical_unseen_ids)}"
+                )
 
             if new_tweets:
                 new_tweets.reverse()
@@ -2140,6 +2148,54 @@ class NitterTweetScheduler:
 
     def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
         return self.storage.merge_seen_ids(new_ids, old_ids)
+
+    @classmethod
+    def _select_new_tweets_after_seen_watermark(
+        cls,
+        tweets: list[TweetItem],
+        seen_ids: list[str],
+    ) -> tuple[list[TweetItem], list[str]]:
+        seen_set = set(str(item) for item in seen_ids)
+        watermark = cls._max_numeric_status_id(seen_ids)
+        new_tweets: list[TweetItem] = []
+        historical_unseen_ids: list[str] = []
+
+        for tweet in tweets:
+            status_id = str(tweet.status_id or "")
+            if not status_id or status_id in seen_set:
+                continue
+
+            status_number = cls._parse_numeric_status_id(status_id)
+            if (
+                watermark is not None
+                and status_number is not None
+                and status_number <= watermark
+            ):
+                historical_unseen_ids.append(status_id)
+                continue
+
+            new_tweets.append(tweet)
+
+        return new_tweets, historical_unseen_ids
+
+    @classmethod
+    def _max_numeric_status_id(cls, seen_ids: list[str]) -> int | None:
+        numeric_ids = [
+            status_number
+            for status_id in seen_ids
+            if (status_number := cls._parse_numeric_status_id(str(status_id)))
+            is not None
+        ]
+        if not numeric_ids:
+            return None
+        return max(numeric_ids)
+
+    @staticmethod
+    def _parse_numeric_status_id(status_id: str) -> int | None:
+        value = str(status_id or "").strip()
+        if not value or not value.isdigit():
+            return None
+        return int(value)
 
     def _watch_users(self) -> list[str]:
         return self.config_reader.watch_users()

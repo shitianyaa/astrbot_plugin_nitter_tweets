@@ -664,6 +664,84 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("filtered=3", result.format_log_summary())
         self.assertIn("filtered=3", result.format_brief_log_lines()[0])
 
+    async def test_scheduler_ignores_unseen_tweets_older_than_seen_watermark(self):
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "200"),
+                    self._make_tweet("NASA", "150"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 2,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["200"])
+
+        result = await scheduler.run_check(reason="test_seen_watermark_older")
+        seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
+
+        self.assertEqual(result.new_tweet_count, 0)
+        self.assertEqual(sender.sent, [])
+        self.assertIn("NASA", result.no_new_users)
+        self.assertIn("150", seen_ids)
+        self.assertIn("200", seen_ids)
+
+    async def test_scheduler_sends_only_unseen_tweets_newer_than_seen_watermark(self):
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                    self._make_tweet("NASA", "150"),
+                    self._make_tweet("NASA", "200"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 3,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["200"])
+
+        result = await scheduler.run_check(reason="test_seen_watermark_mixed")
+        seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(
+            sender.sent,
+            [
+                (
+                    "telegram:FriendMessage:1",
+                    "NASA",
+                    "https://nitter.test",
+                    ["201"],
+                )
+            ],
+        )
+        self.assertIn("150", seen_ids)
+        self.assertIn("201", seen_ids)
+
     async def test_concurrent_fetch_requires_enabled_pool_and_parallelism(self):
         events = []
         nitter = _NoConcurrentNitter(
