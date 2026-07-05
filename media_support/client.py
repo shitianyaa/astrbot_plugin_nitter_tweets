@@ -33,11 +33,14 @@ class TransientFetchError(RuntimeError):
 
 
 # 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
-# /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 包成
-# <video> 标签。引用推文里的媒体也不算当前作者上传的媒体。
+# /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 可能包成
+# <video> 标签，也可能只暴露 Nitter 的 video_thumb 封面图。引用推文里的媒体也不算
+# 当前作者上传的媒体。
 # Twitter Article（长文）的封面图虽走 /pic/media，但包在 <a href="/i/article/...">
 # 里，属于文章卡片而非作者上传的媒体附件，不算作者媒体。
-_MEDIA_SRC_RE = re.compile(r"(?i)/pic/media")
+_MEDIA_SRC_RE = re.compile(
+    r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)"
+)
 _ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
 _HTML_VOID_TAGS = frozenset(
     {
@@ -459,8 +462,13 @@ class NitterClient:
 
     @staticmethod
     def _is_repost(tweet: TweetItem, username: str) -> bool:
+        return NitterClient._is_repost_link(tweet.link, username)
+
+    @staticmethod
+    def _is_repost_link(link: str, username: str) -> bool:
         watched = str(username or "").strip().lstrip("@").lower()
-        author = str(tweet.username or "").strip().lstrip("@").lower()
+        author = TweetItem(text="", link=link, published="").username
+        author = str(author or "").strip().lstrip("@").lower()
         return bool(watched and author and author != watched)
 
     def _fetch_page_with_retries(
@@ -540,7 +548,7 @@ class NitterClient:
         except (TimeoutError, ssl.SSLError) as exc:
             raise TransientFetchError(str(exc)) from exc
         tweets, plain_text_filtered = self._parse_rss(
-            data, instance, 0, skip_plain_text,
+            data, instance, 0, skip_plain_text, username,
         )
         return tweets, next_cursor, plain_text_filtered
 
@@ -591,6 +599,7 @@ class NitterClient:
         instance: str,
         limit: int,
         skip_plain_text: bool = False,
+        username: str = "",
     ) -> tuple[list[TweetItem], int]:
         root = ET.fromstring(data)
         channel = root.find("channel") if root.tag.lower().endswith("rss") else root
@@ -601,15 +610,23 @@ class NitterClient:
         for item in channel.findall("item"):
             title = self._node_text(item, "title")
             description = self._node_text(item, "description")
+            link = self._normalize_link(self._node_text(item, "link"), instance)
+            published = self._format_pub_date(self._node_text(item, "pubDate"))
             # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
             # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
-            #（/pic/card_img）不算作者媒体，只有 /pic/media 和 <video> 算。
-            if skip_plain_text and not _has_author_media(description):
+            #（/pic/card_img）不算作者媒体。转发先交给转发过滤，避免
+            # 把本来就会丢弃的转发也计入纯文本过滤数。
+            lacks_author_media = skip_plain_text and not _has_author_media(description)
+            if (
+                lacks_author_media
+                and not (
+                    self.filter_reposts_enabled
+                    and self._is_repost_link(link, username)
+                )
+            ):
                 plain_text_filtered += 1
                 continue
             text = normalize_external_links(clean_text(description or title))
-            link = self._normalize_link(self._node_text(item, "link"), instance)
-            published = self._format_pub_date(self._node_text(item, "pubDate"))
             if not text and not link:
                 continue
             tweets.append(

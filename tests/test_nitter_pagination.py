@@ -677,6 +677,51 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
 
+    async def test_skip_plain_text_keeps_video_thumbnail_tweets(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "Video",
+                        '<a href="https://nitter.example/nasa/status/100#m">'
+                        "<br>Video<br>"
+                        '<img src="https://nitter.example/pic/'
+                        'amplify_video_thumb%2F2042858549571915776%2Fimg%2Fv.jpg" />'
+                        "</a>",
+                    ),
+                    (
+                        "/nasa/status/101",
+                        "Video",
+                        '<img src="https://nitter.example/pic/'
+                        'ext_tw_video_thumb%2F1844320908279681041%2Fpu%2Fimg%2Fq.jpg" />',
+                    ),
+                    (
+                        "/nasa/status/102",
+                        "Video",
+                        '<img src="https://nitter.example/pic/'
+                        'future_video_thumb%2F1844320908279681041%2Fpu%2Fimg%2Fq.jpg" />',
+                    ),
+                    ("/nasa/status/103", "t4", "纯文本无图"),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets, plain_text_filtered = await client.fetch_tweets_with_stats(
+                "nasa", 10, skip_plain_text=True
+            )
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101", "102"])
+        self.assertEqual(plain_text_filtered, 1)
+
     async def test_skip_plain_text_filters_card_img_only(self):
         client = NitterClient(
             {"instances": ["https://nitter.example"], "request_timeout": 12}
@@ -982,6 +1027,36 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
         self.assertEqual(plain_text_filtered, 2)
+
+    async def test_skip_plain_text_stats_excludes_text_reposts(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    ("/BBCWorld/status/100", "repost", "转发纯文本"),
+                    ("/nasa/status/101", "t2", "本账号纯文本"),
+                    (
+                        "/nasa/status/102",
+                        "t3",
+                        '<img src="https://nitter.net/pic/media%2Fabcd.jpg" />',
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets, plain_text_filtered = await client.fetch_tweets_with_stats(
+                "nasa", 10, skip_plain_text=True
+            )
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["102"])
+        self.assertEqual(plain_text_filtered, 1)
 
     async def test_skip_plain_text_filters_article_card_image(self):
         client = NitterClient(

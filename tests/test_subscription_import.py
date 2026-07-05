@@ -151,6 +151,7 @@ if "astrbot.api.all" not in sys.modules:
 from main import NitterTweetsPlugin
 from config_compat import (
     LEGACY_CONFIG_MIGRATION_KEY,
+    MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
     TWEET_GROUP_TEMPLATE_KEY_FIELD,
     config_get,
@@ -289,6 +290,16 @@ class _ManualMedia:
         self.events.append(
             "cleanup:" + ",".join(tweet.status_id for tweet in tweets)
         )
+
+
+class _StartupCleanupMedia:
+    def __init__(self, *, failed=0):
+        self.clear_non_staged_cache_calls = 0
+        self.failed = failed
+
+    def clear_non_staged_cache(self):
+        self.clear_non_staged_cache_calls += 1
+        return types.SimpleNamespace(removed=2, failed=self.failed, skipped_dirs=1)
 
 
 class _ManualEnricher:
@@ -447,6 +458,8 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
+        self.assertNotIn("media_cache_retention_days", schema["media"]["items"])
+        self.assertNotIn("media_cache_retention_days", schema)
         performance_items = schema["performance"]["items"]
         for key in [
             "concurrent_fetch_enabled",
@@ -635,6 +648,41 @@ class ConfigCompatTest(unittest.TestCase):
             _group_config(config, "tech")[TWEET_GROUP_TEMPLATE_KEY_FIELD],
             TWEET_GROUP_TEMPLATE_KEY,
         )
+
+    def test_startup_media_cache_upgrade_cleanup_runs_once(self):
+        config = _Config({})
+        media = _StartupCleanupMedia()
+        plugin = object.__new__(NitterTweetsPlugin)
+        plugin.config = config
+        plugin.media = media
+
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertTrue(config.saved)
+        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
+
+        config.saved = False
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertFalse(config.saved)
+
+    def test_startup_media_cache_upgrade_cleanup_retries_after_failures(self):
+        config = _Config({})
+        media = _StartupCleanupMedia(failed=1)
+        plugin = object.__new__(NitterTweetsPlugin)
+        plugin.config = config
+        plugin.media = media
+
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertFalse(config.saved)
+        self.assertNotIn(MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY, config)
+
+        media.failed = 0
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 2)
+        self.assertTrue(config.saved)
+        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
 
     def test_default_group_migration_merges_legacy_global_group(self):
         config = _Config(

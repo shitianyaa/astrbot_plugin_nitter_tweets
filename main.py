@@ -12,6 +12,7 @@ try:
         SubscriptionCommandMixin,
     )
     from .config_compat import (
+        MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
@@ -28,6 +29,7 @@ except ImportError:
         SubscriptionCommandMixin,
     )
     from config_compat import (
+        MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
@@ -43,7 +45,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.10.0",
+    "0.12.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
@@ -59,6 +61,7 @@ class NitterTweetsPlugin(
         migrate_default_group_config(self.config)
         self.nitter = NitterClient(config)
         self.media = MediaService(config)
+        self._cleanup_legacy_media_cache_once()
         self.sender = TweetSender(config)
         self.translator = TweetTranslator(context, config)
         self.enricher = TweetEnricher(context, config)
@@ -80,6 +83,38 @@ class NitterTweetsPlugin(
         )
         self._cooldowns: dict[str, float] = {}
         self.scheduler.start(reason="__init__")
+
+    def _cleanup_legacy_media_cache_once(self) -> None:
+        if bool(self.config.get(MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY, False)):
+            return
+
+        try:
+            result = self.media.clear_non_staged_cache()
+        except Exception as exc:
+            logger.warning(
+                "[NitterTweets] 升级清理普通媒体缓存失败，"
+                f"下次启动将重试: error={exc}"
+            )
+            return
+
+        if result.failed > 0:
+            logger.warning(
+                "[NitterTweets] 升级清理普通媒体缓存存在失败文件，"
+                "下次启动将重试: "
+                f"removed={result.removed}, failed={result.failed}, "
+                f"skipped_dirs={result.skipped_dirs}"
+            )
+            return
+
+        self.config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY] = True
+        save_config = getattr(self.config, "save_config", None)
+        if callable(save_config):
+            save_config()
+        logger.info(
+            "[NitterTweets] 升级迁移已完成一次普通媒体缓存清理: "
+            f"removed={result.removed}, failed={result.failed}, "
+            f"skipped_dirs={result.skipped_dirs}"
+        )
 
     async def initialize(self):
         logger.info(

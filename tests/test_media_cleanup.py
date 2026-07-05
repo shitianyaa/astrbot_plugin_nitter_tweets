@@ -34,7 +34,7 @@ from utils import TweetItem, TweetMedia
 
 
 class MediaCleanupTest(unittest.TestCase):
-    def test_zero_retention_deletes_downloaded_media_after_send(self):
+    def test_send_cleanup_deletes_downloaded_media_after_send(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"
             path.write_bytes(b"image")
@@ -45,14 +45,14 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService({})
 
             service.cleanup_after_send([tweet])
 
             self.assertFalse(path.exists())
             self.assertIsNone(media.path)
 
-    def test_zero_retention_cleanup_after_send_logs_removed_image_count(self):
+    def test_send_cleanup_logs_removed_image_count(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"
             path.write_bytes(b"image")
@@ -63,7 +63,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService({})
 
             with patch.object(cache_module.logger, "info") as info_log:
                 service.cleanup_after_send([tweet])
@@ -83,7 +83,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService({})
 
             with patch.object(cache_module.logger, "info") as info_log:
                 service.cleanup_after_send([tweet])
@@ -92,7 +92,7 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertIn("图片 1", logged)
             self.assertIn("视频 0", logged)
 
-    def test_positive_retention_keeps_downloaded_media_after_send(self):
+    def test_removed_retention_config_is_ignored_after_send(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"
             path.write_bytes(b"image")
@@ -107,10 +107,10 @@ class MediaCleanupTest(unittest.TestCase):
 
             service.cleanup_after_send([tweet])
 
-            self.assertTrue(path.exists())
-            self.assertEqual(media.path, path)
+            self.assertFalse(path.exists())
+            self.assertIsNone(media.path)
 
-    def test_zero_retention_clears_duplicate_path_references(self):
+    def test_send_cleanup_clears_duplicate_path_references(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"
             path.write_bytes(b"image")
@@ -122,7 +122,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[first, second],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService({})
 
             service.cleanup_after_send([tweet])
 
@@ -214,7 +214,7 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertFalse(staged_path.exists())
             self.assertIsNone(media.path)
 
-    def test_zero_retention_cleanup_after_send_keeps_staged_media(self):
+    def test_send_cleanup_keeps_staged_media(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
             staged_dir = cache_dir / "staged" / "global" / "123"
@@ -228,7 +228,7 @@ class MediaCleanupTest(unittest.TestCase):
                 published="",
                 media=[media],
             )
-            service = MediaService({"media_cache_retention_days": 0})
+            service = MediaService({})
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 
@@ -296,37 +296,6 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertFalse(image.exists())
             self.assertFalse(video.exists())
             self.assertFalse(other.exists())
-
-    def test_expired_cache_cleanup_logs_media_type_counts(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            cache_dir.mkdir()
-            image = cache_dir / "old.jpg"
-            video = cache_dir / "old.mp4"
-            other = cache_dir / "old.bin"
-            fresh = cache_dir / "fresh.jpg"
-            for path in (image, video, other, fresh):
-                path.write_bytes(b"data")
-            old_time = 1
-            for path in (image, video, other):
-                os.utime(path, (old_time, old_time))
-            service = MediaService({"media_cache_retention_days": 1})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
-
-            with patch.object(cache_module.logger, "info") as info_log:
-                service.cleanup_cache(force=True)
-
-            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
-            self.assertIn("媒体缓存清理完成", logged)
-            self.assertIn("图片 1", logged)
-            self.assertIn("视频 1", logged)
-            self.assertIn("其他 1", logged)
-            self.assertFalse(image.exists())
-            self.assertFalse(video.exists())
-            self.assertFalse(other.exists())
-            self.assertTrue(fresh.exists())
-
 
 if __name__ == "__main__":
     unittest.main()

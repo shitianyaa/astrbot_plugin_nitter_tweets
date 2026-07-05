@@ -17,6 +17,7 @@ except ImportError:
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
 DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
+MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
 
@@ -34,7 +35,6 @@ CONFIG_GROUP_BY_KEY = {
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
-    "media_cache_retention_days": "media",
     "xdown_api_url": "media",
     "media_user_agent": "media",
     "translate_enabled": "ai_translation",
@@ -99,7 +99,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "max_media_per_tweet",
     "media_timeout",
     "media_max_size_mb",
-    "media_cache_retention_days",
     "xdown_api_url",
     "media_user_agent",
     "translate_enabled",

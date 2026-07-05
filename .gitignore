@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 cache/
 data/
+diagnostics/
 tests/downloads/
 *.db
 *.db-wal

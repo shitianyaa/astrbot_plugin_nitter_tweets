@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.10.0-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.12.0-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -130,7 +130,6 @@ telegram:FriendMessage:123456789
 | `prepare_concurrency` | 同时准备的推文或账号批次数，范围 `1-8`，默认 `2`。 |
 | `send_image_attachments` | 是否发送图片附件，默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
-| `media_cache_retention_days` | 普通媒体缓存保留天数；设为 `0` 时发送流程结束后删除。 |
 | `translate_enabled` | 是否翻译非中文推文。 |
 | `comment_enabled` | 是否按概率追加 AI 评论。 |
 | `vision_enabled` | 是否启用 AI 识图；结果主要作为 AI 评论上下文。 |
@@ -144,7 +143,7 @@ telegram:FriendMessage:123456789
 - 手动 `/推文 用户名 数量` 不写入 seen；后台检查和暂存发布会写入 seen。
 - QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
 - `brief_log_enabled` 只影响 AstrBot 后台日志，不影响聊天消息、命令返回或推送内容。
-- 媒体缓存存放在 AstrBot 插件数据目录，不写入插件源码目录；暂存队列媒体发布成功后会删除。
+- 普通媒体发送后会删除；升级后会自动执行一次普通缓存清理，不删除暂存队列媒体。
 - `scheduled_fetch_limit` 是每个账号本轮最多保留的有效推文数，默认 `5`、范围 `1-20`；Nitter RSS 会按 `Min-Id` 游标翻页，不是固定只拉一页。
 - 后台并发拉取只在 `concurrent_fetch_enabled=true`、`concurrent_fetch_instances` 非空且 `fetch_concurrency > 1` 时启用；手动 `/推文` 和 `/镜像测试` 不使用并发配置。
 - 即使拉取、媒体下载或模型处理并发完成，最终发送、暂存入队和 seen 更新仍按 `watch_users` 配置顺序以及推文从旧到新的顺序执行。

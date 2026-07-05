@@ -51,7 +51,7 @@ NitterTweetScheduler
 6. 可选过滤纯文本
 7. 根据 cursor 翻页
 
-纯文本过滤只认当前作者区域的 `/pic/media` 和 `<video>`。引用推文和 `card_img` 不算当前作者媒体。
+纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
 ## 后台检查链路
 
@@ -87,9 +87,9 @@ NitterTweetScheduler
 3. 视频/GIF 优先，跳过同条推文里的图片候选
 4. 分辨率、时长、大小限制
 5. 下载到普通缓存或移动到暂存缓存
-6. 发送后按 retention 清理
+6. 普通媒体发送后清理
 
-暂存缓存位于 `cache/staged/<group_id>/<status_id>/`，不能被普通缓存清理误删。
+升级到发送后删除策略时会自动执行一次普通缓存清理。暂存缓存位于 `cache/staged/<group_id>/<status_id>/`，不能被普通缓存清理误删。
 
 ## 存储链路
 
