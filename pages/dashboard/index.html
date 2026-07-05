@@ -25,6 +25,7 @@
         <button class="tab active" type="button" data-view="overview">概览</button>
         <button class="tab" type="button" data-view="groups">分组订阅</button>
         <button class="tab" type="button" data-view="pending">暂存队列</button>
+        <button class="tab" type="button" data-view="history">最近推送</button>
         <button class="tab" type="button" data-view="mirror">镜像测试</button>
         <button class="tab" type="button" data-view="cleanup">缓存清理</button>
       </nav>
@@ -68,6 +69,28 @@
             </button>
           </div>
           <div id="pendingContent" class="stack"></div>
+        </section>
+
+        <section id="historyView" class="view" aria-label="最近推送">
+          <div class="toolbar">
+            <label class="field compact">
+              <span>分组</span>
+              <select id="historyGroupSelect"></select>
+            </label>
+            <label class="field compact">
+              <span>博主</span>
+              <input id="historyUsername" type="text" placeholder="NASA" />
+            </label>
+            <label class="field compact">
+              <span>数量</span>
+              <input id="historyLimit" type="number" min="1" max="200" value="50" />
+            </label>
+            <button id="historyRefreshBtn" class="button secondary" type="button">
+              <span class="icon" data-icon="refresh"></span>
+              查询
+            </button>
+          </div>
+          <div id="historyContent" class="stack"></div>
         </section>
 
         <section id="mirrorView" class="view" aria-label="镜像测试">

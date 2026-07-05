@@ -37,6 +37,99 @@ from utils import TweetItem, TweetMedia
 
 
 class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_push_history_records_and_filters_sent_tweets(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                nasa = TweetItem(
+                    text="moon",
+                    link="https://x.com/NASA/status/100",
+                    published="2026-07-05",
+                    translation="月球",
+                    ai_comment="值得看",
+                )
+                openai = TweetItem(
+                    text="model",
+                    link="https://x.com/OpenAI/status/200",
+                    published="2026-07-05",
+                )
+
+                first_id = await asyncio.to_thread(
+                    storage.record_push_history,
+                    "default",
+                    "NASA",
+                    nasa,
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                    1000,
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "OpenAI",
+                    openai,
+                    "telegram:FriendMessage:2",
+                    "replay",
+                    "https://nitter.test",
+                    1001,
+                )
+
+                all_records = await asyncio.to_thread(storage.get_push_history, limit=10)
+                nasa_records = await asyncio.to_thread(
+                    storage.get_push_history,
+                    group_id="default",
+                    username="NASA",
+                    limit=10,
+                )
+                first_record = await asyncio.to_thread(
+                    storage.get_push_history_record, first_id
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual([record.username for record in all_records], ["OpenAI", "NASA"])
+            self.assertEqual([record.status_id for record in nasa_records], ["100"])
+            self.assertIsNotNone(first_record)
+            self.assertEqual(first_record.tweet.translation, "月球")
+            self.assertEqual(first_record.tweet.ai_comment, "值得看")
+            self.assertEqual(first_record.target_umo, "telegram:FriendMessage:1")
+            self.assertEqual(first_record.source, "scheduled")
+
+    async def test_push_history_persists_after_reopening_database(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "default",
+                    "NASA",
+                    TweetItem(
+                        text="moon",
+                        link="https://x.com/NASA/status/101",
+                        published="",
+                    ),
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                )
+            finally:
+                storage.close()
+
+            reopened = SQLiteStorage(db_path)
+            await reopened.connect()
+            try:
+                records = await asyncio.to_thread(reopened.get_push_history, limit=10)
+            finally:
+                reopened.close()
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].status_id, "101")
+
     async def test_delete_group_runtime_data_removes_only_target_group_rows(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
@@ -478,10 +571,47 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "4")
+            self.assertEqual(version, "5")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].instance, "")
             self.assertEqual(records[0].delivered_targets, ())
+
+    async def test_schema_v4_database_migrates_push_history_table(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO meta (key, value, updated_at) VALUES ('schema_version', '4', 0)"
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                exists = storage.conn.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'push_history'
+                    """
+                ).fetchone()
+                version = await asyncio.to_thread(storage.get_meta, "schema_version")
+            finally:
+                storage.close()
+
+            self.assertIsNotNone(exists)
+            self.assertEqual(version, "5")
 
     async def test_schema_v2_global_group_rows_merge_to_default(self):
         with TemporaryDirectory() as temp_dir:
@@ -649,7 +779,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "4")
+            self.assertEqual(version, "5")
             self.assertEqual(users, ["ESA", "NASA"])
             self.assertEqual(
                 targets,

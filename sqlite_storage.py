@@ -24,7 +24,7 @@ except ImportError:
     from utils import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
 PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
@@ -40,7 +40,7 @@ PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS: dict[str, str] = {
         "ADD COLUMN delivered_targets TEXT NOT NULL DEFAULT '[]'"
     ),
 }
-SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media"}
+SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media", "push_history"}
 
 
 @dataclass(slots=True)
@@ -70,6 +70,20 @@ class PendingQueueSummary:
     oldest_created_at: int | None = None
     newest_created_at: int | None = None
     user_counts: list[tuple[str, int]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PushHistoryRecord:
+    id: int
+    group_id: str
+    username: str
+    status_id: str
+    original_link: str
+    target_umo: str
+    source: str
+    instance: str
+    pushed_at: int
+    tweet: TweetItem
 
 
 def _locked_sqlite_method(method):
@@ -286,6 +300,8 @@ class SQLiteStorage:
                 ON pending_media(pending_tweet_id)
             """)
 
+            self._create_push_history_table(cursor)
+
             self.conn.commit()
             cursor.close()
             logger.info(f"[NitterTweets] SQLite 存储已初始化: {self.db_path}")
@@ -297,6 +313,8 @@ class SQLiteStorage:
             self._migrate_schema_v3(cursor)
         if stored_version < 4:
             self._migrate_schema_v4(cursor)
+        if stored_version < 5:
+            self._migrate_schema_v5(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -338,6 +356,33 @@ class SQLiteStorage:
         for name, statement in PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS.items():
             if name not in columns:
                 cursor.execute(statement)
+
+    def _migrate_schema_v5(self, cursor: sqlite3.Cursor) -> None:
+        self._create_push_history_table(cursor)
+
+    def _create_push_history_table(self, cursor: sqlite3.Cursor) -> None:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS push_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                status_id TEXT NOT NULL,
+                original_link TEXT NOT NULL,
+                target_umo TEXT NOT NULL,
+                source TEXT NOT NULL,
+                instance TEXT NOT NULL DEFAULT '',
+                tweet_data TEXT NOT NULL,
+                pushed_at INTEGER NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_push_history_group_time
+            ON push_history(group_id, pushed_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_push_history_user_time
+            ON push_history(username, pushed_at DESC)
+        """)
 
     def _migrate_global_group_to_default(self, cursor: sqlite3.Cursor) -> None:
         legacy_id = LEGACY_GLOBAL_GROUP_ID
@@ -1130,6 +1175,87 @@ class SQLiteStorage:
         self.delete_pending_tweets(ids)
         return len(ids)
 
+    def record_push_history(
+        self,
+        group_id: str,
+        username: str,
+        tweet: TweetItem,
+        target_umo: str,
+        source: str,
+        instance: str = "",
+        pushed_at: int | None = None,
+    ) -> int:
+        """Record one successfully pushed tweet/target pair."""
+        assert self.conn is not None
+        normalized_group_id = normalize_group_id(group_id)
+        normalized_username = normalize_username(username) or str(username or "").strip()
+        status_id = str(getattr(tweet, "status_id", "") or "").strip()
+        if not normalized_group_id or not normalized_username or not status_id:
+            return 0
+        now = int(pushed_at if pushed_at is not None else time.time())
+        cursor = self.conn.execute(
+            """
+            INSERT INTO push_history (
+                group_id, username, status_id, original_link, target_umo,
+                source, instance, tweet_data, pushed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_group_id,
+                normalized_username,
+                status_id,
+                str(getattr(tweet, "x_url", "") or getattr(tweet, "link", "") or ""),
+                str(target_umo or "").strip(),
+                str(source or "").strip() or "scheduled",
+                str(instance or ""),
+                self._serialize_tweet(tweet),
+                now,
+            ),
+        )
+        return int(cursor.lastrowid or 0)
+
+    def get_push_history(
+        self,
+        group_id: str = "",
+        username: str = "",
+        limit: int = 50,
+    ) -> list[PushHistoryRecord]:
+        """Return recent successful push history records."""
+        assert self.conn is not None
+        clauses: list[str] = []
+        params: list[Any] = []
+        normalized_group_id = normalize_group_id(group_id) if group_id else ""
+        normalized_username = normalize_username(username) if username else ""
+        if normalized_group_id:
+            clauses.append("group_id = ?")
+            params.append(normalized_group_id)
+        if normalized_username:
+            clauses.append("username = ?")
+            params.append(normalized_username)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(max(1, min(int(limit or 50), 200)))
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM push_history
+            {where}
+            ORDER BY pushed_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [self._push_history_record_from_row(row) for row in rows]
+
+    def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
+        """Return one push history record by id."""
+        assert self.conn is not None
+        row = self.conn.execute(
+            "SELECT * FROM push_history WHERE id = ?",
+            (int(record_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._push_history_record_from_row(row)
+
     def cleanup_orphan_seen_tweets(self) -> int:
         """清理长期不在订阅配置中的 seen 记录."""
         assert self.conn is not None
@@ -1274,6 +1400,20 @@ class SQLiteStorage:
             delivered_targets=self._deserialize_delivered_targets(
                 row["delivered_targets"]
             ),
+        )
+
+    def _push_history_record_from_row(self, row: sqlite3.Row) -> PushHistoryRecord:
+        return PushHistoryRecord(
+            id=int(row["id"]),
+            group_id=str(row["group_id"]),
+            username=str(row["username"]),
+            status_id=str(row["status_id"]),
+            original_link=str(row["original_link"] or ""),
+            target_umo=str(row["target_umo"] or ""),
+            source=str(row["source"] or ""),
+            instance=str(row["instance"] or ""),
+            pushed_at=int(row["pushed_at"]),
+            tweet=self._deserialize_tweet(row["tweet_data"]),
         )
 
     def migrate_kv_seen_data(
@@ -1433,6 +1573,9 @@ for _method_name in (
     "delete_pending_tweets",
     "delete_group_runtime_data",
     "cleanup_sent_pending_tweets",
+    "record_push_history",
+    "get_push_history",
+    "get_push_history_record",
     "cleanup_orphan_seen_tweets",
     "_migrate_global_group_to_default",
     "migrate_kv_seen_data",

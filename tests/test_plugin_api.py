@@ -155,7 +155,7 @@ from config_compat import config_get
 from main import NitterTweetsPlugin
 from plugin_api import NitterWebAPI
 from scheduler_config import SchedulerConfigReader
-from sqlite_storage import PendingQueueSummary, PendingTweetRecord
+from sqlite_storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
 from utils import TweetItem, TweetMedia, configured_merge_tweet_threshold
 
 
@@ -189,6 +189,7 @@ class _Storage:
         self.clear_seen_calls = []
         self.delete_legacy_seen_kv_calls = 0
         self.delete_group_runtime_data_calls = []
+        self.history: list[PushHistoryRecord] = []
 
     async def get_pending_queue_summary(self, group_id):
         return self.summaries.get(group_id, PendingQueueSummary(group_id=group_id))
@@ -218,6 +219,14 @@ class _Storage:
             "pending_media_deleted": 3,
         }
 
+    async def get_push_history(self, group_id="", username="", limit=50):
+        rows = list(self.history)
+        if group_id:
+            rows = [row for row in rows if row.group_id == group_id]
+        if username:
+            rows = [row for row in rows if row.username == username]
+        return rows[:limit]
+
 
 class _CheckResult:
     def __init__(self, message="检查结果"):
@@ -241,6 +250,7 @@ class _Scheduler:
         self.is_running = True
         self.run_check_calls = []
         self.publish_pending_calls = []
+        self.replay_push_history_calls = []
 
     @property
     def schedule_enabled(self):
@@ -256,6 +266,20 @@ class _Scheduler:
     async def publish_pending(self, **kwargs):
         self.publish_pending_calls.append(kwargs)
         return _CheckResult("已发布暂存队列")
+
+    async def replay_push_history(self, record_id):
+        self.replay_push_history_calls.append(record_id)
+        if record_id == 404:
+            return {"success": False, "error": "未找到推送记录"}
+        if record_id == 400:
+            return {"success": False, "error": "当前分组没有有效推送目标"}
+        return {
+            "success": True,
+            "record_id": record_id,
+            "target_count": 2,
+            "success_targets": 2,
+            "total_targets": 2,
+        }
 
 
 class _Media:
@@ -376,6 +400,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "/astrbot_plugin_nitter_tweets/web/groups/create": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/groups/update": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/groups/delete": ["POST"],
+                "/astrbot_plugin_nitter_tweets/web/history": ["GET"],
+                "/astrbot_plugin_nitter_tweets/web/history/replay": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/pending": ["GET"],
                 "/astrbot_plugin_nitter_tweets/web/check": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/publish": ["POST"],
@@ -468,6 +494,42 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["group"]["filter_plain_text_enabled"])
         self.assertTrue(config.saved)
         self.assertEqual(_group_config(config, "tech")["name"], "科技新闻")
+
+    async def test_update_group_saves_push_targets(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                            "push_targets": ["telegram:FriendMessage:1"],
+                        }
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {
+                "group_id": "tech",
+                "name": "科技",
+                "push_targets": [
+                    "telegram:FriendMessage:2",
+                    "invalid target",
+                ],
+            }
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["group"]["push_targets"], ["telegram:FriendMessage:2"])
+        self.assertEqual(payload["group"]["invalid_push_targets"], ["invalid target"])
+        self.assertEqual(
+            _group_config(config, "tech")["push_targets"],
+            ["telegram:FriendMessage:2", "invalid target"],
+        )
 
     async def test_update_group_rejects_name_collision(self):
         config = _Config(
@@ -1004,6 +1066,87 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(imported["summary"]["added"], ["BBCWorld", "SpaceX"])
         self.assertEqual(deleted["summary"]["removed"], ["BBCWorld"])
         self.assertEqual(deleted["summary"]["missing"], ["Missing"])
+
+    async def test_push_history_query_filters_and_hides_media_paths(self):
+        plugin = _plugin(
+            _Config(
+                {
+                    "push": {
+                        "tweet_groups": [
+                            {"name": "科技", "group_id": "tech", "watch_users": []}
+                        ]
+                    }
+                }
+            )
+        )
+        plugin.scheduler.storage.history = [
+            PushHistoryRecord(
+                id=2,
+                group_id="tech",
+                username="OpenAI",
+                status_id="200",
+                original_link="https://x.com/OpenAI/status/200",
+                target_umo="telegram:FriendMessage:2",
+                source="scheduled",
+                instance="https://nitter.test",
+                pushed_at=2000,
+                tweet=TweetItem(
+                    text="model",
+                    link="https://x.com/OpenAI/status/200",
+                    published="",
+                    media=[TweetMedia("image", "https://example.test/a.jpg", Path("C:/tmp/a.jpg"))],
+                ),
+            ),
+            PushHistoryRecord(
+                id=1,
+                group_id="default",
+                username="NASA",
+                status_id="100",
+                original_link="https://x.com/NASA/status/100",
+                target_umo="telegram:FriendMessage:1",
+                source="replay",
+                instance="https://nitter.test",
+                pushed_at=1000,
+                tweet=TweetItem(
+                    text="moon",
+                    link="https://x.com/NASA/status/100",
+                    published="",
+                ),
+            ),
+        ]
+
+        payload = await NitterWebAPI(plugin).build_history(
+            group_id="tech",
+            username="OpenAI",
+            limit=50,
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["records"]), 1)
+        row = payload["records"][0]
+        self.assertEqual(row["id"], 2)
+        self.assertEqual(row["group_id"], "tech")
+        self.assertEqual(row["username"], "OpenAI")
+        self.assertEqual(row["target_umo"], "telegram:FriendMessage:2")
+        self.assertNotIn("media", row)
+        self.assertNotIn("C:/tmp/a.jpg", repr(row))
+
+    async def test_replay_push_history_uses_scheduler_result(self):
+        plugin = _plugin(_Config({}))
+
+        payload = await NitterWebAPI(plugin).replay_history({"record_id": 12})
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(plugin.scheduler.replay_push_history_calls, [12])
+        self.assertEqual(payload["target_count"], 2)
+
+    async def test_replay_push_history_rejects_missing_current_targets(self):
+        plugin = _plugin(_Config({}))
+
+        payload = await NitterWebAPI(plugin).replay_history({"record_id": 400})
+
+        self.assertFalse(payload["success"])
+        self.assertIn("推送目标", payload["error"])
 
     async def test_subscription_import_reports_save_error_without_losing_runtime_update(self):
         config = _FailingSaveConfig(

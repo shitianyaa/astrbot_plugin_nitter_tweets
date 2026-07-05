@@ -734,8 +734,51 @@ button:focus-visible {
   opacity: 0.55;
 }
 
+.chip-edit-wrap {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.chip-edit-wrap .chip {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.chip-delete {
+  min-height: 26px;
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--danger-soft);
+  color: var(--danger);
+  padding: 0 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.push-target-editor {
+  min-width: 0;
+}
+
+.editable-chip-list {
+  margin-bottom: 8px;
+}
+
+.target-edit-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .mono .chip {
   font-family: Consolas, "SFMono-Regular", monospace;
+}
+
+.mono-cell {
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .bad .chip {

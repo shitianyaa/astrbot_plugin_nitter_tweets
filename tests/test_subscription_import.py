@@ -150,6 +150,7 @@ if "astrbot.api.all" not in sys.modules:
 
 from main import NitterTweetsPlugin
 from config_compat import (
+    DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     LEGACY_CONFIG_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
@@ -451,6 +452,13 @@ class ConfigCompatTest(unittest.TestCase):
             ],
         )
         self.assertIn(LEGACY_CONFIG_MIGRATION_KEY, schema)
+        for key in [
+            LEGACY_CONFIG_MIGRATION_KEY,
+            DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
+            MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
+        ]:
+            self.assertIn(key, schema)
+            self.assertTrue(schema[key]["invisible"])
         self.assertTrue(schema["watch_users"]["invisible"])
         self.assertEqual(schema["tweet_groups"]["type"], "list")
         self.assertIn("watch_users", schema["push"]["items"])

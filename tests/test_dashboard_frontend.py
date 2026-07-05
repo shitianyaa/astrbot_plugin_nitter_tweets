@@ -112,6 +112,15 @@ class DashboardFrontendSourceTest(unittest.TestCase):
             body.index("const reloaded = await reloadAll();"),
         )
 
+    def test_non_reload_actions_rerender_dynamic_controls_after_busy_clears(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "withAction")
+
+        self.assertIn("options.rerender", body)
+        self.assertLess(
+            body.index("state.actionBusy = false;", body.index("const successMessage =")),
+            body.index("options.rerender();"),
+        )
+
     def test_group_draft_updates_do_not_rerender_active_editor(self):
         source = APP_JS.read_text(encoding="utf-8")
         body = _function_body(source, "updateGroupDraft")
@@ -176,10 +185,33 @@ class DashboardFrontendSourceTest(unittest.TestCase):
     def test_group_editor_tracks_dirty_state(self):
         source = APP_JS.read_text(encoding="utf-8")
         body = _function_body(source, "saveGroupEdits")
+        snapshot_body = _function_body(source, "snapshotEditableGroup")
 
         self.assertIn("groupDrafts", source)
         self.assertIn("isGroupDirty", source)
         self.assertIn("snapshotEditableGroup", body)
+        self.assertIn("push_targets", snapshot_body)
+
+    def test_push_target_chips_are_editable(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        editor_body = _function_body(source, "renderGroupEditor")
+        target_body = _function_body(source, "buildPushTargetEditor")
+
+        self.assertIn("buildPushTargetEditor(group, draft)", editor_body)
+        self.assertIn("editPushTarget", target_body)
+        self.assertIn("deletePushTarget", target_body)
+        self.assertIn("confirmDeletePushTarget", source)
+
+    def test_recent_push_history_view_is_wired(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertIn('data-view="history"', html)
+        self.assertIn('id="historyView"', html)
+        self.assertIn("最近推送", html)
+        self.assertIn('apiGet("web/history"', source)
+        self.assertIn('apiPost("web/history/replay"', source)
+        self.assertIn("replayHistory", source)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")

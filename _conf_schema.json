@@ -563,6 +563,13 @@
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
   },
+  "_media_cache_send_delete_migrated": {
+    "description": "Media cache send-delete migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
   "storage_backend": {
     "description": "存储后端",
     "type": "string",

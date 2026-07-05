@@ -742,6 +742,70 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("150", seen_ids)
         self.assertIn("201", seen_ids)
 
+    async def test_successful_scheduled_push_records_history(self):
+        sender = _Sender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_history")
+        records = await scheduler.storage.get_push_history()
+
+        self.assertEqual(result.pushed_target_successes, 1)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].group_id, "default")
+        self.assertEqual(records[0].username, "NASA")
+        self.assertEqual(records[0].status_id, "201")
+        self.assertEqual(records[0].target_umo, "telegram:FriendMessage:1")
+        self.assertEqual(records[0].source, "scheduled")
+
+    async def test_failed_scheduled_push_does_not_record_history(self):
+        sender = _Sender(success=False)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_history_fail")
+        records = await scheduler.storage.get_push_history()
+
+        self.assertEqual(records, [])
+
     async def test_concurrent_fetch_requires_enabled_pool_and_parallelism(self):
         events = []
         nitter = _NoConcurrentNitter(
@@ -3007,6 +3071,123 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sender.batch_summaries), 1)
         self.assertEqual(sender.batch_summaries[0][2], "")
         self.assertEqual(media.staged_cleaned, 1)
+
+    async def test_publish_pending_success_records_history(self):
+        sender = _Sender()
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled(
+            sender=sender
+        )
+        await scheduler.storage.enqueue_pending_tweets(
+            "default",
+            "NASA",
+            "https://nitter.test",
+            [self._make_tweet("NASA", "202")],
+        )
+
+        await scheduler.publish_pending(reason="test_publish_history")
+        records = await scheduler.storage.get_push_history()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].group_id, "default")
+        self.assertEqual(records[0].username, "NASA")
+        self.assertEqual(records[0].status_id, "202")
+        self.assertEqual(records[0].target_umo, "aiocqhttp:GroupMessage:1")
+        self.assertEqual(records[0].source, "publish")
+
+    async def test_publish_pending_merged_success_records_each_tweet_history(self):
+        sender = _Sender(merge_targets={"aiocqhttp:GroupMessage:1"})
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled(
+            sender=sender,
+            extra_config={"merge_tweet_threshold": 1},
+        )
+        await scheduler.storage.enqueue_pending_tweets(
+            "default",
+            "NASA",
+            "https://nitter.test",
+            [self._make_tweet("NASA", "205"), self._make_tweet("NASA", "206")],
+        )
+
+        await scheduler.publish_pending(reason="test_publish_merged_history")
+        records = await scheduler.storage.get_push_history("default", "NASA", 10)
+
+        self.assertEqual([record.status_id for record in reversed(records)], ["205", "206"])
+        self.assertEqual({record.target_umo for record in records}, {"aiocqhttp:GroupMessage:1"})
+        self.assertEqual({record.source for record in records}, {"publish"})
+
+    async def test_replay_push_history_uses_current_group_targets(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:2"],
+                    }
+                ],
+            },
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            self._make_tweet("NASA", "203"),
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(record_id)
+        records = await scheduler.storage.get_push_history("tech", "NASA", 10)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["total_targets"], 1)
+        self.assertEqual(result["success_targets"], 1)
+        self.assertEqual(
+            sender.sent,
+            [("telegram:FriendMessage:2", "NASA", "https://nitter.test", ["203"])],
+        )
+        self.assertEqual(records[0].target_umo, "telegram:FriendMessage:2")
+        self.assertEqual(records[0].source, "replay")
+
+    async def test_replay_push_history_rejects_group_without_current_targets(self):
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": [],
+                    }
+                ],
+            }
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            self._make_tweet("NASA", "204"),
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(record_id)
+        records = await scheduler.storage.get_push_history("tech", "NASA", 10)
+
+        self.assertFalse(result["success"])
+        self.assertIn("推送目标", result["error"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, "scheduled")
 
     async def test_publish_pending_skipped_no_push_targets(self):
         scheduler = await self._create_scheduler_with_deferred_publish_enabled(

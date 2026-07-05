@@ -11,13 +11,17 @@ from quart import jsonify, request
 try:
     from .config_compat import config_get
     from .scheduler_config import ScheduleGroup
-    from .sqlite_storage import PendingQueueSummary, PendingTweetRecord
+    from .sqlite_storage import (
+        PendingQueueSummary,
+        PendingTweetRecord,
+        PushHistoryRecord,
+    )
     from .utils import TweetItem, configured_merge_tweet_threshold, normalize_username
     from .webui_groups import WebUIGroupEditor
 except ImportError:
     from config_compat import config_get
     from scheduler_config import ScheduleGroup
-    from sqlite_storage import PendingQueueSummary, PendingTweetRecord
+    from sqlite_storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
     from utils import TweetItem, configured_merge_tweet_threshold, normalize_username
     from webui_groups import WebUIGroupEditor
 
@@ -38,6 +42,8 @@ class NitterWebAPI:
             ("web/groups/create", "handle_group_create", ["POST"]),
             ("web/groups/update", "handle_group_update", ["POST"]),
             ("web/groups/delete", "handle_group_delete", ["POST"]),
+            ("web/history", "handle_history", ["GET"]),
+            ("web/history/replay", "handle_history_replay", ["POST"]),
             ("web/pending", "handle_pending", ["GET"]),
             ("web/check", "handle_check", ["POST"]),
             ("web/publish", "handle_publish", ["POST"]),
@@ -71,6 +77,17 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
+    async def handle_history(self):
+        async def action():
+            group_id = str(request.args.get("group_id", "") or "").strip()
+            username = str(request.args.get("username", "") or "").strip()
+            limit = self._parse_int(
+                request.args.get("limit"), 50, minimum=1, maximum=200
+            )
+            return await self.build_history(group_id, username, limit)
+
+        return await self._json_response(action)
+
     async def handle_group_create(self):
         async def action():
             data = await self._request_json()
@@ -89,6 +106,13 @@ class NitterWebAPI:
         async def action():
             data = await self._request_json()
             return await self.delete_group(data)
+
+        return await self._json_response(action)
+
+    async def handle_history_replay(self):
+        async def action():
+            data = await self._request_json()
+            return await self.replay_history(data)
 
         return await self._json_response(action)
 
@@ -298,6 +322,46 @@ class NitterWebAPI:
             limit=limit,
             terminology=self._terminology(),
         )
+
+    async def build_history(
+        self,
+        group_id: str = "",
+        username: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        group_id = str(group_id or "").strip()
+        username = normalize_username(username) if username else ""
+        if group_id:
+            group, error = self._resolve_group(group_id)
+            if error:
+                return self._error(error)
+            group_id = group.group_id
+        records = await self.storage.get_push_history(group_id, username, limit)
+        group_names = {group.group_id: group.name for group in self._schedule_groups()}
+        return self._ok(
+            selected_group_id=group_id,
+            selected_username=username,
+            limit=max(1, min(int(limit or 50), 200)),
+            records=[
+                self._serialize_history_record(record, group_names)
+                for record in records
+            ],
+            terminology=self._terminology(),
+        )
+
+    async def replay_history(self, data: dict[str, Any]) -> dict[str, Any]:
+        record_id = self._parse_int(
+            self._data_text(data, "record_id") or data.get("record_id"),
+            0,
+            minimum=0,
+            maximum=10_000_000_000,
+        )
+        if record_id <= 0:
+            return self._error("请选择要重新推送的记录")
+        result = await self.scheduler.replay_push_history(record_id)
+        if not result.get("success"):
+            return result
+        return self._ok(**result)
 
     async def run_check(self, data: dict[str, Any]) -> dict[str, Any]:
         group_id = self._data_text(data, "group_id") or self._data_text(
@@ -920,6 +984,29 @@ class NitterWebAPI:
             "has_translation": bool(record.tweet.translation),
             "has_ai_comment": bool(record.tweet.ai_comment),
             "has_image_caption": bool(record.tweet.image_caption),
+        }
+
+    @staticmethod
+    def _serialize_history_record(
+        record: PushHistoryRecord,
+        group_names: dict[str, str],
+    ) -> dict[str, Any]:
+        tweet = record.tweet
+        return {
+            "id": record.id,
+            "group_id": record.group_id,
+            "group_name": group_names.get(record.group_id, record.group_id),
+            "username": record.username,
+            "status_id": record.status_id,
+            "original_link": record.original_link or tweet.x_url,
+            "target_umo": record.target_umo,
+            "source": record.source,
+            "instance": record.instance,
+            "pushed_at": record.pushed_at,
+            "published": tweet.published,
+            "text_preview": NitterWebAPI._text_preview(tweet.text),
+            "translation_preview": NitterWebAPI._text_preview(tweet.translation),
+            "ai_comment_preview": NitterWebAPI._text_preview(tweet.ai_comment),
         }
 
     @staticmethod

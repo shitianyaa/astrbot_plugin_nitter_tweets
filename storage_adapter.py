@@ -9,11 +9,21 @@ from astrbot.api import logger
 try:
     from .config_compat import config_get
     from .seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
-    from .sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
+    from .sqlite_storage import (
+        PendingQueueSummary,
+        PendingTweetRecord,
+        PushHistoryRecord,
+        SQLiteStorage,
+    )
 except ImportError:
     from config_compat import config_get
     from seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
-    from sqlite_storage import PendingQueueSummary, PendingTweetRecord, SQLiteStorage
+    from sqlite_storage import (
+        PendingQueueSummary,
+        PendingTweetRecord,
+        PushHistoryRecord,
+        SQLiteStorage,
+    )
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
@@ -215,6 +225,47 @@ class StorageAdapter:
         return await asyncio.to_thread(
             sqlite.cleanup_sent_pending_tweets, older_than
         )
+
+    async def record_push_history(
+        self,
+        group_id: str,
+        username: str,
+        tweet,
+        target_umo: str,
+        source: str,
+        instance: str = "",
+    ) -> int:
+        """Record one successful push delivery."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.record_push_history,
+            group_id,
+            username,
+            tweet,
+            target_umo,
+            source,
+            instance,
+        )
+
+    async def get_push_history(
+        self,
+        group_id: str = "",
+        username: str = "",
+        limit: int = 50,
+    ) -> list[PushHistoryRecord]:
+        """Return recent successful push history."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_push_history,
+            group_id,
+            username,
+            limit,
+        )
+
+    async def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
+        """Return one push history record."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.get_push_history_record, record_id)
 
     def initial_seen_ids(self, ids: list[str]) -> list[str]:
         """Build an initial limited seen ID list."""

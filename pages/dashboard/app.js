@@ -8,8 +8,12 @@ const state = {
   groups: [],
   groupDrafts: {},
   pending: null,
+  history: null,
   selectedGroupId: "",
   pendingGroupId: "",
+  historyGroupId: "",
+  historyUsername: "",
+  historyLimit: 50,
   seenGroupId: "",
   pendingAction: null,
   lastUpdated: "",
@@ -29,6 +33,11 @@ const els = {
   pendingRefreshBtn: document.getElementById("pendingRefreshBtn"),
   publishSelectedBtn: document.getElementById("publishSelectedBtn"),
   pendingContent: document.getElementById("pendingContent"),
+  historyGroupSelect: document.getElementById("historyGroupSelect"),
+  historyUsername: document.getElementById("historyUsername"),
+  historyLimit: document.getElementById("historyLimit"),
+  historyRefreshBtn: document.getElementById("historyRefreshBtn"),
+  historyContent: document.getElementById("historyContent"),
   mirrorForm: document.getElementById("mirrorForm"),
   mirrorUsername: document.getElementById("mirrorUsername"),
   mirrorLimit: document.getElementById("mirrorLimit"),
@@ -191,12 +200,17 @@ function hideAlert() {
 function setBusy(isBusy) {
   state.loading = isBusy;
   const noGroups = !state.groups.length;
-  const groupDependentButtons = [els.pendingRefreshBtn, els.publishSelectedBtn];
+  const groupDependentButtons = [
+    els.pendingRefreshBtn,
+    els.publishSelectedBtn,
+    els.historyRefreshBtn,
+  ];
   [
     els.refreshBtn,
     els.createGroupBtn,
     els.pendingRefreshBtn,
     els.publishSelectedBtn,
+    els.historyRefreshBtn,
     els.mirrorProbeBtn,
     els.clearCacheBtn,
     els.clearSeenBtn,
@@ -248,6 +262,10 @@ function selectedPendingGroupId() {
   return els.pendingGroupSelect.value || state.pendingGroupId || "";
 }
 
+function selectedHistoryGroupId() {
+  return els.historyGroupSelect.value || state.historyGroupId || "";
+}
+
 function groupOptions(includeAll = false) {
   const options = [];
   if (includeAll) {
@@ -273,18 +291,25 @@ function syncSelectors() {
   const currentPending = groupIds.has(selectedPendingGroupId())
     ? selectedPendingGroupId()
     : state.selectedGroupId || firstGroupId;
+  const currentHistory =
+    state.historyGroupId && (state.historyGroupId === "" || groupIds.has(state.historyGroupId))
+      ? state.historyGroupId
+      : "";
   const currentSeen =
     state.seenGroupId && (state.seenGroupId === "" || groupIds.has(state.seenGroupId))
       ? state.seenGroupId
       : "";
   els.pendingGroupSelect.replaceChildren(...groupOptions(false));
+  els.historyGroupSelect.replaceChildren(...groupOptions(true));
   els.seenGroupSelect.replaceChildren(...groupOptions(true));
   els.pendingGroupSelect.value = currentPending;
+  els.historyGroupSelect.value = currentHistory;
   els.seenGroupSelect.value = currentSeen;
   if (!els.pendingGroupSelect.value && state.groups[0]) {
     els.pendingGroupSelect.value = state.groups[0].group_id;
   }
   state.pendingGroupId = els.pendingGroupSelect.value;
+  state.historyGroupId = els.historyGroupSelect.value;
   state.seenGroupId = els.seenGroupSelect.value;
 }
 
@@ -349,6 +374,88 @@ function buildWatchUserSection(group) {
   return el("div", {}, [el("b", { text: "关注账号" }), list]);
 }
 
+function buildPushTargetEditor(group, draft) {
+  const targets = Array.isArray(draft.push_targets)
+    ? draft.push_targets.filter(Boolean)
+    : [];
+  const list = el("div", { className: "chip-list mono editable-chip-list" });
+  if (!targets.length) {
+    list.appendChild(el("span", { className: "muted", text: "无" }));
+  } else {
+    list.append(
+      ...targets.map((target, index) =>
+        el("span", { className: "chip-edit-wrap" }, [
+          el(
+            "button",
+            {
+              className: "chip chip-action",
+              attrs: {
+                type: "button",
+                title: `编辑推送目标 ${target}`,
+              },
+              dataset: {
+                editPushTarget: String(index),
+                editPushTargetGroup: group.group_id,
+              },
+              disabled: state.loading || state.actionBusy,
+            },
+            target,
+          ),
+          el(
+            "button",
+            {
+              className: "chip-delete",
+              attrs: {
+                type: "button",
+                title: `删除推送目标 ${target}`,
+              },
+              dataset: {
+                deletePushTarget: String(index),
+                deletePushTargetGroup: group.group_id,
+              },
+              disabled: state.loading || state.actionBusy,
+            },
+            "×",
+          ),
+        ]),
+      ),
+    );
+  }
+  return el("div", { className: "push-target-editor" }, [
+    el("b", { text: "推送目标" }),
+    list,
+    el("div", { className: "target-edit-row" }, [
+      el("input", {
+        attrs: {
+          id: "pushTargetInput",
+          type: "text",
+          placeholder: "platform:MessageType:session_id",
+        },
+        dataset: { pushTargetInput: group.group_id },
+        disabled: state.loading || state.actionBusy,
+      }),
+      el("button", {
+        className: "button primary small",
+        attrs: { type: "button" },
+        dataset: { addPushTarget: group.group_id },
+        disabled: state.loading || state.actionBusy,
+      }, [iconSpan("plus"), "新增"]),
+      el("button", {
+        className: "button primary small",
+        attrs: { type: "button" },
+        dataset: { savePushTarget: group.group_id },
+        disabled: true,
+      }, "保存"),
+      el("button", {
+        className: "button secondary small",
+        attrs: { type: "button" },
+        dataset: { cancelPushTarget: group.group_id },
+        disabled: true,
+      }, "取消"),
+    ]),
+  ]);
+}
+
 function buildAttentionBadge(item) {
   return el(
     "span",
@@ -369,6 +476,7 @@ function snapshotEditableGroup(group) {
     daily_check_times: [...(group.daily_check_times || [])],
     deferred_publish_enabled: !!group.deferred_publish_enabled,
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
+    push_targets: [...(group.push_targets || [])],
   };
 }
 
@@ -755,10 +863,10 @@ function renderGroupEditor() {
     el("section", { className: "editor-section" }, [
       el("div", { className: "section-head" }, [
         el("h3", { text: "推送目标" }),
-        el("span", { className: "helper-text", text: "本阶段只读" }),
+        el("span", { className: "helper-text", text: "按 /sid 返回值维护" }),
       ]),
       el("div", { className: "details-grid" }, [
-        buildChipSection("推送目标", group.push_targets, "chip-list mono"),
+        buildPushTargetEditor(group, draft),
         buildChipSection("无效推送目标", group.invalid_push_targets, "chip-list bad"),
         buildChipSection("分组别名", group.aliases),
       ]),
@@ -882,6 +990,75 @@ function renderPending() {
   els.pendingContent.replaceChildren(summaryStrip, content);
 }
 
+function renderHistory() {
+  const payload = state.history;
+  if (!payload) {
+    els.historyContent.replaceChildren(emptyState("正在加载最近推送"));
+    return;
+  }
+  const records = payload.records || [];
+  if (!records.length) {
+    els.historyContent.replaceChildren(emptyState("暂无发送成功历史"));
+    return;
+  }
+  const tbody = el(
+    "tbody",
+    {},
+    records.map((row) => {
+      const tweetCell = el("td", {}, [
+        el("a", {
+          attrs: {
+            href: row.original_link || "",
+            target: "_blank",
+            rel: "noreferrer",
+          },
+          text: row.status_id || row.original_link,
+        }),
+        el("span", { text: row.text_preview || "" }),
+      ]);
+      return el("tr", {}, [
+        el("td", { text: formatTime(row.pushed_at) }),
+        el("td", { text: row.group_name || row.group_id || "-" }),
+        el("td", { text: `@${row.username}` }),
+        tweetCell,
+        el("td", { className: "mono-cell", text: row.target_umo || "-" }),
+        el("td", { text: row.source || "-" }),
+        el("td", {}, [
+          el(
+            "button",
+            {
+              className: "button secondary small",
+              attrs: { type: "button" },
+              dataset: { replayHistory: row.id },
+              disabled: state.loading || state.actionBusy,
+            },
+            [iconSpan("send"), "重新推送"],
+          ),
+        ]),
+      ]);
+    }),
+  );
+  els.historyContent.replaceChildren(
+    el("div", { className: "table-wrap" }, [
+      el("table", { className: "data-table history-table" }, [
+        el("thead", {}, [
+          el("tr", {}, [
+            el("th", { text: "发送时间" }),
+            el("th", { text: "分组" }),
+            el("th", { text: "博主" }),
+            el("th", { text: "推文" }),
+            el("th", { text: "当时推送目标" }),
+            el("th", { text: "来源" }),
+            el("th", { text: "操作" }),
+          ]),
+        ]),
+        tbody,
+      ]),
+    ]),
+  );
+  mountIcons(els.historyContent);
+}
+
 function renderMirrorBase() {
   const instances = state.overview?.instances || [];
   const fromGroups = state.groups.length ? state.groups : [];
@@ -911,6 +1088,7 @@ function renderAll() {
   renderOverview();
   renderGroups();
   renderPending();
+  renderHistory();
   renderMirrorBase();
   renderCleanupSelectors();
   mountIcons();
@@ -920,6 +1098,18 @@ async function loadPending(groupId = selectedPendingGroupId()) {
   state.pendingGroupId = groupId;
   state.pending = await apiGet("web/pending", { group_id: groupId, limit: 80 });
   renderPending();
+}
+
+async function loadHistory() {
+  state.historyGroupId = selectedHistoryGroupId();
+  state.historyUsername = els.historyUsername.value.trim();
+  state.historyLimit = Number(els.historyLimit.value || 50);
+  state.history = await apiGet("web/history", {
+    group_id: state.historyGroupId,
+    username: state.historyUsername,
+    limit: state.historyLimit,
+  });
+  renderHistory();
 }
 
 async function reloadAll() {
@@ -945,6 +1135,7 @@ async function reloadAll() {
     syncGroupDrafts();
     syncSelectors();
     await loadPending(state.pendingGroupId);
+    await loadHistory();
     state.lastUpdated = new Date().toLocaleTimeString("zh-CN", {
       hour: "2-digit",
       minute: "2-digit",
@@ -1012,6 +1203,8 @@ async function withAction(action, successText, options = {}) {
       if (reloaded === false) {
         return result;
       }
+    } else if (typeof options.rerender === "function") {
+      options.rerender();
     }
     showAlert(successMessage, "success");
     return result;
@@ -1073,6 +1266,99 @@ function subscriptionEntriesValue() {
   return subscriptionEntriesInput()?.value.trim() || "";
 }
 
+function pushTargetInput() {
+  return document.getElementById("pushTargetInput");
+}
+
+function pushTargetList(groupId) {
+  const group = state.groups.find((item) => item.group_id === groupId);
+  const draft = state.groupDrafts[groupId] || (group ? snapshotEditableGroup(group) : null);
+  return Array.isArray(draft?.push_targets) ? [...draft.push_targets] : [];
+}
+
+function setPushTargetInputMode(groupId, index = "") {
+  const input = pushTargetInput();
+  if (!input) return;
+  input.dataset.editPushTargetIndex = index === "" ? "" : String(index);
+  const saveButton = els.groupEditor.querySelector(`[data-save-push-target="${groupId}"]`);
+  const cancelButton = els.groupEditor.querySelector(`[data-cancel-push-target="${groupId}"]`);
+  if (saveButton) {
+    saveButton.disabled = index === "" || state.loading || state.actionBusy;
+  }
+  if (cancelButton) {
+    cancelButton.disabled = index === "" || state.loading || state.actionBusy;
+  }
+}
+
+function addPushTarget(groupId) {
+  const input = pushTargetInput();
+  const value = input?.value.trim() || "";
+  if (!value) {
+    showAlert("请填写推送目标", "error");
+    return;
+  }
+  const targets = pushTargetList(groupId);
+  targets.push(value);
+  updateGroupDraft(groupId, "push_targets", targets);
+  renderGroupEditor();
+}
+
+function editPushTarget(groupId, indexText) {
+  const input = pushTargetInput();
+  const index = Number(indexText);
+  const targets = pushTargetList(groupId);
+  if (!input || !Number.isInteger(index) || !targets[index]) return;
+  input.value = targets[index];
+  setPushTargetInputMode(groupId, index);
+  input.focus();
+}
+
+function savePushTargetEdit(groupId) {
+  const input = pushTargetInput();
+  const index = Number(input?.dataset.editPushTargetIndex || -1);
+  const value = input?.value.trim() || "";
+  const targets = pushTargetList(groupId);
+  if (!Number.isInteger(index) || index < 0 || index >= targets.length) return;
+  if (!value) {
+    showAlert("请填写推送目标", "error");
+    return;
+  }
+  targets[index] = value;
+  updateGroupDraft(groupId, "push_targets", targets);
+  renderGroupEditor();
+}
+
+function cancelPushTargetEdit(groupId) {
+  const input = pushTargetInput();
+  if (input) {
+    input.value = "";
+  }
+  setPushTargetInputMode(groupId, "");
+}
+
+function confirmDeletePushTarget(groupId, indexText) {
+  const index = Number(indexText);
+  const targets = pushTargetList(groupId);
+  const target = targets[index];
+  if (!Number.isInteger(index) || !target) return;
+  openConfirm({
+    kicker: "删除推送目标",
+    title: "删除这个推送目标？",
+    desc: "只会从当前分组配置移除推送目标，不会删除关注账号、暂存队列、媒体、推送记录或发送历史。",
+    confirmText: "删除",
+    action: () =>
+      withAction(async () => {
+        const nextTargets = pushTargetList(groupId).filter((_, itemIndex) => itemIndex !== index);
+        updateGroupDraft(groupId, "push_targets", nextTargets);
+        renderGroupEditor();
+        return { message: "推送目标已从草稿删除，请保存更改" };
+      }, "推送目标已从草稿删除，请保存更改", {
+        reload: false,
+        rerender: renderGroupEditor,
+      }),
+  });
+}
+
 async function saveGroupEdits(groupId) {
   const draft = state.groupDrafts[groupId];
   if (!draft) {
@@ -1084,6 +1370,26 @@ async function saveGroupEdits(groupId) {
     state.groupDrafts[groupId] = snapshotEditableGroup(result.group);
     return result;
   }, "");
+}
+
+function replayHistory(recordId) {
+  const record = (state.history?.records || []).find(
+    (item) => String(item.id) === String(recordId),
+  );
+  const group = state.groups.find((item) => item.group_id === record?.group_id);
+  const targetCount = group?.push_target_count ?? 0;
+  openConfirm({
+    kicker: "重新推送",
+    title: "重新推送这条记录？",
+    desc: `会发送到当前分组现有推送目标，共 ${formatNumber(targetCount)} 个。`,
+    confirmText: "重新推送",
+    danger: false,
+    action: () =>
+      withAction(
+        () => apiPost("web/history/replay", { record_id: recordId }),
+        "重新推送完成",
+      ),
+  });
 }
 
 function confirmDeleteGroup(groupId) {
@@ -1270,6 +1576,37 @@ function bindEvents() {
       reload: false,
     });
   });
+  els.historyRefreshBtn.addEventListener("click", () =>
+    withAction(() => loadHistory(), "最近推送已刷新", {
+      reload: false,
+      rerender: renderHistory,
+    }),
+  );
+  els.historyGroupSelect.addEventListener("change", (event) => {
+    state.historyGroupId = event.target.value;
+    withAction(() => loadHistory(), "最近推送已刷新", {
+      reload: false,
+      rerender: renderHistory,
+    });
+  });
+  els.historyUsername.addEventListener("change", () =>
+    withAction(() => loadHistory(), "最近推送已刷新", {
+      reload: false,
+      rerender: renderHistory,
+    }),
+  );
+  els.historyLimit.addEventListener("change", () =>
+    withAction(() => loadHistory(), "最近推送已刷新", {
+      reload: false,
+      rerender: renderHistory,
+    }),
+  );
+  els.historyContent.addEventListener("click", (event) => {
+    const target = event.target.closest("button");
+    if (!target) return;
+    if (state.loading || state.actionBusy) return;
+    if (target.dataset.replayHistory) replayHistory(target.dataset.replayHistory);
+  });
   els.seenGroupSelect.addEventListener("change", (event) => {
     state.seenGroupId = event.target.value;
   });
@@ -1288,6 +1625,18 @@ function bindEvents() {
     if (target.dataset.saveGroup) saveGroupEdits(target.dataset.saveGroup);
     if (target.dataset.deleteGroup) confirmDeleteGroup(target.dataset.deleteGroup);
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);
+    if (target.dataset.addPushTarget) addPushTarget(target.dataset.addPushTarget);
+    if (target.dataset.editPushTarget) {
+      editPushTarget(target.dataset.editPushTargetGroup, target.dataset.editPushTarget);
+    }
+    if (target.dataset.savePushTarget) savePushTargetEdit(target.dataset.savePushTarget);
+    if (target.dataset.cancelPushTarget) cancelPushTargetEdit(target.dataset.cancelPushTarget);
+    if (target.dataset.deletePushTarget) {
+      confirmDeletePushTarget(
+        target.dataset.deletePushTargetGroup,
+        target.dataset.deletePushTarget,
+      );
+    }
     if (target.dataset.deleteSubscriptions) {
       confirmDeleteSubscriptions(target.dataset.deleteSubscriptions);
     }

@@ -73,6 +73,9 @@ class WebUIGroupEditor:
             daily_check_times = self._normalized_times(
                 data.get("daily_check_times", raw_group.get("daily_check_times", []))
             )
+            push_targets = self._normalized_list(
+                data.get("push_targets", raw_group.get("push_targets", []))
+            )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
@@ -87,6 +90,7 @@ class WebUIGroupEditor:
             )
         )
         raw_group["daily_check_times"] = daily_check_times
+        raw_group["push_targets"] = push_targets
         raw_group["deferred_publish_enabled"] = bool(
             data.get(
                 "deferred_publish_enabled",
@@ -217,6 +221,17 @@ class WebUIGroupEditor:
         if len(parsed) != len(values):
             raise ValueError("每日检查时间格式无效，请使用 HH:MM")
         return [f"{hour:02d}:{minute:02d}" for hour, minute in parsed]
+
+    def _normalized_list(self, raw_values: Any) -> list[str]:
+        values: list[str] = []
+        seen: set[str] = set()
+        for raw in self.scheduler.config_reader.config_list(raw_values):
+            value = str(raw).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            values.append(value)
+        return values
 
     def _group_identifier(self, raw_group: dict[str, Any], index: int) -> str:
         raw_group_id = str(raw_group.get("group_id") or "").strip()
