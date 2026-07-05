@@ -142,12 +142,13 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("syncGroupEditorControls(groupId);", body)
         self.assertNotIn("renderGroupEditor();", body)
 
-    def test_api_get_serializes_query_params_into_endpoint(self):
+    def test_api_get_passes_params_without_mutating_endpoint(self):
         source = APP_JS.read_text(encoding="utf-8")
         body = _function_body(source, "apiGet")
 
-        self.assertIn("endpointWithQuery(endpoint, params)", body)
-        self.assertIn("bridge.apiGet(endpointWithQuery(endpoint, params))", body)
+        self.assertIn("bridge.apiGet(endpoint,", body)
+        self.assertIn("entries.length ? query : undefined", body)
+        self.assertNotIn("endpointWithQuery", source)
 
     def test_manual_refresh_discards_unsaved_group_drafts_after_confirmation(self):
         source = APP_JS.read_text(encoding="utf-8")

@@ -182,19 +182,10 @@ function apiResult(result) {
   return result;
 }
 
-function endpointWithQuery(endpoint, params) {
-  const entries = Object.entries(params || {}).filter(([, value]) => value != null && value !== "");
-  if (!entries.length) {
-    return endpoint;
-  }
-  const search = new URLSearchParams();
-  entries.forEach(([key, value]) => search.set(key, String(value)));
-  const separator = String(endpoint).includes("?") ? "&" : "?";
-  return `${endpoint}${separator}${search.toString()}`;
-}
-
 async function apiGet(endpoint, params) {
-  return apiResult(await bridge.apiGet(endpointWithQuery(endpoint, params)));
+  const entries = Object.entries(params || {}).filter(([, value]) => value != null && value !== "");
+  const query = Object.fromEntries(entries);
+  return apiResult(await bridge.apiGet(endpoint, entries.length ? query : undefined));
 }
 
 async function apiPost(endpoint, body) {
