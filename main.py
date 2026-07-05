@@ -19,6 +19,7 @@ try:
     )
     from .enricher import TweetEnricher, TweetTranslator
     from .media import MediaService, NitterClient
+    from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
     from .sender import TweetSender
     from .utils import clamp_float
@@ -36,6 +37,7 @@ except ImportError:
     )
     from enricher import TweetEnricher, TweetTranslator
     from media import MediaService, NitterClient
+    from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
     from sender import TweetSender
     from utils import clamp_float
@@ -75,6 +77,8 @@ class NitterTweetsPlugin(
             self.translator,
             self.enricher,
         )
+        self.web_api = NitterWebAPI(self)
+        self.web_api.register(context)
         self.default_limit = self._parse_positive_limit(
             config_get(config, "default_limit", 5), 5
         )

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 AstrBot Plugin Pages 运维面板，可查看概览、关键配置摘要、分组订阅、分组提示、暂存队列、镜像测试和缓存清理；面板不替代 AstrBot 设置页，复杂配置仍在 `_conf_schema.json` 对应配置界面维护。
+
 ### Changed
 
 - QQ/OneBot 直发和合并转发会将图片附件拆成独立消息或独立节点发送，降低图文同条发送导致的超时概率；非 QQ 平台保持原有图文同消息行为。
@@ -150,7 +154,7 @@
 - 存储层升级为主版本变更（0.7.0 → 0.8.0）。
 - 已见推文 ID 按 `group_id + username` 独立存储和查询，不再整组读写。
 - 每个账号只维护最近 300 条 seen ID（`SEEN_LIMIT_PER_USER`），自动清理旧记录。
-- 取消订阅的账号不会立即删除 seen 记录；超过 30 天仍未重新订阅的孤儿 seen 记录会在配置同步时清理。
+- 取消订阅的账号不会立即删除推送记录；超过 30 天仍未重新订阅的孤儿推送记录会在配置同步时清理。
 - `/推文状态` 改为先显示全部分组项合计，再分别显示默认分组和自定义分组详情，避免把 `global` 分组误读为总数。
 - `/推文状态` 和 `/推文检查` 的账号、目标等长列表最多显示 10 项，并追加“还有 N 个”提示。
 - SQLite 连接允许跨 `asyncio.to_thread()` 线程串行访问，避免 AstrBot 调度器启动和 `/推文状态` 查询时触发 `SQLite objects created in a thread can only be used in that same thread`。
