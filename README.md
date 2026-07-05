@@ -142,6 +142,7 @@ telegram:FriendMessage:123456789
 - seen ID 按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。
 - 手动 `/推文 用户名 数量` 不写入 seen；后台检查和暂存发布会写入 seen。
 - QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
+- QQ/OneBot 图片附件会拆成独立图片消息或独立合并转发节点，降低图文同条发送超时概率；其他平台保持图文同消息行为。
 - `brief_log_enabled` 只影响 AstrBot 后台日志，不影响聊天消息、命令返回或推送内容。
 - 普通媒体发送后会删除；升级后会自动执行一次普通缓存清理，不删除暂存队列媒体。
 - `scheduled_fetch_limit` 是每个账号本轮最多保留的有效推文数，默认 `5`、范围 `1-20`；Nitter RSS 会按 `Min-Id` 游标翻页，不是固定只拉一页。

@@ -2272,6 +2272,59 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
             [_Plain, _Video],
         )
 
+    async def test_qq_forward_nodes_split_images_into_separate_node(self):
+        sender = TweetSender({})
+
+        tweet = self._make_tweet("NASA", "107")
+        image_path = Path(self.temp_dir.name) / "image-node.jpg"
+        image_path.write_bytes(b"jpg")
+        tweet.media.append(
+            TweetMedia("image", "https://image.example.test/image-node.jpg", image_path)
+        )
+
+        nodes = sender.renderer.build_nodes_for_uin(
+            10000,
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+            start_index=1,
+        )
+
+        self.assertEqual(len(nodes.nodes), 3)
+        text_components = nodes.nodes[1].content
+        image_components = nodes.nodes[2].content
+        self.assertTrue(any(isinstance(component, _Plain) for component in text_components))
+        self.assertFalse(any(isinstance(component, _Image) for component in text_components))
+        self.assertEqual(
+            [type(component) for component in image_components],
+            [_Plain, _Image],
+        )
+
+    async def test_qq_raw_forward_nodes_split_images_into_separate_node(self):
+        sender = TweetSender({})
+
+        tweet = self._make_tweet("NASA", "108")
+        image_path = Path(self.temp_dir.name) / "image-raw.jpg"
+        image_path.write_bytes(b"jpg")
+        tweet.media.append(
+            TweetMedia("image", "https://image.example.test/image-raw.jpg", image_path)
+        )
+
+        raw_nodes = sender.renderer.build_merged_onebot_nodes_for_uin(
+            10000,
+            [("NASA", "https://nitter.test", [tweet])],
+            start_index=1,
+        )
+
+        self.assertEqual(len(raw_nodes), 3)
+        text_segments = raw_nodes[1]["data"]["content"]
+        image_segments = raw_nodes[2]["data"]["content"]
+        self.assertFalse(any(segment["type"] == "image" for segment in text_segments))
+        self.assertEqual(
+            [segment["type"] for segment in image_segments],
+            ["text", "image"],
+        )
+
     async def test_qq_direct_event_splits_text_and_videos_without_forward(self):
         sender = TweetSender(
             {"send_video_attachments": True, "merge_tweet_threshold": 0}
@@ -2306,6 +2359,38 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent_chains[1].components), 1)
         self.assertTrue(isinstance(sent_chains[1].components[0], _Video))
 
+    async def test_qq_direct_event_splits_text_and_images_without_forward(self):
+        sender = TweetSender({"merge_tweet_threshold": 0})
+        sent_chains = []
+
+        class _Event:
+            def get_platform_name(self):
+                return "qq"
+
+            async def send(self, chain):
+                sent_chains.append(chain)
+
+        tweet = self._make_tweet("NASA", "109")
+        image_path = Path(self.temp_dir.name) / "image-event.jpg"
+        image_path.write_bytes(b"jpg")
+        tweet.media.append(
+            TweetMedia("image", "https://image.example.test/image-event.jpg", image_path)
+        )
+
+        ok = await sender._send_direct_event(
+            _Event(),
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(len(sent_chains), 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0].components))
+        self.assertFalse(any(isinstance(c, _Image) for c in sent_chains[0].components))
+        self.assertEqual(len(sent_chains[1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1].components[0], _Image))
+
     async def test_qq_direct_umo_splits_text_and_videos_without_forward(self):
         sender = TweetSender(
             {"send_video_attachments": True, "merge_tweet_threshold": 0}
@@ -2337,6 +2422,36 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(isinstance(c, _Video) for c in sent_chains[0][1].components))
         self.assertEqual(len(sent_chains[1][1].components), 1)
         self.assertTrue(isinstance(sent_chains[1][1].components[0], _Video))
+
+    async def test_qq_direct_umo_splits_text_and_images_without_forward(self):
+        sender = TweetSender({"merge_tweet_threshold": 0})
+        sent_chains = []
+
+        class _Context:
+            async def send_message(self, umo, chain):
+                sent_chains.append((umo, chain))
+
+        tweet = self._make_tweet("NASA", "110")
+        image_path = Path(self.temp_dir.name) / "image-umo.jpg"
+        image_path.write_bytes(b"jpg")
+        tweet.media.append(
+            TweetMedia("image", "https://image.example.test/image-umo.jpg", image_path)
+        )
+
+        outcome = await sender._send_direct_to_umo(
+            _Context(),
+            "qq:GroupMessage:123456",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual([umo for umo, _ in sent_chains], ["qq:GroupMessage:123456"] * 2)
+        self.assertTrue(any(isinstance(c, _Plain) for c in sent_chains[0][1].components))
+        self.assertFalse(any(isinstance(c, _Image) for c in sent_chains[0][1].components))
+        self.assertEqual(len(sent_chains[1][1].components), 1)
+        self.assertTrue(isinstance(sent_chains[1][1].components[0], _Image))
 
     async def test_buffered_qq_sends_per_user_at_end_below_merge_threshold(self):
         events = []

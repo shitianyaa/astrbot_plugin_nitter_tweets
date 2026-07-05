@@ -22,6 +22,10 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
     def should_split_direct_videos(self) -> bool:
         return True
 
+    @property
+    def should_split_direct_images(self) -> bool:
+        return True
+
     async def send_event_forward(self, event, raw_nodes: list[dict]) -> bool:
         client = getattr(event, "bot", None)
         call_action = self.profile.call_action

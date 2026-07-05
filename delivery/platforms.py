@@ -91,6 +91,10 @@ class PlatformProfile:
     def should_split_qq_direct_videos(self) -> bool:
         return self.is_onebot or bool(self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES)
 
+    @property
+    def should_split_qq_direct_images(self) -> bool:
+        return self.is_onebot or bool(self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES)
+
 
 class PlatformResolver:
     def from_umo(self, context: Any, umo: str) -> PlatformProfile:

@@ -1062,6 +1062,12 @@ class TweetSender:
             media.is_video for tweet in tweets for media in tweet.media if media.path
         )
 
+    @staticmethod
+    def _has_attached_images(tweets: list[TweetItem]) -> bool:
+        return any(
+            media.is_image for tweet in tweets for media in tweet.media if media.path
+        )
+
     def _should_split_qq_direct_videos(self, event, tweets: list[TweetItem]) -> bool:
         return bool(
             self.send_video_attachments
