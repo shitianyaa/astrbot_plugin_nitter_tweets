@@ -59,7 +59,7 @@
         "description": "发送图片附件",
         "type": "bool",
         "default": true,
-        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。"
+        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。"
       },
       "send_video_attachments": {
         "description": "发送视频/GIF 附件",
@@ -611,7 +611,7 @@
     "description": "发送图片附件",
     "type": "bool",
     "default": true,
-    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。",
+    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。",
     "invisible": true
   },
   "send_video_attachments": {

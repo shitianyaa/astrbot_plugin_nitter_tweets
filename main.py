@@ -171,7 +171,7 @@ class NitterTweetsPlugin(
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文缓存清理")
     async def cmd_tweets_clear_cache(self, event: AstrMessageEvent):
-        """清理本地推文内容缓存，下次检查时重新获取推文数据。"""
+        """清理普通图片/视频缓存，保留暂存队列媒体。"""
         return await self._cmd_tweets_clear_cache_impl(event)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
