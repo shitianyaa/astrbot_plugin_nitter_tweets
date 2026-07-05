@@ -188,6 +188,7 @@ class _Storage:
         self.synced_groups = []
         self.clear_seen_calls = []
         self.delete_legacy_seen_kv_calls = 0
+        self.delete_group_runtime_data_calls = []
 
     async def get_pending_queue_summary(self, group_id):
         return self.summaries.get(group_id, PendingQueueSummary(group_id=group_id))
@@ -205,6 +206,17 @@ class _Storage:
     async def delete_legacy_seen_kv(self):
         self.delete_legacy_seen_kv_calls += 1
         return True
+
+    async def delete_group_runtime_data(self, group_id):
+        self.delete_group_runtime_data_calls.append(group_id)
+        return {
+            "groups_deleted": 1,
+            "users_deleted": 1,
+            "targets_deleted": 1,
+            "seen_deleted": 1,
+            "pending_deleted": 2,
+            "pending_media_deleted": 3,
+        }
 
 
 class _CheckResult:
@@ -249,6 +261,7 @@ class _Scheduler:
 class _Media:
     def __init__(self):
         self.clear_non_staged_cache_calls = 0
+        self.delete_staged_media_group_calls = []
 
     def clear_non_staged_cache(self):
         self.clear_non_staged_cache_calls += 1
@@ -260,6 +273,18 @@ class _Media:
             videos=1,
             other=0,
             removed_empty_dirs=0,
+        )
+
+    def delete_staged_media_group(self, group_id):
+        self.delete_staged_media_group_calls.append(group_id)
+        return types.SimpleNamespace(
+            removed=2,
+            failed=0,
+            skipped_dirs=0,
+            removed_images=1,
+            removed_videos=1,
+            removed_other=0,
+            removed_empty_dirs=2,
         )
 
 
@@ -325,6 +350,17 @@ async def _call_json_handler(handler):
 
 
 class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
+    def test_registers_group_management_routes(self):
+        api = NitterWebAPI(_plugin(_Config({})))
+        context = _Context()
+
+        api.register(context)
+
+        routes = {item[0]: item[2] for item in context.routes}
+        self.assertEqual(routes["/astrbot_plugin_nitter_tweets/web/groups/create"], ["POST"])
+        self.assertEqual(routes["/astrbot_plugin_nitter_tweets/web/groups/update"], ["POST"])
+        self.assertEqual(routes["/astrbot_plugin_nitter_tweets/web/groups/delete"], ["POST"])
+
     def test_registers_dashboard_routes_under_plugin_prefix(self):
         api = NitterWebAPI(_plugin(_Config({})))
         context = _Context()
@@ -337,6 +373,9 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             {
                 "/astrbot_plugin_nitter_tweets/web/overview": ["GET"],
                 "/astrbot_plugin_nitter_tweets/web/groups": ["GET"],
+                "/astrbot_plugin_nitter_tweets/web/groups/create": ["POST"],
+                "/astrbot_plugin_nitter_tweets/web/groups/update": ["POST"],
+                "/astrbot_plugin_nitter_tweets/web/groups/delete": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/pending": ["GET"],
                 "/astrbot_plugin_nitter_tweets/web/check": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/publish": ["POST"],
@@ -347,6 +386,182 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "/astrbot_plugin_nitter_tweets/web/mirror/probe": ["POST"],
             },
         )
+
+    async def test_create_group_uses_safe_defaults(self):
+        config = _Config({"push": {"tweet_groups": []}})
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).create_group({})
+
+        self.assertTrue(payload["success"])
+        group = payload["group"]
+        self.assertEqual(group["group_id"], "group_1")
+        self.assertEqual(group["name"], "新分组 1")
+        self.assertFalse(group["enabled"])
+        self.assertTrue(group["interval_check_enabled"])
+        self.assertFalse(group["deferred_publish_enabled"])
+        self.assertFalse(group["filter_plain_text_enabled"])
+        self.assertEqual(group["watch_users"], [])
+        self.assertEqual(group["push_targets"], [])
+        self.assertEqual(group["pending_summary"]["pending_count"], 0)
+        self.assertTrue(config.saved)
+
+    async def test_update_group_rejects_group_id_mutation(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "科技", "group_id": "tech", "watch_users": []}
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {"group_id": "tech", "new_group_id": "news", "name": "科技"}
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertIn("group_id", payload["error"])
+
+    async def test_update_group_saves_editable_fields(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "enabled": True,
+                            "watch_users": ["OpenAI"],
+                            "push_targets": ["telegram:FriendMessage:1"],
+                            "interval_check_enabled": True,
+                            "daily_check_times": [],
+                            "deferred_publish_enabled": False,
+                            "filter_plain_text_enabled": False,
+                        }
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {
+                "group_id": "tech",
+                "name": "科技新闻",
+                "enabled": False,
+                "interval_check_enabled": False,
+                "daily_check_times": ["08:30", "21:05"],
+                "deferred_publish_enabled": True,
+                "filter_plain_text_enabled": True,
+            }
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["group"]["name"], "科技新闻")
+        self.assertFalse(payload["group"]["enabled"])
+        self.assertFalse(payload["group"]["interval_check_enabled"])
+        self.assertEqual(payload["group"]["daily_check_times"], ["08:30", "21:05"])
+        self.assertTrue(payload["group"]["deferred_publish_enabled"])
+        self.assertTrue(payload["group"]["filter_plain_text_enabled"])
+        self.assertTrue(config.saved)
+        self.assertEqual(_group_config(config, "tech")["name"], "科技新闻")
+
+    async def test_update_group_rejects_name_collision(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "科技", "group_id": "tech", "watch_users": []},
+                        {"name": "新闻", "group_id": "news", "watch_users": []},
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {"group_id": "tech", "name": "news"}
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertIn("冲突", payload["error"])
+
+    async def test_delete_group_rejects_default_group(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "默认分组", "group_id": "default", "watch_users": []}
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).delete_group(
+            {"group_id": "default", "confirm": "DELETE", "force": True}
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertIn("默认分组", payload["error"])
+
+    async def test_delete_group_removes_config_and_reports_cleanup_summary(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "默认分组", "group_id": "default", "watch_users": []},
+                        {"name": "科技", "group_id": "tech", "watch_users": ["OpenAI"]},
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).delete_group(
+            {"group_id": "tech", "confirm": "DELETE", "force": True}
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["group_id"], "tech")
+        self.assertEqual(payload["group_name"], "科技")
+        self.assertEqual(
+            payload["runtime_summary"],
+            {
+                "groups_deleted": 1,
+                "users_deleted": 1,
+                "targets_deleted": 1,
+                "seen_deleted": 1,
+                "pending_deleted": 2,
+                "pending_media_deleted": 3,
+            },
+        )
+        self.assertEqual(payload["media_summary"]["removed"], 2)
+        self.assertEqual(
+            plugin.scheduler.storage.delete_group_runtime_data_calls, ["tech"]
+        )
+        self.assertEqual(plugin.media.delete_staged_media_group_calls, ["tech"])
+        self.assertEqual(
+            [group.group_id for group in plugin.scheduler.storage.synced_groups],
+            ["default"],
+        )
+        self.assertEqual(
+            [group["group_id"] for group in config_get(config, "tweet_groups", [])],
+            ["default"],
+        )
+
+    async def test_create_group_rolls_back_when_save_fails(self):
+        config = _FailingSaveConfig({"push": {"tweet_groups": []}})
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).create_group({})
+
+        self.assertFalse(payload["success"])
+        self.assertIn("配置保存失败", payload["error"])
+        self.assertEqual(config_get(config, "tweet_groups", []), [])
 
     async def test_overview_counts_groups_watch_users_push_targets_and_pending(self):
         config = _Config(
@@ -694,6 +909,37 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.delete_legacy_seen_kv_calls, 1)
         self.assertFalse(config.saved)
         self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
+
+    async def test_seen_clear_handler_rejects_group_name_only_payload(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                        }
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+        api = NitterWebAPI(plugin)
+
+        async def fake_request_json():
+            return {"group_name": "tech"}
+
+        original_request_json = api._request_json
+        api._request_json = fake_request_json
+        try:
+            payload = await _call_json_handler(api.handle_seen_clear)
+        finally:
+            api._request_json = original_request_json
+
+        self.assertFalse(payload["success"])
+        self.assertIn("group_id", payload["error"])
+        self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [])
 
     async def test_run_check_rejects_disabled_group_without_starting_check(self):
         config = _Config(

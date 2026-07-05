@@ -195,6 +195,40 @@ class MediaCacheMixin:
             )
         return result
 
+    def delete_staged_media_group(self, group_id: str) -> MediaCacheCleanupResult:
+        result = MediaCacheCleanupResult()
+        group_root = self.staged_cache_dir / str(group_id or "").strip()
+        if not group_root.exists():
+            return result
+
+        for path in sorted(
+            group_root.rglob("*"),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            if path.is_file():
+                try:
+                    path.unlink()
+                    self._record_removed_media_file(result, path)
+                except OSError as exc:
+                    result.failed += 1
+                    logger.warning(
+                        f"[NitterTweets] 删除分组暂存媒体失败: path={path}, error={exc}"
+                    )
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                    result.removed_empty_dirs += 1
+                except OSError:
+                    pass
+
+        try:
+            group_root.rmdir()
+            result.removed_empty_dirs += 1
+        except OSError:
+            pass
+        return result
+
     def clear_non_staged_cache(self) -> MediaCacheCleanupResult:
         result = MediaCacheCleanupResult()
         seen_dirs: set[Path] = set()

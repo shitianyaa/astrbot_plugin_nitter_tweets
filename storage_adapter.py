@@ -204,6 +204,11 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(sqlite.delete_pending_tweets, pending_ids)
 
+    async def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
+        """Delete one group's runtime rows from SQLite."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.delete_group_runtime_data, group_id)
+
     async def cleanup_sent_pending_tweets(self, older_than: int) -> int:
         """Delete sent pending tweet rows older than a timestamp."""
         sqlite = await self._ensure_sqlite_connected()

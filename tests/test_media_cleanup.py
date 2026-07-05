@@ -34,6 +34,30 @@ from utils import TweetItem, TweetMedia
 
 
 class MediaCleanupTest(unittest.TestCase):
+    def test_delete_staged_media_group_removes_only_selected_group(self):
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            tech_dir = cache_dir / "staged" / "tech" / "200"
+            default_dir = cache_dir / "staged" / "default" / "100"
+            tech_dir.mkdir(parents=True)
+            default_dir.mkdir(parents=True)
+
+            tech_media = tech_dir / "00_image.jpg"
+            default_media = default_dir / "00_image.jpg"
+            tech_media.write_bytes(b"tech")
+            default_media.write_bytes(b"default")
+
+            service = MediaService({})
+            service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
+
+            result = service.delete_staged_media_group("tech")
+
+            self.assertEqual(result.removed, 1)
+            self.assertEqual(result.failed, 0)
+            self.assertFalse(tech_dir.exists())
+            self.assertTrue(default_media.exists())
+
     def test_send_cleanup_deletes_downloaded_media_after_send(self):
         with TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "image.jpg"

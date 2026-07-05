@@ -10,7 +10,6 @@
     <div id="app" class="shell">
       <header class="topbar">
         <div>
-          <p class="kicker">AstrBot Plugin Page</p>
           <h1>Nitter 推文面板</h1>
         </div>
         <div class="topbar-actions">
@@ -36,25 +35,21 @@
         <section id="overviewView" class="view active" aria-label="概览"></section>
 
         <section id="groupsView" class="view" aria-label="分组订阅">
-          <div class="toolbar">
-            <label class="field compact">
-              <span>分组</span>
-              <select id="groupActionSelect"></select>
-            </label>
-            <label class="field grow">
-              <span>关注账号</span>
-              <input id="subscriptionInput" type="text" placeholder="NASA,@OpenAI" />
-            </label>
-            <button id="importBtn" class="button primary" type="button">
-              <span class="icon" data-icon="plus"></span>
-              导入
-            </button>
-            <button id="deleteBtn" class="button danger ghost" type="button">
-              <span class="icon" data-icon="trash"></span>
-              删除
-            </button>
+          <div class="groups-layout">
+            <aside class="group-sidebar">
+              <div class="panel sidebar-panel">
+                <div class="panel-head">
+                  <h2>用户分组</h2>
+                  <button id="createGroupBtn" class="button primary small" type="button">
+                    <span class="icon" data-icon="plus"></span>
+                    新建分组
+                  </button>
+                </div>
+                <div id="groupList" class="group-list"></div>
+              </div>
+            </aside>
+            <section id="groupEditor" class="group-editor" aria-label="分组详情"></section>
           </div>
-          <div id="groupsContent" class="stack"></div>
         </section>
 
         <section id="pendingView" class="view" aria-label="暂存队列">

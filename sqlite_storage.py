@@ -1049,6 +1049,71 @@ class SQLiteStorage:
             [(pending_id,) for pending_id in ids],
         )
 
+    def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
+        """Delete one group's runtime rows."""
+        assert self.conn is not None
+        normalized_group_id = normalize_group_id(group_id)
+        pending_ids = [
+            int(row[0])
+            for row in self.conn.execute(
+                "SELECT id FROM pending_tweets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).fetchall()
+        ]
+        summary = {
+            "groups_deleted": 0,
+            "users_deleted": 0,
+            "targets_deleted": 0,
+            "seen_deleted": 0,
+            "pending_deleted": 0,
+            "pending_media_deleted": 0,
+        }
+        if pending_ids:
+            placeholders = ",".join("?" for _ in pending_ids)
+            summary["pending_media_deleted"] = int(
+                self.conn.execute(
+                    f"DELETE FROM pending_media WHERE pending_tweet_id IN ({placeholders})",
+                    pending_ids,
+                ).rowcount
+                or 0
+            )
+        summary["pending_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM pending_tweets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["seen_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM seen_tweets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["users_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM group_users WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["targets_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM group_targets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["groups_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM groups WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        return summary
+
     def cleanup_sent_pending_tweets(self, older_than: int) -> int:
         """Delete sent pending tweet rows at or before the timestamp."""
         assert self.conn is not None
@@ -1366,6 +1431,7 @@ for _method_name in (
     "mark_pending_tweets_published",
     "mark_pending_tweets_failed",
     "delete_pending_tweets",
+    "delete_group_runtime_data",
     "cleanup_sent_pending_tweets",
     "cleanup_orphan_seen_tweets",
     "_migrate_global_group_to_default",

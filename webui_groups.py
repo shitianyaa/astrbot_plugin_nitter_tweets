@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import copy
+from typing import Any
+
+from astrbot.api import logger
+
+try:
+    from .config_compat import (
+        TWEET_GROUP_TEMPLATE_KEY,
+        TWEET_GROUP_TEMPLATE_KEY_FIELD,
+        config_get,
+        config_set,
+    )
+    from .group_ids import is_default_group, normalize_group_id
+except ImportError:
+    from config_compat import (
+        TWEET_GROUP_TEMPLATE_KEY,
+        TWEET_GROUP_TEMPLATE_KEY_FIELD,
+        config_get,
+        config_set,
+    )
+    from group_ids import is_default_group, normalize_group_id
+
+
+class WebUIGroupEditor:
+    def __init__(self, plugin: Any) -> None:
+        self.plugin = plugin
+        self.config = plugin.config
+        self.scheduler = plugin.scheduler
+
+    def create_group(self) -> dict[str, Any]:
+        previous_groups = self._raw_groups()
+        groups = copy.deepcopy(previous_groups)
+        group_id = self._next_group_id(groups)
+        group_name = self._next_group_name(groups)
+        groups.append(
+            {
+                TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
+                "name": group_name,
+                "group_id": group_id,
+                "enabled": False,
+                "watch_users": [],
+                "push_targets": [],
+                "interval_check_enabled": True,
+                "daily_check_times": [],
+                "deferred_publish_enabled": False,
+                "filter_plain_text_enabled": False,
+            }
+        )
+        save_error = self._save_groups(previous_groups, groups)
+        if save_error:
+            return {"success": False, "error": f"配置保存失败：{save_error}"}
+        return {"success": True, "group_id": group_id}
+
+    def update_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        if self._text(data, "new_group_id"):
+            return {"success": False, "error": "WebUI 不支持修改 group_id"}
+
+        group_id = self._text(data, "group_id")
+        if not group_id:
+            return {"success": False, "error": "请选择分组"}
+
+        previous_groups = self._raw_groups()
+        groups = copy.deepcopy(previous_groups)
+        try:
+            index, raw_group = self._find_group(groups, group_id)
+        except KeyError:
+            return {"success": False, "error": f"未找到分组：{group_id}"}
+
+        try:
+            name = self._validated_name(groups, self._text(data, "name"), index)
+            daily_check_times = self._normalized_times(
+                data.get("daily_check_times", raw_group.get("daily_check_times", []))
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
+
+        raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
+        raw_group["name"] = name
+        raw_group["group_id"] = normalize_group_id(group_id)
+        raw_group["enabled"] = bool(data.get("enabled", raw_group.get("enabled", True)))
+        raw_group["interval_check_enabled"] = bool(
+            data.get(
+                "interval_check_enabled",
+                raw_group.get("interval_check_enabled", True),
+            )
+        )
+        raw_group["daily_check_times"] = daily_check_times
+        raw_group["deferred_publish_enabled"] = bool(
+            data.get(
+                "deferred_publish_enabled",
+                raw_group.get("deferred_publish_enabled", False),
+            )
+        )
+        raw_group["filter_plain_text_enabled"] = bool(
+            data.get(
+                "filter_plain_text_enabled",
+                raw_group.get("filter_plain_text_enabled", False),
+            )
+        )
+        groups[index] = raw_group
+        save_error = self._save_groups(previous_groups, groups)
+        if save_error:
+            return {"success": False, "error": f"配置保存失败：{save_error}"}
+        return {"success": True, "group_id": raw_group["group_id"]}
+
+    def delete_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        group_id = self._text(data, "group_id")
+        if not group_id:
+            return {"success": False, "error": "请选择分组"}
+        if is_default_group(group_id):
+            return {"success": False, "error": "默认分组不能在 WebUI 中删除"}
+        if not bool(data.get("force")) or self._text(data, "confirm") != "DELETE":
+            return {"success": False, "error": "删除分组需要二次确认"}
+
+        previous_groups = self._raw_groups()
+        groups = copy.deepcopy(previous_groups)
+        try:
+            index, raw_group = self._find_group(groups, group_id)
+        except KeyError:
+            return {"success": False, "error": f"未找到分组：{group_id}"}
+
+        deleted = groups.pop(index)
+        save_error = self._save_groups(previous_groups, groups)
+        if save_error:
+            return {"success": False, "error": f"配置保存失败：{save_error}"}
+        return {
+            "success": True,
+            "group_id": normalize_group_id(group_id),
+            "group_name": str(deleted.get("name") or group_id),
+        }
+
+    def _raw_groups(self) -> list[dict[str, Any]]:
+        raw_groups = config_get(self.config, "tweet_groups", []) or []
+        if isinstance(raw_groups, dict):
+            return [copy.deepcopy(raw_groups)]
+        if isinstance(raw_groups, list):
+            return copy.deepcopy(raw_groups)
+        return []
+
+    def _save_groups(
+        self,
+        previous_groups: list[dict[str, Any]],
+        next_groups: list[dict[str, Any]],
+    ) -> str:
+        config_set(self.config, "tweet_groups", next_groups)
+        save_config = getattr(self.config, "save_config", None)
+        if not callable(save_config):
+            config_set(self.config, "tweet_groups", previous_groups)
+            return "当前配置对象不支持 save_config()"
+        try:
+            save_config()
+        except Exception as exc:
+            config_set(self.config, "tweet_groups", previous_groups)
+            error = str(exc)
+            logger.warning(f"[NitterTweets] WebUI 保存分组配置失败: {error}")
+            return error
+        return ""
+
+    def _next_group_id(self, groups: list[dict[str, Any]]) -> str:
+        existing = {
+            self._group_identifier(raw_group, index)
+            for index, raw_group in enumerate(groups, 1)
+        }
+        counter = 1
+        while True:
+            candidate = f"group_{counter}"
+            if candidate not in existing:
+                return candidate
+            counter += 1
+
+    def _next_group_name(self, groups: list[dict[str, Any]]) -> str:
+        counter = 1
+        while True:
+            candidate = f"新分组 {counter}"
+            try:
+                return self._validated_name(groups, candidate)
+            except ValueError:
+                counter += 1
+
+    def _find_group(
+        self, groups: list[dict[str, Any]], group_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        target = normalize_group_id(group_id)
+        for index, raw_group in enumerate(groups):
+            if self._group_identifier(raw_group, index + 1) == target:
+                return index, raw_group
+        raise KeyError(target)
+
+    def _validated_name(
+        self,
+        groups: list[dict[str, Any]],
+        value: str,
+        exclude_index: int | None = None,
+    ) -> str:
+        name = str(value or "").strip()
+        if not name:
+            raise ValueError("分组名称不能为空")
+        normalized = normalize_group_id(name)
+        for index, raw_group in enumerate(groups):
+            if exclude_index is not None and index == exclude_index:
+                continue
+            if normalized in self._group_identifiers(raw_group, index + 1):
+                raise ValueError("分组名称与现有分组标识冲突")
+        return name
+
+    def _normalized_times(self, raw_times: Any) -> list[str]:
+        values = [
+            str(item).strip().replace("：", ":")
+            for item in self.scheduler.config_reader.config_list(raw_times)
+            if str(item).strip()
+        ]
+        if not values:
+            return []
+        parsed = self.scheduler.config_reader.parse_daily_times(values)
+        if len(parsed) != len(values):
+            raise ValueError("每日检查时间格式无效，请使用 HH:MM")
+        return [f"{hour:02d}:{minute:02d}" for hour, minute in parsed]
+
+    def _group_identifier(self, raw_group: dict[str, Any], index: int) -> str:
+        raw_group_id = str(raw_group.get("group_id") or "").strip()
+        name = str(raw_group.get("name") or "").strip()
+        return normalize_group_id(raw_group_id or name or f"group_{index}")
+
+    def _group_identifiers(
+        self, raw_group: dict[str, Any], index: int
+    ) -> set[str]:
+        identifiers = {self._group_identifier(raw_group, index)}
+        name = str(raw_group.get("name") or "").strip()
+        if name:
+            identifiers.add(normalize_group_id(name))
+        for alias in self.scheduler.config_reader.config_list(raw_group.get("aliases")):
+            identifiers.add(normalize_group_id(alias))
+        return identifiers
+
+    @staticmethod
+    def _text(data: dict[str, Any], key: str) -> str:
+        return str(data.get(key, "") or "").strip()

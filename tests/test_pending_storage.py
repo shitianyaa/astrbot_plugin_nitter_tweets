@@ -37,6 +37,140 @@ from utils import TweetItem, TweetMedia
 
 
 class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_delete_group_runtime_data_removes_only_target_group_rows(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                now = int(time.time())
+                await asyncio.to_thread(
+                    storage.upsert_group,
+                    "default",
+                    "默认分组",
+                    True,
+                    False,
+                    True,
+                    30,
+                    False,
+                    [],
+                    5,
+                    1.5,
+                    2.0,
+                    False,
+                    ["default"],
+                )
+                await asyncio.to_thread(
+                    storage.upsert_group,
+                    "tech",
+                    "科技",
+                    True,
+                    False,
+                    True,
+                    30,
+                    False,
+                    [],
+                    5,
+                    1.5,
+                    2.0,
+                    False,
+                    ["tech"],
+                )
+                await asyncio.to_thread(
+                    storage.set_group_users, "default", ["NASA"]
+                )
+                await asyncio.to_thread(
+                    storage.set_group_users, "tech", ["OpenAI"]
+                )
+                await asyncio.to_thread(
+                    storage.set_group_targets,
+                    "default",
+                    ["telegram:FriendMessage:1"],
+                )
+                await asyncio.to_thread(
+                    storage.set_group_targets,
+                    "tech",
+                    ["telegram:FriendMessage:2"],
+                )
+                await asyncio.to_thread(
+                    storage.add_seen_ids, "default", "NASA", ["100"]
+                )
+                await asyncio.to_thread(
+                    storage.add_seen_ids, "tech", "OpenAI", ["200"]
+                )
+
+                tech_tweet = TweetItem(
+                    text="queued",
+                    link="https://x.com/OpenAI/status/200",
+                    published="2026-07-05",
+                )
+                default_tweet = TweetItem(
+                    text="queued",
+                    link="https://x.com/NASA/status/100",
+                    published="2026-07-05",
+                )
+                await asyncio.to_thread(
+                    storage.enqueue_pending_tweets,
+                    "tech",
+                    "OpenAI",
+                    "https://nitter.test",
+                    [tech_tweet],
+                    now,
+                )
+                await asyncio.to_thread(
+                    storage.enqueue_pending_tweets,
+                    "default",
+                    "NASA",
+                    "https://nitter.test",
+                    [default_tweet],
+                    now,
+                )
+
+                summary = await asyncio.to_thread(
+                    storage.delete_group_runtime_data, "tech"
+                )
+
+                self.assertEqual(summary["groups_deleted"], 1)
+                self.assertEqual(summary["users_deleted"], 1)
+                self.assertEqual(summary["targets_deleted"], 1)
+                self.assertEqual(summary["seen_deleted"], 1)
+                self.assertEqual(summary["pending_deleted"], 1)
+                self.assertEqual(summary["pending_media_deleted"], 0)
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_group_users, "default"),
+                    ["NASA"],
+                )
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_group_users, "tech"),
+                    [],
+                )
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_group_targets, "default"),
+                    ["telegram:FriendMessage:1"],
+                )
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_group_targets, "tech"),
+                    [],
+                )
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_seen_ids, "default", "NASA"),
+                    ["100"],
+                )
+                self.assertEqual(
+                    await asyncio.to_thread(storage.get_seen_ids, "tech", "OpenAI"),
+                    [],
+                )
+                remaining_default = storage.conn.execute(
+                    "SELECT COUNT(*) FROM pending_tweets WHERE group_id = 'default'"
+                ).fetchone()[0]
+                remaining_tech = storage.conn.execute(
+                    "SELECT COUNT(*) FROM pending_tweets WHERE group_id = 'tech'"
+                ).fetchone()[0]
+                self.assertEqual(remaining_default, 1)
+                self.assertEqual(remaining_tech, 0)
+            finally:
+                storage.close()
+
     async def test_pending_queue_round_trips_tweet_and_media(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"

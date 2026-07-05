@@ -84,12 +84,19 @@ flowchart TD
 | 页面 | 作用 |
 | --- | --- |
 | `概览` | 查看调度器运行状态、后台检查总开关、用户分组、关注账号、推送目标、无效推送目标、暂存队列、功能开关和关键配置摘要。 |
-| `分组订阅` | 查看每个用户分组的关注账号、推送目标、无效推送目标、别名、间隔检查、每日检查、暂存发布、纯文本过滤状态和分组提示；支持导入和删除关注账号。 |
+| `分组订阅` | 左侧用户分组列表 + 右侧详情编辑；支持创建安全默认的新分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`deferred_publish_enabled`、`filter_plain_text_enabled`，并继续支持导入和删除关注账号。 |
 | `暂存队列` | 查看各分组待发布推文、账号分布、失败数量、媒体数量、最早/最新入队时间、失败原因和已送达推送目标数量；支持按分组发布暂存队列。 |
 | `镜像测试` | 使用临时 Nitter 镜像 URL 测试指定账号 RSS 抓取；要求完整 `http://` 或 `https://` 地址，不写入 `instances`，不写入推送记录。 |
 | `缓存清理` | 清理普通媒体缓存或推送记录；媒体缓存清理会保留 `cache/staged/` 暂存媒体，推送记录清理不会删除关注账号、推送目标、暂存队列或媒体文件。 |
 
-WebUI v1 不编辑完整 `tweet_groups`，也不编辑推送目标、AI、媒体下载、Nitter 实例、并发与限流等配置。这些配置仍以 `_conf_schema.json` 对应的 AstrBot 设置页为准。
+### WebUI 分组管理 v2
+
+- `group_id` 只读展示，不支持在 WebUI 中修改。
+- 默认分组不可删除；删除自定义分组时会同时清理该分组的推送记录、暂存队列和 `cache/staged/<group_id>/` 暂存媒体。
+- `check_interval_minutes` 和 `deferred_publish_times` 仍是全局配置，分组编辑页只展示“继承全局”的有效值。
+- `push_targets` 在这一阶段仍是只读展示，编辑入口留到后续阶段。
+
+WebUI 不编辑完整 `tweet_groups`，也不编辑推送目标、AI、媒体下载、Nitter 实例、并发与限流等配置。这些配置仍以 `_conf_schema.json` 对应的 AstrBot 设置页为准。
 
 ## 配置参考
 

@@ -13,11 +13,13 @@ try:
     from .scheduler_config import ScheduleGroup
     from .sqlite_storage import PendingQueueSummary, PendingTweetRecord
     from .utils import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from .webui_groups import WebUIGroupEditor
 except ImportError:
     from config_compat import config_get
     from scheduler_config import ScheduleGroup
     from sqlite_storage import PendingQueueSummary, PendingTweetRecord
     from utils import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from webui_groups import WebUIGroupEditor
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
@@ -33,6 +35,9 @@ class NitterWebAPI:
         routes: list[tuple[str, str, list[str]]] = [
             ("web/overview", "handle_overview", ["GET"]),
             ("web/groups", "handle_groups", ["GET"]),
+            ("web/groups/create", "handle_group_create", ["POST"]),
+            ("web/groups/update", "handle_group_update", ["POST"]),
+            ("web/groups/delete", "handle_group_delete", ["POST"]),
             ("web/pending", "handle_pending", ["GET"]),
             ("web/check", "handle_check", ["POST"]),
             ("web/publish", "handle_publish", ["POST"]),
@@ -66,6 +71,27 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
+    async def handle_group_create(self):
+        async def action():
+            data = await self._request_json()
+            return await self.create_group(data)
+
+        return await self._json_response(action)
+
+    async def handle_group_update(self):
+        async def action():
+            data = await self._request_json()
+            return await self.update_group(data)
+
+        return await self._json_response(action)
+
+    async def handle_group_delete(self):
+        async def action():
+            data = await self._request_json()
+            return await self.delete_group(data)
+
+        return await self._json_response(action)
+
     async def handle_check(self):
         async def action():
             data = await self._request_json()
@@ -86,9 +112,9 @@ class NitterWebAPI:
     async def handle_seen_clear(self):
         async def action():
             data = await self._request_json()
-            group_id = self._data_text(data, "group_id") or self._data_text(
-                data, "group_name"
-            )
+            group_id = self._data_text(data, "group_id")
+            if not group_id and self._data_text(data, "group_name"):
+                return self._error("WebUI API 仅支持使用 group_id 指定分组")
             return await self.clear_seen(group_id)
 
         return await self._json_response(action)
@@ -179,6 +205,66 @@ class NitterWebAPI:
             ],
             terminology=self._terminology(),
         )
+
+    async def create_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = self._group_editor().create_group()
+        if not result.get("success"):
+            return result
+
+        sync_error = await self._sync_groups()
+        group, error = self._resolve_group(result["group_id"])
+        if error:
+            return self._error(error)
+        summary = await self.storage.get_pending_queue_summary(group.group_id)
+        payload = self._ok(
+            group=self._serialize_group(group, summary),
+        )
+        if sync_error:
+            payload["sync_error"] = sync_error
+            payload["message"] = f"分组已创建，但数据库同步失败：{sync_error}"
+        return payload
+
+    async def update_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = self._group_editor().update_group(data)
+        if not result.get("success"):
+            return result
+
+        sync_error = await self._sync_groups()
+        group, error = self._resolve_group(result["group_id"])
+        if error:
+            return self._error(error)
+        summary = await self.storage.get_pending_queue_summary(group.group_id)
+        payload = self._ok(
+            group=self._serialize_group(group, summary),
+        )
+        if sync_error:
+            payload["sync_error"] = sync_error
+            payload["message"] = f"分组已保存，但数据库同步失败：{sync_error}"
+        return payload
+
+    async def delete_group(self, data: dict[str, Any]) -> dict[str, Any]:
+        result = self._group_editor().delete_group(data)
+        if not result.get("success"):
+            return result
+
+        runtime_summary = await self.storage.delete_group_runtime_data(
+            result["group_id"]
+        )
+        media_summary = await asyncio.to_thread(
+            self.plugin.media.delete_staged_media_group,
+            result["group_id"],
+        )
+        sync_error = await self._sync_groups()
+        payload = self._ok(
+            group_id=result["group_id"],
+            group_name=result["group_name"],
+            runtime_summary=runtime_summary,
+            media_summary=self._serialize_cache_result(media_summary),
+        )
+        if sync_error:
+            payload["sync_error"] = sync_error
+            payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
+        return payload
 
     async def build_pending(self, group_id: str = "", limit: int = 50) -> dict[str, Any]:
         groups = self._schedule_groups()
@@ -448,6 +534,18 @@ class NitterWebAPI:
 
     def _schedule_groups(self) -> list[ScheduleGroup]:
         return self.scheduler.config_reader.schedule_groups(log_invalid_targets=False)
+
+    def _group_editor(self) -> WebUIGroupEditor:
+        return WebUIGroupEditor(self.plugin)
+
+    async def _sync_groups(self) -> str:
+        try:
+            await self.storage.migrate_and_sync(self._schedule_groups())
+        except Exception as exc:
+            error = str(exc)
+            logger.warning(f"[NitterTweets] WebUI 分组同步失败: {error}")
+            return error
+        return ""
 
     async def _pending_summaries(
         self, groups: list[ScheduleGroup]

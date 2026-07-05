@@ -51,7 +51,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
     def test_disabled_group_check_button_is_disabled(self):
         source = APP_JS.read_text(encoding="utf-8")
 
-        self.assertIn("data-check-group=", source)
+        self.assertIn("checkGroup", source)
         self.assertIn("group.enabled", source)
         self.assertIn("分组停用时不能立即检查", source)
 
@@ -71,6 +71,23 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("summary-users", body)
         self.assertIn("账号", body)
 
+    def test_overview_uses_compact_three_panel_layout(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+        body = _function_body(source, "renderOverview")
+
+        self.assertIn("overview-panels", body)
+        self.assertIn(".overview-panels", style)
+        self.assertIn("repeat(3, minmax(0, 1fr))", style)
+        self.assertIn("align-items: start", style)
+
+    def test_dashboard_does_not_assign_innerhtml(self):
+        source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertNotIn(".innerHTML =", source)
+
     def test_group_dependent_controls_are_disabled_without_groups(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "setBusy")
 
@@ -81,21 +98,52 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
     def test_group_attention_items_are_rendered(self):
         source = APP_JS.read_text(encoding="utf-8")
-        body = _function_body(source, "renderGroups")
+        body = _function_body(source, "renderGroupList")
 
         self.assertIn("group.attention_items", body)
-        self.assertIn("group-alerts", body)
-        self.assertIn("attention-badge", body)
-        self.assertIn("item.title", body)
+        self.assertIn("group-list-alerts", body)
+        self.assertIn("attention-badge", source)
+        self.assertIn("item.title", source)
 
     def test_group_invalid_and_duplicate_watch_users_are_rendered(self):
         source = APP_JS.read_text(encoding="utf-8")
-        body = _function_body(source, "renderGroups")
+        body = _function_body(source, "renderGroupEditor")
 
         self.assertIn("group.invalid_watch_users", body)
         self.assertIn("group.duplicate_watch_users", body)
         self.assertIn("无效关注账号", body)
         self.assertIn("重复关注项", body)
+
+    def test_groups_view_uses_list_detail_layout(self):
+        source = INDEX_HTML.read_text(encoding="utf-8")
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="groupList"', source)
+        self.assertIn('id="groupEditor"', source)
+        self.assertIn(".groups-layout", style)
+        self.assertIn(".group-sidebar", style)
+
+    def test_dashboard_removes_generic_plugin_page_kicker(self):
+        source = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertNotIn("AstrBot Plugin Page", source)
+
+    def test_group_editor_tracks_dirty_state(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "saveGroupEdits")
+
+        self.assertIn("groupDrafts", source)
+        self.assertIn("isGroupDirty", source)
+        self.assertIn("snapshotEditableGroup", body)
+
+    def test_group_editor_renders_global_fields_as_read_only_context(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")
+
+        self.assertIn("继承全局", body)
+        self.assertIn("check_interval_minutes", body)
+        self.assertIn("deferred_publish_times", body)
 
     def test_cache_cleanup_result_shows_media_breakdown(self):
         source = APP_JS.read_text(encoding="utf-8")
