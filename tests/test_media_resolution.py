@@ -336,6 +336,23 @@ class MediaResolutionTest(unittest.TestCase):
         self.assertEqual(media, [])
         self.assertEqual(len(calls), 1)
 
+    def test_attach_media_uses_existing_media_urls_without_resolving_again(self):
+        service = MediaService({"send_image_attachments": True})
+        tweet = _tweet()
+        tweet.media = [TweetMedia("image", "https://example.test/history.jpg")]
+
+        def fail_resolve(_tweet):
+            raise AssertionError("should not resolve media again")
+
+        service._resolve_media_urls = fail_resolve
+        service._download = lambda media: Path("history.jpg")
+
+        asyncio.run(service.attach_media([tweet]))
+
+        self.assertEqual(len(tweet.media), 1)
+        self.assertEqual(tweet.media[0].url, "https://example.test/history.jpg")
+        self.assertEqual(tweet.media[0].path, Path("history.jpg"))
+
 
 if __name__ == "__main__":
     unittest.main()

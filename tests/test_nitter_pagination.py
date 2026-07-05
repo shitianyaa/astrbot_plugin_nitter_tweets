@@ -787,6 +787,41 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
+    async def test_skip_plain_text_filters_blockquote_media_only(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def body(request):
+            del request
+            return _rss_with_descriptions(
+                [
+                    (
+                        "/nasa/status/100",
+                        "t1",
+                        "<p>主推文本</p>"
+                        "<hr/>"
+                        "<blockquote>"
+                        "<p>引用推文</p>"
+                        '<img src="https://nitter.net/pic/media%2Fquoted.jpg" />'
+                        "</blockquote>",
+                    ),
+                    (
+                        "/nasa/status/101",
+                        "t2",
+                        '<img src="https://nitter.net/pic/media%2Fown.jpg" />',
+                    ),
+                ]
+            )
+
+        original_urlopen = self._patch_urlopen(body)
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
+        finally:
+            media.urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
+
     async def test_skip_plain_text_filters_quote_media_with_duplicate_class_attrs(self):
         client = NitterClient(
             {"instances": ["https://nitter.example"], "request_timeout": 12}

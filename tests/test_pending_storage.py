@@ -49,6 +49,13 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     published="2026-07-05",
                     translation="月球",
                     ai_comment="值得看",
+                    media=[
+                        TweetMedia(
+                            "image",
+                            "https://media.example.test/moon.jpg",
+                            Path("C:/tmp/moon.jpg"),
+                        )
+                    ],
                 )
                 openai = TweetItem(
                     text="model",
@@ -95,6 +102,13 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(first_record)
             self.assertEqual(first_record.tweet.translation, "月球")
             self.assertEqual(first_record.tweet.ai_comment, "值得看")
+            self.assertEqual(len(first_record.tweet.media), 1)
+            self.assertEqual(
+                first_record.tweet.media[0].url,
+                "https://media.example.test/moon.jpg",
+            )
+            self.assertIsNone(first_record.tweet.media[0].path)
+            self.assertNotIn("C:/tmp/moon.jpg", repr(first_record.tweet))
             self.assertEqual(first_record.target_umo, "telegram:FriendMessage:1")
             self.assertEqual(first_record.source, "scheduled")
 

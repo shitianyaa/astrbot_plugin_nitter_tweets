@@ -1293,6 +1293,15 @@ class SQLiteStorage:
                 "text": tweet.text,
                 "link": tweet.link,
                 "published": tweet.published,
+                "media": [
+                    {
+                        "kind": media.kind,
+                        "url": media.url,
+                        "duration_seconds": media.duration_seconds,
+                    }
+                    for media in tweet.media
+                    if media.url
+                ],
                 "media_warnings": tweet.media_warnings,
                 "ai_warnings": tweet.ai_warnings,
                 "translation": tweet.translation,
@@ -1308,10 +1317,20 @@ class SQLiteStorage:
             data = json.loads(raw_data)
         except (TypeError, ValueError):
             data = {}
-        return TweetItem(
+        tweet = TweetItem(
             text=str(data.get("text") or ""),
             link=str(data.get("link") or ""),
             published=str(data.get("published") or ""),
+            media=[
+                TweetMedia(
+                    kind=str(item.get("kind") or ""),
+                    url=str(item.get("url") or ""),
+                    path=None,
+                    duration_seconds=item.get("duration_seconds"),
+                )
+                for item in data.get("media", [])
+                if isinstance(item, dict) and str(item.get("url") or "")
+            ],
             media_warnings=[
                 str(item)
                 for item in data.get("media_warnings", [])
@@ -1326,6 +1345,7 @@ class SQLiteStorage:
             image_caption=str(data.get("image_caption") or ""),
             ai_comment=str(data.get("ai_comment") or ""),
         )
+        return tweet
 
     @staticmethod
     def _serialize_delivered_targets(targets: list[str] | tuple[str, ...]) -> str:

@@ -76,6 +76,7 @@ class _AuthorMediaDetector(HTMLParser):
         tag = tag.lower()
         ignored = (
             self._inside_ignored_container
+            or tag == "blockquote"
             or self._is_ignored_container(attrs)
             or self._is_article_link(tag, attrs)
         )
@@ -86,8 +87,10 @@ class _AuthorMediaDetector(HTMLParser):
         self._ignored_stack.append((tag, ignored))
 
     def handle_startendtag(self, tag: str, attrs):
+        tag = tag.lower()
         if (
             self._inside_ignored_container
+            or tag == "blockquote"
             or self._is_ignored_container(attrs)
             or self._is_article_link(tag, attrs)
         ):

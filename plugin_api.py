@@ -348,9 +348,11 @@ class NitterWebAPI:
             limit + 1,
             offset,
         )
-        has_next = len(records) > limit
-        visible_records = records[:limit]
         group_names = {group.group_id: group.name for group in self._schedule_groups()}
+        groups_by_id = {group.group_id: group for group in self._schedule_groups()}
+        grouped_records = self._group_history_records(records, group_names, groups_by_id)
+        has_next = len(grouped_records) > limit
+        visible_records = grouped_records[:limit]
         return self._ok(
             selected_group_id=group_id,
             selected_username=username,
@@ -361,10 +363,7 @@ class NitterWebAPI:
             has_next=has_next,
             prev_offset=max(0, offset - limit),
             next_offset=offset + limit if has_next else offset,
-            records=[
-                self._serialize_history_record(record, group_names)
-                for record in visible_records
-            ],
+            records=visible_records,
             terminology=self._terminology(),
         )
 
@@ -377,7 +376,8 @@ class NitterWebAPI:
         )
         if record_id <= 0:
             return self._error("请选择要重新推送的记录")
-        result = await self.scheduler.replay_push_history(record_id)
+        target_umos = self._data_text_list(data, "target_umos")
+        result = await self.scheduler.replay_push_history(record_id, target_umos)
         if not result.get("success"):
             return result
         return self._ok(**result)
@@ -1029,6 +1029,64 @@ class NitterWebAPI:
         }
 
     @staticmethod
+    def _group_history_records(
+        records: list[PushHistoryRecord],
+        group_names: dict[str, str],
+        groups_by_id: dict[str, ScheduleGroup],
+    ) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+        order: list[tuple[str, str, str, str, str]] = []
+        for record in records:
+            key = (
+                record.group_id,
+                record.username,
+                record.status_id,
+                record.source,
+                record.original_link or record.tweet.x_url,
+            )
+            item = grouped.get(key)
+            serialized = NitterWebAPI._serialize_history_record(record, group_names)
+            if item is None:
+                group = groups_by_id.get(record.group_id)
+                current_targets = list(getattr(group, "targets", []) or [])
+                item = {
+                    **serialized,
+                    "target_umos": [],
+                    "target_count": 0,
+                    "replay_target_options": [
+                        {
+                            "umo": target,
+                            "historical": False,
+                            "available": True,
+                        }
+                        for target in current_targets
+                    ],
+                }
+                grouped[key] = item
+                order.append(key)
+            if record.target_umo and record.target_umo not in item["target_umos"]:
+                item["target_umos"].append(record.target_umo)
+            item["target_count"] = len(item["target_umos"])
+            if int(record.pushed_at or 0) > int(item.get("pushed_at") or 0):
+                item.update(serialized)
+            options_by_umo = {
+                option["umo"]: option for option in item["replay_target_options"]
+            }
+            if record.target_umo:
+                option = options_by_umo.get(record.target_umo)
+                if option is None:
+                    item["replay_target_options"].append(
+                        {
+                            "umo": record.target_umo,
+                            "historical": True,
+                            "available": False,
+                        }
+                    )
+                else:
+                    option["historical"] = True
+        return [grouped[key] for key in order]
+
+    @staticmethod
     def _serialize_check_result(result: Any) -> dict[str, Any]:
         return {
             "group_id": getattr(result, "group_id", ""),
@@ -1104,6 +1162,15 @@ class NitterWebAPI:
     @staticmethod
     def _data_text(data: dict[str, Any], key: str) -> str:
         return str(data.get(key, "") or "").strip()
+
+    @staticmethod
+    def _data_text_list(data: dict[str, Any], key: str) -> list[str]:
+        value = data.get(key, [])
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
 
     @staticmethod
     def _parse_int(

@@ -852,6 +852,19 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.history-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 520px;
+}
+
+.history-target-chip {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .error-text {
   color: var(--danger) !important;
 }
@@ -931,8 +944,54 @@ button:focus-visible {
   padding: 18px;
 }
 
-.dialog-panel p {
+.dialog-panel p,
+.dialog-desc {
   color: var(--muted);
+}
+
+.replay-target-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.replay-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.replay-target-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.replay-target-option input {
+  margin-top: 3px;
+}
+
+.replay-target-option span,
+.replay-target-option small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.replay-target-option small {
+  grid-column: 2;
+  color: var(--muted);
+}
+
+.replay-target-option.disabled {
+  opacity: 0.64;
 }
 
 .dialog-actions {

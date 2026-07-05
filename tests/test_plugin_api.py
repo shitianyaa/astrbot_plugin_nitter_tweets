@@ -269,8 +269,8 @@ class _Scheduler:
         self.publish_pending_calls.append(kwargs)
         return _CheckResult("已发布暂存队列")
 
-    async def replay_push_history(self, record_id):
-        self.replay_push_history_calls.append(record_id)
+    async def replay_push_history(self, record_id, target_umos=None):
+        self.replay_push_history_calls.append((record_id, target_umos))
         if record_id == 404:
             return {"success": False, "error": "未找到推送记录"}
         if record_id == 400:
@@ -1182,13 +1182,86 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["username"] for row in filtered["records"]], ["oioioi525"])
         self.assertEqual(filtered["selected_username"], "oi")
 
+    async def test_push_history_groups_multiple_targets_for_same_tweet(self):
+        plugin = _plugin(
+            _Config(
+                {
+                    "push": {
+                        "tweet_groups": [
+                            {
+                                "name": "coser",
+                                "group_id": "coser",
+                                "watch_users": ["xixikawaii"],
+                                "push_targets": [
+                                    "default:GroupMessage:1",
+                                    "lark:GroupMessage:2",
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        plugin.scheduler.storage.history = [
+            PushHistoryRecord(
+                id=11,
+                group_id="coser",
+                username="xixikawaii",
+                status_id="207",
+                original_link="https://x.com/xixikawaii/status/207",
+                target_umo=target,
+                source="scheduled",
+                instance="https://nitter.test",
+                pushed_at=2000 + index,
+                tweet=TweetItem(
+                    text="same tweet",
+                    link="https://x.com/xixikawaii/status/207",
+                    published="",
+                ),
+            )
+            for index, target in enumerate(
+                ["default:GroupMessage:1", "lark:GroupMessage:2"]
+            )
+        ]
+
+        payload = await NitterWebAPI(plugin).build_history(limit=10)
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(len(payload["records"]), 1)
+        record = payload["records"][0]
+        self.assertEqual(record["target_count"], 2)
+        self.assertEqual(
+            record["target_umos"],
+            ["lark:GroupMessage:2", "default:GroupMessage:1"],
+        )
+        self.assertEqual(
+            record["replay_target_options"],
+            [
+                {
+                    "umo": "default:GroupMessage:1",
+                    "historical": True,
+                    "available": True,
+                },
+                {
+                    "umo": "lark:GroupMessage:2",
+                    "historical": True,
+                    "available": True,
+                },
+            ],
+        )
+
     async def test_replay_push_history_uses_scheduler_result(self):
         plugin = _plugin(_Config({}))
 
-        payload = await NitterWebAPI(plugin).replay_history({"record_id": 12})
+        payload = await NitterWebAPI(plugin).replay_history(
+            {"record_id": 12, "target_umos": ["telegram:FriendMessage:2"]}
+        )
 
         self.assertTrue(payload["success"])
-        self.assertEqual(plugin.scheduler.replay_push_history_calls, [12])
+        self.assertEqual(
+            plugin.scheduler.replay_push_history_calls,
+            [(12, ["telegram:FriendMessage:2"])],
+        )
         self.assertEqual(payload["target_count"], 2)
 
     async def test_replay_push_history_rejects_missing_current_targets(self):

@@ -182,8 +182,19 @@ function apiResult(result) {
   return result;
 }
 
+function endpointWithQuery(endpoint, params) {
+  const entries = Object.entries(params || {}).filter(([, value]) => value != null && value !== "");
+  if (!entries.length) {
+    return endpoint;
+  }
+  const search = new URLSearchParams();
+  entries.forEach(([key, value]) => search.set(key, String(value)));
+  const separator = String(endpoint).includes("?") ? "&" : "?";
+  return `${endpoint}${separator}${search.toString()}`;
+}
+
 async function apiGet(endpoint, params) {
-  return apiResult(await bridge.apiGet(endpoint, params));
+  return apiResult(await bridge.apiGet(endpointWithQuery(endpoint, params)));
 }
 
 async function apiPost(endpoint, body) {
@@ -252,6 +263,37 @@ function formatTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function shortUmoLabel(umo) {
+  const value = String(umo || "").trim();
+  if (!value) return "-";
+  const [platform, messageType, sessionId] = value.split(":");
+  if (!platform || !messageType || !sessionId) {
+    return value;
+  }
+  const typeLabel = messageType.replace("Message", "");
+  return `${platform}:${typeLabel}`;
+}
+
+function historyTargetChips(row) {
+  const targets = Array.isArray(row.target_umos)
+    ? row.target_umos.filter(Boolean)
+    : [row.target_umo].filter(Boolean);
+  if (!targets.length) {
+    return el("span", { className: "muted", text: "-" });
+  }
+  return el(
+    "div",
+    { className: "history-targets" },
+    targets.map((target) =>
+      el("span", {
+        className: "chip mono history-target-chip",
+        attrs: { title: target },
+        text: shortUmoLabel(target),
+      }),
+    ),
+  );
 }
 
 function compactList(values, empty = "无") {
@@ -1002,7 +1044,7 @@ function renderHistory() {
         el("td", { text: row.group_name || row.group_id || "-" }),
         el("td", { text: `@${row.username}` }),
         tweetCell,
-        el("td", { className: "mono-cell", text: row.target_umo || "-" }),
+        el("td", {}, [historyTargetChips(row)]),
         el("td", { text: row.source || "-" }),
         el("td", {}, [
           el(
@@ -1113,7 +1155,7 @@ async function loadHistoryPage(offset) {
   await loadHistory();
 }
 
-async function reloadAll() {
+async function reloadAll(options = {}) {
   setBusy(true);
   hideAlert();
   try {
@@ -1132,6 +1174,9 @@ async function reloadAll() {
     }
     if (!state.groups.some((group) => group.group_id === state.pendingGroupId)) {
       state.pendingGroupId = state.selectedGroupId || state.groups[0]?.group_id || "";
+    }
+    if (options.preserveDrafts === false) {
+      state.groupDrafts = {};
     }
     syncGroupDrafts();
     syncSelectors();
@@ -1154,6 +1199,16 @@ async function reloadAll() {
       setBusy(false);
     }
   }
+}
+
+async function refreshDashboard() {
+  if (hasDirtyGroup()) {
+    const confirmed = window.confirm("分组订阅有未保存更改，刷新会丢弃这些草稿。继续刷新？");
+    if (!confirmed) {
+      return;
+    }
+  }
+  await reloadAll({ preserveDrafts: false });
 }
 
 function switchView(view) {
@@ -1179,8 +1234,14 @@ function openConfirm({
   state.pendingAction = action;
   els.confirmKicker.textContent = kicker;
   els.confirmTitle.textContent = title;
-  els.confirmDesc.textContent = desc;
+  els.confirmDesc.replaceChildren();
+  if (desc instanceof Node) {
+    els.confirmDesc.appendChild(desc);
+  } else {
+    els.confirmDesc.textContent = desc;
+  }
   els.confirmActionBtn.textContent = confirmText || "确认";
+  els.confirmActionBtn.disabled = false;
   els.confirmActionBtn.classList.toggle("danger", danger);
   els.confirmDialog.hidden = false;
   els.cancelConfirmBtn.focus();
@@ -1332,19 +1393,64 @@ function replayHistory(recordId) {
     (item) => String(item.id) === String(recordId),
   );
   const group = state.groups.find((item) => item.group_id === record?.group_id);
-  const targetCount = group?.push_target_count ?? 0;
+  const options = Array.isArray(record?.replay_target_options)
+    ? record.replay_target_options
+    : (group?.push_targets || []).map((target) => ({
+        umo: target,
+        historical: (record?.target_umos || []).includes(target),
+        available: true,
+      }));
+  const availableOptions = options.filter((option) => option.available);
+  const desc = el("div", { className: "replay-target-panel" }, [
+    el("p", {
+      text: "选择要重新推送到的当前推送目标。历史旧目标只用于提示，不会自动使用。",
+    }),
+    el(
+      "div",
+      { className: "replay-target-list" },
+      options.map((option, index) =>
+        el("label", { className: `replay-target-option ${option.available ? "" : "disabled"}` }, [
+          el("input", {
+            attrs: {
+              type: "checkbox",
+              checked: option.available,
+              disabled: !option.available,
+            },
+            dataset: { replayTarget: option.umo },
+          }),
+          el("span", { className: "mono-cell", text: option.umo }),
+          el("small", {
+            text: option.available
+              ? option.historical
+                ? "当前可用，历史已送达"
+                : "当前可用"
+              : "历史目标，当前配置未包含",
+          }),
+        ]),
+      ),
+    ),
+  ]);
   openConfirm({
     kicker: "重新推送",
     title: "重新推送这条记录？",
-    desc: `会发送到当前分组现有推送目标，共 ${formatNumber(targetCount)} 个。`,
+    desc,
     confirmText: "重新推送",
     danger: false,
     action: () =>
-      withAction(
-        () => apiPost("web/history/replay", { record_id: recordId }),
-        "重新推送完成",
-      ),
+      withAction(() => {
+        const selectedTargets = [
+          ...els.confirmDialog.querySelectorAll("[data-replay-target]:checked"),
+        ].map((node) => node.dataset.replayTarget);
+        if (!selectedTargets.length) {
+          throw new Error("请选择至少一个推送目标");
+        }
+        return apiPost("web/history/replay", {
+          record_id: recordId,
+          target_umos: selectedTargets,
+        });
+      }, "重新推送完成"),
   });
+  els.confirmActionBtn.disabled = availableOptions.length <= 0;
 }
 
 function confirmDeleteGroup(groupId) {
@@ -1515,7 +1621,7 @@ function bindEvents() {
   els.tabs.forEach((tab) => {
     tab.addEventListener("click", () => switchView(tab.dataset.view));
   });
-  els.refreshBtn.addEventListener("click", reloadAll);
+  els.refreshBtn.addEventListener("click", refreshDashboard);
   els.createGroupBtn.addEventListener("click", createGroup);
   els.pendingRefreshBtn.addEventListener("click", () =>
     withAction(() => loadPending(selectedPendingGroupId()), "暂存队列已刷新", {

@@ -123,7 +123,17 @@ class MediaService(MediaCacheMixin):
                 self._add_media_warning(tweet, f"媒体解析失败，已保留原文链接：{exc}")
 
     async def resolve_and_download(self, tweet: TweetItem) -> list[TweetMedia]:
-        media_urls = await asyncio.to_thread(self._resolve_media_urls, tweet)
+        media_urls = [
+            TweetMedia(
+                media.kind,
+                media.url,
+                duration_seconds=media.duration_seconds,
+            )
+            for media in tweet.media
+            if media.url
+        ]
+        if not media_urls:
+            media_urls = await asyncio.to_thread(self._resolve_media_urls, tweet)
         if not media_urls:
             return []
 

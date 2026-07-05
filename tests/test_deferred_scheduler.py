@@ -336,6 +336,10 @@ class _RecordingMedia(_Media):
 
     async def attach_media(self, tweets):
         self.events.append("media:" + ",".join(tweet.status_id for tweet in tweets))
+        for tweet in tweets:
+            for media in tweet.media:
+                if media.path is None:
+                    media.path = Path(f"/tmp/{tweet.status_id}.jpg")
         await super().attach_media(tweets)
 
     def cleanup_after_send(self, tweets):
@@ -3154,6 +3158,138 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(records[0].target_umo, "telegram:FriendMessage:2")
         self.assertEqual(records[0].source, "replay")
+
+    async def test_replay_push_history_redownloads_recorded_media(self):
+        events = []
+        sender = _Sender(events=events)
+        media = _RecordingMedia(events)
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:2"],
+                    }
+                ],
+            },
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        tweet = self._make_tweet("NASA", "209")
+        tweet.media.append(
+            TweetMedia(
+                "image",
+                "https://media.example.test/209.jpg",
+                Path("C:/tmp/209.jpg"),
+            )
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            tweet,
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(record_id)
+        records = await scheduler.storage.get_push_history("tech", "NASA", 10)
+
+        self.assertTrue(result["success"])
+        self.assertIn("media:209", events)
+        self.assertEqual(media.attached, 1)
+        self.assertEqual(media.cleaned, 1)
+        self.assertEqual(sender.sent, [("telegram:FriendMessage:2", "NASA", "https://nitter.test", ["209"])])
+        self.assertEqual(records[0].source, "replay")
+        self.assertEqual(len(records[0].tweet.media), 1)
+        self.assertEqual(records[0].tweet.media[0].url, "https://media.example.test/209.jpg")
+        self.assertIsNone(records[0].tweet.media[0].path)
+
+    async def test_replay_push_history_uses_selected_current_targets(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": [
+                            "telegram:FriendMessage:2",
+                            "lark:GroupMessage:3",
+                        ],
+                    }
+                ],
+            },
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            self._make_tweet("NASA", "207"),
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(
+            record_id,
+            target_umos=["lark:GroupMessage:3"],
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["total_targets"], 1)
+        self.assertEqual(
+            sender.sent,
+            [("lark:GroupMessage:3", "NASA", "https://nitter.test", ["207"])],
+        )
+
+    async def test_replay_push_history_rejects_targets_outside_current_group(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:2"],
+                    }
+                ],
+            },
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            self._make_tweet("NASA", "208"),
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(
+            record_id,
+            target_umos=["telegram:FriendMessage:old"],
+        )
+
+        self.assertFalse(result["success"])
+        self.assertIn("当前分组", result["error"])
+        self.assertEqual(sender.sent, [])
 
     async def test_replay_push_history_rejects_group_without_current_targets(self):
         scheduler = self._create_scheduler(

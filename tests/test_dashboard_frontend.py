@@ -142,6 +142,25 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("syncGroupEditorControls(groupId);", body)
         self.assertNotIn("renderGroupEditor();", body)
 
+    def test_api_get_serializes_query_params_into_endpoint(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "apiGet")
+
+        self.assertIn("endpointWithQuery(endpoint, params)", body)
+        self.assertIn("bridge.apiGet(endpointWithQuery(endpoint, params))", body)
+
+    def test_manual_refresh_discards_unsaved_group_drafts_after_confirmation(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        refresh_body = _function_body(source, "refreshDashboard")
+        reload_body = _function_body(source, "reloadAll")
+        bind_body = _function_body(source, "bindEvents")
+
+        self.assertIn("hasDirtyGroup()", refresh_body)
+        self.assertIn("window.confirm", refresh_body)
+        self.assertIn("preserveDrafts: false", refresh_body)
+        self.assertIn("state.groupDrafts = {};", reload_body)
+        self.assertIn("refreshDashboard", bind_body)
+
     def test_checkbox_changes_still_refresh_editor_labels(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "bindEvents")
 
@@ -241,6 +260,18 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("next_offset", source)
         self.assertIn("prev_offset", source)
         self.assertIn("replayHistory", source)
+
+    def test_recent_push_history_groups_targets_and_replays_selected_targets(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        render_body = _function_body(source, "renderHistory")
+        chips_body = _function_body(source, "historyTargetChips")
+        replay_body = _function_body(source, "replayHistory")
+
+        self.assertIn("historyTargetChips", render_body)
+        self.assertIn("row.target_umos", chips_body)
+        self.assertIn("replay_target_options", replay_body)
+        self.assertIn("data-replay-target", replay_body)
+        self.assertIn("target_umos: selectedTargets", replay_body)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")
