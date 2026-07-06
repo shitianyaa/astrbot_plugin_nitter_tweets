@@ -1616,26 +1616,10 @@ function createGroup() {
       autocomplete: "off",
     },
   });
-  const idInput = el("input", {
-    attrs: {
-      type: "text",
-      placeholder: "可选：news 或 coser_1",
-      autocomplete: "off",
-      pattern: "[A-Za-z0-9_-]{1,32}",
-    },
-  });
   const form = el("div", { className: "confirm-form" }, [
     el("label", { className: "field" }, [
       el("span", { text: "分组名称" }),
       nameInput,
-    ]),
-    el("label", { className: "field" }, [
-      el("span", { text: "分组 ID" }),
-      idInput,
-      el("small", {
-        className: "field-hint",
-        text: "创建时可选；保存后保持稳定。仅支持字母、数字、下划线和连字符。",
-      }),
     ]),
   ]);
   openConfirm({
@@ -1648,7 +1632,6 @@ function createGroup() {
       withAction(async () => {
         const result = await apiPost("web/groups/create", {
           name: nameInput.value.trim(),
-          group_id: idInput.value.trim(),
         });
         state.selectedGroupId = result.group.group_id;
         return result;

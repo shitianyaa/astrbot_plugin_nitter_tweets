@@ -366,10 +366,11 @@
                 "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
               },
               "group_id": {
-                "description": "分组 ID",
+                "description": "内部稳定分组 ID",
                 "type": "string",
                 "default": "",
-                "hint": "可选。用于内部存储已见推文 ID；默认分组使用 default。旧的 global/全局 会作为默认分组别名兼容；新增自定义分组请使用其他稳定 ID。改名但想保留已见记录时，请保持该 ID 不变。"
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致已见记录、暂存队列和历史记录断开。",
+                "invisible": true
               },
               "enabled": {
                 "description": "启用分组",

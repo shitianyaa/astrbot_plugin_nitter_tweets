@@ -247,7 +247,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("overflow-x: auto", style)
         self.assertNotIn('class="group-sidebar"', source)
 
-    def test_create_group_dialog_accepts_optional_group_id(self):
+    def test_create_group_dialog_does_not_accept_group_id(self):
         source = APP_JS.read_text(encoding="utf-8")
         style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
             encoding="utf-8"
@@ -255,12 +255,11 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         body = _function_body(source, "createGroup")
 
         self.assertIn("openConfirm", body)
-        self.assertIn("group_id: idInput.value.trim()", body)
         self.assertIn("name: nameInput.value.trim()", body)
-        self.assertIn('pattern: "[A-Za-z0-9_-]{1,32}"', body)
-        self.assertIn("保存后保持稳定", body)
+        self.assertNotIn("idInput", body)
+        self.assertNotIn("group_id:", body)
+        self.assertNotIn("分组 ID", body)
         self.assertIn(".confirm-form", style)
-        self.assertIn(".field-hint", style)
 
     def test_dashboard_removes_generic_plugin_page_kicker(self):
         source = INDEX_HTML.read_text(encoding="utf-8")
