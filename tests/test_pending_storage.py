@@ -37,6 +37,60 @@ from shared import TweetItem, TweetMedia
 
 
 class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_push_history_group_summaries_count_records_users_and_latest_time(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                tweet = TweetItem(
+                    text="queued",
+                    link="https://x.com/NASA/status/100",
+                    published="",
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "deleted",
+                    "NASA",
+                    tweet,
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                    1000,
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "deleted",
+                    "OpenAI",
+                    tweet,
+                    "telegram:FriendMessage:2",
+                    "scheduled",
+                    "https://nitter.test",
+                    1200,
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "OpenAI",
+                    tweet,
+                    "telegram:FriendMessage:3",
+                    "scheduled",
+                    "https://nitter.test",
+                    900,
+                )
+
+                summaries = await asyncio.to_thread(
+                    storage.get_push_history_group_summaries
+                )
+            finally:
+                storage.close()
+
+            by_group = {summary.group_id: summary for summary in summaries}
+            self.assertEqual(by_group["deleted"].record_count, 2)
+            self.assertEqual(by_group["deleted"].user_count, 2)
+            self.assertEqual(by_group["deleted"].latest_pushed_at, 1200)
+            self.assertEqual(by_group["tech"].record_count, 1)
+
     async def test_push_history_records_and_filters_sent_tweets(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
@@ -428,6 +482,22 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     [default_tweet],
                     now,
                 )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "OpenAI",
+                    tech_tweet,
+                    "telegram:FriendMessage:2",
+                    "scheduled",
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "default",
+                    "NASA",
+                    default_tweet,
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                )
 
                 summary = await asyncio.to_thread(
                     storage.delete_group_runtime_data, "tech"
@@ -439,6 +509,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(summary["seen_deleted"], 1)
                 self.assertEqual(summary["pending_deleted"], 1)
                 self.assertEqual(summary["pending_media_deleted"], 0)
+                self.assertEqual(summary["push_history_deleted"], 1)
                 self.assertEqual(
                     await asyncio.to_thread(storage.get_group_users, "default"),
                     ["NASA"],
@@ -469,8 +540,16 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 remaining_tech = storage.conn.execute(
                     "SELECT COUNT(*) FROM pending_tweets WHERE group_id = 'tech'"
                 ).fetchone()[0]
+                remaining_default_history = storage.conn.execute(
+                    "SELECT COUNT(*) FROM push_history WHERE group_id = 'default'"
+                ).fetchone()[0]
+                remaining_tech_history = storage.conn.execute(
+                    "SELECT COUNT(*) FROM push_history WHERE group_id = 'tech'"
+                ).fetchone()[0]
                 self.assertEqual(remaining_default, 1)
                 self.assertEqual(remaining_tech, 0)
+                self.assertEqual(remaining_default_history, 1)
+                self.assertEqual(remaining_tech_history, 0)
             finally:
                 storage.close()
 

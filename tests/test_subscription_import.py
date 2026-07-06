@@ -675,6 +675,10 @@ class ConfigCompatTest(unittest.TestCase):
                         "watch_users": ["NASA"],
                     },
                     {
+                        "name": "coser",
+                        "watch_users": ["CoserAccount"],
+                    },
+                    {
                         "name": "Already Allocated",
                         "group_id": "group_1",
                         "watch_users": ["ESA"],
@@ -695,11 +699,13 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual([group["group_id"] for group in groups], [
             "tech",
             "group_2",
+            "coser",
             "group_1",
             "group_3",
         ])
         self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
         self.assertEqual(_group_config(config, "group_2")["name"], "Legacy Without ID")
+        self.assertEqual(_group_config(config, "coser")["watch_users"], ["CoserAccount"])
         self.assertEqual(_group_config(config, "group_3")["watch_users"], ["JAXA"])
 
     def test_default_group_migration_preserves_existing_legacy_global_group_id(self):
@@ -949,7 +955,7 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(group.name, "默认分组")
         self.assertEqual(group.daily_check_times, [(8, 30)])
 
-    def test_scheduler_reader_does_not_use_english_name_as_missing_group_id(self):
+    def test_scheduler_reader_preserves_safe_english_name_as_missing_group_id(self):
         reader = SchedulerConfigReader({}, context=None)
 
         group = reader.parse_schedule_group(
@@ -963,8 +969,25 @@ with TemporaryDirectory() as temp_dir:
         )
 
         self.assertIsNotNone(group)
-        self.assertEqual(group.group_id, "group_3")
+        self.assertEqual(group.group_id, "tech123")
         self.assertEqual(group.name, "Tech123")
+
+    def test_scheduler_reader_does_not_use_display_name_with_spaces_as_group_id(self):
+        reader = SchedulerConfigReader({}, context=None)
+
+        group = reader.parse_schedule_group(
+            {
+                "name": "Legacy Without ID",
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            3,
+            log_invalid_targets=False,
+        )
+
+        self.assertIsNotNone(group)
+        self.assertEqual(group.group_id, "group_3")
+        self.assertEqual(group.name, "Legacy Without ID")
 
     def test_scheduler_reader_reads_grouped_performance_config(self):
         config = {

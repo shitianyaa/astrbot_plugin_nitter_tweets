@@ -10,6 +10,7 @@ const state = {
   targetProbeResults: {},
   pending: null,
   history: null,
+  historyOrphans: null,
   selectedGroupId: "",
   pendingGroupId: "",
   historyGroupId: "",
@@ -49,9 +50,11 @@ const els = {
   historyUsername: document.getElementById("historyUsername"),
   historyLimit: document.getElementById("historyLimit"),
   historyRefreshBtn: document.getElementById("historyRefreshBtn"),
+  historyOrphanBtn: document.getElementById("historyOrphanBtn"),
   historyPrevBtn: document.getElementById("historyPrevBtn"),
   historyNextBtn: document.getElementById("historyNextBtn"),
   historyPageLabel: document.getElementById("historyPageLabel"),
+  historyOrphanResult: document.getElementById("historyOrphanResult"),
   historyContent: document.getElementById("historyContent"),
   mirrorForm: document.getElementById("mirrorForm"),
   mirrorUsername: document.getElementById("mirrorUsername"),
@@ -97,7 +100,7 @@ const viewMeta = {
   },
   cleanup: {
     title: "系统维护清理",
-    desc: "清理普通媒体缓存或推送记录，危险操作会二次确认。",
+    desc: "清理普通媒体缓存或去重记录，危险操作会二次确认。",
   },
 };
 
@@ -386,6 +389,7 @@ function setBusy(isBusy) {
     els.pendingRefreshBtn,
     els.publishSelectedBtn,
     els.historyRefreshBtn,
+    els.historyOrphanBtn,
     els.historyPrevBtn,
     els.historyNextBtn,
     els.mirrorProbeBtn,
@@ -1323,6 +1327,80 @@ function renderHistory() {
   mountIcons(els.historyContent);
 }
 
+function renderHistoryOrphans(payload = state.historyOrphans) {
+  if (!els.historyOrphanResult) return;
+  if (!payload) {
+    els.historyOrphanResult.replaceChildren();
+    return;
+  }
+  const orphans = Array.isArray(payload.orphans) ? payload.orphans : [];
+  if (!orphans.length) {
+    els.historyOrphanResult.replaceChildren(
+      el("div", {
+        className: "result-line",
+        text: "未发现已推送但当前配置不存在的分组 ID。",
+      }),
+    );
+    return;
+  }
+  const tbody = el(
+    "tbody",
+    {},
+    orphans.map((row) =>
+      el("tr", {}, [
+        el("td", { className: "mono-cell", text: row.group_id || "-" }),
+        el("td", { text: formatNumber(row.record_count) }),
+        el("td", { text: formatNumber(row.user_count) }),
+        el("td", { text: formatTime(row.latest_pushed_at) }),
+        el("td", {}, [
+          el(
+            "button",
+            {
+              className: "button danger small",
+              attrs: {
+                type: "button",
+                "data-delete-history-orphan": row.group_id,
+              },
+              disabled: state.loading || state.actionBusy,
+            },
+            [iconSpan("trash"), "删除运行数据"],
+          ),
+        ]),
+      ]),
+    ),
+  );
+  els.historyOrphanResult.replaceChildren(
+    el("div", { className: "panel" }, [
+      el("div", { className: "panel-head" }, [
+        el("h2", { text: "失效分组记录" }),
+        el("span", {
+          className: "badge warning",
+          text: `${formatNumber(orphans.length)} 个分组`,
+        }),
+      ]),
+      el("p", {
+        className: "muted",
+        text: "这些 group_id 存在于推送历史，但当前配置里已经没有对应分组。删除会清理该 group_id 的推送历史、已见索引和暂存运行数据。",
+      }),
+      el("div", { className: "table-wrap" }, [
+        el("table", { className: "data-table" }, [
+          el("thead", {}, [
+            el("tr", {}, [
+              el("th", { text: "Group ID" }),
+              el("th", { text: "记录" }),
+              el("th", { text: "账号" }),
+              el("th", { text: "最近推送" }),
+              el("th", { text: "操作" }),
+            ]),
+          ]),
+          tbody,
+        ]),
+      ]),
+    ]),
+  );
+  mountIcons(els.historyOrphanResult);
+}
+
 function renderHistoryPager(payload = state.history) {
   const page = Math.max(1, Number(payload?.page || 1));
   const totalPages = Math.max(1, Number(payload?.total_pages || 1));
@@ -1363,6 +1441,7 @@ function renderAll() {
   renderGroups();
   renderPending();
   renderHistory();
+  renderHistoryOrphans();
   renderMirrorBase();
   renderCleanupSelectors();
   mountIcons();
@@ -1397,6 +1476,12 @@ function resetHistoryPage() {
 async function loadHistoryPage(offset) {
   state.historyOffset = Math.max(0, Number(offset || 0));
   await loadHistory();
+}
+
+async function detectHistoryOrphans() {
+  state.historyOrphans = await apiGet("web/history/orphans");
+  renderHistoryOrphans();
+  return state.historyOrphans;
 }
 
 async function reloadAll(options = {}) {
@@ -1752,6 +1837,33 @@ async function saveGroupEdits(groupId) {
   }, "");
 }
 
+function confirmDeleteHistoryOrphan(groupId) {
+  const value = String(groupId || "").trim();
+  if (!value) return;
+  openConfirm({
+    kicker: "清理失效分组",
+    title: `删除 ${value} 的运行数据？`,
+    desc: "该 group_id 当前不在配置分组里。确认后会删除它的推送历史、已见索引和暂存运行数据，不能恢复。",
+    confirmText: "删除运行数据",
+    action: () =>
+      withAction(async () => {
+        const result = await apiPost("web/history/orphans/delete", {
+          group_id: value,
+          confirm: "DELETE",
+        });
+        await detectHistoryOrphans();
+        await loadHistory();
+        return result;
+      }, "失效分组运行数据已删除", {
+        reload: false,
+        rerender: () => {
+          renderHistoryOrphans();
+          renderHistory();
+        },
+      }),
+  });
+}
+
 function replayHistory(recordId) {
   const record = (state.history?.records || []).find(
     (item) => String(item.id) === String(recordId),
@@ -1972,8 +2084,8 @@ function confirmClearSeen() {
   const group = state.groups.find((item) => item.group_id === groupId);
   const scope = group?.name || "全部分组";
   openConfirm({
-    kicker: "推送记录",
-    title: "清理推送记录？",
+    kicker: "去重记录",
+    title: "清理去重记录？",
     desc: `清理范围：${scope}。不会删除关注账号、推送目标、暂存队列或媒体文件，但旧推文可能重新参与检查。`,
     confirmText: "清理",
     action: () =>
@@ -1984,7 +2096,7 @@ function confirmClearSeen() {
         });
         els.seenResult.textContent = `${scope}：删除 ${formatNumber(result.deleted)} 条`;
         return result;
-      }, "推送记录清理完成"),
+      }, "去重记录清理完成"),
   });
 }
 
@@ -2025,6 +2137,14 @@ function bindEvents() {
       rerender: renderHistory,
     }),
   );
+  if (els.historyOrphanBtn) {
+    els.historyOrphanBtn.addEventListener("click", () =>
+      withAction(() => detectHistoryOrphans(), "失效分组检测完成", {
+        reload: false,
+        rerender: renderHistoryOrphans,
+      }),
+    );
+  }
   els.historyGroupSelect.addEventListener("change", (event) => {
     state.historyGroupId = event.target.value;
     withAction(() => {
@@ -2081,6 +2201,16 @@ function bindEvents() {
     if (state.loading || state.actionBusy) return;
     if (target.dataset.replayHistory) replayHistory(target.dataset.replayHistory);
   });
+  if (els.historyOrphanResult) {
+    els.historyOrphanResult.addEventListener("click", (event) => {
+      const target = event.target.closest("button");
+      if (!target) return;
+      if (state.loading || state.actionBusy) return;
+      if (target.dataset.deleteHistoryOrphan) {
+        confirmDeleteHistoryOrphan(target.dataset.deleteHistoryOrphan);
+      }
+    });
+  }
   els.seenGroupSelect.addEventListener("change", (event) => {
     state.seenGroupId = event.target.value;
   });

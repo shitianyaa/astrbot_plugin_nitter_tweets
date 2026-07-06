@@ -13,6 +13,7 @@ try:
         config_set,
     )
     from ..shared.group_ids import (
+        infer_legacy_group_id_from_name,
         is_default_group,
         normalize_group_id,
         normalize_stable_group_id,
@@ -25,6 +26,7 @@ except ImportError:
         config_set,
     )
     from shared.group_ids import (
+        infer_legacy_group_id_from_name,
         is_default_group,
         normalize_group_id,
         normalize_stable_group_id,
@@ -266,8 +268,9 @@ class WebUIGroupEditor:
         name = str(raw_group.get("name") or "").strip()
         if raw_group_id:
             return normalize_stable_group_id(raw_group_id)
-        if normalize_group_id(name) == "default":
-            return "default"
+        inferred_group_id = infer_legacy_group_id_from_name(name)
+        if inferred_group_id:
+            return inferred_group_id
         return normalize_stable_group_id(f"group_{index}")
 
     def _group_identifiers(

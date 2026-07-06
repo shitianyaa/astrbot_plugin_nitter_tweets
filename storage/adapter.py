@@ -17,6 +17,7 @@ try:
     from .sqlite import (
         PendingQueueSummary,
         PendingTweetRecord,
+        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -31,6 +32,7 @@ except ImportError:
     from storage.sqlite import (
         PendingQueueSummary,
         PendingTweetRecord,
+        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -246,6 +248,14 @@ class StorageAdapter:
             sqlite.delete_group_runtime_data, self._storage_group_id(group_id)
         )
 
+    async def delete_orphan_group_runtime_data(self, group_id: str) -> dict[str, int]:
+        """Delete raw orphan group rows without legacy global aliasing."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.delete_group_runtime_data,
+            normalize_stable_group_id(group_id),
+        )
+
     async def cleanup_sent_pending_tweets(self, older_than: int) -> int:
         """Delete sent pending tweet rows older than a timestamp."""
         sqlite = await self._ensure_sqlite_connected()
@@ -301,6 +311,11 @@ class StorageAdapter:
             storage_group_id,
             username,
         )
+
+    async def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:
+        """Return successful push history counts grouped by stable group id."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.get_push_history_group_summaries)
 
     async def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
         """Return one push history record."""

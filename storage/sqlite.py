@@ -94,6 +94,14 @@ class PushHistoryRecord:
     tweet: TweetItem
 
 
+@dataclass(slots=True)
+class PushHistoryGroupSummary:
+    group_id: str
+    record_count: int
+    user_count: int
+    latest_pushed_at: int
+
+
 def _locked_sqlite_method(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -1120,6 +1128,7 @@ class SQLiteStorage:
             "seen_deleted": 0,
             "pending_deleted": 0,
             "pending_media_deleted": 0,
+            "push_history_deleted": 0,
         }
         if pending_ids:
             placeholders = ",".join("?" for _ in pending_ids)
@@ -1140,6 +1149,13 @@ class SQLiteStorage:
         summary["seen_deleted"] = int(
             self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["push_history_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM push_history WHERE group_id = ?",
                 (normalized_group_id,),
             ).rowcount
             or 0
@@ -1290,6 +1306,31 @@ class SQLiteStorage:
             params,
         ).fetchone()
         return int(row["count"] if row is not None else 0)
+
+    def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:
+        """Return successful push history counts grouped by stable group id."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            """
+            SELECT
+                group_id,
+                COUNT(*) AS record_count,
+                COUNT(DISTINCT username) AS user_count,
+                MAX(pushed_at) AS latest_pushed_at
+            FROM push_history
+            GROUP BY group_id
+            ORDER BY latest_pushed_at DESC, group_id ASC
+            """
+        ).fetchall()
+        return [
+            PushHistoryGroupSummary(
+                group_id=str(row["group_id"]),
+                record_count=int(row["record_count"] or 0),
+                user_count=int(row["user_count"] or 0),
+                latest_pushed_at=int(row["latest_pushed_at"] or 0),
+            )
+            for row in rows
+        ]
 
     @staticmethod
     def _push_history_filter(
@@ -1675,6 +1716,7 @@ for _method_name in (
     "record_push_history",
     "get_push_history",
     "count_push_history",
+    "get_push_history_group_summaries",
     "get_push_history_record",
     "cleanup_orphan_seen_tweets",
     "_migrate_global_group_to_default",

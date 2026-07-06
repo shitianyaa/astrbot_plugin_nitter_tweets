@@ -211,6 +211,51 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(default_seen, [])
             self.assertEqual(default_openai_seen, ["200"])
 
+    async def test_orphan_runtime_delete_does_not_alias_global_to_default(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+
+            with patch.object(
+                StorageAdapter,
+                "_init_sqlite",
+                return_value=SQLiteStorage(db_path),
+            ):
+                adapter = StorageAdapter(_Owner(), {"storage_backend": "sqlite"}, None)
+
+            try:
+                await adapter.migrate_and_sync([
+                    types.SimpleNamespace(
+                        group_id="default",
+                        name="默认分组",
+                        enabled=True,
+                        check_on_startup=False,
+                        interval_check_enabled=True,
+                        check_interval_minutes=30,
+                        daily_check_enabled=False,
+                        daily_check_times=[],
+                        scheduled_fetch_limit=5,
+                        send_target_interval=1.5,
+                        send_user_interval=2.0,
+                        notify_no_updates=False,
+                        aliases=["default"],
+                        users=["NASA"],
+                        targets=[],
+                    )
+                ])
+                sqlite = await adapter._ensure_sqlite_connected()
+                await asyncio.to_thread(sqlite.add_seen_ids, "global", "NASA", ["100"])
+                await asyncio.to_thread(sqlite.add_seen_ids, "default", "NASA", ["200"])
+
+                summary = await adapter.delete_orphan_group_runtime_data("global")
+                global_seen = await asyncio.to_thread(sqlite.get_seen_ids, "global", "NASA")
+                default_seen = await asyncio.to_thread(sqlite.get_seen_ids, "default", "NASA")
+            finally:
+                adapter.close()
+
+            self.assertEqual(summary["seen_deleted"], 1)
+            self.assertEqual(global_seen, [])
+            self.assertEqual(default_seen, ["200"])
+
 
 if __name__ == "__main__":
     unittest.main()

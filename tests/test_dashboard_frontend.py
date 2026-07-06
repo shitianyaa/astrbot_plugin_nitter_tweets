@@ -399,6 +399,21 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("${page} / ${totalPages}", pager_body)
         self.assertNotIn("第 ${page} 页", pager_body)
 
+    def test_recent_push_history_can_detect_and_delete_orphan_groups(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        render_body = _function_body(source, "renderHistoryOrphans")
+        detect_body = _function_body(source, "detectHistoryOrphans")
+        delete_body = _function_body(source, "confirmDeleteHistoryOrphan")
+
+        self.assertIn('id="historyOrphanBtn"', html)
+        self.assertIn('id="historyOrphanResult"', html)
+        self.assertIn('apiGet("web/history/orphans"', detect_body)
+        self.assertIn("payload.orphans", render_body)
+        self.assertIn("data-delete-history-orphan", render_body)
+        self.assertIn('apiPost("web/history/orphans/delete"', delete_body)
+        self.assertIn('confirm: "DELETE"', delete_body)
+
     def test_recent_push_history_groups_targets_and_replays_selected_targets(self):
         source = APP_JS.read_text(encoding="utf-8")
         render_body = _function_body(source, "renderHistory")
@@ -441,10 +456,13 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
     def test_clear_all_seen_posts_explicit_confirmation(self):
         source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
         clear_body = _function_body(source, "confirmClearSeen")
 
         self.assertIn('confirm: groupId ? "" : "CLEAR_ALL"', clear_body)
         self.assertIn("全部分组", clear_body)
+        self.assertIn("清理去重记录", html)
+        self.assertIn("清理去重记录？", clear_body)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")

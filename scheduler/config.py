@@ -12,6 +12,7 @@ try:
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        infer_legacy_group_id_from_name,
         is_default_group,
         normalize_group_id,
         normalize_stable_group_id,
@@ -24,6 +25,7 @@ except ImportError:
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        infer_legacy_group_id_from_name,
         is_default_group,
         normalize_group_id,
         normalize_stable_group_id,
@@ -184,9 +186,8 @@ class SchedulerConfigReader:
             normalize_stable_group_id(raw_group_id)
             if raw_group_id
             else (
-                DEFAULT_GROUP_ID
-                if normalize_group_id(name) == DEFAULT_GROUP_ID
-                else normalize_stable_group_id(f"group_{index}")
+                infer_legacy_group_id_from_name(name)
+                or normalize_stable_group_id(f"group_{index}")
             )
         )
         if not name:
