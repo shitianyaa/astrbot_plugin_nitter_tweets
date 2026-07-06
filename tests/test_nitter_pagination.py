@@ -24,9 +24,9 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-import media
 import media_support.client as client_module
-from media import NitterClient
+import media_support.network as network_module
+from media_support import NitterClient
 
 
 class _FakeResponse:
@@ -133,12 +133,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 return _FakeResponse(_rss_page(84, 16), {"Min-Id": "68"})
             raise AssertionError(f"unexpected cursor: {cursor}")
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets = await client.fetch_tweets("nasa", 20)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual(len(tweets), 20)
@@ -172,12 +172,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets = await client.fetch_tweets("NASA", 10)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101", ""])
@@ -198,12 +198,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 _rss_from_links(["/nasa/status/100", "/BBCWorld/status/200"])
             )
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             _, tweets = await client.fetch_tweets("nasa", 10)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.username for tweet in tweets], ["nasa", "BBCWorld"])
 
@@ -227,12 +227,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 return _FakeResponse(_rss_from_links(["/nasa/status/100"]))
             raise AssertionError(f"unexpected cursor: {cursor}")
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             _, tweets = await client.fetch_tweets("nasa", 5)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(len(calls), 2)
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
@@ -249,12 +249,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             del request, timeout
             return _FakeResponse(_rss_from_links(["/BBCWorld/status/200"]))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets = await client.fetch_tweets("nasa", 5)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual(tweets, [])
@@ -271,13 +271,13 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             del request, timeout
             return _FakeResponse(b"<rss><channel></channel></rss>")
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with self.assertRaisesRegex(RuntimeError, "empty feed"):
                 await client.fetch_tweets("nasa", 5)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
     async def test_fetch_tweets_retries_transient_http_errors(self):
         client = NitterClient(
@@ -298,12 +298,12 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             return _FakeResponse(_rss_page(100, 1))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets = await client.fetch_tweets("nasa", 1)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual(len(tweets), 1)
@@ -328,13 +328,13 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             return _FakeResponse(_rss_page(100, 1))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with patch.object(client_module.logger, "warning") as warning_log:
                 await client.fetch_tweets("nasa", 1)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         warning_log.assert_not_called()
 
@@ -358,13 +358,13 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             return _FakeResponse(_rss_page(100, 1))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with patch.object(client_module.logger, "warning") as warning_log:
                 await client.fetch_tweets("nasa", 1)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         logged = "\n".join(str(call.args[0]) for call in warning_log.call_args_list)
         self.assertIn("RSS 抓取失败，准备重试", logged)
@@ -391,8 +391,8 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             return _FakeResponse(_rss_page(100, 1))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with (
                 patch.object(client_module.logger, "warning") as warning_log,
@@ -400,7 +400,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             ):
                 instance, tweets = await client.fetch_tweets("nasa", 1)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://working.example")
         self.assertEqual(len(tweets), 1)
@@ -438,8 +438,8 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             calls.append(request.full_url)
             return _FakeResponse(_rss_page(100, 1))
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets, plain_text_filtered = (
                 await client.fetch_tweets_with_stats_from_instances(
@@ -450,7 +450,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://mirror-b.example")
         self.assertEqual(len(tweets), 1)
@@ -478,8 +478,8 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 return _FakeResponse(_rss_page(100, 1))
             raise AssertionError(f"unexpected fallback URL: {request.full_url}")
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets, _ = await client.fetch_tweets_with_stats_from_instances(
                 "nasa",
@@ -487,7 +487,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 ["https://broken.example", "https://working.example"],
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://working.example")
         self.assertEqual(len(tweets), 1)
@@ -541,8 +541,8 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 )
             raise AssertionError(f"unexpected fallback URL: {request.full_url}")
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             instance, tweets, _ = await client.fetch_tweets_with_stats_from_instances(
                 "nasa",
@@ -551,7 +551,7 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 skip_plain_text=True,
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://working.example")
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
@@ -593,15 +593,15 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError("normal instances must not be used")
             raise HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with self.assertRaisesRegex(RuntimeError, "broken.example"):
                 await client.fetch_tweets_with_stats_from_instances(
                     "nasa", 1, ["https://broken.example"]
                 )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(
             calls,
@@ -627,13 +627,13 @@ class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
             calls.append(request.full_url)
             raise HTTPError(request.full_url, 404, "Not Found", {}, None)
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             with self.assertRaisesRegex(RuntimeError, "HTTP 404"):
                 await client.fetch_tweets("nasa", 1)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(len(calls), 1)
 
@@ -647,8 +647,8 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 return response
             return _FakeResponse(response)
 
-        original_urlopen = media.urlopen
-        media.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         return original_urlopen
 
     async def test_skip_plain_text_keeps_media_tweets(self):
@@ -673,7 +673,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
 
@@ -717,7 +717,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 "nasa", 10, skip_plain_text=True
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101", "102"])
         self.assertEqual(plain_text_filtered, 1)
@@ -750,7 +750,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
@@ -783,7 +783,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
@@ -818,7 +818,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
@@ -851,7 +851,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
 
@@ -877,7 +877,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
 
@@ -905,7 +905,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
 
@@ -935,7 +935,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(tweets, [])
 
@@ -959,7 +959,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 "nasa", 10, skip_plain_text=True
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(instance, "https://nitter.example")
         self.assertEqual(tweets, [])
@@ -1002,7 +1002,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 5, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(len(calls), 2)
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
@@ -1029,7 +1029,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100", "101"])
 
@@ -1058,7 +1058,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 "nasa", 10, skip_plain_text=True
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
         self.assertEqual(plain_text_filtered, 2)
@@ -1088,7 +1088,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 "nasa", 10, skip_plain_text=True
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["102"])
         self.assertEqual(plain_text_filtered, 1)
@@ -1131,7 +1131,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
                 "nasa", 10, skip_plain_text=True
             )
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["101"])
         self.assertEqual(plain_text_filtered, 1)
@@ -1161,7 +1161,7 @@ class NitterPlainTextFilterTest(unittest.IsolatedAsyncioTestCase):
         try:
             _, tweets = await client.fetch_tweets("nasa", 10, skip_plain_text=True)
         finally:
-            media.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual([tweet.status_id for tweet in tweets], ["100"])
 

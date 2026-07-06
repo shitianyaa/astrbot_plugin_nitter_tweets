@@ -8,7 +8,7 @@ except ImportError:
     from astrbot.core.message.components import Image, Node, Nodes, Plain, Video
 
 try:
-    from .utils import (
+    from ..shared import (
         TweetItem,
         TweetMedia,
         file_uri,
@@ -17,7 +17,7 @@ try:
         strip_external_links,
     )
 except ImportError:
-    from utils import (
+    from shared import (
         TweetItem,
         TweetMedia,
         file_uri,

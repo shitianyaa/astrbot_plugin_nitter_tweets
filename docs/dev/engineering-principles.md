@@ -6,9 +6,9 @@
 - 命令层只处理参数、权限、用户提示。
 - RSS 行为放 `media_support/client.py`。
 - 媒体行为放 `media_support/service.py` 和 `cache.py`。
-- 调度行为放 `scheduler.py`。
+- 调度行为放 `scheduler/`。
 - 平台差异放 `delivery/` 和 `PlatformResolver`。
-- 输出格式放 `tweet_rendering.py`。
+- 输出格式放 `rendering/tweets.py`。
 
 ## 兼容优先
 

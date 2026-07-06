@@ -26,28 +26,22 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get
-    from .lark_delivery import is_lark_platform
-    from .utils import (
+    from ..config import config_get
+    from .lark_support import is_lark_platform
+    from ..shared import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
     )
-    from .delivery import (
-        DefaultDeliveryAdapter,
-        MergedSendOutcome,
-        OneBotDeliveryAdapter,
-        PlatformDeliveryRegistry,
-        PlatformResolver,
-        SendAttempt,
-        SendOutcome,
-        normalize_platform,
-    )
-    from .tweet_rendering import TweetBatch, TweetMessageRenderer
+    from .default import DefaultDeliveryAdapter
+    from .onebot import OneBotDeliveryAdapter
+    from .outcomes import MergedSendOutcome, SendAttempt, SendOutcome
+    from .platforms import PlatformDeliveryRegistry, PlatformResolver, normalize_platform
+    from ..rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config_compat import config_get
-    from lark_delivery import is_lark_platform
-    from utils import (
+    from config import config_get
+    from delivery.lark_support import is_lark_platform
+    from shared import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
@@ -62,7 +56,7 @@ except ImportError:
         SendOutcome,
         normalize_platform,
     )
-    from tweet_rendering import TweetBatch, TweetMessageRenderer
+    from rendering import TweetBatch, TweetMessageRenderer
 
 
 class TweetSender:

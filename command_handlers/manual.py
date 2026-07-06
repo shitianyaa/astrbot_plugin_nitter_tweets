@@ -9,11 +9,11 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..enricher import format_ai_tweet_summary
-    from ..utils import normalize_username, safe_call
+    from ..ai import format_ai_tweet_summary
+    from ..shared import normalize_username, safe_call
 except ImportError:
-    from enricher import format_ai_tweet_summary
-    from utils import normalize_username, safe_call
+    from ai import format_ai_tweet_summary
+    from shared import normalize_username, safe_call
 
 
 class ManualCommandMixin:

@@ -6,21 +6,21 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from .config_compat import (
+    from ..config import (
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
     )
-    from .group_ids import is_default_group, normalize_group_id
+    from ..shared.group_ids import is_default_group, normalize_group_id
 except ImportError:
-    from config_compat import (
+    from config import (
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
     )
-    from group_ids import is_default_group, normalize_group_id
+    from shared.group_ids import is_default_group, normalize_group_id
 
 
 class WebUIGroupEditor:

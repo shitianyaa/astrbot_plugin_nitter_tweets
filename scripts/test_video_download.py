@@ -40,8 +40,8 @@ def _import_plugin_modules():
         sys.path.insert(0, str(root))
     _install_astrbot_logger_stub()
 
-    from media import MediaService
-    from utils import TweetItem
+    from media_support import MediaService
+    from shared import TweetItem
 
     return MediaService, TweetItem
 

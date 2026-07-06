@@ -6,25 +6,25 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get, migrate_default_group_config
-    from .group_ids import (
+    from ..config import config_get, migrate_default_group_config
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from .utils import clamp_float, clamp_int, load_instances, normalize_username
+    from ..shared import clamp_float, clamp_int, load_instances, normalize_username
 except ImportError:
-    from config_compat import config_get, migrate_default_group_config
-    from group_ids import (
+    from config import config_get, migrate_default_group_config
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from utils import clamp_float, clamp_int, load_instances, normalize_username
+    from shared import clamp_float, clamp_int, load_instances, normalize_username
 
 
 @dataclass(slots=True)

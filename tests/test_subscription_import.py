@@ -149,7 +149,7 @@ if "astrbot.api.all" not in sys.modules:
 
 
 from main import NitterTweetsPlugin
-from config_compat import (
+from config import (
     DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     LEGACY_CONFIG_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
@@ -160,17 +160,17 @@ from config_compat import (
     migrate_default_group_config,
     migrate_legacy_grouped_config,
 )
-from enricher import (
+from ai import (
     TranslationReport,
     TranslationTweetResult,
     TweetTranslator,
     TweetEnricher,
     format_ai_tweet_summary,
 )
-from lark_delivery import lark_tweet_post_title
-from scheduler_config import SchedulerConfigReader
-from tweet_rendering import TweetMessageRenderer
-from utils import TweetItem, TweetMedia
+from delivery.lark_support import lark_tweet_post_title
+from scheduler import SchedulerConfigReader
+from rendering import TweetMessageRenderer
+from shared import TweetItem, TweetMedia
 
 
 class _Config(dict):
@@ -741,7 +741,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from astrbot.core.config.astrbot_config import AstrBotConfig
-from config_compat import config_get, migrate_legacy_grouped_config
+from config import config_get, migrate_legacy_grouped_config
 
 repo = Path.cwd()
 schema = json.loads((repo / "_conf_schema.json").read_text(encoding="utf-8"))

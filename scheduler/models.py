@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 try:
-    from .group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
-    from .scheduler_formatting import _format_limited_values
+    from ..shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
+    from .formatting import _format_limited_values
 except ImportError:
-    from group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
-    from scheduler_formatting import _format_limited_values
+    from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
+    from scheduler.formatting import _format_limited_values
 
 
 @dataclass(slots=True)

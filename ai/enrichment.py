@@ -9,11 +9,11 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
-    from .utils import TweetItem, clamp_float, clamp_int, strip_external_links
+    from ..config import config_get
+    from ..shared import TweetItem, clamp_float, clamp_int, strip_external_links
 except ImportError:
-    from config_compat import config_get
-    from utils import TweetItem, clamp_float, clamp_int, strip_external_links
+    from config import config_get
+    from shared import TweetItem, clamp_float, clamp_int, strip_external_links
 
 
 LOG_PREFIX = "[NitterTweets]"

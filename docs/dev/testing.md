@@ -5,7 +5,7 @@
 ```powershell
 python -m pytest -q
 ruff check .
-python -m py_compile main.py scheduler.py scheduler_config.py scheduler_models.py media_support/client.py media_support/service.py sender.py
+python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler/config.py scheduler/models.py media_support/client.py media_support/service.py delivery/sender.py
 ```
 
 ## 分层验证矩阵
@@ -31,6 +31,6 @@ python -m py_compile main.py scheduler.py scheduler_config.py scheduler_models.p
 | Lark post | 图片或文本降级异常 | 补 Lark 行为测试 |
 | 纯文本过滤 | 引用媒体误判 | 补 RSS HTML 片段测试 |
 | xdown 解析 | 下载错误或封面误发 | 补 media resolution 测试 |
-| 配置迁移 | 老用户配置丢失 | 补 config compat 测试 |
+| 配置迁移 | 老用户配置丢失 | 补 `config/compat.py` 相关测试 |
 
-改公共模型、scheduler、sender、storage 或 config compat 后，优先跑全量测试。
+改公共模型、`scheduler/`、`delivery/sender.py`、`storage/` 或 `config/compat.py` 后，优先跑全量测试。

@@ -7,18 +7,18 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get
-    from .seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
-    from .sqlite_storage import (
+    from ..config import config_get
+    from .seen import KV_KEY_SEEN_BY_TARGET, SeenStore
+    from .sqlite import (
         PendingQueueSummary,
         PendingTweetRecord,
         PushHistoryRecord,
         SQLiteStorage,
     )
 except ImportError:
-    from config_compat import config_get
-    from seen_store import KV_KEY_SEEN_BY_TARGET, SeenStore
-    from sqlite_storage import (
+    from config import config_get
+    from storage.seen import KV_KEY_SEEN_BY_TARGET, SeenStore
+    from storage.sqlite import (
         PendingQueueSummary,
         PendingTweetRecord,
         PushHistoryRecord,
