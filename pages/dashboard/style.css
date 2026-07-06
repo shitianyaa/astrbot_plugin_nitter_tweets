@@ -2095,19 +2095,38 @@ body.light-theme .toast-message {
 }
 
 .groups-layout {
-  display: grid;
-  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
-  gap: 22px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: stretch;
 }
 
-.group-sidebar {
+.group-switcher,
+.group-editor {
   min-width: 0;
 }
 
+.group-switcher {
+  padding: 18px 20px;
+}
+
+.group-switcher .panel-head {
+  margin-bottom: 12px;
+}
+
 .group-list {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 8px;
+  scrollbar-width: thin;
+}
+
+.group-list .empty {
+  flex: 1 1 auto;
+  padding: 16px;
 }
 
 .group-list-item,
@@ -2121,7 +2140,8 @@ body.light-theme .toast-message {
 }
 
 .group-list-item {
-  width: 100%;
+  flex: 0 0 clamp(220px, 24vw, 320px);
+  min-height: 74px;
   cursor: pointer;
   text-align: left;
   transition: var(--transition-fast);
@@ -2136,6 +2156,14 @@ body.light-theme .toast-message {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--primary);
+}
+
+.group-list-item strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+  margin-bottom: 4px;
 }
 
 .group-main p,
@@ -2230,6 +2258,82 @@ body.light-theme .toast-message {
 
 .group-stats {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.group-editor-panel .panel-head {
+  align-items: flex-start;
+}
+
+.group-editor-panel .editor-grid {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 18px 24px;
+}
+
+.editor-field {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.readonly-field {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.toggle-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.toggle-field input[type="checkbox"] {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  appearance: none;
+  background: var(--secondary-bg);
+  box-shadow: var(--shadow-inset);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.toggle-field input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s var(--ease-in-out-smooth);
+}
+
+.toggle-field input[type="checkbox"]:checked {
+  border-color: transparent;
+  background: var(--primary-gradient);
+}
+
+.toggle-field input[type="checkbox"]:checked::before {
+  transform: translateX(18px);
+}
+
+.toggle-field input[type="checkbox"]:disabled {
+  cursor: not-allowed;
 }
 
 .summary-item,
@@ -2334,7 +2438,7 @@ body.light-theme .toast-message {
   grid-column: 1 / -1;
 }
 
-input,
+input:not([type="checkbox"]),
 select {
   width: 100%;
   min-height: 38px;
@@ -2347,9 +2451,11 @@ select {
   font: inherit;
 }
 
-input:focus,
+input:not([type="checkbox"]):focus,
 select:focus,
-button:focus-visible {
+button:focus-visible,
+.toggle-field input[type="checkbox"]:focus-visible,
+.replay-target-option input[type="checkbox"]:focus-visible {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
@@ -2572,6 +2678,17 @@ button:focus-visible {
   border-radius: var(--radius-md);
   background: var(--secondary-bg);
   padding: 10px 12px;
+}
+
+.replay-target-option input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 .replay-target-option small {

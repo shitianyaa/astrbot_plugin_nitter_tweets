@@ -183,6 +183,16 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn('target.dataset.fieldType === "checkbox"', body)
         self.assertIn("renderGroupEditor();", body)
 
+    def test_checkbox_controls_are_not_stretched_by_text_input_styles(self):
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('input:not([type="checkbox"])', style)
+        self.assertIn('.toggle-field input[type="checkbox"]', style)
+        self.assertIn(".replay-target-option input[type=\"checkbox\"]", style)
+        self.assertNotIn("input,\nselect {", style)
+
     def test_watch_user_chips_can_delete_single_account(self):
         source = APP_JS.read_text(encoding="utf-8")
         editor_body = _function_body(source, "renderGroupEditor")
@@ -214,16 +224,21 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("无效关注账号", body)
         self.assertIn("重复关注项", body)
 
-    def test_groups_view_uses_list_detail_layout(self):
+    def test_groups_view_uses_top_switcher_layout(self):
         source = INDEX_HTML.read_text(encoding="utf-8")
         style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
             encoding="utf-8"
         )
 
+        self.assertIn('id="groupSwitcher"', source)
         self.assertIn('id="groupList"', source)
         self.assertIn('id="groupEditor"', source)
+        self.assertIn('id="createGroupBtn"', source)
         self.assertIn(".groups-layout", style)
-        self.assertIn(".group-sidebar", style)
+        self.assertIn(".group-switcher", style)
+        self.assertIn(".group-list", style)
+        self.assertIn("overflow-x: auto", style)
+        self.assertNotIn('class="group-sidebar"', source)
 
     def test_dashboard_removes_generic_plugin_page_kicker(self):
         source = INDEX_HTML.read_text(encoding="utf-8")

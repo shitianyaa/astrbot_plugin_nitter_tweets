@@ -123,18 +123,16 @@
 
         <section id="groupsView" class="view" aria-label="分组订阅">
           <div class="groups-layout">
-            <aside class="group-sidebar">
-              <div class="panel sidebar-panel">
-                <div class="panel-head">
-                  <h2>用户分组</h2>
-                  <button id="createGroupBtn" class="button primary small" type="button">
-                    <span class="icon" data-icon="plus"></span>
-                    新建分组
-                  </button>
-                </div>
-                <div id="groupList" class="group-list"></div>
+            <section id="groupSwitcher" class="panel group-switcher" aria-label="用户分组切换">
+              <div class="panel-head">
+                <h2>用户分组</h2>
+                <button id="createGroupBtn" class="button primary small" type="button">
+                  <span class="icon" data-icon="plus"></span>
+                  新建分组
+                </button>
               </div>
-            </aside>
+              <div id="groupList" class="group-list"></div>
+            </section>
             <section id="groupEditor" class="group-editor" aria-label="分组详情"></section>
           </div>
         </section>
