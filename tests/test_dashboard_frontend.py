@@ -230,6 +230,45 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
         self.assertNotIn("AstrBot Plugin Page", source)
 
+    def test_dashboard_uses_design_concept_shell_without_static_mock_wiring(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        app_source = APP_JS.read_text(encoding="utf-8")
+
+        self.assertIn('class="rail"', html)
+        self.assertIn('class="brand-logo"', html)
+        self.assertIn('class="main"', html)
+        self.assertIn('id="currentTabTitle"', html)
+        self.assertIn('id="currentTabDesc"', html)
+        self.assertIn('id="railSchedulerStatus"', html)
+        self.assertIn('data-view="overview"', html)
+        self.assertIn("window.AstrBotPluginPage", app_source)
+        self.assertNotIn('data-tab="overview"', html)
+        self.assertNotIn('id="view-overview"', html)
+
+    def test_dashboard_design_does_not_depend_on_remote_fonts(self):
+        html = INDEX_HTML.read_text(encoding="utf-8")
+
+        self.assertNotIn("fonts.googleapis.com", html)
+        self.assertNotIn("fonts.gstatic.com", html)
+
+    def test_theme_toggle_uses_safe_storage_and_matching_icons(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+        init_body = _function_body(source, "initTheme")
+        toggle_body = _function_body(source, "toggleTheme")
+
+        self.assertIn("safeStorageGet", source)
+        self.assertIn("safeStorageSet", source)
+        self.assertNotIn("localStorage.getItem", init_body)
+        self.assertNotIn("localStorage.setItem", toggle_body)
+        self.assertIn('class="sun-icon"', html)
+        self.assertIn('class="moon-icon"', html)
+        self.assertIn(".sun-icon", style)
+        self.assertIn(".moon-icon", style)
+
     def test_group_editor_tracks_dirty_state(self):
         source = APP_JS.read_text(encoding="utf-8")
         body = _function_body(source, "saveGroupEdits")

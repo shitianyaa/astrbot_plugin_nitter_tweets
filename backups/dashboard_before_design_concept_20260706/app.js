@@ -28,13 +28,6 @@ const els = {
   views: document.querySelectorAll(".view"),
   refreshBtn: document.getElementById("refreshBtn"),
   lastUpdated: document.getElementById("lastUpdated"),
-  currentTabTitle: document.getElementById("currentTabTitle"),
-  currentTabDesc: document.getElementById("currentTabDesc"),
-  themeToggleBtn: document.getElementById("themeToggleBtn"),
-  railSchedulerStatus: document.getElementById("railSchedulerStatus"),
-  railScheduleStatus: document.getElementById("railScheduleStatus"),
-  railPendingStatus: document.getElementById("railPendingStatus"),
-  railTargetStatus: document.getElementById("railTargetStatus"),
   alert: document.getElementById("alert"),
   overviewView: document.getElementById("overviewView"),
   createGroupBtn: document.getElementById("createGroupBtn"),
@@ -70,34 +63,6 @@ const els = {
   confirmDesc: document.getElementById("confirmDesc"),
   cancelConfirmBtn: document.getElementById("cancelConfirmBtn"),
   confirmActionBtn: document.getElementById("confirmActionBtn"),
-  cancelConfirmBtnIcon: document.getElementById("cancelConfirmBtnIcon"),
-};
-
-const viewMeta = {
-  overview: {
-    title: "Nitter 推文控制台总览",
-    desc: "聚合查看博主订阅分组、推送目标状态、暂存队列以及 Nitter 节点连通性。",
-  },
-  groups: {
-    title: "订阅分组与博主管理",
-    desc: "维护关注账号、推送目标和分组级检查策略。",
-  },
-  pending: {
-    title: "推文暂存发布队列",
-    desc: "查看待发布推文、失败原因和已送达推送目标，并按分组发布。",
-  },
-  history: {
-    title: "最近推送历史",
-    desc: "查看成功送达记录，按分组和博主筛选，并选择当前推送目标重新推送。",
-  },
-  mirror: {
-    title: "Nitter 镜像连通诊断",
-    desc: "临时测试镜像抓取效果，不改配置、不写推送记录。",
-  },
-  cleanup: {
-    title: "系统维护清理",
-    desc: "清理普通媒体缓存或推送记录，危险操作会二次确认。",
-  },
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -239,89 +204,6 @@ function showAlert(message, type = "success") {
 function hideAlert() {
   els.alert.hidden = true;
   els.alert.textContent = "";
-}
-
-function setStatusBadge(node, text, status = "") {
-  if (!node) return;
-  node.className = `status-badge ${status}`.trim();
-  node.replaceChildren(el("span", { className: "dot" }), text);
-}
-
-function updateViewHeader() {
-  const meta = viewMeta[state.view] || viewMeta.overview;
-  if (els.currentTabTitle) {
-    els.currentTabTitle.textContent = meta.title;
-  }
-  if (els.currentTabDesc) {
-    els.currentTabDesc.textContent = meta.desc;
-  }
-}
-
-function renderRailStatus() {
-  const payload = state.overview || {};
-  const scheduler = payload.scheduler || {};
-  const counts = payload.counts || {};
-  setStatusBadge(
-    els.railSchedulerStatus,
-    scheduler.running ? "运行中" : "未运行",
-    scheduler.running ? "status-ok" : "status-danger",
-  );
-  setStatusBadge(
-    els.railScheduleStatus,
-    scheduler.schedule_enabled ? "已开启" : "已关闭",
-    scheduler.schedule_enabled ? "status-ok" : "status-warn",
-  );
-  const pendingCount = Number(counts.pending_tweets || 0);
-  setStatusBadge(
-    els.railPendingStatus,
-    `${formatNumber(pendingCount)} 条`,
-    pendingCount > 0 ? "status-warn" : "status-ok",
-  );
-  const invalidTargets = Number(counts.invalid_push_targets || 0);
-  setStatusBadge(
-    els.railTargetStatus,
-    `${formatNumber(invalidTargets)} 条异常`,
-    invalidTargets > 0 ? "status-danger" : "status-ok",
-  );
-}
-
-function safeStorageGet(key) {
-  try {
-    return window.localStorage?.getItem(key) || "";
-  } catch (error) {
-    return "";
-  }
-}
-
-function safeStorageSet(key, value) {
-  try {
-    window.localStorage?.setItem(key, value);
-  } catch (error) {
-    // Storage can be blocked in embedded WebViews; theme still works for this session.
-  }
-}
-
-function initTheme() {
-  if (!els.themeToggleBtn) return;
-  const savedTheme = safeStorageGet("nitter-dashboard-theme");
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-  const theme = savedTheme || (prefersDark ? "dark" : "light");
-  document.body.classList.toggle("dark-theme", theme === "dark");
-  document.body.classList.toggle("light-theme", theme !== "dark");
-  els.themeToggleBtn.setAttribute(
-    "aria-pressed",
-    String(document.body.classList.contains("dark-theme")),
-  );
-}
-
-function toggleTheme() {
-  const dark = !document.body.classList.contains("dark-theme");
-  document.body.classList.toggle("dark-theme", dark);
-  document.body.classList.toggle("light-theme", !dark);
-  safeStorageSet("nitter-dashboard-theme", dark ? "dark" : "light");
-  if (els.themeToggleBtn) {
-    els.themeToggleBtn.setAttribute("aria-pressed", String(dark));
-  }
 }
 
 function setBusy(isBusy) {
@@ -1309,8 +1191,6 @@ function renderCleanupSelectors() {
 
 function renderAll() {
   syncSelectors();
-  updateViewHeader();
-  renderRailStatus();
   renderOverview();
   renderGroups();
   renderPending();
@@ -1409,7 +1289,6 @@ async function refreshDashboard() {
 
 function switchView(view) {
   state.view = view;
-  updateViewHeader();
   els.tabs.forEach((tab) => {
     const active = tab.dataset.view === view;
     tab.classList.toggle("active", active);
@@ -2075,12 +1954,6 @@ function bindEvents() {
   els.clearCacheBtn.addEventListener("click", confirmClearCache);
   els.clearSeenBtn.addEventListener("click", confirmClearSeen);
   els.cancelConfirmBtn.addEventListener("click", closeConfirm);
-  if (els.cancelConfirmBtnIcon) {
-    els.cancelConfirmBtnIcon.addEventListener("click", closeConfirm);
-  }
-  if (els.themeToggleBtn) {
-    els.themeToggleBtn.addEventListener("click", toggleTheme);
-  }
   els.confirmDialog.addEventListener("click", (event) => {
     if (event.target === els.confirmDialog) closeConfirm();
   });
@@ -2100,7 +1973,6 @@ function bindEvents() {
   });
 }
 
-initTheme();
 mountIcons();
 bindEvents();
 reloadAll();
