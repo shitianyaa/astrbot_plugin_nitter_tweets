@@ -109,6 +109,7 @@
 - 手动 `/推文`、`/镜像测试` 不受影响。
 - `/pic/media` 和 `<video>` 算作者上传媒体。
 - `/pic/card_img` 不算作者上传媒体。
+- Twitter Article（长文）封面图包在 `<a href="/i/article/...">` 里，不算作者上传媒体。
 - 引用推文里的媒体不算当前作者上传媒体。
 - 修改 `_AuthorMediaDetector` 时必须补 Nitter RSS HTML 片段回归测试。
 
