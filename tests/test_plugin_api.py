@@ -229,6 +229,19 @@ class _Storage:
         rows.sort(key=lambda row: (row.pushed_at, row.id), reverse=True)
         return rows[offset : offset + limit]
 
+    async def count_push_history(self, group_id="", username=""):
+        rows = list(self.history)
+        if group_id:
+            rows = [row for row in rows if row.group_id == group_id]
+        if username:
+            query = username.lower().lstrip("@")
+            rows = [row for row in rows if query in row.username.lower()]
+        grouped_keys = {
+            (row.group_id, row.username, row.status_id, row.source, row.original_link)
+            for row in rows
+        }
+        return len(grouped_keys)
+
 
 class _CheckResult:
     def __init__(self, message="检查结果"):
@@ -1164,6 +1177,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_page["limit"], 2)
         self.assertEqual(first_page["offset"], 0)
         self.assertEqual(first_page["page"], 1)
+        self.assertEqual(first_page["total_count"], 4)
+        self.assertEqual(first_page["total_pages"], 2)
         self.assertTrue(first_page["has_next"])
         self.assertFalse(first_page["has_prev"])
         self.assertEqual(first_page["next_offset"], 2)
@@ -1172,6 +1187,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             ["mamania1008", "oioioi525"],
         )
         self.assertEqual(second_page["page"], 2)
+        self.assertEqual(second_page["total_count"], 4)
+        self.assertEqual(second_page["total_pages"], 2)
         self.assertTrue(second_page["has_prev"])
         self.assertFalse(second_page["has_next"])
         self.assertEqual(second_page["prev_offset"], 0)
@@ -1181,6 +1198,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([row["username"] for row in filtered["records"]], ["oioioi525"])
         self.assertEqual(filtered["selected_username"], "oi")
+        self.assertEqual(filtered["total_count"], 1)
+        self.assertEqual(filtered["total_pages"], 1)
 
     async def test_push_history_groups_multiple_targets_for_same_tweet(self):
         plugin = _plugin(
@@ -1227,6 +1246,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         payload = await NitterWebAPI(plugin).build_history(limit=10)
 
         self.assertTrue(payload["success"])
+        self.assertEqual(payload["total_count"], 1)
+        self.assertEqual(payload["total_pages"], 1)
         self.assertEqual(len(payload["records"]), 1)
         record = payload["records"][0]
         self.assertEqual(record["target_count"], 2)

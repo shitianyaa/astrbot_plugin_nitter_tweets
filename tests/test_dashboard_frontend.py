@@ -246,6 +246,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
     def test_recent_push_history_view_is_wired(self):
         source = APP_JS.read_text(encoding="utf-8")
         html = INDEX_HTML.read_text(encoding="utf-8")
+        pager_body = _function_body(source, "renderHistoryPager")
 
         self.assertIn('data-view="history"', html)
         self.assertIn('id="historyView"', html)
@@ -261,6 +262,9 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("next_offset", source)
         self.assertIn("prev_offset", source)
         self.assertIn("replayHistory", source)
+        self.assertIn("total_pages", pager_body)
+        self.assertIn("${page} / ${totalPages}", pager_body)
+        self.assertNotIn("第 ${page} 页", pager_body)
 
     def test_recent_push_history_groups_targets_and_replays_selected_targets(self):
         source = APP_JS.read_text(encoding="utf-8")

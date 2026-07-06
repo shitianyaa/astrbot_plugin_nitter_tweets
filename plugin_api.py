@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -342,6 +343,8 @@ class NitterWebAPI:
             if error:
                 return self._error(error)
             group_id = group.group_id
+        total_count = await self.storage.count_push_history(group_id, username)
+        total_pages = max(1, math.ceil(total_count / limit))
         records = await self.storage.get_push_history(
             group_id,
             username,
@@ -359,6 +362,8 @@ class NitterWebAPI:
             limit=limit,
             offset=offset,
             page=(offset // limit) + 1,
+            total_count=total_count,
+            total_pages=total_pages,
             has_prev=offset > 0,
             has_next=has_next,
             prev_offset=max(0, offset - limit),

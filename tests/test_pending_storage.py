@@ -262,6 +262,84 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(percent_records, [])
 
+    async def test_count_push_history_counts_grouped_display_records(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                for index, target in enumerate(
+                    ["telegram:FriendMessage:1", "lark:GroupMessage:2"], start=1
+                ):
+                    await asyncio.to_thread(
+                        storage.record_push_history,
+                        "coser",
+                        "xixikawaii",
+                        TweetItem(
+                            text="same tweet",
+                            link="https://x.com/xixikawaii/status/207",
+                            published="",
+                        ),
+                        target,
+                        "scheduled",
+                        "https://nitter.test",
+                        2000 + index,
+                    )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "coser",
+                    "Gongye_11",
+                    TweetItem(
+                        text="underscore",
+                        link="https://x.com/Gongye_11/status/208",
+                        published="",
+                    ),
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                    2003,
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "GongyeA11",
+                    TweetItem(
+                        text="other group",
+                        link="https://x.com/GongyeA11/status/209",
+                        published="",
+                    ),
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                    2004,
+                )
+
+                all_count = await asyncio.to_thread(storage.count_push_history)
+                coser_count = await asyncio.to_thread(
+                    storage.count_push_history,
+                    group_id="coser",
+                )
+                partial_count = await asyncio.to_thread(
+                    storage.count_push_history,
+                    username="xixi",
+                )
+                literal_underscore_count = await asyncio.to_thread(
+                    storage.count_push_history,
+                    username="Gongye_1",
+                )
+                literal_percent_count = await asyncio.to_thread(
+                    storage.count_push_history,
+                    username="%",
+                )
+            finally:
+                storage.close()
+
+            self.assertEqual(all_count, 3)
+            self.assertEqual(coser_count, 2)
+            self.assertEqual(partial_count, 1)
+            self.assertEqual(literal_underscore_count, 1)
+            self.assertEqual(literal_percent_count, 0)
+
     async def test_delete_group_runtime_data_removes_only_target_group_rows(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"

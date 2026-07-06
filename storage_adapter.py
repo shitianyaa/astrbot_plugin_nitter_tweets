@@ -264,6 +264,15 @@ class StorageAdapter:
             offset,
         )
 
+    async def count_push_history(self, group_id: str = "", username: str = "") -> int:
+        """Return count of grouped successful push history records."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.count_push_history,
+            group_id,
+            username,
+        )
+
     async def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
         """Return one push history record."""
         sqlite = await self._ensure_sqlite_connected()

@@ -1223,6 +1223,71 @@ class SQLiteStorage:
     ) -> list[PushHistoryRecord]:
         """Return recent successful push history records."""
         assert self.conn is not None
+        where, params = self._push_history_filter(group_id, username)
+        params.extend(
+            [
+                max(1, min(int(limit or 50), 51)),
+                max(0, int(offset or 0)),
+            ]
+        )
+        rows = self.conn.execute(
+            f"""
+            WITH display_page AS (
+                SELECT
+                    group_id,
+                    username,
+                    status_id,
+                    source,
+                    original_link,
+                    MAX(pushed_at) AS latest_pushed_at,
+                    MAX(id) AS latest_id
+                FROM push_history
+                {where}
+                GROUP BY group_id, username, status_id, source, original_link
+                ORDER BY latest_pushed_at DESC, latest_id DESC
+                LIMIT ? OFFSET ?
+            )
+            SELECT push_history.*
+            FROM push_history
+            JOIN display_page
+              ON push_history.group_id = display_page.group_id
+             AND push_history.username = display_page.username
+             AND push_history.status_id = display_page.status_id
+             AND push_history.source = display_page.source
+             AND push_history.original_link = display_page.original_link
+            ORDER BY
+                display_page.latest_pushed_at DESC,
+                display_page.latest_id DESC,
+                push_history.pushed_at DESC,
+                push_history.id DESC
+            """,
+            params,
+        ).fetchall()
+        return [self._push_history_record_from_row(row) for row in rows]
+
+    def count_push_history(self, group_id: str = "", username: str = "") -> int:
+        """Return count of grouped successful push history display records."""
+        assert self.conn is not None
+        where, params = self._push_history_filter(group_id, username)
+        row = self.conn.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM (
+                SELECT 1
+                FROM push_history
+                {where}
+                GROUP BY group_id, username, status_id, source, original_link
+            ) AS grouped_history
+            """,
+            params,
+        ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
+    @staticmethod
+    def _push_history_filter(
+        group_id: str = "",
+        username: str = "",
+    ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         normalized_group_id = normalize_group_id(group_id) if group_id else ""
@@ -1239,22 +1304,7 @@ class SQLiteStorage:
             clauses.append("username LIKE ? ESCAPE '\\' COLLATE NOCASE")
             params.append(f"%{escaped_username}%")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
-        params.extend(
-            [
-                max(1, min(int(limit or 50), 51)),
-                max(0, int(offset or 0)),
-            ]
-        )
-        rows = self.conn.execute(
-            f"""
-            SELECT * FROM push_history
-            {where}
-            ORDER BY pushed_at DESC, id DESC
-            LIMIT ? OFFSET ?
-            """,
-            params,
-        ).fetchall()
-        return [self._push_history_record_from_row(row) for row in rows]
+        return where, params
 
     def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
         """Return one push history record by id."""
@@ -1606,6 +1656,7 @@ for _method_name in (
     "cleanup_sent_pending_tweets",
     "record_push_history",
     "get_push_history",
+    "count_push_history",
     "get_push_history_record",
     "cleanup_orphan_seen_tweets",
     "_migrate_global_group_to_default",

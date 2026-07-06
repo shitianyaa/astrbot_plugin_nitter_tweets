@@ -1075,7 +1075,8 @@ function renderHistory() {
 
 function renderHistoryPager(payload = state.history) {
   const page = Math.max(1, Number(payload?.page || 1));
-  els.historyPageLabel.textContent = `第 ${page} 页`;
+  const totalPages = Math.max(1, Number(payload?.total_pages || 1));
+  els.historyPageLabel.textContent = `${page} / ${totalPages}`;
   els.historyPrevBtn.disabled = state.loading || state.actionBusy || !payload?.has_prev;
   els.historyNextBtn.disabled = state.loading || state.actionBusy || !payload?.has_next;
 }
