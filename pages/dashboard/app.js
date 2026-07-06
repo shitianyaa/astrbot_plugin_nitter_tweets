@@ -270,11 +270,12 @@ async function copyText(text) {
     }
   }
   const input = el("textarea", {
-    attrs: { readonly: true, "aria-hidden": "true" },
+    attrs: { readonly: true, "aria-hidden": "true", tabindex: "-1" },
     text: value,
   });
   input.style.position = "fixed";
   input.style.left = "-9999px";
+  input.style.pointerEvents = "none";
   document.body.appendChild(input);
   input.select();
   try {

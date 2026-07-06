@@ -110,6 +110,12 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("externalLink(row.original_link", history_body)
         self.assertIn("externalLink(tweet.link", probe_body)
 
+    def test_clipboard_fallback_textarea_is_not_tabbable(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "copyText")
+
+        self.assertIn('"aria-hidden": "true", tabindex: "-1"', body)
+        self.assertIn('input.style.pointerEvents = "none"', body)
+
     def test_group_dependent_controls_are_disabled_without_groups(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "setBusy")
 
