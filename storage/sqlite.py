@@ -32,7 +32,7 @@ except ImportError:
     from shared import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
 PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
@@ -46,6 +46,16 @@ PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS: dict[str, str] = {
     "delivered_targets": (
         "ALTER TABLE pending_tweets "
         "ADD COLUMN delivered_targets TEXT NOT NULL DEFAULT '[]'"
+    ),
+}
+PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
+    "delivery_status": (
+        "ALTER TABLE push_history "
+        "ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'success'"
+    ),
+    "delivery_error": (
+        "ALTER TABLE push_history "
+        "ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"
     ),
 }
 SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media", "push_history"}
@@ -92,6 +102,8 @@ class PushHistoryRecord:
     instance: str
     pushed_at: int
     tweet: TweetItem
+    delivery_status: str = "success"
+    delivery_error: str = ""
 
 
 @dataclass(slots=True)
@@ -331,6 +343,8 @@ class SQLiteStorage:
             self._migrate_schema_v4(cursor)
         if stored_version < 5:
             self._migrate_schema_v5(cursor)
+        if stored_version < 6:
+            self._migrate_schema_v6(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -376,6 +390,9 @@ class SQLiteStorage:
     def _migrate_schema_v5(self, cursor: sqlite3.Cursor) -> None:
         self._create_push_history_table(cursor)
 
+    def _migrate_schema_v6(self, cursor: sqlite3.Cursor) -> None:
+        self._ensure_push_history_delivery_columns(cursor)
+
     def _create_push_history_table(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS push_history (
@@ -388,9 +405,12 @@ class SQLiteStorage:
                 source TEXT NOT NULL,
                 instance TEXT NOT NULL DEFAULT '',
                 tweet_data TEXT NOT NULL,
-                pushed_at INTEGER NOT NULL
+                pushed_at INTEGER NOT NULL,
+                delivery_status TEXT NOT NULL DEFAULT 'success',
+                delivery_error TEXT NOT NULL DEFAULT ''
             )
         """)
+        self._ensure_push_history_delivery_columns(cursor)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_push_history_group_time
             ON push_history(group_id, pushed_at DESC)
@@ -1208,6 +1228,8 @@ class SQLiteStorage:
         source: str,
         instance: str = "",
         pushed_at: int | None = None,
+        delivery_status: str = "success",
+        delivery_error: str = "",
     ) -> int:
         """Record one successfully pushed tweet/target pair."""
         assert self.conn is not None
@@ -1221,8 +1243,9 @@ class SQLiteStorage:
             """
             INSERT INTO push_history (
                 group_id, username, status_id, original_link, target_umo,
-                source, instance, tweet_data, pushed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source, instance, tweet_data, pushed_at,
+                delivery_status, delivery_error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized_group_id,
@@ -1234,6 +1257,8 @@ class SQLiteStorage:
                 str(instance or ""),
                 self._serialize_tweet(tweet),
                 now,
+                self._normalize_delivery_status(delivery_status),
+                str(delivery_error or "").strip(),
             ),
         )
         return int(cursor.lastrowid or 0)
@@ -1544,7 +1569,24 @@ class SQLiteStorage:
             instance=str(row["instance"] or ""),
             pushed_at=int(row["pushed_at"]),
             tweet=self._deserialize_tweet(row["tweet_data"]),
+            delivery_status=self._normalize_delivery_status(row["delivery_status"]),
+            delivery_error=str(row["delivery_error"] or ""),
         )
+
+    def _ensure_push_history_delivery_columns(self, cursor: sqlite3.Cursor) -> None:
+        if not self._table_exists(cursor, "push_history"):
+            return
+        columns = self._table_columns(cursor, "push_history")
+        for name, statement in PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS.items():
+            if name not in columns:
+                cursor.execute(statement)
+
+    @staticmethod
+    def _normalize_delivery_status(value: object) -> str:
+        status = str(value or "").strip()
+        if status in {"success", "partial_failed"}:
+            return status
+        return "success"
 
     def migrate_kv_seen_data(
         self,

@@ -57,6 +57,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     "scheduled",
                     "https://nitter.test",
                     1000,
+                    "partial_failed",
+                    "图片附件发送失败",
                 )
                 await asyncio.to_thread(
                     storage.record_push_history,
@@ -126,6 +128,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     "scheduled",
                     "https://nitter.test",
                     1000,
+                    "partial_failed",
+                    "图片附件发送失败",
                 )
                 await asyncio.to_thread(
                     storage.record_push_history,
@@ -154,6 +158,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([record.username for record in all_records], ["OpenAI", "NASA"])
             self.assertEqual([record.status_id for record in nasa_records], ["100"])
             self.assertIsNotNone(first_record)
+            self.assertEqual(first_record.delivery_status, "partial_failed")
+            self.assertEqual(first_record.delivery_error, "图片附件发送失败")
             self.assertEqual(first_record.tweet.translation, "月球")
             self.assertEqual(first_record.tweet.ai_comment, "值得看")
             self.assertEqual(len(first_record.tweet.media), 1)
@@ -860,7 +866,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].instance, "")
             self.assertEqual(records[0].delivered_targets, ())
@@ -900,7 +906,61 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 storage.close()
 
             self.assertIsNotNone(exists)
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
+
+    async def test_schema_v5_push_history_adds_delivery_status_columns(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO meta (key, value, updated_at) VALUES ('schema_version', '5', 0)"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE push_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id TEXT NOT NULL,
+                        username TEXT NOT NULL,
+                        status_id TEXT NOT NULL,
+                        original_link TEXT NOT NULL,
+                        target_umo TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        instance TEXT NOT NULL DEFAULT '',
+                        tweet_data TEXT NOT NULL,
+                        pushed_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                columns = {
+                    row[1]
+                    for row in storage.conn.execute(
+                        "PRAGMA table_info(push_history)"
+                    ).fetchall()
+                }
+                version = await asyncio.to_thread(storage.get_meta, "schema_version")
+            finally:
+                storage.close()
+
+            self.assertEqual(version, "6")
+            self.assertIn("delivery_status", columns)
+            self.assertIn("delivery_error", columns)
 
     async def test_schema_v2_global_group_rows_merge_to_default_on_config_sync(self):
         with TemporaryDirectory() as temp_dir:
@@ -1112,7 +1172,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             self.assertEqual(users_before_sync, ["NASA"])
             self.assertGreater(global_rows_before_sync, 0)
             self.assertEqual(users, ["ESA", "NASA"])

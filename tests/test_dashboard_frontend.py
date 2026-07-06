@@ -426,6 +426,17 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("data-replay-target", replay_body)
         self.assertIn("target_umos: selectedTargets", replay_body)
 
+    def test_recent_push_history_shows_partial_delivery_failures(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        render_body = _function_body(source, "renderHistory")
+        status_body = _function_body(source, "historyDeliveryStatus")
+
+        self.assertIn("historyDeliveryStatus", source)
+        self.assertIn("historyDeliveryStatus(row)", render_body)
+        self.assertIn("row.delivery_status", status_body)
+        self.assertIn("row.delivery_error", status_body)
+        self.assertIn("媒体失败", source)
+
     def test_confirm_dialog_has_accessible_focus_management(self):
         source = APP_JS.read_text(encoding="utf-8")
         html = INDEX_HTML.read_text(encoding="utf-8")

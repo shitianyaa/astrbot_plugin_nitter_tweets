@@ -271,6 +271,8 @@ class StorageAdapter:
         target_umo: str,
         source: str,
         instance: str = "",
+        delivery_status: str = "success",
+        delivery_error: str = "",
     ) -> int:
         """Record one successful push delivery."""
         sqlite = await self._ensure_sqlite_connected()
@@ -282,6 +284,9 @@ class StorageAdapter:
             target_umo,
             source,
             instance,
+            None,
+            delivery_status,
+            delivery_error,
         )
 
     async def get_push_history(

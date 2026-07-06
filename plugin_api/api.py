@@ -1317,6 +1317,8 @@ class NitterWebAPI:
             "source": record.source,
             "instance": record.instance,
             "pushed_at": record.pushed_at,
+            "delivery_status": record.delivery_status,
+            "delivery_error": record.delivery_error,
             "published": tweet.published,
             "text_preview": NitterWebAPI._text_preview(tweet.text),
             "translation_preview": NitterWebAPI._text_preview(tweet.translation),
@@ -1375,6 +1377,9 @@ class NitterWebAPI:
             item["target_count"] = len(item["target_umos"])
             if int(record.pushed_at or 0) > int(item.get("pushed_at") or 0):
                 item.update(serialized)
+            if record.delivery_status == "partial_failed":
+                item["delivery_status"] = "partial_failed"
+                item["delivery_error"] = record.delivery_error
             options_by_umo = {
                 option["umo"]: option for option in item["replay_target_options"]
             }

@@ -489,6 +489,18 @@ function historyTargetChips(row) {
   );
 }
 
+function historyDeliveryStatus(row) {
+  if (row.delivery_status === "partial_failed") {
+    const error = row.delivery_error || "媒体附件发送失败";
+    return el("span", {
+      className: "badge warning",
+      attrs: { title: error },
+      text: "媒体失败",
+    });
+  }
+  return el("span", { className: "badge ok", text: "已送达" });
+}
+
 function compactList(values, empty = "无") {
   const list = Array.isArray(values) ? values.filter(Boolean) : [];
   if (!list.length) {
@@ -1291,6 +1303,7 @@ function renderHistory() {
         tweetCell,
         el("td", {}, [historyTargetChips(row)]),
         el("td", { text: row.source || "-" }),
+        el("td", {}, [historyDeliveryStatus(row)]),
         el("td", {}, [
           el(
             "button",
@@ -1317,6 +1330,7 @@ function renderHistory() {
             el("th", { text: "推文" }),
             el("th", { text: "当时推送目标" }),
             el("th", { text: "来源" }),
+            el("th", { text: "状态" }),
             el("th", { text: "操作" }),
           ]),
         ]),

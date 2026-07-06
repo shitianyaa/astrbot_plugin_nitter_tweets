@@ -409,6 +409,11 @@ async def send_media_with_video_retry(
     if attempt.success or not attempt.retryable:
         return attempt
 
+    retry_attempt = await send_chain(MessageChain(components), label)
+    if retry_attempt.success or not retry_attempt.retryable:
+        return retry_attempt
+    attempt = retry_attempt
+
     without_videos = [
         component for component in components if not isinstance(component, Video)
     ]

@@ -1360,6 +1360,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 source="scheduled",
                 instance="https://nitter.test",
                 pushed_at=2000,
+                delivery_status="partial_failed",
+                delivery_error="图片附件发送失败",
                 tweet=TweetItem(
                     text="model",
                     link="https://x.com/OpenAI/status/200",
@@ -1398,6 +1400,8 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["group_id"], "tech")
         self.assertEqual(row["username"], "OpenAI")
         self.assertEqual(row["target_umo"], "telegram:FriendMessage:2")
+        self.assertEqual(row["delivery_status"], "partial_failed")
+        self.assertEqual(row["delivery_error"], "图片附件发送失败")
         self.assertNotIn("media", row)
         self.assertNotIn("C:/tmp/a.jpg", repr(row))
 
