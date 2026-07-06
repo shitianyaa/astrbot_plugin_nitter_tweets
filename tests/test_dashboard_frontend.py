@@ -88,6 +88,21 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
         self.assertNotIn(".innerHTML =", source)
 
+    def test_external_links_are_filtered_to_http_protocols(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        safe_body = _function_body(source, "safeUrl")
+        link_body = _function_body(source, "externalLink")
+        pending_body = _function_body(source, "renderPending")
+        history_body = _function_body(source, "renderHistory")
+        probe_body = _function_body(source, "probeMirror")
+
+        self.assertIn('url.protocol === "http:" || url.protocol === "https:"', safe_body)
+        self.assertIn('rel: "noopener noreferrer"', link_body)
+        self.assertIn("return el(\"span\"", link_body)
+        self.assertIn("externalLink(row.original_link", pending_body)
+        self.assertIn("externalLink(row.original_link", history_body)
+        self.assertIn("externalLink(tweet.link", probe_body)
+
     def test_group_dependent_controls_are_disabled_without_groups(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "setBusy")
 
@@ -225,6 +240,29 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("snapshotEditableGroup", body)
         self.assertIn("push_targets", snapshot_body)
 
+    def test_dirty_group_disables_check_and_publish_actions(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        editor_body = _function_body(source, "renderGroupEditor")
+        sync_body = _function_body(source, "syncGroupEditorControls")
+
+        self.assertIn("const dirty = isGroupDirty(group.group_id)", editor_body)
+        self.assertIn("dirty ? \"请先保存更改\" : null", editor_body)
+        self.assertIn("!group.enabled || dirty || state.loading || state.actionBusy", editor_body)
+        self.assertIn("dirty || state.loading || state.actionBusy", editor_body)
+        self.assertIn("[data-check-group]", sync_body)
+        self.assertIn("[data-publish-group]", sync_body)
+        self.assertIn("checkButton.disabled = !group.enabled || dirty", sync_body)
+        self.assertIn("publishButton.disabled = dirty", sync_body)
+
+    def test_immediate_check_requires_confirmation(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        run_body = _function_body(source, "runGroupCheck")
+
+        self.assertIn("openConfirm", run_body)
+        self.assertIn("将使用当前已保存配置", run_body)
+        self.assertIn("可能立即推送", run_body)
+        self.assertIn('apiPost("web/check"', run_body)
+
     def test_push_target_chips_are_editable(self):
         source = APP_JS.read_text(encoding="utf-8")
         editor_body = _function_body(source, "renderGroupEditor")
@@ -236,6 +274,20 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertNotIn("editPushTarget", target_body)
         self.assertNotIn("chip-delete", target_body)
         self.assertNotIn("savePushTarget", target_body)
+
+    def test_push_targets_can_be_probed_without_saving(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        target_body = _function_body(source, "buildPushTargetEditor")
+        probe_body = _function_body(source, "probePushTargets")
+        bind_body = _function_body(source, "bindEvents")
+
+        self.assertIn("probePushTargets", source)
+        self.assertIn("probePushTargets", target_body)
+        self.assertIn('apiPost("web/targets/probe"', probe_body)
+        self.assertIn("pushTargetList(groupId)", probe_body)
+        self.assertIn("targetProbeResults", source)
+        self.assertIn("renderTargetProbeResults", source)
+        self.assertIn("target.dataset.probePushTargets", bind_body)
 
     def test_history_empty_state_explains_new_history_only(self):
         source = APP_JS.read_text(encoding="utf-8")
@@ -277,6 +329,41 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("replay_target_options", replay_body)
         self.assertIn("data-replay-target", replay_body)
         self.assertIn("target_umos: selectedTargets", replay_body)
+
+    def test_confirm_dialog_has_accessible_focus_management(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        open_body = _function_body(source, "openConfirm")
+        close_body = _function_body(source, "closeConfirm")
+        trap_body = _function_body(source, "trapConfirmFocus")
+        bind_body = _function_body(source, "bindEvents")
+
+        self.assertIn('aria-labelledby="confirmTitle"', html)
+        self.assertIn('aria-describedby="confirmDesc"', html)
+        self.assertIn("state.lastFocusedElement = document.activeElement", open_body)
+        self.assertIn('document.body.classList.add("dialog-open")', open_body)
+        self.assertIn("focusable[0].focus()", open_body)
+        self.assertIn('document.body.classList.remove("dialog-open")', close_body)
+        self.assertIn("state.lastFocusedElement.focus()", close_body)
+        self.assertIn("trapConfirmFocus", bind_body)
+        self.assertIn('event.key !== "Tab"', trap_body)
+        self.assertIn("event.preventDefault()", trap_body)
+
+    def test_replay_confirm_button_tracks_selected_targets(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        replay_body = _function_body(source, "replayHistory")
+
+        self.assertIn("updateReplayConfirmState", replay_body)
+        self.assertIn("change", replay_body)
+        self.assertIn("querySelectorAll(\"[data-replay-target]:checked\")", replay_body)
+        self.assertIn("els.confirmActionBtn.disabled = selectedCount <= 0", replay_body)
+
+    def test_clear_all_seen_posts_explicit_confirmation(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        clear_body = _function_body(source, "confirmClearSeen")
+
+        self.assertIn('confirm: groupId ? "" : "CLEAR_ALL"', clear_body)
+        self.assertIn("全部分组", clear_body)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")

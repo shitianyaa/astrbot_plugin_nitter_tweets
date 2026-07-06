@@ -764,6 +764,22 @@ button:focus-visible {
   align-items: center;
 }
 
+.target-probe-results {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.target-probe-results .chip {
+  background: #ffffff;
+}
+
+.target-probe-results .chip.bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 24%, var(--line));
+}
+
 .mono .chip {
   font-family: Consolas, "SFMono-Regular", monospace;
 }

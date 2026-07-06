@@ -17,10 +17,12 @@ try:
         PendingTweetRecord,
         PushHistoryRecord,
     )
+    from .delivery import PlatformResolver, parse_umo
     from .utils import TweetItem, configured_merge_tweet_threshold, normalize_username
     from .webui_groups import WebUIGroupEditor
 except ImportError:
     from config_compat import config_get
+    from delivery import PlatformResolver, parse_umo
     from scheduler_config import ScheduleGroup
     from sqlite_storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
     from utils import TweetItem, configured_merge_tweet_threshold, normalize_username
@@ -43,6 +45,7 @@ class NitterWebAPI:
             ("web/groups/create", "handle_group_create", ["POST"]),
             ("web/groups/update", "handle_group_update", ["POST"]),
             ("web/groups/delete", "handle_group_delete", ["POST"]),
+            ("web/targets/probe", "handle_targets_probe", ["POST"]),
             ("web/history", "handle_history", ["GET"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
             ("web/pending", "handle_pending", ["GET"]),
@@ -113,6 +116,13 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
+    async def handle_targets_probe(self):
+        async def action():
+            data = await self._request_json()
+            return await self.probe_targets(data)
+
+        return await self._json_response(action)
+
     async def handle_history_replay(self):
         async def action():
             data = await self._request_json()
@@ -141,9 +151,10 @@ class NitterWebAPI:
         async def action():
             data = await self._request_json()
             group_id = self._data_text(data, "group_id")
+            confirm = self._data_text(data, "confirm")
             if not group_id and self._data_text(data, "group_name"):
                 return self._error("WebUI API 仅支持使用 group_id 指定分组")
-            return await self.clear_seen(group_id)
+            return await self.clear_seen(group_id, confirm=confirm)
 
         return await self._json_response(action)
 
@@ -218,7 +229,7 @@ class NitterWebAPI:
             config_summary=self._config_summary(instances, groups),
             instances=instances,
             attention_items=self._overview_attention_items(
-                counts, scheduler_state, instances
+                counts, scheduler_state, instances, groups
             ),
             terminology=self._terminology(),
         )
@@ -275,24 +286,146 @@ class NitterWebAPI:
         if not result.get("success"):
             return result
 
-        runtime_summary = await self.storage.delete_group_runtime_data(
-            result["group_id"]
-        )
-        media_summary = await asyncio.to_thread(
-            self.plugin.media.delete_staged_media_group,
-            result["group_id"],
-        )
+        runtime_summary = None
+        media_summary = None
+        runtime_error = ""
+        media_error = ""
+        try:
+            runtime_summary = await self.storage.delete_group_runtime_data(
+                result["group_id"]
+            )
+        except Exception as exc:
+            runtime_error = str(exc)
+            logger.warning(
+                "[NitterTweets] WebUI 删除分组运行数据清理失败: "
+                f"group={result['group_id']}, error={runtime_error}"
+            )
+        try:
+            media_summary = await asyncio.to_thread(
+                self.plugin.media.delete_staged_media_group,
+                result["group_id"],
+            )
+        except Exception as exc:
+            media_error = str(exc)
+            logger.warning(
+                "[NitterTweets] WebUI 删除分组暂存媒体清理失败: "
+                f"group={result['group_id']}, error={media_error}"
+            )
         sync_error = await self._sync_groups()
         payload = self._ok(
             group_id=result["group_id"],
             group_name=result["group_name"],
             runtime_summary=runtime_summary,
-            media_summary=self._serialize_cache_result(media_summary),
+            media_summary=(
+                self._serialize_cache_result(media_summary)
+                if media_summary is not None
+                else None
+            ),
+            cleanup_status=(
+                "partial_failure" if runtime_error or media_error else "ok"
+            ),
         )
+        if runtime_error:
+            payload["runtime_error"] = runtime_error
+        if media_error:
+            payload["media_error"] = media_error
+        if runtime_error or media_error:
+            payload["message"] = "分组已删除，但部分运行数据清理失败，请查看详情"
         if sync_error:
             payload["sync_error"] = sync_error
-            payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
+            if runtime_error or media_error:
+                payload["message"] += f"；数据库同步失败：{sync_error}"
+            else:
+                payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
         return payload
+
+    async def probe_targets(self, data: dict[str, Any]) -> dict[str, Any]:
+        group_id = self._data_text(data, "group_id")
+        group: ScheduleGroup | None = None
+        if group_id:
+            group, error = self._resolve_group(group_id)
+            if error:
+                return self._error(error)
+
+        targets = self._data_text_list(data, "target_umos")
+        if not targets and group is not None:
+            targets = [*group.targets, *group.invalid_targets]
+        if not targets:
+            return self._error("请填写要检测的推送目标")
+
+        results = [self._probe_target(target) for target in targets]
+        valid_count = sum(1 for item in results if item["valid"])
+        invalid_count = len(results) - valid_count
+        found_count = sum(1 for item in results if item.get("platform_found"))
+        merge_count = sum(1 for item in results if item.get("supports_merged_forward"))
+        return self._ok(
+            group_id=group.group_id if group is not None else group_id,
+            group_name=group.name if group is not None else "",
+            targets=results,
+            summary={
+                "total": len(results),
+                "valid": valid_count,
+                "invalid": invalid_count,
+                "platform_found": found_count,
+                "supports_merged_forward": merge_count,
+            },
+        )
+
+    def _probe_target(self, target_umo: str) -> dict[str, Any]:
+        target_umo = str(target_umo or "").strip()
+        platform_id, message_type, session_id = parse_umo(target_umo)
+        if not platform_id or not message_type or not session_id:
+            return {
+                "umo": target_umo,
+                "valid": False,
+                "error": "推送目标必须是 /sid 返回的完整 UMO：platform:MessageType:session_id",
+                "platform_id": platform_id,
+                "message_type": message_type,
+                "session_id": session_id,
+                "platform_kind": "unknown",
+                "platform_found": False,
+                "supports_merged_forward": False,
+            }
+
+        context = getattr(self.scheduler, "context", None) or getattr(
+            self.plugin, "context", None
+        )
+        profile = PlatformResolver().from_umo(context, target_umo)
+        supports_merged_forward = False
+        sender = getattr(self.plugin, "sender", None) or getattr(
+            self.scheduler, "sender", None
+        )
+        supports = getattr(sender, "supports_merged_forward_for_umo", None)
+        if callable(supports):
+            try:
+                supports_merged_forward = bool(supports(context, target_umo))
+            except Exception:
+                supports_merged_forward = False
+
+        return {
+            "umo": target_umo,
+            "valid": True,
+            "error": "",
+            "platform_id": platform_id,
+            "message_type": message_type,
+            "session_id": session_id,
+            "platform_kind": self._platform_kind(profile),
+            "platform_types": list(profile.platform_types),
+            "platform_found": profile.platform is not None,
+            "supports_merged_forward": supports_merged_forward,
+        }
+
+    @staticmethod
+    def _platform_kind(profile: Any) -> str:
+        if getattr(profile, "is_lark", False):
+            return "lark"
+        if getattr(profile, "is_telegram", False):
+            return "telegram"
+        if getattr(profile, "is_onebot", False):
+            return "onebot"
+        if getattr(profile, "is_known_non_onebot", False):
+            return "non_onebot"
+        return "default"
 
     async def build_pending(self, group_id: str = "", limit: int = 50) -> dict[str, Any]:
         groups = self._schedule_groups()
@@ -429,10 +562,15 @@ class NitterWebAPI:
         result = await asyncio.to_thread(self.plugin.media.clear_non_staged_cache)
         return self._ok(result=self._serialize_cache_result(result))
 
-    async def clear_seen(self, group_id: str = "") -> dict[str, Any]:
+    async def clear_seen(self, group_id: str = "", confirm: str = "") -> dict[str, Any]:
         group_id = str(group_id or "").strip()
+        confirm = str(confirm or "").strip()
         group: ScheduleGroup | None = None
-        if group_id and group_id.lower() not in {"all", "全部"}:
+        clear_all = not group_id or group_id.lower() in {"all", "全部"}
+        if clear_all:
+            if confirm != "CLEAR_ALL":
+                return self._error("清理全部分组推送记录需要显式确认")
+        else:
             group, error = self._resolve_group(group_id)
             if error:
                 return self._error(error)
@@ -784,6 +922,7 @@ class NitterWebAPI:
         counts: dict[str, int],
         scheduler_state: dict[str, bool],
         instances: list[str],
+        groups: list[ScheduleGroup] | None = None,
     ) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         if not scheduler_state.get("running", False):
@@ -793,6 +932,15 @@ class NitterWebAPI:
                     "level": "warning",
                     "title": "调度器未运行",
                     "detail": "后台检查和暂存发布不会自动执行。",
+                }
+            )
+        if not scheduler_state.get("schedule_enabled", False):
+            items.append(
+                {
+                    "key": "schedule_disabled",
+                    "level": "warning",
+                    "title": "后台检查总开关关闭",
+                    "detail": "定时检查和暂存发布时间不会自动触发。",
                 }
             )
         if not instances:
@@ -849,6 +997,7 @@ class NitterWebAPI:
                     "detail": f"{counts['failed_pending_tweets']} 条待发布推文需要关注。",
                 }
             )
+        items.extend(NitterWebAPI._overview_group_diagnostics(groups or []))
         if not items:
             items.append(
                 {
@@ -859,6 +1008,85 @@ class NitterWebAPI:
                 }
             )
         return items
+
+    @staticmethod
+    def _overview_group_diagnostics(
+        groups: list[ScheduleGroup],
+    ) -> list[dict[str, str]]:
+        enabled_groups = [group for group in groups if group.enabled]
+        if not enabled_groups:
+            return []
+
+        items: list[dict[str, str]] = []
+        no_watch_users = [group for group in enabled_groups if not group.users]
+        no_push_targets = [group for group in enabled_groups if not group.targets]
+        no_check_triggers = [
+            group
+            for group in enabled_groups
+            if not group.interval_check_enabled and not group.daily_check_enabled
+        ]
+        deferred_without_times = [
+            group
+            for group in enabled_groups
+            if group.deferred_publish_enabled and not group.deferred_publish_times
+        ]
+
+        if no_watch_users:
+            items.append(
+                {
+                    "key": "groups_without_watch_users",
+                    "level": "warning",
+                    "title": "启用分组没有关注账号",
+                    "detail": (
+                        "这些分组不会检查任何账号："
+                        + NitterWebAPI._format_group_names(no_watch_users)
+                    ),
+                }
+            )
+        if no_push_targets:
+            items.append(
+                {
+                    "key": "groups_without_push_targets",
+                    "level": "warning",
+                    "title": "启用分组没有推送目标",
+                    "detail": (
+                        "新推文无法送达这些分组："
+                        + NitterWebAPI._format_group_names(no_push_targets)
+                    ),
+                }
+            )
+        if no_check_triggers:
+            items.append(
+                {
+                    "key": "groups_without_check_triggers",
+                    "level": "warning",
+                    "title": "启用分组没有检查触发",
+                    "detail": (
+                        "这些分组既没有间隔检查也没有每日检查："
+                        + NitterWebAPI._format_group_names(no_check_triggers)
+                    ),
+                }
+            )
+        if deferred_without_times:
+            items.append(
+                {
+                    "key": "deferred_without_publish_times",
+                    "level": "warning",
+                    "title": "暂存发布没有发布时间",
+                    "detail": (
+                        "这些分组已开启暂存发布，但全局发布时间为空："
+                        + NitterWebAPI._format_group_names(deferred_without_times)
+                    ),
+                }
+            )
+        return items
+
+    @staticmethod
+    def _format_group_names(groups: list[ScheduleGroup], limit: int = 4) -> str:
+        names = [str(group.name or group.group_id) for group in groups]
+        visible = names[:limit]
+        suffix = f" 等 {len(names)} 个" if len(names) > limit else ""
+        return "、".join(visible) + suffix
 
     def _serialize_group(
         self,

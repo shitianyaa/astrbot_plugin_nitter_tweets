@@ -7,6 +7,7 @@ const state = {
   overview: null,
   groups: [],
   groupDrafts: {},
+  targetProbeResults: {},
   pending: null,
   history: null,
   selectedGroupId: "",
@@ -17,6 +18,8 @@ const state = {
   historyOffset: 0,
   seenGroupId: "",
   pendingAction: null,
+  lastFocusedElement: null,
+  inertNodes: [],
   lastUpdated: "",
 };
 
@@ -256,6 +259,35 @@ function formatTime(value) {
   });
 }
 
+function safeUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const url = new URL(text);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.href;
+    }
+  } catch (error) {
+    return "";
+  }
+  return "";
+}
+
+function externalLink(url, text) {
+  const href = safeUrl(url);
+  if (!href) {
+    return el("span", { text: text || url || "-" });
+  }
+  return el("a", {
+    attrs: {
+      href,
+      target: "_blank",
+      rel: "noopener noreferrer",
+    },
+    text: text || href,
+  });
+}
+
 function shortUmoLabel(umo) {
   const value = String(umo || "").trim();
   if (!value) return "-";
@@ -463,7 +495,46 @@ function buildPushTargetEditor(group, draft) {
         dataset: { addPushTarget: group.group_id },
         disabled: state.loading || state.actionBusy,
       }, [iconSpan("plus"), "新增"]),
+      el("button", {
+        className: "button secondary small",
+        attrs: { type: "button" },
+        dataset: { probePushTargets: group.group_id },
+        disabled: state.loading || state.actionBusy || !targets.length,
+      }, [iconSpan("probe"), "检测目标"]),
     ]),
+    renderTargetProbeResults(group.group_id),
+  ]);
+}
+
+function renderTargetProbeResults(groupId) {
+  const payload = state.targetProbeResults[groupId];
+  if (!payload) {
+    return null;
+  }
+  const rows = payload.targets || [];
+  const summary = payload.summary || {};
+  return el("div", { className: "target-probe-results" }, [
+    el("small", {
+      className: "muted",
+      text: `检测 ${formatNumber(summary.total)} 个，有效 ${formatNumber(summary.valid)} 个，异常 ${formatNumber(summary.invalid)} 个`,
+    }),
+    el(
+      "div",
+      { className: "chip-list mono" },
+      rows.map((row) =>
+        el("span", {
+          className: `chip ${row.valid ? "" : "bad"}`.trim(),
+          attrs: {
+            title: row.valid
+              ? `${row.platform_kind || "default"} · ${row.platform_found ? "已找到平台实例" : "未找到平台实例"} · ${row.supports_merged_forward ? "支持合并转发" : "普通发送"}`
+              : row.error,
+          },
+          text: row.valid
+            ? `${shortUmoLabel(row.umo)} · ${row.platform_kind || "default"}`
+            : `${row.umo || "空目标"} · 无效`,
+        }),
+      ),
+    ),
   ]);
 }
 
@@ -530,12 +601,31 @@ function syncGroupEditorControls(groupId) {
   const group = state.groups.find((item) => item.group_id === groupId);
   const draft = state.groupDrafts[groupId];
   if (!group || !draft) return;
+  const dirty = isGroupDirty(groupId);
   const saveButton = [...els.groupEditor.querySelectorAll("[data-save-group]")].find(
     (node) => node.dataset.saveGroup === groupId,
   );
   if (saveButton) {
     saveButton.disabled =
-      !isGroupDirty(groupId) || state.loading || state.actionBusy;
+      !dirty || state.loading || state.actionBusy;
+  }
+  const checkButton = [...els.groupEditor.querySelectorAll("[data-check-group]")].find(
+    (node) => node.dataset.checkGroup === groupId,
+  );
+  if (checkButton) {
+    checkButton.disabled = !group.enabled || dirty || state.loading || state.actionBusy;
+    checkButton.title = !group.enabled
+      ? "分组停用时不能立即检查"
+      : dirty
+        ? "请先保存更改"
+        : "";
+  }
+  const publishButton = [...els.groupEditor.querySelectorAll("[data-publish-group]")].find(
+    (node) => node.dataset.publishGroup === groupId,
+  );
+  if (publishButton) {
+    publishButton.disabled = dirty || state.loading || state.actionBusy;
+    publishButton.title = dirty ? "请先保存更改" : "";
   }
   const title = [...els.groupEditor.querySelectorAll("[data-group-title]")].find(
     (node) => node.dataset.groupTitle === groupId,
@@ -707,6 +797,7 @@ function renderGroupEditor() {
     return;
   }
   const draft = groupDraft(group);
+  const dirty = isGroupDirty(group.group_id);
   const pendingSummary = group.pending_summary || {};
   const globalPublishTimes = (group.deferred_publish_times || []).join("，") || "未设置";
   const checkButton = el(
@@ -715,10 +806,14 @@ function renderGroupEditor() {
       className: "button secondary small",
       attrs: {
         type: "button",
-        title: group.enabled ? null : "分组停用时不能立即检查",
+        title: !group.enabled
+          ? "分组停用时不能立即检查"
+          : dirty
+            ? "请先保存更改"
+            : null,
       },
       dataset: { checkGroup: group.group_id },
-      disabled: !group.enabled || state.loading || state.actionBusy,
+      disabled: !group.enabled || dirty || state.loading || state.actionBusy,
     },
     [iconSpan("play"), "立即检查"],
   );
@@ -726,9 +821,12 @@ function renderGroupEditor() {
     "button",
     {
       className: "button primary small",
-      attrs: { type: "button" },
+      attrs: {
+        type: "button",
+        title: dirty ? "请先保存更改" : null,
+      },
       dataset: { publishGroup: group.group_id },
-      disabled: state.loading || state.actionBusy,
+      disabled: dirty || state.loading || state.actionBusy,
     },
     [iconSpan("send"), "发布暂存"],
   );
@@ -951,14 +1049,7 @@ function renderPending() {
       records.map((row) => {
         const tweetCell = el("td");
         tweetCell.append(
-          el("a", {
-            attrs: {
-              href: row.original_link || "",
-              target: "_blank",
-              rel: "noreferrer",
-            },
-            text: row.status_id || row.original_link,
-          }),
+          externalLink(row.original_link, row.status_id || row.original_link),
           el("span", { text: row.text_preview || "" }),
         );
         const failedCell = el("td", {}, [formatNumber(row.fail_count)]);
@@ -1020,14 +1111,7 @@ function renderHistory() {
     {},
     records.map((row) => {
       const tweetCell = el("td", {}, [
-        el("a", {
-          attrs: {
-            href: row.original_link || "",
-            target: "_blank",
-            rel: "noreferrer",
-          },
-          text: row.status_id || row.original_link,
-        }),
+        externalLink(row.original_link, row.status_id || row.original_link),
         el("span", { text: row.text_preview || "" }),
       ]);
       return el("tr", {}, [
@@ -1215,6 +1299,31 @@ function switchView(view) {
   });
 }
 
+function confirmFocusableElements() {
+  return [...els.confirmDialog.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  )].filter((node) => !node.disabled && node.offsetParent !== null);
+}
+
+function setBackgroundInert(isInert) {
+  const nodes = [
+    document.querySelector(".topbar"),
+    document.querySelector(".tabs"),
+    document.querySelector("main"),
+    els.alert,
+  ].filter(Boolean);
+  state.inertNodes = isInert ? nodes : [];
+  nodes.forEach((node) => {
+    if ("inert" in node) {
+      node.inert = isInert;
+    } else if (isInert) {
+      node.setAttribute("aria-hidden", "true");
+    } else {
+      node.removeAttribute("aria-hidden");
+    }
+  });
+}
+
 function openConfirm({
   kicker = "确认操作",
   title,
@@ -1223,6 +1332,10 @@ function openConfirm({
   danger = true,
   action,
 }) {
+  if (!els.confirmDialog.hidden) {
+    closeConfirm({ restoreFocus: false });
+  }
+  state.lastFocusedElement = document.activeElement;
   state.pendingAction = action;
   els.confirmKicker.textContent = kicker;
   els.confirmTitle.textContent = title;
@@ -1236,12 +1349,51 @@ function openConfirm({
   els.confirmActionBtn.disabled = false;
   els.confirmActionBtn.classList.toggle("danger", danger);
   els.confirmDialog.hidden = false;
-  els.cancelConfirmBtn.focus();
+  document.body.classList.add("dialog-open");
+  setBackgroundInert(true);
+  const focusable = confirmFocusableElements();
+  if (focusable.length) {
+    focusable[0].focus();
+  } else {
+    els.confirmDialog.focus();
+  }
 }
 
-function closeConfirm() {
+function closeConfirm(options = {}) {
+  const restoreFocus = options.restoreFocus !== false;
   els.confirmDialog.hidden = true;
   state.pendingAction = null;
+  document.body.classList.remove("dialog-open");
+  setBackgroundInert(false);
+  if (
+    restoreFocus &&
+    state.lastFocusedElement &&
+    document.contains(state.lastFocusedElement) &&
+    typeof state.lastFocusedElement.focus === "function"
+  ) {
+    state.lastFocusedElement.focus();
+  }
+  state.lastFocusedElement = null;
+}
+
+function trapConfirmFocus(event) {
+  if (els.confirmDialog.hidden || event.key !== "Tab") {
+    return;
+  }
+  const focusable = confirmFocusableElements();
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 async function withAction(action, successText, options = {}) {
@@ -1297,7 +1449,16 @@ async function createGroup() {
 }
 
 async function runGroupCheck(groupId) {
-  await withAction(() => apiPost("web/check", { group_id: groupId }), "检查完成");
+  const group = state.groups.find((item) => item.group_id === groupId);
+  openConfirm({
+    kicker: "立即检查",
+    title: "立即检查这个分组？",
+    desc: `${group?.name || groupId} 将使用当前已保存配置检查推文，并可能立即推送到该分组的推送目标。`,
+    confirmText: "开始检查",
+    danger: false,
+    action: () =>
+      withAction(() => apiPost("web/check", { group_id: groupId }), "检查完成"),
+  });
 }
 
 function confirmPublish(groupId) {
@@ -1342,6 +1503,25 @@ function addPushTarget(groupId) {
   targets.push(value);
   updateGroupDraft(groupId, "push_targets", targets);
   renderGroupEditor();
+}
+
+async function probePushTargets(groupId) {
+  const targets = pushTargetList(groupId);
+  if (!targets.length) {
+    showAlert("当前草稿没有推送目标", "error");
+    return;
+  }
+  await withAction(async () => {
+    const result = await apiPost("web/targets/probe", {
+      group_id: groupId,
+      target_umos: targets,
+    });
+    state.targetProbeResults[groupId] = result;
+    return result;
+  }, "推送目标检测完成", {
+    reload: false,
+    rerender: renderGroupEditor,
+  });
 }
 
 function confirmDeletePushTarget(groupId, indexText) {
@@ -1392,7 +1572,6 @@ function replayHistory(recordId) {
         historical: (record?.target_umos || []).includes(target),
         available: true,
       }));
-  const availableOptions = options.filter((option) => option.available);
   const desc = el("div", { className: "replay-target-panel" }, [
     el("p", {
       text: "选择要重新推送到的当前推送目标。历史旧目标只用于提示，不会自动使用。",
@@ -1442,7 +1621,18 @@ function replayHistory(recordId) {
         });
       }, "重新推送完成"),
   });
-  els.confirmActionBtn.disabled = availableOptions.length <= 0;
+  const updateReplayConfirmState = () => {
+    const selectedCount = els.confirmDialog.querySelectorAll(
+      "[data-replay-target]:checked",
+    ).length;
+    els.confirmActionBtn.disabled = selectedCount <= 0;
+  };
+  desc.addEventListener("change", (event) => {
+    if (event.target.closest("[data-replay-target]")) {
+      updateReplayConfirmState();
+    }
+  });
+  updateReplayConfirmState();
 }
 
 function confirmDeleteGroup(groupId) {
@@ -1535,18 +1725,11 @@ async function probeMirror(event) {
       limit: Number(els.mirrorLimit.value || 5),
       instance: els.mirrorInstance.value.trim(),
     });
-    const tweets = (result.tweets || []).map((tweet) =>
-      el("a", {
-        attrs: {
-          href: tweet.link || "",
-          target: "_blank",
-          rel: "noreferrer",
-        },
-      }, [
-        el("strong", { text: tweet.status_id || tweet.link }),
-        el("span", { text: tweet.text_preview || "" }),
-      ]),
-    );
+    const tweets = (result.tweets || []).map((tweet) => {
+      const link = externalLink(tweet.link, tweet.status_id || tweet.link || "");
+      link.appendChild(el("span", { text: tweet.text_preview || "" }));
+      return link;
+    });
     els.mirrorResult.replaceChildren(
       el("div", { className: "panel" }, [
         el("h2", {
@@ -1595,15 +1778,19 @@ function confirmClearCache() {
 function confirmClearSeen() {
   const groupId = els.seenGroupSelect.value;
   const group = state.groups.find((item) => item.group_id === groupId);
+  const scope = group?.name || "全部分组";
   openConfirm({
     kicker: "推送记录",
     title: "清理推送记录？",
-    desc: "不会删除关注账号、推送目标、暂存队列或媒体文件，但旧推文可能重新参与检查。",
+    desc: `清理范围：${scope}。不会删除关注账号、推送目标、暂存队列或媒体文件，但旧推文可能重新参与检查。`,
     confirmText: "清理",
     action: () =>
       withAction(async () => {
-        const result = await apiPost("web/seen/clear", { group_id: groupId });
-        els.seenResult.textContent = `${group?.name || "全部分组"}：删除 ${formatNumber(result.deleted)} 条`;
+        const result = await apiPost("web/seen/clear", {
+          group_id: groupId,
+          confirm: groupId ? "" : "CLEAR_ALL",
+        });
+        els.seenResult.textContent = `${scope}：删除 ${formatNumber(result.deleted)} 条`;
         return result;
       }, "推送记录清理完成"),
   });
@@ -1713,6 +1900,7 @@ function bindEvents() {
     if (target.dataset.deleteGroup) confirmDeleteGroup(target.dataset.deleteGroup);
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);
     if (target.dataset.addPushTarget) addPushTarget(target.dataset.addPushTarget);
+    if (target.dataset.probePushTargets) probePushTargets(target.dataset.probePushTargets);
     if (target.dataset.deletePushTarget) {
       confirmDeletePushTarget(
         target.dataset.deletePushTargetGroup,
@@ -1775,6 +1963,7 @@ function bindEvents() {
     if (typeof action === "function") await action();
   });
   document.addEventListener("keydown", (event) => {
+    trapConfirmFocus(event);
     if (event.key === "Escape" && !els.confirmDialog.hidden) closeConfirm();
   });
   window.addEventListener("beforeunload", (event) => {

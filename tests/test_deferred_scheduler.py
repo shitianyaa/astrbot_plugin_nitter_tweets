@@ -3118,6 +3118,56 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({record.target_umo for record in records}, {"aiocqhttp:GroupMessage:1"})
         self.assertEqual({record.source for record in records}, {"publish"})
 
+    async def test_publish_pending_does_not_resend_already_delivered_tweet_to_target(self):
+        sender = _Sender()
+        scheduler = await self._create_scheduler_with_deferred_publish_enabled(
+            push_targets=["telegram:FriendMessage:1", "lark:GroupMessage:2"],
+            sender=sender,
+        )
+        await scheduler.storage.enqueue_pending_tweets(
+            "default",
+            "NASA",
+            "https://nitter.test",
+            [
+                self._make_tweet("NASA", "301"),
+                self._make_tweet("NASA", "302"),
+            ],
+        )
+        records = await scheduler.storage.get_pending_tweets("default", 10)
+        old_record = next(record for record in records if record.tweet.status_id == "301")
+        await scheduler.storage.mark_pending_tweets_delivered(
+            [old_record.id],
+            "telegram:FriendMessage:1",
+        )
+
+        result = await scheduler.publish_pending(reason="test_partial_delivered")
+        records_after = await scheduler.storage.get_push_history("default", "NASA", 20)
+
+        self.assertEqual(result.pushed_target_attempts, 2)
+        self.assertEqual(
+            sender.sent,
+            [
+                ("telegram:FriendMessage:1", "NASA", "https://nitter.test", ["302"]),
+                (
+                    "lark:GroupMessage:2",
+                    "NASA",
+                    "https://nitter.test",
+                    ["301", "302"],
+                ),
+            ],
+        )
+        sent_history = sorted(
+            (record.target_umo, record.status_id) for record in records_after
+        )
+        self.assertEqual(
+            sent_history,
+            [
+                ("lark:GroupMessage:2", "301"),
+                ("lark:GroupMessage:2", "302"),
+                ("telegram:FriendMessage:1", "302"),
+            ],
+        )
+
     async def test_replay_push_history_uses_current_group_targets(self):
         sender = _Sender()
         scheduler = self._create_scheduler(
@@ -3252,6 +3302,57 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             sender.sent,
             [("lark:GroupMessage:3", "NASA", "https://nitter.test", ["207"])],
+        )
+
+    async def test_replay_push_history_deduplicates_selected_targets(self):
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "tweet_groups": [
+                    {
+                        "name": "Tech",
+                        "group_id": "tech",
+                        "watch_users": ["NASA"],
+                        "push_targets": [
+                            "telegram:FriendMessage:2",
+                            "lark:GroupMessage:3",
+                        ],
+                    }
+                ],
+            },
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "tech",
+            "NASA",
+            self._make_tweet("NASA", "210"),
+            "telegram:FriendMessage:old",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(
+            record_id,
+            target_umos=[
+                "lark:GroupMessage:3",
+                "lark:GroupMessage:3",
+                "telegram:FriendMessage:2",
+                "lark:GroupMessage:3",
+            ],
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["total_targets"], 2)
+        self.assertEqual(
+            sender.sent,
+            [
+                ("lark:GroupMessage:3", "NASA", "https://nitter.test", ["210"]),
+                ("telegram:FriendMessage:2", "NASA", "https://nitter.test", ["210"]),
+            ],
         )
 
     async def test_replay_push_history_rejects_targets_outside_current_group(self):

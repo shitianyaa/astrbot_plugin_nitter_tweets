@@ -82,8 +82,10 @@ class WebUIGroupEditor:
         raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
         raw_group["name"] = name
         raw_group["group_id"] = normalize_group_id(group_id)
-        raw_group["enabled"] = bool(data.get("enabled", raw_group.get("enabled", True)))
-        raw_group["interval_check_enabled"] = bool(
+        raw_group["enabled"] = self._bool(
+            data.get("enabled", raw_group.get("enabled", True))
+        )
+        raw_group["interval_check_enabled"] = self._bool(
             data.get(
                 "interval_check_enabled",
                 raw_group.get("interval_check_enabled", True),
@@ -91,13 +93,13 @@ class WebUIGroupEditor:
         )
         raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
-        raw_group["deferred_publish_enabled"] = bool(
+        raw_group["deferred_publish_enabled"] = self._bool(
             data.get(
                 "deferred_publish_enabled",
                 raw_group.get("deferred_publish_enabled", False),
             )
         )
-        raw_group["filter_plain_text_enabled"] = bool(
+        raw_group["filter_plain_text_enabled"] = self._bool(
             data.get(
                 "filter_plain_text_enabled",
                 raw_group.get("filter_plain_text_enabled", False),
@@ -115,7 +117,7 @@ class WebUIGroupEditor:
             return {"success": False, "error": "请选择分组"}
         if is_default_group(group_id):
             return {"success": False, "error": "默认分组不能在 WebUI 中删除"}
-        if not bool(data.get("force")) or self._text(data, "confirm") != "DELETE":
+        if not self._bool(data.get("force")) or self._text(data, "confirm") != "DELETE":
             return {"success": False, "error": "删除分组需要二次确认"}
 
         previous_groups = self._raw_groups()
@@ -232,6 +234,16 @@ class WebUIGroupEditor:
             seen.add(value)
             values.append(value)
         return values
+
+    @staticmethod
+    def _bool(value: Any) -> bool:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"false", "0", "off", "no", "否", "关闭"}:
+                return False
+            if normalized in {"true", "1", "on", "yes", "是", "开启"}:
+                return True
+        return bool(value)
 
     def _group_identifier(self, raw_group: dict[str, Any], index: int) -> str:
         raw_group_id = str(raw_group.get("group_id") or "").strip()

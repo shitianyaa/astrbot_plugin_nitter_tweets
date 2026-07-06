@@ -1743,20 +1743,41 @@ class NitterTweetScheduler:
                 protected_media_paths,
             )
             if pending_targets:
-                await self._send_prepared_batches(
-                    batches,
-                    result,
-                    pending_targets,
-                    target_interval,
-                    user_interval,
-                    group_label=group_label,
-                    batch_summary=batch_summary,
-                    on_target_delivered=lambda batch, umo: self.storage.mark_pending_tweets_delivered(
-                        batch.pending_ids, umo
-                    ),
-                    history_group_id=group.group_id,
-                    history_source="publish",
+                merge_targets, ordinary_targets = self._split_merge_targets(
+                    pending_targets
                 )
+                placeholder_target = (
+                    merge_targets[0]
+                    if merge_targets and not ordinary_targets
+                    else ""
+                )
+                for target_index, target in enumerate(pending_targets):
+                    target_records = [
+                        record
+                        for record in records
+                        if target not in record.delivered_targets
+                    ]
+                    if not target_records:
+                        continue
+                    target_batches = self._pending_records_to_batches(target_records)
+                    await self._send_prepared_batches(
+                        target_batches,
+                        result,
+                        [target],
+                        target_interval,
+                        user_interval,
+                        record_merge_placeholders=target == placeholder_target,
+                        merge_existing_stats=True,
+                        group_label=group_label,
+                        batch_summary=batch_summary,
+                        on_target_delivered=lambda batch, umo: self.storage.mark_pending_tweets_delivered(
+                            batch.pending_ids, umo
+                        ),
+                        history_group_id=group.group_id,
+                        history_source="publish",
+                    )
+                    if target_index < len(pending_targets) - 1 and target_interval > 0:
+                        await asyncio.sleep(target_interval)
             else:
                 result.push_mode = "already_delivered"
                 self._log_verbose_info(
@@ -1821,8 +1842,9 @@ class NitterTweetScheduler:
                 "success": False,
                 "error": "当前分组没有有效推送目标，请先维护推送目标",
             }
-        selected_targets = [str(target or "").strip() for target in (target_umos or [])]
-        selected_targets = [target for target in selected_targets if target]
+        selected_targets = self._dedupe_targets(
+            [str(target or "").strip() for target in (target_umos or [])]
+        )
         if selected_targets:
             current_targets = set(group.targets)
             invalid_targets = [
@@ -1913,6 +1935,17 @@ class NitterTweetScheduler:
             "total_targets": len(targets),
             "failed_targets": failed_targets,
         }
+
+    @staticmethod
+    def _dedupe_targets(targets: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for target in targets:
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            result.append(target)
+        return result
 
     @staticmethod
     def _pending_publish_targets(records, targets: list[str]) -> list[str]:
