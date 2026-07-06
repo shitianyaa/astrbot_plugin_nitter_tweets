@@ -21,7 +21,7 @@
 
 字段：
 - `name`: 显示名，可用于命令。
-- `group_id`: 存储 ID，默认分组为 `default`。
+- `group_id`: 存储 ID，默认分组为 `default`。由插件自动分配并保持稳定；已有值保留，缺失时自动补齐。
 - `enabled`: 是否启用。
 - `watch_users`: 分组关注账号。
 - `push_targets`: 分组推送目标 UMO。

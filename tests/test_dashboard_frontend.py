@@ -90,18 +90,31 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
     def test_external_links_are_filtered_to_http_protocols(self):
         source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
         safe_body = _function_body(source, "safeUrl")
         link_body = _function_body(source, "externalLink")
         pending_body = _function_body(source, "renderPending")
         history_body = _function_body(source, "renderHistory")
         probe_body = _function_body(source, "probeMirror")
+        bind_body = _function_body(source, "bindEvents")
 
         self.assertIn('url.protocol === "http:" || url.protocol === "https:"', safe_body)
         self.assertIn('rel: "noopener noreferrer"', link_body)
+        self.assertIn("copyLink", link_body)
+        self.assertIn("toastContainer", html)
+        self.assertIn('a[data-copy-link]', bind_body)
+        self.assertIn("copyText(link.dataset.copyLink)", bind_body)
+        self.assertIn("已复制原推文链接", bind_body)
         self.assertIn("return el(\"span\"", link_body)
         self.assertIn("externalLink(row.original_link", pending_body)
         self.assertIn("externalLink(row.original_link", history_body)
         self.assertIn("externalLink(tweet.link", probe_body)
+
+    def test_clipboard_fallback_textarea_is_not_tabbable(self):
+        body = _function_body(APP_JS.read_text(encoding="utf-8"), "copyText")
+
+        self.assertIn('"aria-hidden": "true", tabindex: "-1"', body)
+        self.assertIn('input.style.pointerEvents = "none"', body)
 
     def test_group_dependent_controls_are_disabled_without_groups(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "setBusy")
@@ -239,6 +252,20 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn(".group-list", style)
         self.assertIn("overflow-x: auto", style)
         self.assertNotIn('class="group-sidebar"', source)
+
+    def test_create_group_dialog_does_not_accept_group_id(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+        body = _function_body(source, "createGroup")
+
+        self.assertIn("openConfirm", body)
+        self.assertIn("name: nameInput.value.trim()", body)
+        self.assertNotIn("idInput", body)
+        self.assertNotIn("group_id:", body)
+        self.assertNotIn("分组 ID", body)
+        self.assertIn(".confirm-form", style)
 
     def test_dashboard_removes_generic_plugin_page_kicker(self):
         source = INDEX_HTML.read_text(encoding="utf-8")

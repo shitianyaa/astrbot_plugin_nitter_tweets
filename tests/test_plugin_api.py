@@ -458,6 +458,18 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(group["pending_summary"]["pending_count"], 0)
         self.assertTrue(config.saved)
 
+    async def test_create_group_rejects_custom_group_id(self):
+        config = _Config({"push": {"tweet_groups": []}})
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).create_group(
+            {"name": "news", "group_id": "News-Feed_1"}
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertIn("group_id", payload["error"])
+        self.assertEqual(config_get(config, "tweet_groups", []), [])
+
     async def test_update_group_rejects_group_id_mutation(self):
         config = _Config(
             {

@@ -487,6 +487,9 @@ class ConfigCompatTest(unittest.TestCase):
             "filter_plain_text_enabled",
             schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"],
         )
+        group_items = schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"]
+        self.assertIn("group_id", group_items)
+        self.assertTrue(group_items["group_id"]["invisible"])
 
     def test_brief_log_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "brief_log_enabled", True), True)
@@ -656,6 +659,48 @@ class ConfigCompatTest(unittest.TestCase):
             _group_config(config, "tech")[TWEET_GROUP_TEMPLATE_KEY_FIELD],
             TWEET_GROUP_TEMPLATE_KEY,
         )
+
+    def test_default_group_migration_assigns_missing_custom_group_ids(self):
+        config = _Config(
+            {
+                "_default_group_config_migrated": True,
+                "tweet_groups": [
+                    {
+                        "name": "Existing",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                    },
+                    {
+                        "name": "Legacy Without ID",
+                        "watch_users": ["NASA"],
+                    },
+                    {
+                        "name": "Already Allocated",
+                        "group_id": "group_1",
+                        "watch_users": ["ESA"],
+                    },
+                    {
+                        "name": "Another Legacy",
+                        "watch_users": ["JAXA"],
+                    },
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        groups = config_get(config, "tweet_groups")
+        self.assertEqual([group["group_id"] for group in groups], [
+            "tech",
+            "group_2",
+            "group_1",
+            "group_3",
+        ])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
+        self.assertEqual(_group_config(config, "group_2")["name"], "Legacy Without ID")
+        self.assertEqual(_group_config(config, "group_3")["watch_users"], ["JAXA"])
 
     def test_startup_media_cache_upgrade_cleanup_runs_once(self):
         config = _Config({})

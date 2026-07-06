@@ -36,6 +36,7 @@ const els = {
   railPendingStatus: document.getElementById("railPendingStatus"),
   railTargetStatus: document.getElementById("railTargetStatus"),
   alert: document.getElementById("alert"),
+  toastContainer: document.getElementById("toastContainer"),
   overviewView: document.getElementById("overviewView"),
   createGroupBtn: document.getElementById("createGroupBtn"),
   groupList: document.getElementById("groupList"),
@@ -241,6 +242,51 @@ function hideAlert() {
   els.alert.textContent = "";
 }
 
+function showToast(message) {
+  if (!els.toastContainer || !message) {
+    return;
+  }
+  const toast = el("div", { className: "toast-message", text: message });
+  els.toastContainer.appendChild(toast);
+  window.requestAnimationFrame(() => toast.classList.add("show"));
+  window.setTimeout(() => {
+    toast.classList.remove("show");
+    toast.classList.add("hide");
+    window.setTimeout(() => toast.remove(), 320);
+  }, 1800);
+}
+
+async function copyText(text) {
+  const value = String(text || "").trim();
+  if (!value) {
+    return false;
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (error) {
+      // Embedded WebViews may expose clipboard but reject writes.
+    }
+  }
+  const input = el("textarea", {
+    attrs: { readonly: true, "aria-hidden": "true", tabindex: "-1" },
+    text: value,
+  });
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  input.style.pointerEvents = "none";
+  document.body.appendChild(input);
+  input.select();
+  try {
+    return document.execCommand("copy");
+  } catch (error) {
+    return false;
+  } finally {
+    input.remove();
+  }
+}
+
 function setStatusBadge(node, text, status = "") {
   if (!node) return;
   node.className = `status-badge ${status}`.trim();
@@ -401,7 +447,9 @@ function externalLink(url, text) {
       href,
       target: "_blank",
       rel: "noopener noreferrer",
+      title: "点击复制原推文链接",
     },
+    dataset: { copyLink: href },
     text: text || href,
   });
 }
@@ -1561,12 +1609,35 @@ function selectGroup(groupId) {
   renderGroups();
 }
 
-async function createGroup() {
-  await withAction(async () => {
-    const result = await apiPost("web/groups/create", {});
-    state.selectedGroupId = result.group.group_id;
-    return result;
-  }, "");
+function createGroup() {
+  const nameInput = el("input", {
+    attrs: {
+      type: "text",
+      placeholder: "留空自动生成",
+      autocomplete: "off",
+    },
+  });
+  const form = el("div", { className: "confirm-form" }, [
+    el("label", { className: "field" }, [
+      el("span", { text: "分组名称" }),
+      nameInput,
+    ]),
+  ]);
+  openConfirm({
+    kicker: "新建分组",
+    title: "新建用户分组",
+    desc: form,
+    confirmText: "创建",
+    danger: false,
+    action: () =>
+      withAction(async () => {
+        const result = await apiPost("web/groups/create", {
+          name: nameInput.value.trim(),
+        });
+        state.selectedGroupId = result.group.group_id;
+        return result;
+      }, "分组已创建"),
+  });
 }
 
 async function runGroupCheck(groupId) {
@@ -1918,6 +1989,14 @@ function confirmClearSeen() {
 }
 
 function bindEvents() {
+  document.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const link = event.target.closest("a[data-copy-link]");
+    if (!link) return;
+    event.preventDefault();
+    const copied = await copyText(link.dataset.copyLink);
+    showToast(copied ? "已复制原推文链接" : "复制失败，请手动复制链接");
+  });
   els.tabs.forEach((tab) => {
     tab.addEventListener("click", () => switchView(tab.dataset.view));
   });

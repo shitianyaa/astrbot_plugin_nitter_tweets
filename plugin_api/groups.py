@@ -29,11 +29,19 @@ class WebUIGroupEditor:
         self.config = plugin.config
         self.scheduler = plugin.scheduler
 
-    def create_group(self) -> dict[str, Any]:
+    def create_group(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = data or {}
+        if self._text(data, "group_id"):
+            return {"success": False, "error": "WebUI 不支持指定 group_id"}
         previous_groups = self._raw_groups()
         groups = copy.deepcopy(previous_groups)
-        group_id = self._next_group_id(groups)
-        group_name = self._next_group_name(groups)
+        try:
+            group_id = self._next_group_id(groups)
+            group_name = self._validated_name(
+                groups, self._text(data, "name") or self._next_group_name(groups)
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         groups.append(
             {
                 TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,

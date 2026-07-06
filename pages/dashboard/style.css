@@ -2438,6 +2438,11 @@ body.light-theme .toast-message {
   grid-column: 1 / -1;
 }
 
+.confirm-form {
+  display: grid;
+  gap: 14px;
+}
+
 input:not([type="checkbox"]),
 select {
   width: 100%;

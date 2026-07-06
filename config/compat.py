@@ -298,6 +298,8 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
 
     if _ensure_tweet_group_template_keys(groups):
         changed = True
+    if _ensure_tweet_group_stable_ids(groups):
+        changed = True
 
     if not changed:
         return False
@@ -323,6 +325,8 @@ def ensure_tweet_group_template_keys(config, *, save: bool = True) -> bool:
         return False
 
     if _ensure_tweet_group_template_keys(groups):
+        changed = True
+    if _ensure_tweet_group_stable_ids(groups):
         changed = True
 
     if not changed:
@@ -429,6 +433,42 @@ def _ensure_tweet_group_template_keys(groups: list) -> bool:
         if _ensure_tweet_group_template_key(group):
             changed = True
     return changed
+
+
+def _ensure_tweet_group_stable_ids(groups: list) -> bool:
+    changed = False
+    existing: set[str] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            existing.add(normalize_group_id(group_id))
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            continue
+        if normalize_group_id(group.get("name") or "") == DEFAULT_GROUP_ID:
+            group["group_id"] = DEFAULT_GROUP_ID
+            existing.add(DEFAULT_GROUP_ID)
+            changed = True
+            continue
+        candidate = _next_generated_group_id(existing)
+        group["group_id"] = candidate
+        existing.add(candidate)
+        changed = True
+    return changed
+
+
+def _next_generated_group_id(existing: set[str], start_index: int = 1) -> str:
+    counter = max(1, int(start_index or 1))
+    while True:
+        candidate = f"group_{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:
