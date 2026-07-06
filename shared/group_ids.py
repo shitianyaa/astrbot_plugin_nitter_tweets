@@ -4,8 +4,8 @@ from __future__ import annotations
 DEFAULT_GROUP_ID = "default"
 LEGACY_GLOBAL_GROUP_ID = "global"
 
-# Backward-compatible name for existing imports. Runtime storage should use
-# DEFAULT_GROUP_ID; LEGACY_GLOBAL_GROUP_ID is accepted only as input/migration.
+# Backward-compatible name for existing imports. New default groups use
+# DEFAULT_GROUP_ID, while explicit legacy IDs such as "global" stay stable.
 GLOBAL_GROUP_ID = DEFAULT_GROUP_ID
 
 DEFAULT_GROUP_NAME = "默认分组"
@@ -19,6 +19,13 @@ def normalize_group_id(value: str) -> str:
     if group_id in {"默认", "默认分组", "全局", "全局分组"}:
         return DEFAULT_GROUP_ID
     return group_id
+
+
+def normalize_stable_group_id(value: str) -> str:
+    group_id = str(value or "").strip().lower()
+    if group_id in {"默认", "默认分组", "全局", "全局分组"}:
+        return DEFAULT_GROUP_ID
+    return group_id or DEFAULT_GROUP_ID
 
 
 def is_default_group(value: str) -> bool:

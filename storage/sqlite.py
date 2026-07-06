@@ -15,11 +15,19 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from ..shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from ..shared.group_ids import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        normalize_stable_group_id,
+    )
     from .seen import SEEN_LIMIT_PER_USER
     from ..shared import TweetItem, TweetMedia, normalize_username
 except ImportError:
-    from shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from shared.group_ids import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        normalize_stable_group_id,
+    )
     from storage.seen import SEEN_LIMIT_PER_USER
     from shared import TweetItem, TweetMedia, normalize_username
 
@@ -346,7 +354,7 @@ class SQLiteStorage:
         )
 
     def _migrate_schema_v3(self, cursor: sqlite3.Cursor) -> None:
-        self._migrate_global_group_to_default(cursor)
+        return
 
     def _migrate_schema_v4(self, cursor: sqlite3.Cursor) -> None:
         if not self._table_exists(cursor, "pending_tweets"):
@@ -570,7 +578,7 @@ class SQLiteStorage:
         """插入或更新分组配置."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         now = int(time.time())
 
         # 检查是否存在
@@ -629,7 +637,7 @@ class SQLiteStorage:
         """设置分组的订阅账号列表（替换现有）."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         now = int(time.time())
 
         # 删除旧的
@@ -656,7 +664,7 @@ class SQLiteStorage:
         """获取分组的订阅账号列表."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         rows = self.conn.execute(
             "SELECT username FROM group_users WHERE group_id = ? ORDER BY username",
             (normalized_group_id,),
@@ -668,7 +676,7 @@ class SQLiteStorage:
         """设置分组的推送目标列表（替换现有）."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         now = int(time.time())
 
         # 删除旧的
@@ -691,7 +699,7 @@ class SQLiteStorage:
         """获取分组的推送目标列表."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         rows = self.conn.execute(
             "SELECT target_umo FROM group_targets WHERE group_id = ? ORDER BY target_umo",
             (normalized_group_id,),
@@ -733,7 +741,7 @@ class SQLiteStorage:
         """获取指定分组和用户的已见推文 ID 列表."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = normalize_username(username)
 
         if not normalized_username:
@@ -760,7 +768,7 @@ class SQLiteStorage:
         """添加已见推文 ID（批量）."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = normalize_username(username)
 
         if not normalized_username or not status_ids:
@@ -802,7 +810,7 @@ class SQLiteStorage:
         """获取指定分组的所有用户 seen map."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
 
         rows = self.conn.execute(
             """
@@ -831,7 +839,7 @@ class SQLiteStorage:
         if group_id:
             cursor = self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
-                (normalize_group_id(group_id),),
+                (normalize_stable_group_id(group_id),),
             )
         else:
             cursor = self.conn.execute("DELETE FROM seen_tweets")
@@ -848,7 +856,7 @@ class SQLiteStorage:
         """Add tweets to the pending publish queue."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = normalize_username(username)
         if not normalized_username or not tweets:
             return 0
@@ -913,7 +921,7 @@ class SQLiteStorage:
         assert self.conn is not None
 
         with self._conn_lock:
-            normalized_group_id = normalize_group_id(group_id)
+            normalized_group_id = normalize_stable_group_id(group_id)
             rows = self.conn.execute(
                 """
                 SELECT * FROM pending_tweets
@@ -934,7 +942,7 @@ class SQLiteStorage:
         """Get pending queue counts for a group."""
         assert self.conn is not None
 
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         row = self.conn.execute(
             """
             SELECT
@@ -1097,7 +1105,7 @@ class SQLiteStorage:
     def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows."""
         assert self.conn is not None
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         pending_ids = [
             int(row[0])
             for row in self.conn.execute(
@@ -1187,7 +1195,7 @@ class SQLiteStorage:
     ) -> int:
         """Record one successfully pushed tweet/target pair."""
         assert self.conn is not None
-        normalized_group_id = normalize_group_id(group_id)
+        normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = normalize_username(username) or str(username or "").strip()
         status_id = str(getattr(tweet, "status_id", "") or "").strip()
         if not normalized_group_id or not normalized_username or not status_id:
@@ -1290,7 +1298,7 @@ class SQLiteStorage:
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
-        normalized_group_id = normalize_group_id(group_id) if group_id else ""
+        normalized_group_id = normalize_stable_group_id(group_id) if group_id else ""
         username_query = str(username or "").strip().lstrip("@")
         if normalized_group_id:
             clauses.append("group_id = ?")
@@ -1521,7 +1529,7 @@ class SQLiteStorage:
             now = int(time.time())
 
             for group_id, seen_map in grouped_seen_map.items():
-                normalized_group_id = normalize_group_id(group_id)
+                normalized_group_id = normalize_stable_group_id(group_id)
 
                 for username, status_ids in seen_map.items():
                     normalized_username = normalize_username(username)
@@ -1575,6 +1583,16 @@ class SQLiteStorage:
         assert self.conn is not None
 
         # 计算配置指纹
+        configured_group_ids = {
+            normalize_stable_group_id(group.group_id)
+            for group in schedule_groups
+        }
+        if (
+            DEFAULT_GROUP_ID in configured_group_ids
+            and LEGACY_GLOBAL_GROUP_ID not in configured_group_ids
+        ):
+            self._migrate_global_group_to_default(self.conn.cursor())
+
         fingerprint_data = []
         for group in schedule_groups:
             fingerprint_data.append({

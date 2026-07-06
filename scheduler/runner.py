@@ -30,6 +30,7 @@ try:
     from ..shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        is_default_group,
         normalize_group_id,
     )
     from .formatting import (
@@ -69,6 +70,7 @@ except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        is_default_group,
         normalize_group_id,
     )
     from scheduler.formatting import (
@@ -665,7 +667,7 @@ class NitterTweetScheduler:
     async def status_summary(self) -> str:
         groups = self._schedule_groups(log_invalid_targets=False)
         default_group = next(
-            (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
+            (item for item in groups if is_default_group(item.group_id)),
             None,
         )
         if not groups:
@@ -2160,7 +2162,7 @@ class NitterTweetScheduler:
 
     @staticmethod
     def _push_group_label(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
+        if is_default_group(group.group_id):
             return DEFAULT_GROUP_NAME
         return str(group.name or group.group_id).strip() or group.group_id
 
@@ -2333,7 +2335,7 @@ class NitterTweetScheduler:
 
     @staticmethod
     def _group_command_suffix(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
+        if is_default_group(group.group_id):
             return ""
         name = str(group.name or group.group_id).strip()
         return f" {name}" if name else ""

@@ -12,7 +12,11 @@ try:
         config_get,
         config_set,
     )
-    from ..shared.group_ids import is_default_group, normalize_group_id
+    from ..shared.group_ids import (
+        is_default_group,
+        normalize_group_id,
+        normalize_stable_group_id,
+    )
 except ImportError:
     from config import (
         TWEET_GROUP_TEMPLATE_KEY,
@@ -20,7 +24,11 @@ except ImportError:
         config_get,
         config_set,
     )
-    from shared.group_ids import is_default_group, normalize_group_id
+    from shared.group_ids import (
+        is_default_group,
+        normalize_group_id,
+        normalize_stable_group_id,
+    )
 
 
 class WebUIGroupEditor:
@@ -89,7 +97,7 @@ class WebUIGroupEditor:
 
         raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
         raw_group["name"] = name
-        raw_group["group_id"] = normalize_group_id(group_id)
+        raw_group["group_id"] = normalize_stable_group_id(group_id)
         raw_group["enabled"] = self._bool(
             data.get("enabled", raw_group.get("enabled", True))
         )
@@ -141,7 +149,7 @@ class WebUIGroupEditor:
             return {"success": False, "error": f"配置保存失败：{save_error}"}
         return {
             "success": True,
-            "group_id": normalize_group_id(group_id),
+            "group_id": normalize_stable_group_id(group_id),
             "group_name": str(deleted.get("name") or group_id),
         }
 
@@ -256,7 +264,11 @@ class WebUIGroupEditor:
     def _group_identifier(self, raw_group: dict[str, Any], index: int) -> str:
         raw_group_id = str(raw_group.get("group_id") or "").strip()
         name = str(raw_group.get("name") or "").strip()
-        return normalize_group_id(raw_group_id or name or f"group_{index}")
+        if raw_group_id:
+            return normalize_stable_group_id(raw_group_id)
+        if normalize_group_id(name) == "default":
+            return "default"
+        return normalize_stable_group_id(f"group_{index}")
 
     def _group_identifiers(
         self, raw_group: dict[str, Any], index: int

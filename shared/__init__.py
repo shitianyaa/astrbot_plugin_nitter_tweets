@@ -6,6 +6,7 @@ from .group_ids import (
     LEGACY_GLOBAL_GROUP_ID,
     is_default_group,
     normalize_group_id,
+    normalize_stable_group_id,
 )
 from .utils import (
     DEFAULT_INSTANCES,
@@ -55,6 +56,7 @@ __all__ = [
     "node_uin",
     "normalize_external_links",
     "normalize_group_id",
+    "normalize_stable_group_id",
     "normalize_username",
     "safe_call",
     "strip_external_links",

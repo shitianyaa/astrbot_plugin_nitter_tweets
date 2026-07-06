@@ -489,6 +489,27 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["success"])
         self.assertIn("group_id", payload["error"])
 
+    async def test_update_group_does_not_use_english_name_as_missing_group_id(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "Tech123", "watch_users": ["OpenAI"]}
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {"group_id": "group_1", "name": "Tech123"}
+        )
+
+        self.assertTrue(payload["success"])
+        group = _group_config(config, "group_1")
+        self.assertEqual(group["name"], "Tech123")
+        self.assertEqual(group["watch_users"], ["OpenAI"])
+
     async def test_update_group_saves_editable_fields(self):
         config = _Config(
             {

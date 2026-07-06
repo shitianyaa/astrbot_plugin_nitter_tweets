@@ -823,7 +823,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(exists)
             self.assertEqual(version, "5")
 
-    async def test_schema_v2_global_group_rows_merge_to_default(self):
+    async def test_schema_v2_global_group_rows_merge_to_default_on_config_sync(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
             storage = SQLiteStorage(db_path)
@@ -962,10 +962,54 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             await storage.connect()
             try:
                 version = await asyncio.to_thread(storage.get_meta, "schema_version")
+                users_before_sync = await asyncio.to_thread(
+                    storage.get_group_users, "default"
+                )
+                global_rows_before_sync = storage.conn.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT group_id FROM groups WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM group_users WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM group_targets WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM seen_tweets WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM pending_tweets WHERE group_id = 'global'
+                    )
+                    """
+                ).fetchone()[0]
+
+                await asyncio.to_thread(
+                    storage.sync_config_groups,
+                    [
+                        types.SimpleNamespace(
+                            group_id="default",
+                            name="默认分组",
+                            enabled=True,
+                            check_on_startup=False,
+                            interval_check_enabled=True,
+                            check_interval_minutes=30,
+                            daily_check_enabled=False,
+                            daily_check_times=[],
+                            scheduled_fetch_limit=5,
+                            send_target_interval=1.5,
+                            send_user_interval=2.0,
+                            notify_no_updates=False,
+                            aliases=[],
+                            users=["ESA", "NASA"],
+                            targets=[
+                                "telegram:FriendMessage:1",
+                                "telegram:FriendMessage:2",
+                            ],
+                        )
+                    ],
+                )
                 users = await asyncio.to_thread(storage.get_group_users, "default")
                 targets = await asyncio.to_thread(storage.get_group_targets, "default")
                 seen_ids = await asyncio.to_thread(storage.get_seen_ids, "default", "NASA")
-                global_rows = storage.conn.execute(
+                global_rows_after_sync = storage.conn.execute(
                     """
                     SELECT COUNT(*) FROM (
                         SELECT group_id FROM groups WHERE group_id = 'global'
@@ -990,13 +1034,15 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 storage.close()
 
             self.assertEqual(version, "5")
+            self.assertEqual(users_before_sync, ["NASA"])
+            self.assertGreater(global_rows_before_sync, 0)
             self.assertEqual(users, ["ESA", "NASA"])
             self.assertEqual(
                 targets,
                 ["telegram:FriendMessage:1", "telegram:FriendMessage:2"],
             )
             self.assertEqual(set(seen_ids), {"100", "101"})
-            self.assertEqual(global_rows, 0)
+            self.assertEqual(global_rows_after_sync, 0)
             self.assertEqual(pending_count, 2)
             self.assertEqual(media_count, 1)
 

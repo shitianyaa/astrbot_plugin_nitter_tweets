@@ -8,6 +8,11 @@ from astrbot.api import logger
 
 try:
     from ..config import config_get
+    from ..shared.group_ids import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        normalize_stable_group_id,
+    )
     from .seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from .sqlite import (
         PendingQueueSummary,
@@ -17,6 +22,11 @@ try:
     )
 except ImportError:
     from config import config_get
+    from shared.group_ids import (
+        DEFAULT_GROUP_ID,
+        LEGACY_GLOBAL_GROUP_ID,
+        normalize_stable_group_id,
+    )
     from storage.seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from storage.sqlite import (
         PendingQueueSummary,
@@ -64,6 +74,7 @@ class StorageAdapter:
         logger.info("[NitterTweets] 使用 SQLite 存储后端")
         self.sqlite: SQLiteStorage | None = self._init_sqlite()
         self.seen_store = SeenStore(owner)
+        self._legacy_global_aliases_default = False
 
     def _init_sqlite(self) -> SQLiteStorage:
         """Initialize SQLite storage."""
@@ -79,6 +90,14 @@ class StorageAdapter:
     async def migrate_and_sync(self, schedule_groups: list) -> None:
         """Migrate legacy KV seen IDs once and sync configured groups."""
         sqlite = await self._ensure_sqlite_connected()
+        configured_group_ids = {
+            normalize_stable_group_id(group.group_id)
+            for group in schedule_groups
+        }
+        self._legacy_global_aliases_default = (
+            DEFAULT_GROUP_ID in configured_group_ids
+            and LEGACY_GLOBAL_GROUP_ID not in configured_group_ids
+        )
 
         grouped_seen_map = await self.seen_store.get_grouped_seen_map()
         has_legacy_seen = self._has_seen_data(grouped_seen_map.groups)
@@ -93,23 +112,28 @@ class StorageAdapter:
     async def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
         """Get seen IDs for every user in a group."""
         sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(sqlite.get_group_seen_map, group_id)
+        return await asyncio.to_thread(
+            sqlite.get_group_seen_map, self._storage_group_id(group_id)
+        )
 
     async def put_group_seen_map(
         self, group_id: str, seen_map: dict[str, list[str]]
     ) -> None:
         """Save a group's seen map into SQLite."""
         sqlite = await self._ensure_sqlite_connected()
+        storage_group_id = self._storage_group_id(group_id)
         for username, status_ids in seen_map.items():
             if status_ids:
                 await asyncio.to_thread(
-                    sqlite.add_seen_ids, group_id, username, status_ids
+                    sqlite.add_seen_ids, storage_group_id, username, status_ids
                 )
 
     async def get_seen_ids(self, group_id: str, username: str) -> list[str]:
         """Get seen IDs for a group/user pair."""
         sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(sqlite.get_seen_ids, group_id, username)
+        return await asyncio.to_thread(
+            sqlite.get_seen_ids, self._storage_group_id(group_id), username
+        )
 
     async def add_seen_ids(
         self, group_id: str, username: str, status_ids: list[str]
@@ -117,13 +141,14 @@ class StorageAdapter:
         """Add seen IDs for a group/user pair."""
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
-            sqlite.add_seen_ids, group_id, username, status_ids
+            sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
         )
 
     async def clear_seen_records(self, group_id: str | None = None) -> int:
         """Clear SQLite seen records for a group, or all groups when omitted."""
         sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(sqlite.clear_seen_tweets, group_id)
+        storage_group_id = self._storage_group_id(group_id) if group_id else None
+        return await asyncio.to_thread(sqlite.clear_seen_tweets, storage_group_id)
 
     async def delete_legacy_seen_kv(self) -> bool:
         """Delete legacy KV seen data so it cannot resurrect after reinstall."""
@@ -154,7 +179,7 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
             sqlite.enqueue_pending_tweets,
-            group_id,
+            self._storage_group_id(group_id),
             username,
             instance,
             tweets,
@@ -167,7 +192,7 @@ class StorageAdapter:
         """Get unsent pending tweets for a group."""
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
-            sqlite.get_pending_tweets, group_id, limit
+            sqlite.get_pending_tweets, self._storage_group_id(group_id), limit
         )
 
     async def get_pending_queue_summary(
@@ -176,7 +201,7 @@ class StorageAdapter:
         """Get pending queue counts for a group."""
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
-            sqlite.get_pending_queue_summary, group_id
+            sqlite.get_pending_queue_summary, self._storage_group_id(group_id)
         )
 
     async def get_pending_media_paths(self) -> set[str]:
@@ -217,7 +242,9 @@ class StorageAdapter:
     async def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows from SQLite."""
         sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(sqlite.delete_group_runtime_data, group_id)
+        return await asyncio.to_thread(
+            sqlite.delete_group_runtime_data, self._storage_group_id(group_id)
+        )
 
     async def cleanup_sent_pending_tweets(self, older_than: int) -> int:
         """Delete sent pending tweet rows older than a timestamp."""
@@ -239,7 +266,7 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
             sqlite.record_push_history,
-            group_id,
+            self._storage_group_id(group_id),
             username,
             tweet,
             target_umo,
@@ -256,9 +283,10 @@ class StorageAdapter:
     ) -> list[PushHistoryRecord]:
         """Return recent successful push history."""
         sqlite = await self._ensure_sqlite_connected()
+        storage_group_id = self._storage_group_id(group_id) if group_id else ""
         return await asyncio.to_thread(
             sqlite.get_push_history,
-            group_id,
+            storage_group_id,
             username,
             limit,
             offset,
@@ -267,9 +295,10 @@ class StorageAdapter:
     async def count_push_history(self, group_id: str = "", username: str = "") -> int:
         """Return count of grouped successful push history records."""
         sqlite = await self._ensure_sqlite_connected()
+        storage_group_id = self._storage_group_id(group_id) if group_id else ""
         return await asyncio.to_thread(
             sqlite.count_push_history,
-            group_id,
+            storage_group_id,
             username,
         )
 
@@ -290,6 +319,15 @@ class StorageAdapter:
         """Close the SQLite connection."""
         if self.sqlite:
             self.sqlite.close()
+
+    def _storage_group_id(self, group_id: str | None) -> str:
+        normalized = normalize_stable_group_id(group_id or "")
+        if (
+            self._legacy_global_aliases_default
+            and normalized == LEGACY_GLOBAL_GROUP_ID
+        ):
+            return DEFAULT_GROUP_ID
+        return normalized
 
     @staticmethod
     def _has_seen_data(grouped_seen_map: dict[str, dict[str, list[str]]]) -> bool:
