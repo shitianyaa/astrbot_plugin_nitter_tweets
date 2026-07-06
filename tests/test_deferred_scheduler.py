@@ -810,6 +810,99 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(records, [])
 
+    async def test_failed_scheduled_push_does_not_mark_seen(self):
+        sender = _Sender(success=False)
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_failed_seen")
+        seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
+
+        self.assertNotIn("201", seen_ids)
+
+    async def test_partial_scheduled_push_records_delivery_error(self):
+        class _PartialFailureSender(_Sender):
+            async def send_to_umo_with_outcome(
+                self,
+                context,
+                umo,
+                username,
+                instance,
+                tweets,
+                group_label="",
+                header_text="",
+                batch_summary="",
+                tweet_start_index=1,
+            ):
+                await super().send_to_umo_with_outcome(
+                    context,
+                    umo,
+                    username,
+                    instance,
+                    tweets,
+                    group_label,
+                    header_text,
+                    batch_summary,
+                    tweet_start_index,
+                )
+                return types.SimpleNamespace(
+                    success=True,
+                    warning="图片附件发送失败",
+                    delivery_status="partial_failed",
+                    delivery_error="图片附件发送失败",
+                )
+
+        sender = _PartialFailureSender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "201"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        result = await scheduler.run_check(reason="test_partial_history")
+        records = await scheduler.storage.get_push_history()
+
+        self.assertEqual(result.pushed_target_successes, 1)
+        self.assertEqual(result.delivery_warnings, ["图片附件发送失败"])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].delivery_status, "partial_failed")
+        self.assertEqual(records[0].delivery_error, "图片附件发送失败")
+
     async def test_concurrent_fetch_requires_enabled_pool_and_parallelism(self):
         events = []
         nitter = _NoConcurrentNitter(
@@ -2008,6 +2101,79 @@ class DeferredSchedulerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Telegram 限流仍未解除", outcome.warning)
         self.assertEqual(calls, ["telegram:GroupMessage:-1001"] * 2)
         self.assertEqual(sleep_calls, [19.0])
+
+    async def test_qq_direct_image_failure_retries_once(self):
+        sender = TweetSender({"send_image_attachments": True})
+        calls = []
+
+        async def send_with_retry(context, umo, chain, label):
+            del context, umo, chain
+            calls.append(label)
+            if "image" in label and calls.count(label) == 1:
+                return SendAttempt(
+                    success=False,
+                    retryable=True,
+                    error="image timeout",
+                )
+            return SendAttempt(success=True)
+
+        sender._send_context_message = send_with_retry
+        tweet = self._make_tweet("NASA", "110")
+        tweet.media = [
+            TweetMedia("image", "https://image.example.test/a.jpg", Path("C:/tmp/a.jpg"))
+        ]
+
+        outcome = await sender._send_direct_to_umo(
+            None,
+            "qq:GroupMessage:1",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(
+            [label for label in calls if "image" in label],
+            [
+                "QQ direct scheduled tweet image 1/1",
+                "QQ direct scheduled tweet image 1/1",
+            ],
+        )
+        self.assertEqual(outcome.delivery_status, "success")
+
+    async def test_qq_direct_image_failure_is_partial_after_retry_exhausted(self):
+        sender = TweetSender({"send_image_attachments": True})
+        calls = []
+
+        async def fail_images(context, umo, chain, label):
+            del context, umo, chain
+            calls.append(label)
+            if "image" in label:
+                return SendAttempt(
+                    success=False,
+                    retryable=True,
+                    error="image timeout",
+                )
+            return SendAttempt(success=True)
+
+        sender._send_context_message = fail_images
+        tweet = self._make_tweet("NASA", "110")
+        tweet.media = [
+            TweetMedia("image", "https://image.example.test/a.jpg", Path("C:/tmp/a.jpg"))
+        ]
+
+        outcome = await sender._send_direct_to_umo(
+            None,
+            "qq:GroupMessage:1",
+            "NASA",
+            "https://nitter.test",
+            [tweet],
+        )
+
+        self.assertTrue(outcome.success)
+        self.assertEqual(len([label for label in calls if "image" in label]), 2)
+        self.assertEqual(outcome.delivery_status, "partial_failed")
+        self.assertEqual(outcome.delivery_error, "image timeout")
 
     async def test_custom_platform_id_uses_metadata_type_for_onebot_forward(self):
         class _Meta:

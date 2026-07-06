@@ -675,6 +675,10 @@ class ConfigCompatTest(unittest.TestCase):
                         "watch_users": ["NASA"],
                     },
                     {
+                        "name": "coser",
+                        "watch_users": ["CoserAccount"],
+                    },
+                    {
                         "name": "Already Allocated",
                         "group_id": "group_1",
                         "watch_users": ["ESA"],
@@ -695,12 +699,35 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual([group["group_id"] for group in groups], [
             "tech",
             "group_2",
+            "coser",
             "group_1",
             "group_3",
         ])
         self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
         self.assertEqual(_group_config(config, "group_2")["name"], "Legacy Without ID")
+        self.assertEqual(_group_config(config, "coser")["watch_users"], ["CoserAccount"])
         self.assertEqual(_group_config(config, "group_3")["watch_users"], ["JAXA"])
+
+    def test_default_group_migration_preserves_existing_legacy_global_group_id(self):
+        config = _Config(
+            {
+                "tweet_groups": [
+                    {
+                        "name": "Global",
+                        "group_id": "global",
+                        "watch_users": ["NASA"],
+                    }
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        groups = config_get(config, "tweet_groups")
+        self.assertEqual(groups[0]["group_id"], "global")
+        self.assertEqual(groups[0]["watch_users"], ["NASA"])
 
     def test_startup_media_cache_upgrade_cleanup_runs_once(self):
         config = _Config({})
@@ -906,6 +933,61 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(global_group.concurrent_fetch_instances, [])
         self.assertFalse(global_group.concurrent_prepare_enabled)
         self.assertEqual(global_group.prepare_concurrency, 2)
+
+    def test_scheduler_reader_preserves_existing_legacy_global_group_id(self):
+        config = {
+            "daily_check_enabled": True,
+            "daily_check_times": ["08:30"],
+            "tweet_groups": [
+                {
+                    "name": "Global",
+                    "group_id": "global",
+                    "watch_users": ["NASA"],
+                    "push_targets": ["telegram:FriendMessage:1"],
+                }
+            ],
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        group = reader.schedule_groups(log_invalid_targets=False)[0]
+
+        self.assertEqual(group.group_id, "global")
+        self.assertEqual(group.name, "默认分组")
+        self.assertEqual(group.daily_check_times, [(8, 30)])
+
+    def test_scheduler_reader_preserves_safe_english_name_as_missing_group_id(self):
+        reader = SchedulerConfigReader({}, context=None)
+
+        group = reader.parse_schedule_group(
+            {
+                "name": "Tech123",
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            3,
+            log_invalid_targets=False,
+        )
+
+        self.assertIsNotNone(group)
+        self.assertEqual(group.group_id, "tech123")
+        self.assertEqual(group.name, "Tech123")
+
+    def test_scheduler_reader_does_not_use_display_name_with_spaces_as_group_id(self):
+        reader = SchedulerConfigReader({}, context=None)
+
+        group = reader.parse_schedule_group(
+            {
+                "name": "Legacy Without ID",
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            3,
+            log_invalid_targets=False,
+        )
+
+        self.assertIsNotNone(group)
+        self.assertEqual(group.group_id, "group_3")
+        self.assertEqual(group.name, "Legacy Without ID")
 
     def test_scheduler_reader_reads_grouped_performance_config(self):
         config = {

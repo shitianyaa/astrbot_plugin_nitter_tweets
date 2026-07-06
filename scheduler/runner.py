@@ -30,6 +30,7 @@ try:
     from ..shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        is_default_group,
         normalize_group_id,
     )
     from .formatting import (
@@ -69,6 +70,7 @@ except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        is_default_group,
         normalize_group_id,
     )
     from scheduler.formatting import (
@@ -665,7 +667,7 @@ class NitterTweetScheduler:
     async def status_summary(self) -> str:
         groups = self._schedule_groups(log_invalid_targets=False)
         default_group = next(
-            (item for item in groups if item.group_id == GLOBAL_GROUP_ID),
+            (item for item in groups if is_default_group(item.group_id)),
             None,
         )
         if not groups:
@@ -988,6 +990,7 @@ class NitterTweetScheduler:
                             group_label,
                             immediate_batch_summary_tracker,
                             immediate_batches_sent,
+                            seen_map,
                             batch_progress=(tweet_index, len(new_tweets)),
                         )
                     )
@@ -1111,6 +1114,7 @@ class NitterTweetScheduler:
                         group_label,
                         immediate_batch_summary_tracker,
                         immediate_batches_sent,
+                        seen_map,
                         batch_progress=(tweet_index, batch.tweet_total),
                     )
                 )
@@ -1258,7 +1262,6 @@ class NitterTweetScheduler:
         seen_map: dict[str, list[str]],
     ) -> None:
         batch = prepared.batch
-        tweet = batch.tweets[0]
         self._log_ai_process_results(
             batch.username,
             batch.tweets,
@@ -1267,13 +1270,6 @@ class NitterTweetScheduler:
             progress_index=batch.tweet_index,
             progress_total=batch.tweet_total,
         )
-        if tweet.status_id:
-            await self._store_incremental_seen_ids(
-                group.group_id,
-                batch.username,
-                [tweet.status_id],
-                seen_map,
-            )
 
     def _log_prepare_progress(
         self,
@@ -1299,6 +1295,7 @@ class NitterTweetScheduler:
         group_label: str,
         immediate_batch_summary_tracker: BatchSummaryTracker,
         immediate_batches_sent: int,
+        seen_map: dict[str, list[str]],
         *,
         batch_progress: tuple[int, int],
     ) -> tuple[list[PendingTweetBatch], int]:
@@ -1307,7 +1304,7 @@ class NitterTweetScheduler:
                 if immediate_targets:
                     if immediate_batches_sent > 0 and user_interval > 0:
                         await asyncio.sleep(user_interval)
-                    await self._send_per_user_updates(
+                    success_count = await self._send_per_user_updates(
                         [batch],
                         result,
                         immediate_targets,
@@ -1319,6 +1316,13 @@ class NitterTweetScheduler:
                         history_group_id=group.group_id,
                         history_source="scheduled",
                     )
+                    if success_count and batch.tweets[0].status_id:
+                        await self._store_incremental_seen_ids(
+                            group.group_id,
+                            batch.username,
+                            [batch.tweets[0].status_id],
+                            seen_map,
+                        )
                     immediate_batches_sent += 1
                 pending_batches.append(batch)
             except BaseException:
@@ -1330,7 +1334,7 @@ class NitterTweetScheduler:
             if immediate_targets:
                 if immediate_batches_sent > 0 and user_interval > 0:
                     await asyncio.sleep(user_interval)
-                await self._send_per_user_updates(
+                success_count = await self._send_per_user_updates(
                     [batch],
                     result,
                     immediate_targets,
@@ -1342,6 +1346,13 @@ class NitterTweetScheduler:
                     history_group_id=group.group_id,
                     history_source="scheduled",
                 )
+                if success_count and batch.tweets[0].status_id:
+                    await self._store_incremental_seen_ids(
+                        group.group_id,
+                        batch.username,
+                        [batch.tweets[0].status_id],
+                        seen_map,
+                    )
                 immediate_batches_sent += 1
         finally:
             await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
@@ -1362,10 +1373,11 @@ class NitterTweetScheduler:
         on_target_delivered=None,
         history_group_id: str = "",
         history_source: str = "scheduled",
-    ) -> None:
+    ) -> int:
         if batch_summary and batch_summary_tracker is None:
             batch_summary_tracker = BatchSummaryTracker(batch_summary)
 
+        total_success = 0
         for batch_index, batch in enumerate(batches):
             success = 0
             attempted = 0
@@ -1420,6 +1432,10 @@ class NitterTweetScheduler:
                             batch,
                             umo,
                             history_source,
+                            delivery_status=getattr(
+                                outcome, "delivery_status", "success"
+                            ),
+                            delivery_error=getattr(outcome, "delivery_error", ""),
                         )
                         success += 1
                     if outcome.warning:
@@ -1438,6 +1454,7 @@ class NitterTweetScheduler:
                 attempted,
                 merge_existing_stats=merge_existing_stats,
             )
+            total_success += success
             if batch_progress:
                 progress_text = f" progress={batch_progress[0]}/{batch_progress[1]}"
             elif len(batches) > 1:
@@ -1451,6 +1468,7 @@ class NitterTweetScheduler:
             )
             if batch_index < len(batches) - 1 and user_interval > 0:
                 await asyncio.sleep(user_interval)
+        return total_success
 
     @staticmethod
     def _scheduled_update_header(
@@ -1548,6 +1566,8 @@ class NitterTweetScheduler:
         batch: PendingTweetBatch,
         target_umo: str,
         source: str,
+        delivery_status: str = "success",
+        delivery_error: str = "",
     ) -> None:
         if not group_id:
             return
@@ -1562,6 +1582,8 @@ class NitterTweetScheduler:
                     target_umo,
                     source,
                     batch.instance,
+                    delivery_status,
+                    delivery_error,
                 )
             except Exception as exc:
                 logger.warning(
@@ -1609,6 +1631,10 @@ class NitterTweetScheduler:
                             batch,
                             umo,
                             history_source,
+                            delivery_status=getattr(
+                                outcome, "delivery_status", "success"
+                            ),
+                            delivery_error=getattr(outcome, "delivery_error", ""),
                         )
                     success += 1
                     if outcome.warning:
@@ -1906,6 +1932,10 @@ class NitterTweetScheduler:
                             batch,
                             target,
                             "replay",
+                            delivery_status=getattr(
+                                outcome, "delivery_status", "success"
+                            ),
+                            delivery_error=getattr(outcome, "delivery_error", ""),
                         )
                         success_targets += 1
                     else:
@@ -2160,7 +2190,7 @@ class NitterTweetScheduler:
 
     @staticmethod
     def _push_group_label(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
+        if is_default_group(group.group_id):
             return DEFAULT_GROUP_NAME
         return str(group.name or group.group_id).strip() or group.group_id
 
@@ -2333,7 +2363,7 @@ class NitterTweetScheduler:
 
     @staticmethod
     def _group_command_suffix(group: ScheduleGroup) -> str:
-        if group.group_id == GLOBAL_GROUP_ID:
+        if is_default_group(group.group_id):
             return ""
         name = str(group.name or group.group_id).strip()
         return f" {name}" if name else ""

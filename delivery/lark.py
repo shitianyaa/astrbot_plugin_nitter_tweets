@@ -247,7 +247,20 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     f"[NitterTweets] Lark post 已发送到 {umo}，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
-            return SendOutcome(success=True, warning=warning)
+            return SendOutcome(
+                success=True,
+                warning=warning,
+                delivery_status=(
+                    "partial_failed"
+                    if not (video_attempt.success or video_attempt.uncertain)
+                    else "success"
+                ),
+                delivery_error=(
+                    video_attempt.error
+                    if not (video_attempt.success or video_attempt.uncertain)
+                    else ""
+                ),
+            )
 
         logger.warning(
             f"[NitterTweets] Lark post 发送到 {umo} 失败，降级为文本/媒体发送: "
@@ -280,4 +293,17 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 f"[NitterTweets] Lark 推文文本已发送到 {umo}，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
-        return SendOutcome(success=True, warning=warning)
+        return SendOutcome(
+            success=True,
+            warning=warning,
+            delivery_status=(
+                "partial_failed"
+                if not (media_attempt.success or media_attempt.uncertain)
+                else "success"
+            ),
+            delivery_error=(
+                media_attempt.error
+                if not (media_attempt.success or media_attempt.uncertain)
+                else ""
+            ),
+        )

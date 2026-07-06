@@ -96,8 +96,9 @@
 `tweet_groups` 是分组行为的主入口。`watch_users` 和 `push_targets` 顶层字段只是旧版兼容字段。
 
 分组字段规则：
-- `group_id` 是存储 ID，必须稳定。默认分组使用 `default`。
-- `global`、`全局` 等只作为默认分组旧别名兼容。
+- `group_id` 是存储 ID，必须稳定。新建默认分组使用 `default`。
+- 已有 `group_id` 必须保留；旧 `global` 可作为显式存储 ID 保留，也作为默认分组旧别名兼容。
+- 旧配置缺失 `group_id` 时，安全英文数字分组名（如 `coser`）是旧运行时事实 ID，必须继承；普通显示名才生成 `group_N`。
 - seen 索引按 `group_id + username` 隔离。
 - 每个分组的 `watch_users`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`deferred_publish_enabled`、`filter_plain_text_enabled` 都是独立行为。
 

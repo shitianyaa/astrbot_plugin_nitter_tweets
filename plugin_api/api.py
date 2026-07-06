@@ -15,17 +15,25 @@ try:
     from ..storage import (
         PendingQueueSummary,
         PendingTweetRecord,
+        PushHistoryGroupSummary,
         PushHistoryRecord,
     )
     from ..delivery import PlatformResolver, parse_umo
     from ..shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from ..shared.group_ids import normalize_stable_group_id
     from .groups import WebUIGroupEditor
 except ImportError:
     from config import config_get
     from delivery import PlatformResolver, parse_umo
     from scheduler import ScheduleGroup
-    from storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
+    from storage import (
+        PendingQueueSummary,
+        PendingTweetRecord,
+        PushHistoryGroupSummary,
+        PushHistoryRecord,
+    )
     from shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from shared.group_ids import normalize_stable_group_id
     from plugin_api.groups import WebUIGroupEditor
 
 
@@ -47,6 +55,8 @@ class NitterWebAPI:
             ("web/groups/delete", "handle_group_delete", ["POST"]),
             ("web/targets/probe", "handle_targets_probe", ["POST"]),
             ("web/history", "handle_history", ["GET"]),
+            ("web/history/orphans", "handle_history_orphans", ["GET"]),
+            ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
             ("web/pending", "handle_pending", ["GET"]),
             ("web/check", "handle_check", ["POST"]),
@@ -92,6 +102,16 @@ class NitterWebAPI:
                 request.args.get("offset"), 0, minimum=0, maximum=10_000_000
             )
             return await self.build_history(group_id, username, limit, offset)
+
+        return await self._json_response(action)
+
+    async def handle_history_orphans(self):
+        return await self._json_response(self.build_history_orphans)
+
+    async def handle_history_orphan_delete(self):
+        async def action():
+            data = await self._request_json()
+            return await self.delete_history_orphan(data)
 
         return await self._json_response(action)
 
@@ -503,6 +523,48 @@ class NitterWebAPI:
             next_offset=offset + limit if has_next else offset,
             records=visible_records,
             terminology=self._terminology(),
+        )
+
+    async def build_history_orphans(self) -> dict[str, Any]:
+        groups = self._schedule_groups()
+        configured_ids = {
+            normalize_stable_group_id(group.group_id)
+            for group in groups
+        }
+        summaries = await self.storage.get_push_history_group_summaries()
+        orphans = [
+            self._serialize_history_group_summary(summary)
+            for summary in summaries
+            if normalize_stable_group_id(summary.group_id) not in configured_ids
+        ]
+        return self._ok(
+            orphans=orphans,
+            terminology=self._terminology(),
+        )
+
+    async def delete_history_orphan(self, data: dict[str, Any]) -> dict[str, Any]:
+        raw_group_id = self._data_text(data, "group_id")
+        if not raw_group_id:
+            return self._error("请选择要清理的分组 ID")
+        group_id = normalize_stable_group_id(raw_group_id)
+        configured_ids = {
+            normalize_stable_group_id(group.group_id)
+            for group in self._schedule_groups()
+        }
+        if group_id in configured_ids:
+            return self._error(f"分组仍存在，不能作为失效分组清理：{group_id}")
+        if self._data_text(data, "confirm") != "DELETE":
+            return self._error("清理失效分组运行数据需要显式确认")
+
+        summary = await self.storage.delete_orphan_group_runtime_data(group_id)
+        media_summary = await asyncio.to_thread(
+            self.plugin.media.delete_staged_media_group,
+            group_id,
+        )
+        return self._ok(
+            group_id=group_id,
+            summary=summary,
+            media_summary=self._serialize_cache_result(media_summary),
         )
 
     async def replay_history(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -1255,10 +1317,23 @@ class NitterWebAPI:
             "source": record.source,
             "instance": record.instance,
             "pushed_at": record.pushed_at,
+            "delivery_status": record.delivery_status,
+            "delivery_error": record.delivery_error,
             "published": tweet.published,
             "text_preview": NitterWebAPI._text_preview(tweet.text),
             "translation_preview": NitterWebAPI._text_preview(tweet.translation),
             "ai_comment_preview": NitterWebAPI._text_preview(tweet.ai_comment),
+        }
+
+    @staticmethod
+    def _serialize_history_group_summary(
+        summary: PushHistoryGroupSummary,
+    ) -> dict[str, Any]:
+        return {
+            "group_id": summary.group_id,
+            "record_count": summary.record_count,
+            "user_count": summary.user_count,
+            "latest_pushed_at": summary.latest_pushed_at,
         }
 
     @staticmethod
@@ -1302,6 +1377,9 @@ class NitterWebAPI:
             item["target_count"] = len(item["target_umos"])
             if int(record.pushed_at or 0) > int(item.get("pushed_at") or 0):
                 item.update(serialized)
+            if record.delivery_status == "partial_failed":
+                item["delivery_status"] = "partial_failed"
+                item["delivery_error"] = record.delivery_error
             options_by_umo = {
                 option["umo"]: option for option in item["replay_target_options"]
             }

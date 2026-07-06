@@ -336,7 +336,11 @@ class TweetSender:
                 item[0],
             ),
             lambda error, warning: SendOutcome(
-                success=True, error=error, warning=warning
+                success=True,
+                error=error,
+                warning=warning,
+                delivery_status="partial_failed" if error else "success",
+                delivery_error=error,
             ),
             lambda outcome, error, warning: SendOutcome(
                 success=False,
@@ -402,7 +406,12 @@ class TweetSender:
                 logger.info(
                     f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频的定时推文"
                 )
-                return SendOutcome(success=True, error=attempt.error)
+                return SendOutcome(
+                    success=True,
+                    error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
+                )
             if not attempt_nv.retryable:
                 return SendOutcome(
                     success=attempt_nv.uncertain,
@@ -435,6 +444,14 @@ class TweetSender:
             success=fallback.success or fallback.uncertain,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
+            delivery_status=(
+                "partial_failed"
+                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
+                else "success"
+            ),
+            delivery_error=(attempt.error or fallback.error)
+            if (fallback.success or fallback.uncertain)
+            else "",
         )
 
     async def send_merged_to_umo(
@@ -500,6 +517,8 @@ class TweetSender:
                 omitted_videos=omitted_videos,
                 error=error,
                 warning=warning,
+                delivery_status="partial_failed" if error else "success",
+                delivery_error=error,
             ),
             lambda outcome, error, warning: MergedSendOutcome(
                 success=False,
@@ -599,6 +618,8 @@ class TweetSender:
                     mode="raw_forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
                 )
             if not raw_retry_attempt.retryable:
                 return MergedSendOutcome(
@@ -634,6 +655,8 @@ class TweetSender:
                     mode="forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
                 )
             if not retry_attempt.retryable:
                 return MergedSendOutcome(
@@ -671,6 +694,8 @@ class TweetSender:
                 omitted_videos=omitted_videos,
                 error=attempt.error,
                 warning=fallback.warning,
+                delivery_status="partial_failed" if attempt.error else "success",
+                delivery_error=attempt.error,
             )
         return MergedSendOutcome(
             success=False,

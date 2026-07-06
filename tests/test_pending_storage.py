@@ -37,6 +37,62 @@ from shared import TweetItem, TweetMedia
 
 
 class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_push_history_group_summaries_count_records_users_and_latest_time(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                tweet = TweetItem(
+                    text="queued",
+                    link="https://x.com/NASA/status/100",
+                    published="",
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "deleted",
+                    "NASA",
+                    tweet,
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                    "https://nitter.test",
+                    1000,
+                    "partial_failed",
+                    "图片附件发送失败",
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "deleted",
+                    "OpenAI",
+                    tweet,
+                    "telegram:FriendMessage:2",
+                    "scheduled",
+                    "https://nitter.test",
+                    1200,
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "OpenAI",
+                    tweet,
+                    "telegram:FriendMessage:3",
+                    "scheduled",
+                    "https://nitter.test",
+                    900,
+                )
+
+                summaries = await asyncio.to_thread(
+                    storage.get_push_history_group_summaries
+                )
+            finally:
+                storage.close()
+
+            by_group = {summary.group_id: summary for summary in summaries}
+            self.assertEqual(by_group["deleted"].record_count, 2)
+            self.assertEqual(by_group["deleted"].user_count, 2)
+            self.assertEqual(by_group["deleted"].latest_pushed_at, 1200)
+            self.assertEqual(by_group["tech"].record_count, 1)
+
     async def test_push_history_records_and_filters_sent_tweets(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
@@ -72,6 +128,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     "scheduled",
                     "https://nitter.test",
                     1000,
+                    "partial_failed",
+                    "图片附件发送失败",
                 )
                 await asyncio.to_thread(
                     storage.record_push_history,
@@ -100,6 +158,8 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([record.username for record in all_records], ["OpenAI", "NASA"])
             self.assertEqual([record.status_id for record in nasa_records], ["100"])
             self.assertIsNotNone(first_record)
+            self.assertEqual(first_record.delivery_status, "partial_failed")
+            self.assertEqual(first_record.delivery_error, "图片附件发送失败")
             self.assertEqual(first_record.tweet.translation, "月球")
             self.assertEqual(first_record.tweet.ai_comment, "值得看")
             self.assertEqual(len(first_record.tweet.media), 1)
@@ -428,6 +488,22 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                     [default_tweet],
                     now,
                 )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "tech",
+                    "OpenAI",
+                    tech_tweet,
+                    "telegram:FriendMessage:2",
+                    "scheduled",
+                )
+                await asyncio.to_thread(
+                    storage.record_push_history,
+                    "default",
+                    "NASA",
+                    default_tweet,
+                    "telegram:FriendMessage:1",
+                    "scheduled",
+                )
 
                 summary = await asyncio.to_thread(
                     storage.delete_group_runtime_data, "tech"
@@ -439,6 +515,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(summary["seen_deleted"], 1)
                 self.assertEqual(summary["pending_deleted"], 1)
                 self.assertEqual(summary["pending_media_deleted"], 0)
+                self.assertEqual(summary["push_history_deleted"], 1)
                 self.assertEqual(
                     await asyncio.to_thread(storage.get_group_users, "default"),
                     ["NASA"],
@@ -469,8 +546,16 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 remaining_tech = storage.conn.execute(
                     "SELECT COUNT(*) FROM pending_tweets WHERE group_id = 'tech'"
                 ).fetchone()[0]
+                remaining_default_history = storage.conn.execute(
+                    "SELECT COUNT(*) FROM push_history WHERE group_id = 'default'"
+                ).fetchone()[0]
+                remaining_tech_history = storage.conn.execute(
+                    "SELECT COUNT(*) FROM push_history WHERE group_id = 'tech'"
+                ).fetchone()[0]
                 self.assertEqual(remaining_default, 1)
                 self.assertEqual(remaining_tech, 0)
+                self.assertEqual(remaining_default_history, 1)
+                self.assertEqual(remaining_tech_history, 0)
             finally:
                 storage.close()
 
@@ -781,7 +866,7 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0].instance, "")
             self.assertEqual(records[0].delivered_targets, ())
@@ -821,9 +906,63 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
                 storage.close()
 
             self.assertIsNotNone(exists)
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
 
-    async def test_schema_v2_global_group_rows_merge_to_default(self):
+    async def test_schema_v5_push_history_adds_delivery_status_columns(self):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "nitter_tweets.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE meta (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO meta (key, value, updated_at) VALUES ('schema_version', '5', 0)"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE push_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id TEXT NOT NULL,
+                        username TEXT NOT NULL,
+                        status_id TEXT NOT NULL,
+                        original_link TEXT NOT NULL,
+                        target_umo TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        instance TEXT NOT NULL DEFAULT '',
+                        tweet_data TEXT NOT NULL,
+                        pushed_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                columns = {
+                    row[1]
+                    for row in storage.conn.execute(
+                        "PRAGMA table_info(push_history)"
+                    ).fetchall()
+                }
+                version = await asyncio.to_thread(storage.get_meta, "schema_version")
+            finally:
+                storage.close()
+
+            self.assertEqual(version, "6")
+            self.assertIn("delivery_status", columns)
+            self.assertIn("delivery_error", columns)
+
+    async def test_schema_v2_global_group_rows_merge_to_default_on_config_sync(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
             storage = SQLiteStorage(db_path)
@@ -962,10 +1101,54 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             await storage.connect()
             try:
                 version = await asyncio.to_thread(storage.get_meta, "schema_version")
+                users_before_sync = await asyncio.to_thread(
+                    storage.get_group_users, "default"
+                )
+                global_rows_before_sync = storage.conn.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT group_id FROM groups WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM group_users WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM group_targets WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM seen_tweets WHERE group_id = 'global'
+                        UNION ALL
+                        SELECT group_id FROM pending_tweets WHERE group_id = 'global'
+                    )
+                    """
+                ).fetchone()[0]
+
+                await asyncio.to_thread(
+                    storage.sync_config_groups,
+                    [
+                        types.SimpleNamespace(
+                            group_id="default",
+                            name="默认分组",
+                            enabled=True,
+                            check_on_startup=False,
+                            interval_check_enabled=True,
+                            check_interval_minutes=30,
+                            daily_check_enabled=False,
+                            daily_check_times=[],
+                            scheduled_fetch_limit=5,
+                            send_target_interval=1.5,
+                            send_user_interval=2.0,
+                            notify_no_updates=False,
+                            aliases=[],
+                            users=["ESA", "NASA"],
+                            targets=[
+                                "telegram:FriendMessage:1",
+                                "telegram:FriendMessage:2",
+                            ],
+                        )
+                    ],
+                )
                 users = await asyncio.to_thread(storage.get_group_users, "default")
                 targets = await asyncio.to_thread(storage.get_group_targets, "default")
                 seen_ids = await asyncio.to_thread(storage.get_seen_ids, "default", "NASA")
-                global_rows = storage.conn.execute(
+                global_rows_after_sync = storage.conn.execute(
                     """
                     SELECT COUNT(*) FROM (
                         SELECT group_id FROM groups WHERE group_id = 'global'
@@ -989,14 +1172,16 @@ class PendingStorageTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 storage.close()
 
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
+            self.assertEqual(users_before_sync, ["NASA"])
+            self.assertGreater(global_rows_before_sync, 0)
             self.assertEqual(users, ["ESA", "NASA"])
             self.assertEqual(
                 targets,
                 ["telegram:FriendMessage:1", "telegram:FriendMessage:2"],
             )
             self.assertEqual(set(seen_ids), {"100", "101"})
-            self.assertEqual(global_rows, 0)
+            self.assertEqual(global_rows_after_sync, 0)
             self.assertEqual(pending_count, 2)
             self.assertEqual(media_count, 1)
 

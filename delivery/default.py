@@ -185,7 +185,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 logger.info(
                     f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频的定时直发推文"
                 )
-                return SendOutcome(success=True, error=attempt.error)
+                return SendOutcome(
+                    success=True,
+                    error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
+                )
             if not retry_attempt.retryable:
                 return SendOutcome(
                     success=retry_attempt.uncertain,
@@ -218,6 +223,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             success=fallback.success or fallback.uncertain,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
+            delivery_status=(
+                "partial_failed"
+                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
+                else "success"
+            ),
+            delivery_error=(attempt.error or fallback.error)
+            if (fallback.success or fallback.uncertain)
+            else "",
         )
 
     async def _send_split_direct_videos_to_umo(
@@ -262,10 +275,11 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         image_error = ""
         image_warning = ""
         for offset, image_component in enumerate(image_components, start=1):
-            image_attempt = await sender._send_context_message(
+            image_attempt = await self._send_context_component_with_retry(
+                sender,
                 context,
                 umo,
-                MessageChain([image_component]),
+                image_component,
                 f"QQ direct scheduled tweet image {offset}/{len(image_components)}",
             )
             if image_attempt.success or image_attempt.uncertain:
@@ -295,18 +309,24 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_error = video_attempt.error
             break
         else:
+            delivery_error = video_error or image_error
             return SendOutcome(
                 success=True,
-                error=image_error,
+                error=delivery_error,
                 warning=video_warning or image_warning,
+                delivery_status="partial_failed" if delivery_error else "success",
+                delivery_error=delivery_error,
             )
 
         notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
         if not notice_components:
+            delivery_error = video_error or image_error
             return SendOutcome(
                 success=True,
-                error=video_error or image_error,
+                error=delivery_error,
                 warning=video_warning or image_warning,
+                delivery_status="partial_failed" if delivery_error else "success",
+                delivery_error=delivery_error,
             )
 
         notice_attempt = await sender._send_context_message(
@@ -315,10 +335,13 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             MessageChain(notice_components),
             "QQ direct scheduled video omitted notice",
         )
+        delivery_error = video_error or image_error
         return SendOutcome(
             success=True,
-            error=video_error or image_error,
+            error=delivery_error,
             warning=notice_attempt.warning or video_warning or image_warning,
+            delivery_status="partial_failed" if delivery_error else "success",
+            delivery_error=delivery_error,
         )
 
     async def _send_split_direct_videos_event(
@@ -364,9 +387,10 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
 
         image_components = sender.renderer.build_direct_image_components(tweets)
         for offset, image_component in enumerate(image_components, start=1):
-            image_attempt = await sender._send_event_chain(
+            image_attempt = await self._send_event_component_with_retry(
+                sender,
                 event,
-                MessageChain([image_component]),
+                image_component,
                 f"manual QQ direct image {offset}/{len(image_components)}",
             )
             if image_attempt.success or image_attempt.uncertain:
@@ -404,6 +428,49 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             "manual QQ direct video omitted notice",
         )
         return notice_attempt.success or notice_attempt.uncertain
+
+    async def _send_context_component_with_retry(
+        self,
+        sender,
+        context,
+        umo: str,
+        component,
+        label: str,
+    ):
+        attempt = await sender._send_context_message(
+            context,
+            umo,
+            MessageChain([component]),
+            label,
+        )
+        if attempt.success or attempt.uncertain or not attempt.retryable:
+            return attempt
+        return await sender._send_context_message(
+            context,
+            umo,
+            MessageChain([component]),
+            label,
+        )
+
+    async def _send_event_component_with_retry(
+        self,
+        sender,
+        event,
+        component,
+        label: str,
+    ):
+        attempt = await sender._send_event_chain(
+            event,
+            MessageChain([component]),
+            label,
+        )
+        if attempt.success or attempt.uncertain or not attempt.retryable:
+            return attempt
+        return await sender._send_event_chain(
+            event,
+            MessageChain([component]),
+            label,
+        )
 
     def _should_split_direct_media(self, sender, tweets: list) -> bool:
         return bool(

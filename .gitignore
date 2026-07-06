@@ -4,6 +4,7 @@ cache/
 data/
 diagnostics/
 tests/downloads/
+backups/
 *.db
 *.db-wal
 *.db-shm

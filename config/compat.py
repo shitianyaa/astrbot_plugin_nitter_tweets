@@ -5,14 +5,18 @@ try:
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
@@ -232,10 +236,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
                 _merge_default_group_into(default_group, group)
                 changed = True
                 continue
-
-            if str(default_group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                default_group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
             if _is_legacy_default_name(default_group.get("name")):
                 default_group["name"] = DEFAULT_GROUP_NAME
                 changed = True
@@ -244,15 +244,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
     if len(merged_groups) != len(groups):
         groups = merged_groups
         changed = True
-
-    if default_group is not None:
-        for group in groups:
-            if group is not default_group or not isinstance(group, dict):
-                continue
-            if str(group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
-            break
 
     legacy_values = {
         key: config_get(config, key)
@@ -443,16 +434,17 @@ def _ensure_tweet_group_stable_ids(groups: list) -> bool:
             continue
         group_id = str(group.get("group_id") or "").strip()
         if group_id:
-            existing.add(normalize_group_id(group_id))
+            existing.add(normalize_stable_group_id(group_id))
     for group in groups:
         if not isinstance(group, dict):
             continue
         group_id = str(group.get("group_id") or "").strip()
         if group_id:
             continue
-        if normalize_group_id(group.get("name") or "") == DEFAULT_GROUP_ID:
-            group["group_id"] = DEFAULT_GROUP_ID
-            existing.add(DEFAULT_GROUP_ID)
+        inferred_group_id = infer_legacy_group_id_from_name(group.get("name") or "")
+        if inferred_group_id and inferred_group_id not in existing:
+            group["group_id"] = inferred_group_id
+            existing.add(inferred_group_id)
             changed = True
             continue
         candidate = _next_generated_group_id(existing)
