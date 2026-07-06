@@ -26,28 +26,22 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get
-    from .lark_delivery import is_lark_platform
-    from .utils import (
+    from ..config import config_get
+    from .lark_support import is_lark_platform
+    from ..shared import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
     )
-    from .delivery import (
-        DefaultDeliveryAdapter,
-        MergedSendOutcome,
-        OneBotDeliveryAdapter,
-        PlatformDeliveryRegistry,
-        PlatformResolver,
-        SendAttempt,
-        SendOutcome,
-        normalize_platform,
-    )
-    from .tweet_rendering import TweetBatch, TweetMessageRenderer
+    from .default import DefaultDeliveryAdapter
+    from .onebot import OneBotDeliveryAdapter
+    from .outcomes import MergedSendOutcome, SendAttempt, SendOutcome
+    from .platforms import PlatformDeliveryRegistry, PlatformResolver, normalize_platform
+    from ..rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config_compat import config_get
-    from lark_delivery import is_lark_platform
-    from utils import (
+    from config import config_get
+    from delivery.lark_support import is_lark_platform
+    from shared import (
         TweetItem,
         configured_merge_tweet_threshold,
         safe_call,
@@ -62,7 +56,7 @@ except ImportError:
         SendOutcome,
         normalize_platform,
     )
-    from tweet_rendering import TweetBatch, TweetMessageRenderer
+    from rendering import TweetBatch, TweetMessageRenderer
 
 
 class TweetSender:
@@ -342,7 +336,11 @@ class TweetSender:
                 item[0],
             ),
             lambda error, warning: SendOutcome(
-                success=True, error=error, warning=warning
+                success=True,
+                error=error,
+                warning=warning,
+                delivery_status="partial_failed" if error else "success",
+                delivery_error=error,
             ),
             lambda outcome, error, warning: SendOutcome(
                 success=False,
@@ -408,7 +406,12 @@ class TweetSender:
                 logger.info(
                     f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频的定时推文"
                 )
-                return SendOutcome(success=True, error=attempt.error)
+                return SendOutcome(
+                    success=True,
+                    error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
+                )
             if not attempt_nv.retryable:
                 return SendOutcome(
                     success=attempt_nv.uncertain,
@@ -441,6 +444,14 @@ class TweetSender:
             success=fallback.success or fallback.uncertain,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
+            delivery_status=(
+                "partial_failed"
+                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
+                else "success"
+            ),
+            delivery_error=(attempt.error or fallback.error)
+            if (fallback.success or fallback.uncertain)
+            else "",
         )
 
     async def send_merged_to_umo(
@@ -506,6 +517,8 @@ class TweetSender:
                 omitted_videos=omitted_videos,
                 error=error,
                 warning=warning,
+                delivery_status="partial_failed" if error else "success",
+                delivery_error=error,
             ),
             lambda outcome, error, warning: MergedSendOutcome(
                 success=False,
@@ -605,6 +618,8 @@ class TweetSender:
                     mode="raw_forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
                 )
             if not raw_retry_attempt.retryable:
                 return MergedSendOutcome(
@@ -640,6 +655,8 @@ class TweetSender:
                     mode="forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
                 )
             if not retry_attempt.retryable:
                 return MergedSendOutcome(
@@ -677,6 +694,8 @@ class TweetSender:
                 omitted_videos=omitted_videos,
                 error=attempt.error,
                 warning=fallback.warning,
+                delivery_status="partial_failed" if attempt.error else "success",
+                delivery_error=attempt.error,
             )
         return MergedSendOutcome(
             success=False,

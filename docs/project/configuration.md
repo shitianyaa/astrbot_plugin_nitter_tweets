@@ -1,6 +1,6 @@
 # 配置说明
 
-配置真源是 `_conf_schema.json`。读取、分组和迁移规则在 `config_compat.py` 与 `scheduler_config.py`。
+配置真源是 `_conf_schema.json`。读取、迁移规则在 `config/compat.py`，分组解析规则在 `scheduler/config.py`。
 
 ## 分组
 
@@ -21,7 +21,7 @@
 
 字段：
 - `name`: 显示名，可用于命令。
-- `group_id`: 存储 ID，默认分组为 `default`。
+- `group_id`: 存储 ID。新建默认分组为 `default`；由插件自动分配并保持稳定，已有值（包括旧 `global`）保留。缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。
 - `enabled`: 是否启用。
 - `watch_users`: 分组关注账号。
 - `push_targets`: 分组推送目标 UMO。
@@ -37,10 +37,10 @@
 新增字段必须同步：
 
 - `_conf_schema.json`
-- `config_compat.CONFIG_GROUP_BY_KEY`
-- `config_compat.MIGRATABLE_CONFIG_KEYS`
-- `config_compat.DEFAULT_GROUP_MIGRATION_KEYS`
-- `scheduler_config.ScheduleGroup`
+- `config.compat.CONFIG_GROUP_BY_KEY`
+- `config.compat.MIGRATABLE_CONFIG_KEYS`
+- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`
+- `scheduler.config.ScheduleGroup`
 - `SchedulerConfigReader.parse_schedule_group()`
 - README 或 `docs/advanced.md`
 - `tests/test_subscription_import.py`
@@ -51,7 +51,7 @@
 
 - `config_get()` 优先读取分组对象里的值，再 fallback 到扁平字段。
 - `migrate_legacy_grouped_config()` 将旧扁平全局配置复制到新分组对象。
-- `migrate_default_group_config()` 将旧顶层订阅和默认分组字段迁移到 `default`。
+- `migrate_default_group_config()` 将旧顶层订阅和默认分组字段迁移到新默认分组；已有 `tweet_groups[].group_id` 保留，缺失时补齐。
 - `__template_key` 必须保留，供 AstrBot `template_list` 使用。
 
 ## 文档同步

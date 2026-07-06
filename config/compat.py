@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 try:
-    from .group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 except ImportError:
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
@@ -232,10 +236,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
                 _merge_default_group_into(default_group, group)
                 changed = True
                 continue
-
-            if str(default_group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                default_group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
             if _is_legacy_default_name(default_group.get("name")):
                 default_group["name"] = DEFAULT_GROUP_NAME
                 changed = True
@@ -244,15 +244,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
     if len(merged_groups) != len(groups):
         groups = merged_groups
         changed = True
-
-    if default_group is not None:
-        for group in groups:
-            if group is not default_group or not isinstance(group, dict):
-                continue
-            if str(group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
-            break
 
     legacy_values = {
         key: config_get(config, key)
@@ -298,6 +289,8 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
 
     if _ensure_tweet_group_template_keys(groups):
         changed = True
+    if _ensure_tweet_group_stable_ids(groups):
+        changed = True
 
     if not changed:
         return False
@@ -323,6 +316,8 @@ def ensure_tweet_group_template_keys(config, *, save: bool = True) -> bool:
         return False
 
     if _ensure_tweet_group_template_keys(groups):
+        changed = True
+    if _ensure_tweet_group_stable_ids(groups):
         changed = True
 
     if not changed:
@@ -429,6 +424,43 @@ def _ensure_tweet_group_template_keys(groups: list) -> bool:
         if _ensure_tweet_group_template_key(group):
             changed = True
     return changed
+
+
+def _ensure_tweet_group_stable_ids(groups: list) -> bool:
+    changed = False
+    existing: set[str] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            existing.add(normalize_stable_group_id(group_id))
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            continue
+        inferred_group_id = infer_legacy_group_id_from_name(group.get("name") or "")
+        if inferred_group_id and inferred_group_id not in existing:
+            group["group_id"] = inferred_group_id
+            existing.add(inferred_group_id)
+            changed = True
+            continue
+        candidate = _next_generated_group_id(existing)
+        group["group_id"] = candidate
+        existing.add(candidate)
+        changed = True
+    return changed
+
+
+def _next_generated_group_id(existing: set[str], start_index: int = 1) -> str:
+    counter = max(1, int(start_index or 1))
+    while True:
+        candidate = f"group_{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:

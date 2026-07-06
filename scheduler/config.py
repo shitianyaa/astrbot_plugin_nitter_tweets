@@ -6,25 +6,31 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from .config_compat import config_get, migrate_default_group_config
-    from .group_ids import (
+    from ..config import config_get, migrate_default_group_config
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        infer_legacy_group_id_from_name,
+        is_default_group,
         normalize_group_id,
+        normalize_stable_group_id,
     )
-    from .utils import clamp_float, clamp_int, load_instances, normalize_username
+    from ..shared import clamp_float, clamp_int, load_instances, normalize_username
 except ImportError:
-    from config_compat import config_get, migrate_default_group_config
-    from group_ids import (
+    from config import config_get, migrate_default_group_config
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
+        infer_legacy_group_id_from_name,
+        is_default_group,
         normalize_group_id,
+        normalize_stable_group_id,
     )
-    from utils import clamp_float, clamp_int, load_instances, normalize_username
+    from shared import clamp_float, clamp_int, load_instances, normalize_username
 
 
 @dataclass(slots=True)
@@ -176,12 +182,19 @@ class SchedulerConfigReader:
 
         name = str(raw_group.get("name") or "").strip()
         raw_group_id = str(raw_group.get("group_id") or "").strip()
-        group_id = normalize_group_id(raw_group_id or name or f"group_{index}")
+        group_id = (
+            normalize_stable_group_id(raw_group_id)
+            if raw_group_id
+            else (
+                infer_legacy_group_id_from_name(name)
+                or normalize_stable_group_id(f"group_{index}")
+            )
+        )
         if not name:
-            name = DEFAULT_GROUP_NAME if group_id == DEFAULT_GROUP_ID else group_id
+            name = DEFAULT_GROUP_NAME if is_default_group(group_id) else group_id
 
         aliases = self.config_list(raw_group.get("aliases"))
-        if group_id == DEFAULT_GROUP_ID:
+        if is_default_group(group_id):
             aliases = self.merge_unique_strings(aliases, DEFAULT_GROUP_ALIASES)
 
         daily_check_times = self.parse_daily_times(
@@ -195,7 +208,7 @@ class SchedulerConfigReader:
             daily_check_enabled = self.parse_bool(
                 raw_group.get("daily_check_enabled"), False
             ) and bool(daily_check_times)
-        elif group_id == DEFAULT_GROUP_ID:
+        elif is_default_group(group_id):
             daily_check_enabled = self.parse_bool(
                 config_get(self.config, "daily_check_enabled", daily_check_enabled),
                 daily_check_enabled,
@@ -301,7 +314,7 @@ class SchedulerConfigReader:
         )
 
     def default_group_legacy_config(self, group_id: str, key: str, default=None):
-        if group_id != DEFAULT_GROUP_ID:
+        if not is_default_group(group_id):
             return default
         return config_get(self.config, key, default)
 

@@ -81,7 +81,7 @@ def _parse_args() -> argparse.Namespace:
 async def _main() -> None:
     _configure_output_encoding()
     _install_astrbot_logger_stub()
-    from media import NitterClient
+    from media_support import NitterClient
 
     args = _parse_args()
     skip_plain_text = args.skip_plain_text
