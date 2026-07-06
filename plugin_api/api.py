@@ -246,7 +246,7 @@ class NitterWebAPI:
         )
 
     async def create_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = self._group_editor().create_group()
+        result = self._group_editor().create_group(data)
         if not result.get("success"):
             return result
 

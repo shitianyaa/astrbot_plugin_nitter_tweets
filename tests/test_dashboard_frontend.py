@@ -90,14 +90,21 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
     def test_external_links_are_filtered_to_http_protocols(self):
         source = APP_JS.read_text(encoding="utf-8")
+        html = INDEX_HTML.read_text(encoding="utf-8")
         safe_body = _function_body(source, "safeUrl")
         link_body = _function_body(source, "externalLink")
         pending_body = _function_body(source, "renderPending")
         history_body = _function_body(source, "renderHistory")
         probe_body = _function_body(source, "probeMirror")
+        bind_body = _function_body(source, "bindEvents")
 
         self.assertIn('url.protocol === "http:" || url.protocol === "https:"', safe_body)
         self.assertIn('rel: "noopener noreferrer"', link_body)
+        self.assertIn("copyLink", link_body)
+        self.assertIn("toastContainer", html)
+        self.assertIn('a[data-copy-link]', bind_body)
+        self.assertIn("copyText(link.dataset.copyLink)", bind_body)
+        self.assertIn("已复制原推文链接", bind_body)
         self.assertIn("return el(\"span\"", link_body)
         self.assertIn("externalLink(row.original_link", pending_body)
         self.assertIn("externalLink(row.original_link", history_body)
@@ -239,6 +246,21 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn(".group-list", style)
         self.assertIn("overflow-x: auto", style)
         self.assertNotIn('class="group-sidebar"', source)
+
+    def test_create_group_dialog_accepts_optional_group_id(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        style = (ROOT / "pages" / "dashboard" / "style.css").read_text(
+            encoding="utf-8"
+        )
+        body = _function_body(source, "createGroup")
+
+        self.assertIn("openConfirm", body)
+        self.assertIn("group_id: idInput.value.trim()", body)
+        self.assertIn("name: nameInput.value.trim()", body)
+        self.assertIn('pattern: "[A-Za-z0-9_-]{1,32}"', body)
+        self.assertIn("保存后保持稳定", body)
+        self.assertIn(".confirm-form", style)
+        self.assertIn(".field-hint", style)
 
     def test_dashboard_removes_generic_plugin_page_kicker(self):
         source = INDEX_HTML.read_text(encoding="utf-8")

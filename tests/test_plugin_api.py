@@ -458,6 +458,50 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(group["pending_summary"]["pending_count"], 0)
         self.assertTrue(config.saved)
 
+    async def test_create_group_accepts_custom_safe_group_id(self):
+        config = _Config({"push": {"tweet_groups": []}})
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).create_group(
+            {"name": "news", "group_id": "News-Feed_1"}
+        )
+
+        self.assertTrue(payload["success"])
+        group = payload["group"]
+        self.assertEqual(group["group_id"], "news-feed_1")
+        self.assertEqual(group["name"], "news")
+        self.assertEqual(_group_config(config, "news-feed_1")["group_id"], "news-feed_1")
+        self.assertTrue(config.saved)
+
+    async def test_create_group_rejects_unsafe_or_duplicate_group_id(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {"name": "科技", "group_id": "tech", "watch_users": []}
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        unsafe = await NitterWebAPI(plugin).create_group(
+            {"name": "bad", "group_id": "../bad"}
+        )
+        duplicate = await NitterWebAPI(plugin).create_group(
+            {"name": "dup", "group_id": "tech"}
+        )
+        reserved = await NitterWebAPI(plugin).create_group(
+            {"name": "reserved", "group_id": "default"}
+        )
+
+        self.assertFalse(unsafe["success"])
+        self.assertFalse(duplicate["success"])
+        self.assertFalse(reserved["success"])
+        self.assertIn("group_id", unsafe["error"])
+        self.assertIn("group_id", duplicate["error"])
+        self.assertIn("group_id", reserved["error"])
+
     async def test_update_group_rejects_group_id_mutation(self):
         config = _Config(
             {

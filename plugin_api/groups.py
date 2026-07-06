@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from astrbot.api import logger
@@ -29,11 +30,19 @@ class WebUIGroupEditor:
         self.config = plugin.config
         self.scheduler = plugin.scheduler
 
-    def create_group(self) -> dict[str, Any]:
+    def create_group(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = data or {}
         previous_groups = self._raw_groups()
         groups = copy.deepcopy(previous_groups)
-        group_id = self._next_group_id(groups)
-        group_name = self._next_group_name(groups)
+        try:
+            group_id = self._validated_new_group_id(
+                groups, self._text(data, "group_id")
+            )
+            group_name = self._validated_name(
+                groups, self._text(data, "name") or self._next_group_name(groups)
+            )
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         groups.append(
             {
                 TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
@@ -175,6 +184,21 @@ class WebUIGroupEditor:
             if candidate not in existing:
                 return candidate
             counter += 1
+
+    def _validated_new_group_id(
+        self, groups: list[dict[str, Any]], value: str
+    ) -> str:
+        if not value:
+            return self._next_group_id(groups)
+        group_id = normalize_group_id(value)
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", group_id):
+            raise ValueError("group_id 仅支持 1-32 位字母、数字、下划线或连字符")
+        if is_default_group(group_id):
+            raise ValueError("group_id 不能使用默认分组保留标识")
+        for index, raw_group in enumerate(groups):
+            if group_id in self._group_identifiers(raw_group, index + 1):
+                raise ValueError("group_id 与现有分组标识冲突")
+        return group_id
 
     def _next_group_name(self, groups: list[dict[str, Any]]) -> str:
         counter = 1
