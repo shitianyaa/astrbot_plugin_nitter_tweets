@@ -28,9 +28,9 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-from media import MediaService
+from media_support import MediaService
 import media_support.cache as cache_module
-from utils import TweetItem, TweetMedia
+from shared import TweetItem, TweetMedia
 
 
 class MediaCleanupTest(unittest.TestCase):

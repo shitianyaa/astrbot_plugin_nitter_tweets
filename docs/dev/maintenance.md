@@ -21,8 +21,8 @@
 
 - 配置字段语义见 `docs/project/configuration.md`。
 - `_conf_schema.json` 是 WebUI 真源。
-- `config_compat.py` 是兼容和迁移真源。
-- `scheduler_config.py` 是分组行为真源。
+- `config/compat.py` 是兼容和迁移真源。
+- `scheduler/config.py` 是分组行为真源。
 
 ## 测试维护
 

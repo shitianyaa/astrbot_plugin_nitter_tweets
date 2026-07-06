@@ -6,9 +6,9 @@ from .default import DefaultDeliveryAdapter
 from .outcomes import SendAttempt
 
 try:
-    from ..utils import safe_call
+    from ..shared import safe_call
 except ImportError:
-    from utils import safe_call
+    from shared import safe_call
 
 
 class OneBotDeliveryAdapter(DefaultDeliveryAdapter):

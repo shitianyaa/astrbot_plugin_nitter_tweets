@@ -1,6 +1,6 @@
 # 配置说明
 
-配置真源是 `_conf_schema.json`。读取、分组和迁移规则在 `config_compat.py` 与 `scheduler_config.py`。
+配置真源是 `_conf_schema.json`。读取、迁移规则在 `config/compat.py`，分组解析规则在 `scheduler/config.py`。
 
 ## 分组
 
@@ -37,10 +37,10 @@
 新增字段必须同步：
 
 - `_conf_schema.json`
-- `config_compat.CONFIG_GROUP_BY_KEY`
-- `config_compat.MIGRATABLE_CONFIG_KEYS`
-- `config_compat.DEFAULT_GROUP_MIGRATION_KEYS`
-- `scheduler_config.ScheduleGroup`
+- `config.compat.CONFIG_GROUP_BY_KEY`
+- `config.compat.MIGRATABLE_CONFIG_KEYS`
+- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`
+- `scheduler.config.ScheduleGroup`
 - `SchedulerConfigReader.parse_schedule_group()`
 - README 或 `docs/advanced.md`
 - `tests/test_subscription_import.py`

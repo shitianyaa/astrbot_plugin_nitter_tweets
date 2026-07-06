@@ -151,12 +151,12 @@ if "quart" not in sys.modules:
     sys.modules["quart"] = quart_module
 
 
-from config_compat import config_get
+from config import config_get
 from main import NitterTweetsPlugin
 from plugin_api import NitterWebAPI
-from scheduler_config import SchedulerConfigReader
-from sqlite_storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
-from utils import TweetItem, TweetMedia, configured_merge_tweet_threshold
+from scheduler import SchedulerConfigReader
+from storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
+from shared import TweetItem, TweetMedia, configured_merge_tweet_threshold
 
 
 class _Config(dict):

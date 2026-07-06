@@ -28,9 +28,10 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-import media as media_module
-from media import MEDIA_SIZE_LIMIT_ERROR, MediaService, XdownMediaCandidate
-from utils import TweetItem, TweetMedia
+import media_support.network as network_module
+import media_support.service as service_module
+from media_support import MEDIA_SIZE_LIMIT_ERROR, MediaService, XdownMediaCandidate
+from shared import TweetItem, TweetMedia
 
 
 def _tweet() -> TweetItem:
@@ -71,12 +72,12 @@ class MediaResolutionTest(unittest.TestCase):
             calls.append((request.full_url, timeout))
             return _FakeResponse()
 
-        original_urlopen = media_module.urlopen
-        media_module.urlopen = fake_urlopen
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
         try:
             candidates = service._resolve_media_candidates(_tweet())
         finally:
-            media_module.urlopen = original_urlopen
+            network_module.stdlib_urlopen = original_urlopen
 
         self.assertEqual(candidates, [])
         self.assertEqual(calls[0][0], service.xdown_url)
@@ -276,7 +277,7 @@ class MediaResolutionTest(unittest.TestCase):
         service._resolve_media_urls = resolve_media_urls
         service._download = fail_size_limit
 
-        with patch.object(media_module.logger, "warning", side_effect=warnings.append):
+        with patch.object(service_module.logger, "warning", side_effect=warnings.append):
             asyncio.run(service.resolve_and_download(tweet))
 
         self.assertEqual(len(warnings), 1)

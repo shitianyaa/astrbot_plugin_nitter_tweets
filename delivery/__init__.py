@@ -10,6 +10,7 @@ from .platforms import (
     normalize_platform,
     parse_umo,
 )
+from .sender import TweetSender
 from .telegram import TelegramDeliveryAdapter
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "SendAttempt",
     "SendOutcome",
     "TelegramDeliveryAdapter",
+    "TweetSender",
     "normalize_platform",
     "parse_umo",
 ]

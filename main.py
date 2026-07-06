@@ -11,36 +11,36 @@ try:
         ManualCommandMixin,
         SubscriptionCommandMixin,
     )
-    from .config_compat import (
+    from .config import (
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
     )
-    from .enricher import TweetEnricher, TweetTranslator
-    from .media import MediaService, NitterClient
+    from .ai import TweetEnricher, TweetTranslator
+    from .media_support import MediaService, NitterClient
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
-    from .sender import TweetSender
-    from .utils import clamp_float
+    from .delivery import TweetSender
+    from .shared import clamp_float
 except ImportError:
     from command_handlers import (
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
     )
-    from config_compat import (
+    from config import (
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
     )
-    from enricher import TweetEnricher, TweetTranslator
-    from media import MediaService, NitterClient
+    from ai import TweetEnricher, TweetTranslator
+    from media_support import MediaService, NitterClient
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
-    from sender import TweetSender
-    from utils import clamp_float
+    from delivery import TweetSender
+    from shared import clamp_float
 
 
 @register(

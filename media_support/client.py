@@ -15,13 +15,13 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from ..config_compat import config_get
-    from ..utils import (
+    from ..config import config_get
+    from ..shared import (
         TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
     )
 except ImportError:
-    from config_compat import config_get
-    from utils import (
+    from config import config_get
+    from shared import (
         TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
     )
 

@@ -166,8 +166,8 @@ sys.modules["astrbot.core.message.components"] = (
 )
 sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
 
-if "tweet_rendering" in sys.modules:
-    tweet_rendering_module = sys.modules["tweet_rendering"]
+if "rendering.tweets" in sys.modules:
+    tweet_rendering_module = sys.modules["rendering.tweets"]
     tweet_rendering_module.Plain = _Plain
     tweet_rendering_module.Image = _Image
     tweet_rendering_module.Video = _Video
@@ -179,11 +179,11 @@ import scheduler as scheduler_module  # noqa: E402
 import delivery.telegram as telegram_delivery_module  # noqa: E402
 from delivery import PlatformResolver  # noqa: E402
 from scheduler import NitterTweetScheduler  # noqa: E402
-from sender import SendAttempt, TweetSender  # noqa: E402
-from sqlite_storage import SQLiteStorage  # noqa: E402
-from storage_adapter import StorageAdapter  # noqa: E402
-from tweet_rendering import TweetMessageRenderer  # noqa: E402
-from utils import TweetItem, TweetMedia  # noqa: E402
+from delivery import SendAttempt, TweetSender  # noqa: E402
+from storage import SQLiteStorage  # noqa: E402
+from storage import StorageAdapter  # noqa: E402
+from rendering import TweetMessageRenderer  # noqa: E402
+from shared import TweetItem, TweetMedia  # noqa: E402
 
 
 class _Owner:

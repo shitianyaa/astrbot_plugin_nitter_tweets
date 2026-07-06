@@ -21,18 +21,18 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .config_compat import config_get, config_set, migrate_default_group_config
-    from .enricher import (
+    from ..config import config_get, config_set, migrate_default_group_config
+    from ..ai import (
         EnrichmentReport,
         TranslationReport,
         format_ai_tweet_summary,
     )
-    from .group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from .scheduler_formatting import (
+    from .formatting import (
         _format_limited_values as scheduler_format_limited_values,
         format_daily_times as scheduler_format_daily_times,
         format_group_schedule as scheduler_format_group_schedule,
@@ -41,37 +41,37 @@ try:
         format_pending_user_counts as scheduler_format_pending_user_counts,
         format_timestamp as scheduler_format_timestamp,
     )
-    from .scheduler_models import (
+    from .models import (
         BatchSummaryTracker,
         PendingTweetBatch,
         ScheduledCheckResult,
         ScheduledPushResult,
     )
-    from .scheduler_config import (
+    from .config import (
         PushTargetParseResult,
         ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from .storage_adapter import StorageAdapter
-    from .tweet_rendering import TweetMessageRenderer
-    from .utils import (
+    from ..storage import StorageAdapter
+    from ..rendering import TweetMessageRenderer
+    from ..shared import (
         TweetItem,
         configured_merge_tweet_threshold,
     )
 except ImportError:
-    from config_compat import config_get, config_set, migrate_default_group_config
-    from enricher import (
+    from config import config_get, config_set, migrate_default_group_config
+    from ai import (
         EnrichmentReport,
         TranslationReport,
         format_ai_tweet_summary,
     )
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_NAME,
         GLOBAL_GROUP_ID,
         normalize_group_id,
     )
-    from scheduler_formatting import (
+    from scheduler.formatting import (
         _format_limited_values as scheduler_format_limited_values,
         format_daily_times as scheduler_format_daily_times,
         format_group_schedule as scheduler_format_group_schedule,
@@ -80,21 +80,21 @@ except ImportError:
         format_pending_user_counts as scheduler_format_pending_user_counts,
         format_timestamp as scheduler_format_timestamp,
     )
-    from scheduler_models import (
+    from scheduler.models import (
         BatchSummaryTracker,
         PendingTweetBatch,
         ScheduledCheckResult,
         ScheduledPushResult,
     )
-    from scheduler_config import (
+    from scheduler.config import (
         PushTargetParseResult,
         ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
-    from storage_adapter import StorageAdapter
-    from tweet_rendering import TweetMessageRenderer
-    from utils import (
+    from storage import StorageAdapter
+    from rendering import TweetMessageRenderer
+    from shared import (
         TweetItem,
         configured_merge_tweet_threshold,
     )

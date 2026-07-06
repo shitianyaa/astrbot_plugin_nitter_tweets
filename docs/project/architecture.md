@@ -5,18 +5,18 @@
 ```text
 main.py
   -> command_handlers/
-  -> NitterClient
-  -> MediaService
-  -> TweetSender
-  -> TweetTranslator / TweetEnricher
-  -> NitterTweetScheduler
+  -> media_support.NitterClient / MediaService
+  -> delivery.TweetSender
+  -> ai.TweetTranslator / TweetEnricher
+  -> scheduler.NitterTweetScheduler
+  -> plugin_api.NitterWebAPI
 
 NitterTweetScheduler
-  -> SchedulerConfigReader
-  -> StorageAdapter / SQLiteStorage
-  -> NitterClient
-  -> MediaService
-  -> TweetSender
+  -> scheduler.config.SchedulerConfigReader
+  -> storage.StorageAdapter / SQLiteStorage
+  -> media_support.NitterClient
+  -> media_support.MediaService
+  -> delivery.TweetSender
 ```
 
 ## `main.py`
@@ -55,7 +55,7 @@ NitterTweetScheduler
 
 ## 后台检查链路
 
-1. `NitterTweetScheduler._tick()` 找到到期分组。
+1. `scheduler.runner.NitterTweetScheduler._tick()` 找到到期分组。
 2. `run_check()` 加锁，避免并发检查。
 3. 读取该分组 seen map。
 4. 按账号抓取 RSS。
@@ -67,7 +67,7 @@ NitterTweetScheduler
 
 ## 发送链路
 
-`TweetSender` 统一入口：
+`delivery.sender.TweetSender` 统一入口：
 
 - Event 路径：手动命令当前会话。
 - UMO 路径：后台推送目标。
@@ -100,3 +100,15 @@ NitterTweetScheduler
 - 发布成功后清理 sent rows。
 
 不要把运行时 SQLite、缓存、`data/` 提交到 Git。
+
+## 包结构
+
+- `scheduler/`: 调度状态机、分组配置、调度结果模型、日志和消息格式。
+- `plugin_api/`: AstrBot Plugin Pages 后端 API 和 WebUI 分组编辑。
+- `delivery/`: `TweetSender`、平台识别和平台适配器。
+- `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
+- `storage/`: SQLite、pending queue、push history、旧 KV seen 迁移。
+- `ai/`: 翻译、AI 识图、AI 评论。
+- `rendering/`: 推文文本、MessageChain、OneBot raw nodes 渲染。
+- `config/`: 配置读取、分组迁移和旧字段兼容。
+- `shared/`: 推文数据模型、group id 和通用工具。

@@ -31,8 +31,8 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-from sqlite_storage import SQLiteStorage
-from storage_adapter import StorageAdapter
+from storage import SQLiteStorage
+from storage import StorageAdapter
 
 
 class _Owner:

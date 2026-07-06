@@ -40,6 +40,6 @@
 
 1. `docs/project/configuration.md`
 2. `_conf_schema.json`
-3. `config_compat.py`
-4. `scheduler_config.py`
+3. `config/compat.py`
+4. `scheduler/config.py`
 5. `tests/test_subscription_import.py`

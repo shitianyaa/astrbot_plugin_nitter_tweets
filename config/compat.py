@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 try:
-    from .group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         normalize_group_id,
     )
 except ImportError:
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,

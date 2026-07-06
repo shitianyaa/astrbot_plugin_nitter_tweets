@@ -7,35 +7,35 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..config_compat import (
+    from ..config import (
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
     )
-    from ..group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         normalize_group_id,
     )
-    from ..scheduler_config import ScheduleGroup
-    from ..utils import normalize_username
+    from ..scheduler import ScheduleGroup
+    from ..shared import normalize_username
 except ImportError:
-    from config_compat import (
+    from config import (
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
     )
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         normalize_group_id,
     )
-    from scheduler_config import ScheduleGroup
-    from utils import normalize_username
+    from scheduler import ScheduleGroup
+    from shared import normalize_username
 
 
 class SubscriptionCommandMixin:

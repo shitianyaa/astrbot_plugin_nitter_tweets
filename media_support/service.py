@@ -12,14 +12,14 @@ from urllib.request import Request
 from astrbot.api import logger
 
 try:
-    from ..config_compat import config_get
-    from ..utils import (
+    from ..config import config_get
+    from ..shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )
 except ImportError:
-    from config_compat import config_get
-    from utils import (
+    from config import config_get
+    from shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )

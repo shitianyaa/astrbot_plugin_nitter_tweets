@@ -6,7 +6,7 @@ from .default import DefaultDeliveryAdapter
 from .outcomes import SendOutcome
 
 try:
-    from ..lark_delivery import (
+    from .lark_support import (
         lark_client_and_target,
         lark_client_from_event,
         lark_event_target,
@@ -21,7 +21,7 @@ try:
         video_components,
     )
 except ImportError:
-    from lark_delivery import (
+    from delivery.lark_support import (
         lark_client_and_target,
         lark_client_from_event,
         lark_event_target,

@@ -15,13 +15,13 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from .group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
-    from .seen_store import SEEN_LIMIT_PER_USER
-    from .utils import TweetItem, TweetMedia, normalize_username
+    from ..shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from .seen import SEEN_LIMIT_PER_USER
+    from ..shared import TweetItem, TweetMedia, normalize_username
 except ImportError:
-    from group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
-    from seen_store import SEEN_LIMIT_PER_USER
-    from utils import TweetItem, TweetMedia, normalize_username
+    from shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID, normalize_group_id
+    from storage.seen import SEEN_LIMIT_PER_USER
+    from shared import TweetItem, TweetMedia, normalize_username
 
 
 SCHEMA_VERSION = 5

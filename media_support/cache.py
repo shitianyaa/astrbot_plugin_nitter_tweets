@@ -11,9 +11,9 @@ from astrbot.api import logger
 from .extensions import MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, classify_media_path
 
 try:
-    from ..utils import TweetItem, TweetMedia, generate_file_name
+    from ..shared import TweetItem, TweetMedia, generate_file_name
 except ImportError:
-    from utils import TweetItem, TweetMedia, generate_file_name
+    from shared import TweetItem, TweetMedia, generate_file_name
 
 
 @dataclass(slots=True)

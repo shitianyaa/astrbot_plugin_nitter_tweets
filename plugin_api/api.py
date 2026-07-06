@@ -10,23 +10,23 @@ from astrbot.api import logger
 from quart import jsonify, request
 
 try:
-    from .config_compat import config_get
-    from .scheduler_config import ScheduleGroup
-    from .sqlite_storage import (
+    from ..config import config_get
+    from ..scheduler import ScheduleGroup
+    from ..storage import (
         PendingQueueSummary,
         PendingTweetRecord,
         PushHistoryRecord,
     )
-    from .delivery import PlatformResolver, parse_umo
-    from .utils import TweetItem, configured_merge_tweet_threshold, normalize_username
-    from .webui_groups import WebUIGroupEditor
+    from ..delivery import PlatformResolver, parse_umo
+    from ..shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from .groups import WebUIGroupEditor
 except ImportError:
-    from config_compat import config_get
+    from config import config_get
     from delivery import PlatformResolver, parse_umo
-    from scheduler_config import ScheduleGroup
-    from sqlite_storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
-    from utils import TweetItem, configured_merge_tweet_threshold, normalize_username
-    from webui_groups import WebUIGroupEditor
+    from scheduler import ScheduleGroup
+    from storage import PendingQueueSummary, PendingTweetRecord, PushHistoryRecord
+    from shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from plugin_api.groups import WebUIGroupEditor
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
