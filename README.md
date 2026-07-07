@@ -7,6 +7,8 @@
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
   <img alt="Media" src="https://img.shields.io/badge/media-xdown.app-orange" />
   <br />
+  <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
+  <br />
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
@@ -201,6 +203,7 @@ WebUI 仍不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provide
 - [Nitter](https://github.com/zedeus/nitter)：提供公开推文 RSS 访问方式。
 - [xdown.app](https://xdown.app/)：提供 Twitter/X 媒体解析接口。
 - [AstrBot](https://github.com/Soulter/AstrBot)、OneBot/aiocqhttp 生态：提供插件运行、消息组件与合并转发能力。
+- [PeeGayhub Telegram 表情包系列](https://t.me/addstickers/PeeGayhub)：插件图标借鉴了该系列表情包风格；图标素材由 GPT 生成。
 
 ## 许可证
 
