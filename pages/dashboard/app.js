@@ -100,7 +100,7 @@ const viewMeta = {
   },
   cleanup: {
     title: "系统维护清理",
-    desc: "清理普通媒体缓存或去重记录，危险操作会二次确认。",
+    desc: "清理普通媒体缓存或推送记录，危险操作会二次确认。",
   },
 };
 
@@ -2098,8 +2098,8 @@ function confirmClearSeen() {
   const group = state.groups.find((item) => item.group_id === groupId);
   const scope = group?.name || "全部分组";
   openConfirm({
-    kicker: "去重记录",
-    title: "清理去重记录？",
+    kicker: "推送记录",
+    title: "清理推送记录？",
     desc: `清理范围：${scope}。不会删除关注账号、推送目标、暂存队列或媒体文件，但旧推文可能重新参与检查。`,
     confirmText: "清理",
     action: () =>
@@ -2110,7 +2110,7 @@ function confirmClearSeen() {
         });
         els.seenResult.textContent = `${scope}：删除 ${formatNumber(result.deleted)} 条`;
         return result;
-      }, "去重记录清理完成"),
+      }, "推送记录清理完成"),
   });
 }
 

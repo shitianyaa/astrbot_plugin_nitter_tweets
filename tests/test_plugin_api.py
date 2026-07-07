@@ -151,7 +151,7 @@ if "quart" not in sys.modules:
     sys.modules["quart"] = quart_module
 
 
-from config import config_get
+from config import config_get, configured_merge_tweet_threshold
 from main import NitterTweetsPlugin
 from plugin_api import NitterWebAPI
 from scheduler import SchedulerConfigReader
@@ -161,7 +161,7 @@ from storage import (
     PushHistoryGroupSummary,
     PushHistoryRecord,
 )
-from shared import TweetItem, TweetMedia, configured_merge_tweet_threshold
+from shared import TweetItem, TweetMedia
 
 
 class _Config(dict):
@@ -1336,6 +1336,39 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(imported["summary"]["added"], ["BBCWorld", "SpaceX"])
         self.assertEqual(deleted["summary"]["removed"], ["BBCWorld"])
         self.assertEqual(deleted["summary"]["missing"], ["Missing"])
+
+    async def test_subscription_import_does_not_require_command_mixin_methods(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                        }
+                    ]
+                }
+            }
+        )
+        plugin = types.SimpleNamespace(
+            config=config,
+            scheduler=_Scheduler(config),
+            media=_Media(),
+            nitter=_Nitter(),
+            default_limit=5,
+        )
+
+        payload = await NitterWebAPI(plugin).import_subscriptions(
+            {"group_id": "tech", "entries": "BBCWorld,@SpaceX"}
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(
+            _group_config(config, "tech")["watch_users"],
+            ["OpenAI", "BBCWorld", "SpaceX"],
+        )
+        self.assertEqual(payload["summary"]["added"], ["BBCWorld", "SpaceX"])
 
     async def test_push_history_query_filters_and_hides_media_paths(self):
         plugin = _plugin(

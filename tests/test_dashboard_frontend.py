@@ -472,8 +472,8 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
         self.assertIn('confirm: groupId ? "" : "CLEAR_ALL"', clear_body)
         self.assertIn("全部分组", clear_body)
-        self.assertIn("清理去重记录", html)
-        self.assertIn("清理去重记录？", clear_body)
+        self.assertIn("清理推送记录", html)
+        self.assertIn("清理推送记录？", clear_body)
 
     def test_group_editor_renders_global_fields_as_read_only_context(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "renderGroupEditor")
@@ -500,7 +500,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
             ]
         )
 
-        for forbidden in ("接收位置", "订阅目标", "seen记录", "seen 记录"):
+        for forbidden in ("接收位置", "订阅目标", "seen记录", "seen 记录", "去重记录"):
             self.assertNotIn(forbidden, source)
 
 

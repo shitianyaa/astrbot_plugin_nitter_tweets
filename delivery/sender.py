@@ -26,11 +26,10 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from ..config import config_get
+    from ..config import config_get, configured_merge_tweet_threshold
     from .lark_support import is_lark_platform
     from ..shared import (
         TweetItem,
-        configured_merge_tweet_threshold,
         safe_call,
     )
     from .default import DefaultDeliveryAdapter
@@ -39,11 +38,10 @@ try:
     from .platforms import PlatformDeliveryRegistry, PlatformResolver, normalize_platform
     from ..rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config import config_get
+    from config import config_get, configured_merge_tweet_threshold
     from delivery.lark_support import is_lark_platform
     from shared import (
         TweetItem,
-        configured_merge_tweet_threshold,
         safe_call,
     )
     from delivery import (

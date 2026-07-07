@@ -342,6 +342,13 @@ def config_set(config, key: str, value) -> None:
     config[group_name] = group
 
 
+def configured_merge_tweet_threshold(config) -> int:
+    value = config_get(config, "merge_tweet_threshold", None)
+    if value is None:
+        value = 1 if config_get(config, "merge_scheduled_updates", False) else 2
+    return _clamp_int(value, 0, 20)
+
+
 def _dict_get(config, key: str, default=None):
     try:
         return config.get(key, default)
@@ -461,6 +468,14 @@ def _next_generated_group_id(existing: set[str], start_index: int = 1) -> str:
         if candidate not in existing:
             return candidate
         counter += 1
+
+
+def _clamp_int(value, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = minimum
+    return max(minimum, min(maximum, number))
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:

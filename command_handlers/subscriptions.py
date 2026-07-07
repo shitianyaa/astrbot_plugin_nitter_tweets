@@ -7,35 +7,29 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..config import (
-        TWEET_GROUP_TEMPLATE_KEY,
-        TWEET_GROUP_TEMPLATE_KEY_FIELD,
-        config_get,
-        config_set,
+    from ..config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        set_import_group_users,
+        sync_import_config_groups,
     )
     from ..shared.group_ids import (
-        DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
-        normalize_group_id,
     )
     from ..scheduler import ScheduleGroup
-    from ..shared import normalize_username
 except ImportError:
-    from config import (
-        TWEET_GROUP_TEMPLATE_KEY,
-        TWEET_GROUP_TEMPLATE_KEY_FIELD,
-        config_get,
-        config_set,
+    from config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        set_import_group_users,
+        sync_import_config_groups,
     )
     from shared.group_ids import (
-        DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
-        normalize_group_id,
     )
     from scheduler import ScheduleGroup
-    from shared import normalize_username
 
 
 class SubscriptionCommandMixin:
@@ -513,85 +507,25 @@ class SubscriptionCommandMixin:
     def _set_import_group_users(
         self, group: ScheduleGroup | None, users: list[str]
     ) -> None:
-        if group is None:
-            group = self._ensure_default_import_group()
-
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if isinstance(raw_groups, dict):
-            group_items = [raw_groups]
-        elif isinstance(raw_groups, list):
-            group_items = raw_groups
-        else:
-            group_items = []
-
-        target_group_id = normalize_group_id(group.group_id)
-        for index, raw_group in enumerate(group_items, 1):
-            parsed = self.scheduler.config_reader.parse_schedule_group(
-                raw_group,
-                index,
-                log_invalid_targets=False,
-            )
-            if parsed is None:
-                continue
-            if normalize_group_id(parsed.group_id) != target_group_id:
-                continue
-            raw_group["watch_users"] = users
-            config_set(self.config, "tweet_groups", raw_groups)
-            return
-
-        raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
+        set_import_group_users(
+            self.config,
+            self.scheduler.config_reader,
+            group,
+            users,
+        )
 
     def _ensure_default_import_group(self) -> ScheduleGroup:
-        group = self.scheduler.config_reader.schedule_group(
-            DEFAULT_GROUP_ID, log_invalid_targets=False
+        return ensure_default_import_group(
+            self.config,
+            self.scheduler.config_reader,
         )
-        if group is not None:
-            return group
-
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if isinstance(raw_groups, dict):
-            raw_groups = [raw_groups]
-        elif not isinstance(raw_groups, list):
-            raw_groups = []
-
-        default_group = {
-            TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
-            "name": DEFAULT_GROUP_NAME,
-            "group_id": DEFAULT_GROUP_ID,
-            "aliases": list(DEFAULT_GROUP_ALIASES),
-            "enabled": True,
-            "watch_users": [],
-            "push_targets": [],
-        }
-        raw_groups.insert(0, default_group)
-        config_set(self.config, "tweet_groups", raw_groups)
-
-        parsed = self.scheduler.config_reader.parse_schedule_group(
-            default_group, 1, log_invalid_targets=False
-        )
-        if parsed is None:
-            raise RuntimeError("无法创建默认分组配置")
-        return parsed
 
     async def _sync_import_config_groups(self) -> str:
-        try:
-            schedule_groups = self.scheduler.config_reader.schedule_groups(
-                log_invalid_targets=False
-            )
-            await self.scheduler.storage.migrate_and_sync(schedule_groups)
-        except Exception as exc:
-            logger.warning(f"[NitterTweets] 同步导入订阅失败: {exc}")
-            return str(exc)
-        return ""
+        return await sync_import_config_groups(self.scheduler)
 
     @staticmethod
     def _normalize_import_username(value: str) -> str:
-        value = str(value or "").strip()
-        if value.startswith("@"):
-            value = value[1:].strip()
-        if value.startswith(("http://", "https://")) or "/" in value:
-            return ""
-        return normalize_username(value)
+        return normalize_import_username(value)
 
     @staticmethod
     def _format_limited_values(values: list[str], limit: int = 10) -> str:

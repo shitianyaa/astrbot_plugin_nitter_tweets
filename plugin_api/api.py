@@ -10,7 +10,17 @@ from astrbot.api import logger
 from quart import jsonify, request
 
 try:
-    from ..config import config_get
+    from ..config import (
+        config_get,
+        configured_merge_tweet_threshold,
+    )
+    from ..config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        save_subscription_config,
+        set_import_group_users,
+        sync_import_config_groups,
+    )
     from ..scheduler import ScheduleGroup
     from ..storage import (
         PendingQueueSummary,
@@ -19,11 +29,21 @@ try:
         PushHistoryRecord,
     )
     from ..delivery import PlatformResolver, parse_umo
-    from ..shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from ..shared import TweetItem, normalize_username
     from ..shared.group_ids import normalize_stable_group_id
     from .groups import WebUIGroupEditor
 except ImportError:
-    from config import config_get
+    from config import (
+        config_get,
+        configured_merge_tweet_threshold,
+    )
+    from config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        save_subscription_config,
+        set_import_group_users,
+        sync_import_config_groups,
+    )
     from delivery import PlatformResolver, parse_umo
     from scheduler import ScheduleGroup
     from storage import (
@@ -32,7 +52,7 @@ except ImportError:
         PushHistoryGroupSummary,
         PushHistoryRecord,
     )
-    from shared import TweetItem, configured_merge_tweet_threshold, normalize_username
+    from shared import TweetItem, normalize_username
     from shared.group_ids import normalize_stable_group_id
     from plugin_api.groups import WebUIGroupEditor
 
@@ -664,7 +684,7 @@ class NitterWebAPI:
         invalid: list[str] = []
 
         for raw in entries:
-            username = self.plugin._normalize_import_username(raw)
+            username = normalize_import_username(raw)
             if not username:
                 invalid.append(raw)
                 continue
@@ -676,9 +696,14 @@ class NitterWebAPI:
             added.append(username)
 
         if added:
-            self.plugin._set_import_group_users(group, [*existing_users, *added])
+            set_import_group_users(
+                self.config,
+                self.scheduler.config_reader,
+                group,
+                [*existing_users, *added],
+            )
             save_error = self._save_config()
-            sync_error = await self.plugin._sync_import_config_groups()
+            sync_error = await sync_import_config_groups(self.scheduler)
         else:
             save_error = ""
             sync_error = ""
@@ -721,7 +746,7 @@ class NitterWebAPI:
         invalid: list[str] = []
 
         for raw in entries:
-            username = self.plugin._normalize_import_username(raw)
+            username = normalize_import_username(raw)
             if not username:
                 invalid.append(raw)
                 continue
@@ -745,9 +770,14 @@ class NitterWebAPI:
         ]
 
         if removed:
-            self.plugin._set_import_group_users(group, remaining)
+            set_import_group_users(
+                self.config,
+                self.scheduler.config_reader,
+                group,
+                remaining,
+            )
             save_error = self._save_config()
-            sync_error = await self.plugin._sync_import_config_groups()
+            sync_error = await sync_import_config_groups(self.scheduler)
         else:
             save_error = ""
             sync_error = ""
@@ -880,7 +910,10 @@ class NitterWebAPI:
         )
         if group_id:
             return self._resolve_group(group_id)
-        return self.plugin._ensure_default_import_group(), ""
+        return ensure_default_import_group(
+            self.config,
+            self.scheduler.config_reader,
+        ), ""
 
     def _subscription_entries(self, data: dict[str, Any]) -> list[str]:
         raw = data.get("entries", data.get("users", ""))
@@ -889,16 +922,7 @@ class NitterWebAPI:
         return [item.strip() for item in str(raw or "").split(",") if item.strip()]
 
     def _save_config(self) -> str:
-        save_config = getattr(self.config, "save_config", None)
-        if callable(save_config):
-            try:
-                save_config()
-            except Exception as exc:
-                error = str(exc)
-                logger.warning(f"[NitterTweets] WebUI 保存订阅配置失败: {error}")
-                return error
-            return ""
-        return "当前配置对象不支持 save_config()"
+        return save_subscription_config(self.config)
 
     @staticmethod
     def _subscription_message(

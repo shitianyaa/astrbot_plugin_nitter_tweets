@@ -91,6 +91,7 @@
 - `schedule`: 后台检查总开关、全局检查频率。
 - `deferred`: 暂存发布全局参数。
 - `push`: `tweet_groups`、推送间隔、合并阈值。
+- `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
 
 `tweet_groups` 是分组行为的主入口。`watch_users` 和 `push_targets` 顶层字段只是旧版兼容字段。
@@ -165,7 +166,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 
 缓存规则：
 - 普通缓存位于 AstrBot 插件数据目录。
-- `media_cache_retention_days=0` 时，发送流程结束后删除普通媒体。
+- 普通媒体在本轮发送流程结束后删除。
 - 暂存缓存不能被普通发送后清理误删。
 - 清理逻辑要统计 removed、failed、images、videos、other、empty_dirs。
 

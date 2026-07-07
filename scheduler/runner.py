@@ -21,7 +21,12 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from ..config import config_get, config_set, migrate_default_group_config
+    from ..config import (
+        config_get,
+        config_set,
+        configured_merge_tweet_threshold,
+        migrate_default_group_config,
+    )
     from ..ai import (
         EnrichmentReport,
         TranslationReport,
@@ -56,12 +61,14 @@ try:
     )
     from ..storage import StorageAdapter
     from ..rendering import TweetMessageRenderer
-    from ..shared import (
-        TweetItem,
-        configured_merge_tweet_threshold,
-    )
+    from ..shared import TweetItem
 except ImportError:
-    from config import config_get, config_set, migrate_default_group_config
+    from config import (
+        config_get,
+        config_set,
+        configured_merge_tweet_threshold,
+        migrate_default_group_config,
+    )
     from ai import (
         EnrichmentReport,
         TranslationReport,
@@ -96,10 +103,7 @@ except ImportError:
     )
     from storage import StorageAdapter
     from rendering import TweetMessageRenderer
-    from shared import (
-        TweetItem,
-        configured_merge_tweet_threshold,
-    )
+    from shared import TweetItem
 
 
 try:
