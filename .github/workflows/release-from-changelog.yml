@@ -1,0 +1,230 @@
+name: Release From Changelog
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - CHANGELOG.md
+  workflow_dispatch:
+    inputs:
+      tag_prefix:
+        description: "Optional tag prefix override. Empty = v"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-from-changelog-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.collect.outputs.should_release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check changelog change
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            if git --no-pager ls-files --error-unmatch CHANGELOG.md >/dev/null 2>&1; then
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          if git --no-pager diff --name-only "$before" "$after" | grep -qx 'CHANGELOG.md'; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse version and notes
+        id: parse
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changelog_path="CHANGELOG.md"
+          if [ ! -f "$changelog_path" ]; then
+            echo "Missing changelog: $changelog_path" >&2
+            exit 1
+          fi
+
+          first_heading_line="$(grep -n -m1 -E '^##[[:space:]]*\[?v?[0-9]+\.[0-9]+\.[0-9]+([-.+][^]]+)?\]?.*$' "$changelog_path" || true)"
+          if [ -z "$first_heading_line" ]; then
+            echo "No version heading like '## [1.2.3]' found." >&2
+            exit 1
+          fi
+
+          start_line="${first_heading_line%%:*}"
+          heading_text="${first_heading_line#*:}"
+          version="$(printf '%s\n' "$heading_text" | sed -E 's/^##[[:space:]]*\[?v?([^]]+)\]?.*$/\1/')"
+
+          next_line_rel="$(tail -n +$((start_line + 1)) "$changelog_path" | grep -n -m1 -E '^##[[:space:]]*\[?v?[0-9]+\.[0-9]+\.[0-9]+([-.+][^]]+)?\]?.*$' | cut -d: -f1 || true)"
+          if [ -n "$next_line_rel" ]; then
+            end_line=$((start_line + next_line_rel - 1))
+            notes="$(sed -n "${start_line},${end_line}p" "$changelog_path")"
+          else
+            notes="$(sed -n "${start_line},\$p" "$changelog_path")"
+          fi
+
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            echo "Failed to extract release notes from $changelog_path" >&2
+            exit 1
+          fi
+
+          if [ -n "${{ inputs.tag_prefix }}" ]; then
+            tag="${{ inputs.tag_prefix }}${version}"
+          else
+            tag="v${version}"
+          fi
+
+          notes_file="release-notes.md"
+          printf '%s\n' "$notes" > "$notes_file"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+
+      - name: Append contributors
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.parse.outputs.tag }}"
+          notes_file="${{ steps.parse.outputs.notes_file }}"
+
+          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$GITHUB_SHA^" 2>/dev/null || true)"
+          if [ -n "$previous_tag" ]; then
+            commit_range="${previous_tag}..${GITHUB_SHA}"
+          else
+            commit_range="$GITHUB_SHA"
+          fi
+
+          contributors="$(git --no-pager log --format='%aN' "$commit_range" \
+            | awk 'NF && $0 !~ /github-actions\[bot\]/ && !seen[$0]++ { print "- " $0 }')"
+
+          if [ -n "$contributors" ]; then
+            {
+              printf '\n## Contributors\n\n'
+              printf '%s\n' "$contributors"
+            } >> "$notes_file"
+          fi
+
+          echo "Contributor range: ${previous_tag:-initial}..$tag"
+
+      - name: Check existing tag/release
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.parse.outputs.tag }}"
+          tag_exists="false"
+          release_exists="false"
+
+          if gh api "repos/${{ github.repository }}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            tag_exists="true"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_exists="true"
+          fi
+
+          echo "tag_exists=$tag_exists" >> "$GITHUB_OUTPUT"
+          echo "release_exists=$release_exists" >> "$GITHUB_OUTPUT"
+
+      - name: Update existing release notes
+        if: steps.dedupe.outputs.release_exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.parse.outputs.tag }}"
+          gh release edit "$tag" \
+            --title "$tag" \
+            --notes-file "${{ steps.parse.outputs.notes_file }}"
+
+      - name: Create release and tag
+        if: steps.dedupe.outputs.release_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.parse.outputs.tag }}"
+
+          if [ "${{ steps.dedupe.outputs.tag_exists }}" = "true" ]; then
+            gh release create "$tag" \
+              --title "$tag" \
+              --notes-file "${{ steps.parse.outputs.notes_file }}"
+          else
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "$tag" \
+              --notes-file "${{ steps.parse.outputs.notes_file }}"
+          fi
+
+      - name: Release summary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ steps.dedupe.outputs.release_exists }}" = "true" ]; then
+            echo "Updated release ${{ steps.parse.outputs.tag }} from CHANGELOG.md"
+          else
+            echo "Created release ${{ steps.parse.outputs.tag }} from CHANGELOG.md"
+          fi
+
+      - name: Verify release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.parse.outputs.tag }}"
+          body="$(gh release view "$tag" --json body --jq '.body // ""')"
+          if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+            echo "Release body is still empty for $tag" >&2
+            exit 1
+          fi
