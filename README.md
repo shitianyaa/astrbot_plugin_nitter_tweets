@@ -1,16 +1,18 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.10.0-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
   <img alt="Media" src="https://img.shields.io/badge/media-xdown.app-orange" />
   <br />
+  <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
+  <br />
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
-通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、镜像测试、图片附件、翻译、AI 评论、AI 识图、定时推送、暂存发布和 SQLite seen/queue 存储。
+通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、镜像测试、图片附件、翻译、AI 评论、AI 识图、定时推送、暂存发布和 SQLite 推送记录/暂存队列存储。
 
 ## 功能
 
@@ -21,8 +23,10 @@
 - QQ/OneBot 支持按阈值使用合并转发；飞书/Lark、Telegram、微信 OC 和其他平台走普通逐账号发送。
 - 支持图片附件；视频/GIF 附件默认关闭，开启后会按大小、时长和平台能力尽量发送。
 - 支持非中文推文翻译、AI 识图作为评论上下文、按概率追加 AI 评论。
-- 支持暂存定时发布、队列查看、手动发布、缓存清理和 seen 记录清理。
+- 支持暂存定时发布、队列查看、手动发布、缓存清理和推送记录清理。
+- 提供 AstrBot Plugin Pages 运维面板，可查看概览、分组订阅、暂存队列、最近推送、镜像测试和缓存清理。
 - Nitter RSS 抓取和媒体下载遇到临时错误会重试。
+- 后台检查可选启用账号 RSS 并发拉取、媒体和模型并发准备；默认关闭，开启后仍按关注账号和推文顺序发送。
 
 ## 快速开始
 
@@ -86,16 +90,31 @@ telegram:FriendMessage:123456789
 
 `push_targets` 每行填写一个 UMO。不同平台的前缀以 `/sid` 实际返回为准，不需要手动猜平台 ID；自定义 QQ 平台 ID 也应直接使用 `/sid` 返回的完整 UMO。
 
+## WebUI 运维面板
+
+AstrBot 插件页面中会显示 `Nitter 推文面板`，用于查看和执行常用运维操作：
+
+- `概览`：查看调度器、后台检查、关注账号、推送目标、暂存队列、功能开关、关键配置摘要和常见配置诊断。
+- `分组订阅`：改为左侧分组列表 + 右侧详情编辑；支持新建分组、编辑分组名称/启停/每日检查/暂存开关/纯文本过滤/推送目标，并继续支持导入和删除关注账号；推送目标可做轻量检测，不发送测试消息。
+- `暂存队列`：查看待发布推文、账号分布、最早/最新入队时间、失败次数、已送达推送目标数量和媒体数量；支持按分组发布暂存队列。
+- `最近推送`：查看成功送达历史，媒体附件部分失败会标记为“媒体失败”；支持按分组、博主和每页数量筛选，多个推送目标会合并展示；重推时使用当前分组当前选中的推送目标；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。
+- `镜像测试`：用完整 `http://` 或 `https://` 镜像 URL 临时测试 RSS 抓取，不修改配置。
+- `缓存清理`：清理普通媒体缓存或推送记录；不会删除关注账号、推送目标、暂存队列或暂存媒体。
+
+`group_id` 由插件自动分配并只读展示；已有配置里的 `group_id` 会保留。旧配置缺失 `group_id` 时，如果分组名是 `coser` 这类安全英文数字标识，会沿用它作为旧 ID；否则自动补齐为 `group_N`。默认分组不可删除。`检查间隔分钟数` 和 `暂存发布时间` 仍是全局配置，页面里只读显示为“继承全局”。推送目标可以在分组详情里新增或删除，保存后写回当前分组配置；“检测目标”只校验 UMO 格式、平台实例是否存在和是否支持合并转发，不会向目标发送消息。
+
+WebUI 仍不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider、提示词、并发与限流等复杂配置仍在 `_conf_schema.json` 对应的 AstrBot 配置界面维护。
+
 ## 常用命令
 
 | 命令 | 说明 |
 | --- | --- |
 | `/推文 用户名 [数量]` | 查询指定公开 X/Twitter 用户最近推文。 |
 | `/镜像测试 [用户名] [数量] 镜像站URL` | 用临时 Nitter 镜像站测试获取推文。 |
-| `/推文状态` | 查看调度器状态、分组、目标、无效项和 seen 索引数。 |
+| `/推文状态` | 查看调度器状态、分组、目标、无效项和推送记录索引数。 |
 | `/推文检查 [分组名]` | 立即执行一次当前会话有权限的分组检查。 |
 | `/推文缓存清理` | 清理普通图片/视频缓存，不删除暂存队列媒体。 |
-| `/推文记录清理 确认` | 清理全部分组 seen 索引；也支持指定分组。 |
+| `/推文记录清理 确认` | 清理全部分组推送记录；也支持指定分组。 |
 | `/推文队列 [分组名]` | 查看暂存队列数量、失败重试数量和发布时间。 |
 | `/推文发布 [分组名]` | 立即发布暂存队列中的推文。 |
 | `/订阅列表` | 查看默认分组有效账号、重复项和无效项。 |
@@ -122,9 +141,13 @@ telegram:FriendMessage:123456789
 | `send_target_interval` | 多个推送目标之间的发送间隔。 |
 | `send_user_interval` | 多个账号之间的发送间隔。 |
 | `deferred_publish_times` | 暂存队列发布时间列表，格式 `HH:MM`。 |
+| `concurrent_fetch_enabled` | 是否启用后台账号 RSS 并发拉取，默认关闭。 |
+| `fetch_concurrency` | 同时拉取账号数，范围 `1-8`，默认 `3`。 |
+| `concurrent_fetch_instances` | 后台并发拉取专用 Nitter 镜像池；留空时不启用并发，也不会回退到 `instances`。建议只填写自建镜像。 |
+| `concurrent_prepare_enabled` | 是否启用后台媒体、翻译、识图和评论并发准备，默认关闭。 |
+| `prepare_concurrency` | 同时准备的推文或账号批次数，范围 `1-8`，默认 `2`。 |
 | `send_image_attachments` | 是否发送图片附件，默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
-| `media_cache_retention_days` | 普通媒体缓存保留天数；设为 `0` 时发送流程结束后删除。 |
 | `translate_enabled` | 是否翻译非中文推文。 |
 | `comment_enabled` | 是否按概率追加 AI 评论。 |
 | `vision_enabled` | 是否启用 AI 识图；结果主要作为 AI 评论上下文。 |
@@ -133,18 +156,24 @@ telegram:FriendMessage:123456789
 ## 行为要点
 
 - 首次启用某个账号时，只记录当前 RSS 中已有推文 ID，不推送历史内容。
+- 后台检查以推送记录中最大的数字推文 ID 作为时间基准；之后翻页或过滤才发现的更旧未知推文只补入推送记录，不会回填推送。
 - `filter_reposts_enabled` 开启时，会比较 RSS item 主链接作者和订阅账号；作者不同则视为转发并过滤，无法解析作者时保留。
-- seen ID 按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。
-- 手动 `/推文 用户名 数量` 不写入 seen；后台检查和暂存发布会写入 seen。
+- 推送记录按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。
+- 手动 `/推文 用户名 数量` 不写入推送记录；后台检查和暂存发布会写入推送记录。
 - QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
+- QQ/OneBot 图片附件会拆成独立图片消息或独立合并转发节点，普通直发图片失败会重试一次；其他平台按平台适配能力发送，主体消息已送达但媒体附件失败时会在 WebUI 最近推送中标记为“媒体失败”。
 - `brief_log_enabled` 只影响 AstrBot 后台日志，不影响聊天消息、命令返回或推送内容。
-- 媒体缓存存放在 AstrBot 插件数据目录，不写入插件源码目录；暂存队列媒体发布成功后会删除。
+- 普通媒体发送后会删除；升级后会自动执行一次普通缓存清理，不删除暂存队列媒体。
+- `scheduled_fetch_limit` 是每个账号本轮最多保留的有效推文数，默认 `5`、范围 `1-20`；Nitter RSS 会按 `Min-Id` 游标翻页，不是固定只拉一页。
+- 后台并发拉取只在 `concurrent_fetch_enabled=true`、`concurrent_fetch_instances` 非空且 `fetch_concurrency > 1` 时启用；手动 `/推文` 和 `/镜像测试` 不使用并发配置。
+- 即使拉取、媒体下载或模型处理并发完成，最终发送、暂存入队和推送记录更新仍按 `watch_users` 配置顺序以及推文从旧到新的顺序执行。
 
 ## 常见问题
 
 ### 为什么第一次启用账号不推送历史推文？
 
 插件会先记录当前 RSS 已有推文 ID，之后只推送新出现的 ID，避免首次启用时刷屏。
+如果后续因为纯文本过滤或翻页才看到更旧的媒体推文，后台检查只会把它补进推送记录防重复，不会把它当作新推文发送。
 
 ### 为什么 `/推文检查` 只看到检查结果，没有看到新推文？
 
@@ -164,7 +193,7 @@ telegram:FriendMessage:123456789
 
 ## 更多说明
 
-- [进阶说明](./docs/advanced.md)：平台差异、流程图、完整配置参考、缓存/seen/暂存发布细节。
+- [进阶说明](./docs/advanced.md)：平台差异、流程图、完整配置参考、缓存/推送记录/暂存发布细节。
 - [_conf_schema.json](./_conf_schema.json)：插件配置默认值和 AstrBot WebUI 文案。
 - [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
 
@@ -174,6 +203,7 @@ telegram:FriendMessage:123456789
 - [Nitter](https://github.com/zedeus/nitter)：提供公开推文 RSS 访问方式。
 - [xdown.app](https://xdown.app/)：提供 Twitter/X 媒体解析接口。
 - [AstrBot](https://github.com/Soulter/AstrBot)、OneBot/aiocqhttp 生态：提供插件运行、消息组件与合并转发能力。
+- [PeeGayhub Telegram 表情包系列](https://t.me/addstickers/PeeGayhub)：插件图标借鉴了该系列表情包风格；图标素材由 GPT 生成。
 
 ## 许可证
 

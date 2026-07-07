@@ -32,24 +32,32 @@
   - `manual.py`: `/推文`、`/镜像测试`。
   - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen、队列、发布。
   - `subscriptions.py`: 订阅导入、删除、导出、去重。
-- `scheduler.py`: 后台检查、seen 对比、暂存发布、推送编排。高风险模块。
-- `scheduler_config.py`: 分组配置解析，生成 `ScheduleGroup`。
-- `scheduler_models.py`: 调度结果、批次模型、日志/消息格式。
-- `config_compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
+- `scheduler/`: 后台检查、seen 对比、暂存发布、推送编排。高风险模块。
+  - `runner.py`: `NitterTweetScheduler` 主状态机。
+  - `config.py`: 分组配置解析，生成 `ScheduleGroup`。
+  - `models.py`: 调度结果、批次模型。
+  - `formatting.py`: 调度日志和消息格式。
+- `config/compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
 - `media_support/client.py`: Nitter RSS 抓取、分页、转发过滤、纯文本过滤。
 - `media_support/service.py`: xdown 解析、媒体候选归一化、下载、视频时长/分辨率限制。
 - `media_support/cache.py`: 普通缓存、暂存缓存、发送后清理。
 - `media_support/extensions.py`: 媒体类型和扩展名分类。
-- `sender.py`: 发送编排、合并转发、降级、平台能力判断入口。
 - `delivery/`: 平台适配器。
+  - `delivery/sender.py`: 发送编排、合并转发、降级、平台能力判断入口。
   - `platforms.py`: UMO 和 AstrBot 平台能力识别。
   - `onebot.py`: OneBot/QQ 合并转发。
   - `lark.py`: Lark/Feishu 原生 post 和降级发送。
+  - `lark_support.py`: Lark/Feishu client、post、媒体发送工具。
   - `telegram.py`: Telegram flood control retry。
   - `default.py`: AstrBot 通用 MessageChain 发送。
-- `tweet_rendering.py`: 推文文本、MessageChain、OneBot raw nodes 渲染。
-- `enricher.py`: 翻译、AI 识图、AI 评论。
-- `sqlite_storage.py`, `storage_adapter.py`, `seen_store.py`: SQLite 存储和旧 KV 迁移。
+- `rendering/tweets.py`: 推文文本、MessageChain、OneBot raw nodes 渲染。
+- `ai/enrichment.py`: 翻译、AI 识图、AI 评论。
+- `storage/`: SQLite 存储、pending queue、push history 和旧 KV 迁移。
+  - `sqlite.py`: SQLite schema 和查询。
+  - `adapter.py`: 异步存储适配层。
+  - `seen.py`: 旧 KV seen 迁移和 seen ID 合并规则。
+- `shared/`: `TweetItem`、`TweetMedia`、group id 和通用工具。
+- `plugin_api/`: Plugin Pages 后端 API 和 WebUI 分组编辑。
 - `_conf_schema.json`: AstrBot WebUI 配置 schema。
 - `README.md`, `docs/advanced.md`, `CHANGELOG.md`: 用户文档。
 - `scripts/probe_nitter_fetch.py`: 本地诊断 Nitter RSS 抓取。
@@ -69,10 +77,10 @@
 
 新增配置项时必须同步：
 - `_conf_schema.json`
-- `config_compat.CONFIG_GROUP_BY_KEY`，如果是分组后的全局配置
-- `config_compat.MIGRATABLE_CONFIG_KEYS`，如果需要从旧扁平配置迁移
-- `config_compat.DEFAULT_GROUP_MIGRATION_KEYS`，如果是默认分组旧字段
-- `scheduler_config.ScheduleGroup` 和 `SchedulerConfigReader`
+- `config.compat.CONFIG_GROUP_BY_KEY`，如果是分组后的全局配置
+- `config.compat.MIGRATABLE_CONFIG_KEYS`，如果需要从旧扁平配置迁移
+- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`，如果是默认分组旧字段
+- `scheduler.config.ScheduleGroup` 和 `SchedulerConfigReader`
 - README 或 `docs/advanced.md`
 - `tests/test_subscription_import.py`
 
@@ -83,13 +91,15 @@
 - `schedule`: 后台检查总开关、全局检查频率。
 - `deferred`: 暂存发布全局参数。
 - `push`: `tweet_groups`、推送间隔、合并阈值。
+- `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
 
 `tweet_groups` 是分组行为的主入口。`watch_users` 和 `push_targets` 顶层字段只是旧版兼容字段。
 
 分组字段规则：
-- `group_id` 是存储 ID，必须稳定。默认分组使用 `default`。
-- `global`、`全局` 等只作为默认分组旧别名兼容。
+- `group_id` 是存储 ID，必须稳定。新建默认分组使用 `default`。
+- 已有 `group_id` 必须保留；旧 `global` 可作为显式存储 ID 保留，也作为默认分组旧别名兼容。
+- 旧配置缺失 `group_id` 时，安全英文数字分组名（如 `coser`）是旧运行时事实 ID，必须继承；普通显示名才生成 `group_N`。
 - seen 索引按 `group_id + username` 隔离。
 - 每个分组的 `watch_users`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`deferred_publish_enabled`、`filter_plain_text_enabled` 都是独立行为。
 
@@ -109,6 +119,7 @@
 - 手动 `/推文`、`/镜像测试` 不受影响。
 - `/pic/media` 和 `<video>` 算作者上传媒体。
 - `/pic/card_img` 不算作者上传媒体。
+- Twitter Article（长文）封面图包在 `<a href="/i/article/...">` 里，不算作者上传媒体。
 - 引用推文里的媒体不算当前作者上传媒体。
 - 修改 `_AuthorMediaDetector` 时必须补 Nitter RSS HTML 片段回归测试。
 
@@ -122,7 +133,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 
 ## 调度、seen 和暂存发布
 
-`scheduler.py` 是高风险文件。修改前先读对应测试。
+`scheduler/` 是高风险目录。修改前先读对应测试。
 
 行为约束：
 - 首次启用账号只初始化 seen，不推送历史。
@@ -155,7 +166,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 
 缓存规则：
 - 普通缓存位于 AstrBot 插件数据目录。
-- `media_cache_retention_days=0` 时，发送流程结束后删除普通媒体。
+- 普通媒体在本轮发送流程结束后删除。
 - 暂存缓存不能被普通发送后清理误删。
 - 清理逻辑要统计 removed、failed、images、videos、other、empty_dirs。
 
@@ -218,7 +229,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 ```powershell
 python -m pytest -q
 ruff check .
-python -m py_compile main.py scheduler.py scheduler_config.py scheduler_models.py media_support/client.py media_support/service.py sender.py
+python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler/config.py scheduler/models.py media_support/client.py media_support/service.py delivery/sender.py
 ```
 
 按变更类型选择：
@@ -231,7 +242,7 @@ python -m py_compile main.py scheduler.py scheduler_config.py scheduler_models.p
 - 存储适配和旧 KV 迁移：`python -m pytest -q tests/test_storage_adapter.py`
 - SQLite 线程安全：`python -m pytest -q tests/test_sqlite_threading.py`
 
-如果改了公共模型、sender、scheduler 或 config compat，优先跑全量测试。
+如果改了公共模型、`delivery/sender.py`、`scheduler/` 或 `config/compat.py`，优先跑全量测试。
 
 ## 本地调试
 
@@ -260,7 +271,7 @@ python scripts/test_video_download.py
 - 是否没有把暂存媒体当普通缓存删除。
 - 是否没有把 Lark/Telegram/weixin_oc 当 OneBot 处理。
 - 是否没有把引用推文媒体当当前作者媒体。
-- 是否同步 schema、config compat、README/docs、测试。
+- 是否同步 schema、`config/compat.py`、README/docs、测试。
 - 是否跑了对应测试。
 - `git status --short` 是否只有预期文件。
 

@@ -12,14 +12,14 @@ from urllib.request import Request
 from astrbot.api import logger
 
 try:
-    from ..config_compat import config_get
-    from ..utils import (
+    from ..config import config_get
+    from ..shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )
 except ImportError:
-    from config_compat import config_get
-    from utils import (
+    from config import config_get
+    from shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )
@@ -88,11 +88,7 @@ class MediaService(MediaCacheMixin):
             config_get(config, "media_max_size_mb", 25.0), 1.0, 200.0
         )
         self.max_bytes = int(self.max_bytes * 1024 * 1024)
-        self.cache_retention_days = clamp_float(
-            config_get(config, "media_cache_retention_days", 3.0), 0.0, 3650.0
-        )
-        self.cache_cleanup_interval = 3600.0
-        self._last_cache_cleanup = 0.0
+        # 普通媒体不长期缓存；发送流程结束后由 cleanup_after_send 删除。
         self.xdown_url = str(
             config_get(config, "xdown_api_url", "https://xdown.app/api/ajaxSearch")
         )
@@ -115,7 +111,6 @@ class MediaService(MediaCacheMixin):
         return self.send_image_attachments or self.send_video_attachments
 
     async def attach_media(self, tweets: list[TweetItem]) -> None:
-        await asyncio.to_thread(self.cleanup_cache)
         if (
             not self.send_image_attachments
             and not self.send_video_attachments
@@ -128,7 +123,17 @@ class MediaService(MediaCacheMixin):
                 self._add_media_warning(tweet, f"媒体解析失败，已保留原文链接：{exc}")
 
     async def resolve_and_download(self, tweet: TweetItem) -> list[TweetMedia]:
-        media_urls = await asyncio.to_thread(self._resolve_media_urls, tweet)
+        media_urls = [
+            TweetMedia(
+                media.kind,
+                media.url,
+                duration_seconds=media.duration_seconds,
+            )
+            for media in tweet.media
+            if media.url
+        ]
+        if not media_urls:
+            media_urls = await asyncio.to_thread(self._resolve_media_urls, tweet)
         if not media_urls:
             return []
 

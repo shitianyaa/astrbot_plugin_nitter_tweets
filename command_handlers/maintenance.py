@@ -6,11 +6,11 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
-    from ..sender import TweetSender
+    from ..shared.group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
+    from ..delivery import TweetSender
 except ImportError:
-    from group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
-    from sender import TweetSender
+    from shared.group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
+    from delivery import TweetSender
 
 
 class MaintenanceCommandMixin:
@@ -63,7 +63,7 @@ class MaintenanceCommandMixin:
         )
 
     async def _cmd_tweets_clear_seen_impl(self, event: AstrMessageEvent, args=GreedyStr):
-        """清理定时检查 seen 记录，并移除旧版 KV seen 数据。"""
+        """清理定时检查推送记录，并移除旧版 KV 推送记录。"""
         event.stop_event()
         tokens = self._command_tokens(event, args)
         if not tokens or tokens[-1] != "确认":
@@ -71,7 +71,7 @@ class MaintenanceCommandMixin:
                 event.plain_result(
                     "用法：/推文记录清理 确认\n"
                     "指定分组：/推文记录清理 分组名 确认\n"
-                    "会清理定时检查的已记录推文索引，不会删除订阅、暂存队列或媒体文件。"
+                    "会清理定时检查的防重复推送记录，不会删除订阅、暂存队列或媒体文件。"
                 )
             )
             return
@@ -100,10 +100,10 @@ class MaintenanceCommandMixin:
         scope = self._check_group_label(group) if group else "全部分组"
         await event.send(
             event.plain_result(
-                "Nitter 已记录推文索引清理完成\n"
+                "Nitter 推送记录清理完成\n"
                 f"范围: {scope}\n"
-                f"SQLite seen 删除: {deleted} 条\n"
-                f"旧版 KV seen 清理: {'已执行' if legacy_deleted else '无记录或不支持'}\n"
+                f"SQLite 推送记录删除: {deleted} 条\n"
+                f"旧版 KV 推送记录清理: {'已执行' if legacy_deleted else '无记录或不支持'}\n"
                 "订阅配置、暂存队列和媒体文件未删除。"
             )
         )

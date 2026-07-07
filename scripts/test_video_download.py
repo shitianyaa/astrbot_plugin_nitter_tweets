@@ -40,8 +40,8 @@ def _import_plugin_modules():
         sys.path.insert(0, str(root))
     _install_astrbot_logger_stub()
 
-    from media import MediaService
-    from utils import TweetItem
+    from media_support import MediaService
+    from shared import TweetItem
 
     return MediaService, TweetItem
 
@@ -54,7 +54,6 @@ def _build_config(args: argparse.Namespace) -> dict:
         "media_timeout": args.timeout,
         "media_max_size_mb": args.max_size_mb,
         "max_video_duration_minutes": args.max_duration_minutes,
-        "media_cache_retention_days": args.retention_days,
         "xdown_api_url": args.xdown_url,
         "media_user_agent": args.user_agent,
         "video_resolution_preference": args.resolution,
@@ -201,7 +200,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--max-size-mb", type=float, default=100.0)
-    parser.add_argument("--retention-days", type=float, default=3.0)
     parser.add_argument(
         "--xdown-url",
         default="https://xdown.app/api/ajaxSearch",

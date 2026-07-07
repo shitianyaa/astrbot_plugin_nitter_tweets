@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 try:
-    from .group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 except ImportError:
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
+        infer_legacy_group_id_from_name,
         normalize_group_id,
+        normalize_stable_group_id,
     )
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
 DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
+MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
 
@@ -34,7 +39,6 @@ CONFIG_GROUP_BY_KEY = {
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
-    "media_cache_retention_days": "media",
     "xdown_api_url": "media",
     "media_user_agent": "media",
     "translate_enabled": "ai_translation",
@@ -71,6 +75,11 @@ CONFIG_GROUP_BY_KEY = {
     "deferred_media_retention_hours": "deferred",
     "deferred_media_download_interval_seconds": "deferred",
     "brief_log_enabled": "logging",
+    "concurrent_fetch_enabled": "performance",
+    "fetch_concurrency": "performance",
+    "concurrent_fetch_instances": "performance",
+    "concurrent_prepare_enabled": "performance",
+    "prepare_concurrency": "performance",
     "merge_tweet_threshold": "push",
     "merge_scheduled_updates": "push",
     "send_target_interval": "push",
@@ -94,7 +103,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "max_media_per_tweet",
     "media_timeout",
     "media_max_size_mb",
-    "media_cache_retention_days",
     "xdown_api_url",
     "media_user_agent",
     "translate_enabled",
@@ -127,6 +135,11 @@ MIGRATABLE_CONFIG_KEYS = {
     "deferred_prefetch_media",
     "deferred_media_retention_hours",
     "deferred_media_download_interval_seconds",
+    "concurrent_fetch_enabled",
+    "fetch_concurrency",
+    "concurrent_fetch_instances",
+    "concurrent_prepare_enabled",
+    "prepare_concurrency",
     "merge_tweet_threshold",
     "send_target_interval",
     "send_user_interval",
@@ -223,10 +236,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
                 _merge_default_group_into(default_group, group)
                 changed = True
                 continue
-
-            if str(default_group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                default_group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
             if _is_legacy_default_name(default_group.get("name")):
                 default_group["name"] = DEFAULT_GROUP_NAME
                 changed = True
@@ -235,15 +244,6 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
     if len(merged_groups) != len(groups):
         groups = merged_groups
         changed = True
-
-    if default_group is not None:
-        for group in groups:
-            if group is not default_group or not isinstance(group, dict):
-                continue
-            if str(group.get("group_id") or "").strip() != DEFAULT_GROUP_ID:
-                group["group_id"] = DEFAULT_GROUP_ID
-                changed = True
-            break
 
     legacy_values = {
         key: config_get(config, key)
@@ -289,6 +289,8 @@ def migrate_default_group_config(config, *, save: bool = True) -> bool:
 
     if _ensure_tweet_group_template_keys(groups):
         changed = True
+    if _ensure_tweet_group_stable_ids(groups):
+        changed = True
 
     if not changed:
         return False
@@ -315,6 +317,8 @@ def ensure_tweet_group_template_keys(config, *, save: bool = True) -> bool:
 
     if _ensure_tweet_group_template_keys(groups):
         changed = True
+    if _ensure_tweet_group_stable_ids(groups):
+        changed = True
 
     if not changed:
         return False
@@ -336,6 +340,13 @@ def config_set(config, key: str, value) -> None:
         group = {}
     group[key] = value
     config[group_name] = group
+
+
+def configured_merge_tweet_threshold(config) -> int:
+    value = config_get(config, "merge_tweet_threshold", None)
+    if value is None:
+        value = 1 if config_get(config, "merge_scheduled_updates", False) else 2
+    return _clamp_int(value, 0, 20)
 
 
 def _dict_get(config, key: str, default=None):
@@ -420,6 +431,51 @@ def _ensure_tweet_group_template_keys(groups: list) -> bool:
         if _ensure_tweet_group_template_key(group):
             changed = True
     return changed
+
+
+def _ensure_tweet_group_stable_ids(groups: list) -> bool:
+    changed = False
+    existing: set[str] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            existing.add(normalize_stable_group_id(group_id))
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("group_id") or "").strip()
+        if group_id:
+            continue
+        inferred_group_id = infer_legacy_group_id_from_name(group.get("name") or "")
+        if inferred_group_id and inferred_group_id not in existing:
+            group["group_id"] = inferred_group_id
+            existing.add(inferred_group_id)
+            changed = True
+            continue
+        candidate = _next_generated_group_id(existing)
+        group["group_id"] = candidate
+        existing.add(candidate)
+        changed = True
+    return changed
+
+
+def _next_generated_group_id(existing: set[str], start_index: int = 1) -> str:
+    counter = max(1, int(start_index or 1))
+    while True:
+        candidate = f"group_{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
+
+
+def _clamp_int(value, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = minimum
+    return max(minimum, min(maximum, number))
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:

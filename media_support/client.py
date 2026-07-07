@@ -15,13 +15,13 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from ..config_compat import config_get
-    from ..utils import (
+    from ..config import config_get
+    from ..shared import (
         TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
     )
 except ImportError:
-    from config_compat import config_get
-    from utils import (
+    from config import config_get
+    from shared import (
         TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
     )
 
@@ -33,9 +33,15 @@ class TransientFetchError(RuntimeError):
 
 
 # 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
-# /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 包成
-# <video> 标签。引用推文里的媒体也不算当前作者上传的媒体。
-_MEDIA_SRC_RE = re.compile(r"(?i)/pic/media")
+# /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 可能包成
+# <video> 标签，也可能只暴露 Nitter 的 video_thumb 封面图。引用推文里的媒体也不算
+# 当前作者上传的媒体。
+# Twitter Article（长文）的封面图虽走 /pic/media，但包在 <a href="/i/article/...">
+# 里，属于文章卡片而非作者上传的媒体附件，不算作者媒体。
+_MEDIA_SRC_RE = re.compile(
+    r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)"
+)
+_ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
 _HTML_VOID_TAGS = frozenset(
     {
         "area",
@@ -68,7 +74,12 @@ class _AuthorMediaDetector(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs):
         tag = tag.lower()
-        ignored = self._inside_ignored_container or self._is_ignored_container(attrs)
+        ignored = (
+            self._inside_ignored_container
+            or tag == "blockquote"
+            or self._is_ignored_container(attrs)
+            or self._is_article_link(tag, attrs)
+        )
         if not ignored:
             self._detect_media(tag, attrs)
         if tag in _HTML_VOID_TAGS:
@@ -76,7 +87,13 @@ class _AuthorMediaDetector(HTMLParser):
         self._ignored_stack.append((tag, ignored))
 
     def handle_startendtag(self, tag: str, attrs):
-        if self._inside_ignored_container or self._is_ignored_container(attrs):
+        tag = tag.lower()
+        if (
+            self._inside_ignored_container
+            or tag == "blockquote"
+            or self._is_ignored_container(attrs)
+            or self._is_article_link(tag, attrs)
+        ):
             return
         self._detect_media(tag, attrs)
 
@@ -112,6 +129,13 @@ class _AuthorMediaDetector(HTMLParser):
         return any("quote" in item for item in classes)
 
     @staticmethod
+    def _is_article_link(tag: str, attrs) -> bool:
+        if tag.lower() != "a":
+            return False
+        href = _AuthorMediaDetector._first_attr_value(attrs, "href")
+        return bool(_ARTICLE_LINK_RE.search(href))
+
+    @staticmethod
     def _first_attr_value(attrs, name: str) -> str:
         return next(iter(_AuthorMediaDetector._attr_values(attrs, name)), "")
 
@@ -139,6 +163,35 @@ class InstanceFetchResult:
     tweets: list[TweetItem]
     saw_items: bool = False
     plain_text_filtered: int = 0
+
+
+@dataclass(slots=True)
+class FetchAttemptBudget:
+    """Optional per-instance retry budget shared by all paginated RSS pages.
+
+    When ``remaining`` is ``None``, each page gets its own normal retry count.
+    When it is an integer, every page attempt consumes from the same budget so
+    one slow/broken instance cannot spend more than the configured total.
+    """
+
+    remaining: int | None = None
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining is not None and self.remaining <= 0
+
+    def attempts_for_page(self, default_attempts: int) -> int:
+        if self.remaining is None:
+            return default_attempts
+        return max(1, self.remaining)
+
+    def consume(self) -> bool:
+        if self.remaining is None:
+            return True
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        return True
 
 
 class NitterClient:
@@ -175,35 +228,105 @@ class NitterClient:
         limit: int,
         skip_plain_text: bool = False,
     ) -> tuple[str, list[TweetItem], int]:
+        return await self._fetch_tweets_with_stats_from_instances(
+            username,
+            limit,
+            self.instances,
+            skip_plain_text=skip_plain_text,
+            retry_attempts=self.retry_attempts,
+        )
+
+    async def fetch_tweets_with_stats_from_instances(
+        self,
+        username: str,
+        limit: int,
+        instances: list[str],
+        start_index: int = 0,
+        skip_plain_text: bool = False,
+        retry_attempts: int = 3,
+    ) -> tuple[str, list[TweetItem], int]:
+        """Fetch using a dedicated instance pool rotated by ``start_index``.
+
+        ``retry_attempts`` is the total attempt budget for each instance in this
+        dedicated pool, shared across first-page and pagination requests. This
+        differs from ``fetch_tweets_with_stats()``, where the default instance
+        list gives each RSS page its own retry allowance.
+        """
+
+        ordered_instances = self._rotate_instances(instances, start_index)
+        if not ordered_instances:
+            raise RuntimeError("未配置并发专用 Nitter 实例")
+        return await self._fetch_tweets_with_stats_from_instances(
+            username,
+            limit,
+            ordered_instances,
+            skip_plain_text=skip_plain_text,
+            retry_attempts=retry_attempts,
+            total_retry_attempts_per_instance=True,
+        )
+
+    async def _fetch_tweets_with_stats_from_instances(
+        self,
+        username: str,
+        limit: int,
+        instances: list[str],
+        skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        total_retry_attempts_per_instance: bool = False,
+    ) -> tuple[str, list[TweetItem], int]:
+        """Try instances in order until one returns RSS items or tweets.
+
+        ``total_retry_attempts_per_instance=False`` means ``retry_attempts`` is
+        applied per page fetch, preserving the historic serial behavior.
+        ``True`` means ``retry_attempts`` is a per-instance total budget across
+        all pagination requests; this is used for concurrent dedicated pools so
+        pagination does not multiply the intended retry cost.
+        """
+
         errors: list[str] = []
-        for index, instance in enumerate(self.instances):
+        for index, instance in enumerate(instances):
             try:
                 result = await asyncio.to_thread(
                     self._fetch_from_instance,
-                    instance, username, limit, skip_plain_text,
+                    instance,
+                    username,
+                    limit,
+                    skip_plain_text,
+                    retry_attempts,
+                    total_retry_attempts_per_instance,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
-                self._log_instance_fetch_failure(index, instance, username, exc)
+                self._log_instance_fetch_failure(
+                    index, instance, username, exc, instances
+                )
                 continue
             if result.tweets or result.saw_items:
                 self._log_instance_fetch_success(index, instance, username, result)
                 return instance, result.tweets, result.plain_text_filtered
             errors.append(f"{instance}: empty feed")
-            self._log_instance_fetch_failure(index, instance, username, "empty feed")
-        raise RuntimeError(self._format_fetch_errors(errors))
+            self._log_instance_fetch_failure(
+                index, instance, username, "empty feed", instances
+            )
+        raise RuntimeError(self._format_fetch_errors(errors, total_count=len(instances)))
 
     def _log_instance_fetch_failure(
-        self, index: int, instance: str, username: str, error,
+        self,
+        index: int,
+        instance: str,
+        username: str,
+        error,
+        instances: list[str] | None = None,
     ) -> None:
-        total = len(self.instances)
+        instances = instances or self.instances
+        total = len(instances)
         if total <= 1:
             return
 
         if index + 1 < total:
             logger.warning(
                 "[NitterTweets] RSS 实例失败，尝试下一个实例: "
-                f"instance={instance}, next_instance={self.instances[index + 1]}, "
+                f"instance={instance}, next_instance={instances[index + 1]}, "
                 f"username={username}, error={error}"
             )
             return
@@ -240,13 +363,15 @@ class NitterClient:
             raise RuntimeError(f"{normalized}: empty feed")
         return normalized, result.tweets
 
-    def _format_fetch_errors(self, errors: list[str]) -> str:
+    def _format_fetch_errors(
+        self, errors: list[str], total_count: int | None = None
+    ) -> str:
         if not errors:
             return "未配置 Nitter 实例"
 
         shown_errors = errors[-3:]
         hidden_count = len(errors) - len(shown_errors)
-        total_count = len(self.instances)
+        total_count = total_count if total_count is not None else len(self.instances)
         summary = f"已尝试 {len(errors)}/{total_count} 个 Nitter 实例，未获得可用 RSS"
         if hidden_count > 0:
             summary += (
@@ -263,6 +388,8 @@ class NitterClient:
         username: str,
         limit: int,
         skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        total_retry_attempts_per_instance: bool = False,
     ) -> InstanceFetchResult:
         if limit <= 0:
             return InstanceFetchResult([])
@@ -273,12 +400,27 @@ class NitterClient:
         cursor = ""
         saw_items = False
         plain_text_filtered_total = 0
+        # Dedicated concurrent pools cap retries per instance across pagination;
+        # the default pool keeps the older per-page retry behavior.
+        attempt_budget = FetchAttemptBudget(
+            self._retry_attempt_count(retry_attempts)
+            if total_retry_attempts_per_instance
+            else None
+        )
 
         while len(tweets) < limit:
+            if attempt_budget.exhausted:
+                break
             try:
                 page_tweets, next_cursor, plain_text_filtered = (
                     self._fetch_page_with_retries(
-                        instance, username, cursor, limit, skip_plain_text,
+                        instance,
+                        username,
+                        cursor,
+                        limit,
+                        skip_plain_text,
+                        retry_attempts,
+                        attempt_budget,
                     )
                 )
             except Exception:
@@ -349,8 +491,13 @@ class NitterClient:
 
     @staticmethod
     def _is_repost(tweet: TweetItem, username: str) -> bool:
+        return NitterClient._is_repost_link(tweet.link, username)
+
+    @staticmethod
+    def _is_repost_link(link: str, username: str) -> bool:
         watched = str(username or "").strip().lstrip("@").lower()
-        author = str(tweet.username or "").strip().lstrip("@").lower()
+        author = TweetItem(text="", link=link, published="").username
+        author = str(author or "").strip().lstrip("@").lower()
         return bool(watched and author and author != watched)
 
     def _fetch_page_with_retries(
@@ -360,12 +507,18 @@ class NitterClient:
         cursor: str,
         limit: int,
         skip_plain_text: bool = False,
+        retry_attempts: int | None = None,
+        attempt_budget: FetchAttemptBudget | None = None,
     ) -> tuple[list[TweetItem], str, int]:
-        attempts = max(1, int(self.retry_attempts))
+        attempts = self._retry_attempt_count(retry_attempts)
+        if attempt_budget is not None:
+            attempts = attempt_budget.attempts_for_page(attempts)
         delay = max(0.0, float(self.retry_delay_seconds))
         last_error: TransientFetchError | None = None
 
         for attempt in range(1, attempts + 1):
+            if attempt_budget is not None and not attempt_budget.consume():
+                break
             try:
                 return self._fetch_page_from_instance(
                     instance, username, cursor, limit, skip_plain_text,
@@ -386,6 +539,13 @@ class NitterClient:
         if last_error is not None:
             raise last_error
         raise RuntimeError("RSS 抓取失败")
+
+    def _retry_attempt_count(self, retry_attempts: int | None = None) -> int:
+        value = self.retry_attempts if retry_attempts is None else retry_attempts
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return max(1, int(self.retry_attempts))
 
     def _fetch_page_from_instance(
         self,
@@ -417,7 +577,7 @@ class NitterClient:
         except (TimeoutError, ssl.SSLError) as exc:
             raise TransientFetchError(str(exc)) from exc
         tweets, plain_text_filtered = self._parse_rss(
-            data, instance, 0, skip_plain_text,
+            data, instance, 0, skip_plain_text, username,
         )
         return tweets, next_cursor, plain_text_filtered
 
@@ -431,6 +591,22 @@ class NitterClient:
         if cursor:
             rss_url = f"{rss_url}?{urlencode({'cursor': cursor})}"
         return rss_url
+
+    @staticmethod
+    def _rotate_instances(instances: list[str], start_index: int = 0) -> list[str]:
+        normalized: list[str] = []
+        for instance in instances:
+            text = str(instance or "").strip().rstrip("/")
+            if not text:
+                continue
+            if not text.startswith(("http://", "https://")):
+                text = f"https://{text}"
+            if text not in normalized:
+                normalized.append(text)
+        if not normalized:
+            return []
+        offset = int(start_index or 0) % len(normalized)
+        return normalized[offset:] + normalized[:offset]
 
     @staticmethod
     def _header_value(headers, name: str) -> str:
@@ -452,6 +628,7 @@ class NitterClient:
         instance: str,
         limit: int,
         skip_plain_text: bool = False,
+        username: str = "",
     ) -> tuple[list[TweetItem], int]:
         root = ET.fromstring(data)
         channel = root.find("channel") if root.tag.lower().endswith("rss") else root
@@ -462,15 +639,23 @@ class NitterClient:
         for item in channel.findall("item"):
             title = self._node_text(item, "title")
             description = self._node_text(item, "description")
+            link = self._normalize_link(self._node_text(item, "link"), instance)
+            published = self._format_pub_date(self._node_text(item, "pubDate"))
             # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
             # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
-            #（/pic/card_img）不算作者媒体，只有 /pic/media 和 <video> 算。
-            if skip_plain_text and not _has_author_media(description):
+            #（/pic/card_img）不算作者媒体。转发先交给转发过滤，避免
+            # 把本来就会丢弃的转发也计入纯文本过滤数。
+            lacks_author_media = skip_plain_text and not _has_author_media(description)
+            if (
+                lacks_author_media
+                and not (
+                    self.filter_reposts_enabled
+                    and self._is_repost_link(link, username)
+                )
+            ):
                 plain_text_filtered += 1
                 continue
             text = normalize_external_links(clean_text(description or title))
-            link = self._normalize_link(self._node_text(item, "link"), instance)
-            published = self._format_pub_date(self._node_text(item, "pubDate"))
             if not text and not link:
                 continue
             tweets.append(

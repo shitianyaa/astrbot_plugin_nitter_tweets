@@ -6,9 +6,9 @@ from .default import DefaultDeliveryAdapter
 from .outcomes import SendAttempt
 
 try:
-    from ..utils import safe_call
+    from ..shared import safe_call
 except ImportError:
-    from utils import safe_call
+    from shared import safe_call
 
 
 class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
@@ -20,6 +20,10 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
 
     @property
     def should_split_direct_videos(self) -> bool:
+        return True
+
+    @property
+    def should_split_direct_images(self) -> bool:
         return True
 
     async def send_event_forward(self, event, raw_nodes: list[dict]) -> bool:

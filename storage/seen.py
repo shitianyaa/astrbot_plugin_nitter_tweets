@@ -3,19 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 try:
-    from .group_ids import (
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         GLOBAL_GROUP_ID,
-        normalize_group_id,
+        normalize_stable_group_id,
     )
-    from .utils import normalize_username
+    from ..shared import normalize_username
 except ImportError:
-    from group_ids import (
+    from shared.group_ids import (
         DEFAULT_GROUP_ID,
         GLOBAL_GROUP_ID,
-        normalize_group_id,
+        normalize_stable_group_id,
     )
-    from utils import normalize_username
+    from shared import normalize_username
 
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
@@ -47,13 +47,15 @@ class SeenStore:
 
     async def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
         grouped = await self.get_grouped_seen_map()
-        return dict(grouped.groups.get(normalize_group_id(group_id), {}))
+        return dict(grouped.groups.get(normalize_stable_group_id(group_id), {}))
 
     async def put_group_seen_map(
         self, group_id: str, seen_map: dict[str, list[str]]
     ) -> None:
         grouped = await self.get_grouped_seen_map()
-        grouped.groups[normalize_group_id(group_id)] = self.normalize_seen_map(seen_map)
+        grouped.groups[normalize_stable_group_id(group_id)] = self.normalize_seen_map(
+            seen_map
+        )
         await self.put_grouped_seen_map(grouped)
 
     async def get_grouped_seen_map(self) -> GroupedSeenMap:
@@ -79,7 +81,9 @@ class SeenStore:
         if isinstance(groups_value, dict):
             return GroupedSeenMap(
                 groups={
-                    normalize_group_id(group_id): self.normalize_seen_map(seen_map)
+                    normalize_stable_group_id(group_id): self.normalize_seen_map(
+                        seen_map
+                    )
                     for group_id, seen_map in groups_value.items()
                     if isinstance(seen_map, dict)
                 }
@@ -93,7 +97,9 @@ class SeenStore:
             {
                 "version": 2,
                 "groups": {
-                    normalize_group_id(group_id): self.normalize_seen_map(seen_map)
+                    normalize_stable_group_id(group_id): self.normalize_seen_map(
+                        seen_map
+                    )
                     for group_id, seen_map in grouped.groups.items()
                 },
             },

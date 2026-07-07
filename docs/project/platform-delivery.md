@@ -1,6 +1,6 @@
 # 平台发送指南
 
-开发或修改发送逻辑时先读本文件，再读 `sender.py`、`delivery/` 和 `tweet_rendering.py`。
+开发或修改发送逻辑时先读本文件，再读 `delivery/sender.py`、`delivery/` 和 `rendering/tweets.py`。
 
 ## 入口
 
@@ -41,7 +41,7 @@ weixin_oc:FriendMessage:wxid_xxx
 
 | 平台 | 适配器 | 文件 | 行为 |
 | --- | --- | --- | --- |
-| OneBot/QQ | `OneBotDeliveryAdapter` | `delivery/onebot.py` | 支持 Node/Nodes 合并转发、raw forward、视频降级 |
+| OneBot/QQ | `OneBotDeliveryAdapter` | `delivery/onebot.py` | 支持 Node/Nodes 合并转发、raw forward、图片拆分、视频降级 |
 | Lark/Feishu | `LarkDeliveryAdapter` | `delivery/lark.py` | 优先 native post，同框发送正文和图片，失败降级 |
 | Telegram | `TelegramDeliveryAdapter` | `delivery/telegram.py` | 使用默认发送链路，额外处理 flood control retry |
 | 其他平台 | `DefaultDeliveryAdapter` | `delivery/default.py` | 使用 AstrBot `MessageChain` 普通发送 |
@@ -65,6 +65,7 @@ sender._should_use_merge_for_count(tweet_count)
 - `merge_tweet_threshold=0` 关闭合并。
 - 达到阈值且目标支持 merged forward 时使用合并。
 - 单次合并过大时按 chunk 分批。
+- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片成为独立节点。
 - 合并中有视频时优先 raw OneBot 节点。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
@@ -79,7 +80,7 @@ sender._should_use_merge_for_count(tweet_count)
 - post 可同框发送正文和本地图片。
 - post 失败时降级为文本和普通媒体附件。
 - 视频走普通媒体发送或按默认降级。
-- 客户端解析在 `lark_delivery.py`，不要在业务层直接猜 client 字段。
+- 客户端解析在 `delivery/lark_support.py`，不要在业务层直接猜 client 字段。
 
 测试入口：
 - `tests/test_subscription_import.py::test_lark_title_uses_manual_header_override`
@@ -107,20 +108,21 @@ sender._should_use_merge_for_count(tweet_count)
 
 ## 渲染边界
 
-`tweet_rendering.py` 负责输出：
+`rendering/tweets.py` 负责输出：
 - 普通 MessageChain components。
 - OneBot raw nodes。
 - 合并转发标题。
 - 视频省略提示。
 - 纯文本 fallback。
 
-新增平台时优先新增/调整 `delivery/` adapter，不要在 `tweet_rendering.py` 写平台发送逻辑。
+新增平台时优先新增/调整 `delivery/` adapter，不要在 `rendering/tweets.py` 写平台发送逻辑。
 
 ## 修改发送逻辑检查
 
 - 是否通过 `PlatformResolver` 获取平台能力。
 - 是否保留 Event 和 UMO 两条发送路径。
 - 是否保留不确定送达保护。
+- 是否保留 QQ/OneBot 图片独立消息或独立节点行为。
 - 是否保留视频失败后的去视频重试或文本 fallback。
 - 是否保留 Lark post 降级。
 - 是否补对应平台测试。

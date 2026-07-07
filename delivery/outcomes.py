@@ -17,6 +17,8 @@ class SendOutcome:
     success: bool
     error: str = ""
     warning: str = ""
+    delivery_status: str = "success"
+    delivery_error: str = ""
 
 
 @dataclass(slots=True)
@@ -26,3 +28,5 @@ class MergedSendOutcome:
     omitted_videos: int = 0
     error: str = ""
     warning: str = ""
+    delivery_status: str = "success"
+    delivery_error: str = ""

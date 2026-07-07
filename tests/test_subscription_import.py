@@ -149,8 +149,10 @@ if "astrbot.api.all" not in sys.modules:
 
 
 from main import NitterTweetsPlugin
-from config_compat import (
+from config import (
+    DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     LEGACY_CONFIG_MIGRATION_KEY,
+    MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
     TWEET_GROUP_TEMPLATE_KEY_FIELD,
     config_get,
@@ -158,17 +160,17 @@ from config_compat import (
     migrate_default_group_config,
     migrate_legacy_grouped_config,
 )
-from enricher import (
+from ai import (
     TranslationReport,
     TranslationTweetResult,
     TweetTranslator,
     TweetEnricher,
     format_ai_tweet_summary,
 )
-from lark_delivery import lark_tweet_post_title
-from scheduler_config import SchedulerConfigReader
-from tweet_rendering import TweetMessageRenderer
-from utils import TweetItem, TweetMedia
+from delivery.lark_support import lark_tweet_post_title
+from scheduler import SchedulerConfigReader
+from rendering import TweetMessageRenderer
+from shared import TweetItem, TweetMedia
 
 
 class _Config(dict):
@@ -289,6 +291,16 @@ class _ManualMedia:
         self.events.append(
             "cleanup:" + ",".join(tweet.status_id for tweet in tweets)
         )
+
+
+class _StartupCleanupMedia:
+    def __init__(self, *, failed=0):
+        self.clear_non_staged_cache_calls = 0
+        self.failed = failed
+
+    def clear_non_staged_cache(self):
+        self.clear_non_staged_cache_calls += 1
+        return types.SimpleNamespace(removed=2, failed=self.failed, skipped_dirs=1)
 
 
 class _ManualEnricher:
@@ -440,6 +452,13 @@ class ConfigCompatTest(unittest.TestCase):
             ],
         )
         self.assertIn(LEGACY_CONFIG_MIGRATION_KEY, schema)
+        for key in [
+            LEGACY_CONFIG_MIGRATION_KEY,
+            DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
+            MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
+        ]:
+            self.assertIn(key, schema)
+            self.assertTrue(schema[key]["invisible"])
         self.assertTrue(schema["watch_users"]["invisible"])
         self.assertEqual(schema["tweet_groups"]["type"], "list")
         self.assertIn("watch_users", schema["push"]["items"])
@@ -447,10 +466,30 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
+        self.assertNotIn("media_cache_retention_days", schema["media"]["items"])
+        self.assertNotIn("media_cache_retention_days", schema)
+        performance_items = schema["performance"]["items"]
+        for key in [
+            "concurrent_fetch_enabled",
+            "fetch_concurrency",
+            "concurrent_fetch_instances",
+            "concurrent_prepare_enabled",
+            "prepare_concurrency",
+        ]:
+            self.assertIn(key, performance_items)
+            self.assertTrue(schema[key]["invisible"])
+        self.assertFalse(performance_items["concurrent_fetch_enabled"]["default"])
+        self.assertEqual(performance_items["fetch_concurrency"]["default"], 3)
+        self.assertEqual(performance_items["concurrent_fetch_instances"]["default"], [])
+        self.assertFalse(performance_items["concurrent_prepare_enabled"]["default"])
+        self.assertEqual(performance_items["prepare_concurrency"]["default"], 2)
         self.assertIn(
             "filter_plain_text_enabled",
             schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"],
         )
+        group_items = schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"]
+        self.assertIn("group_id", group_items)
+        self.assertTrue(group_items["group_id"]["invisible"])
 
     def test_brief_log_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "brief_log_enabled", True), True)
@@ -475,6 +514,27 @@ class ConfigCompatTest(unittest.TestCase):
         config = {"basic": {"filter_reposts_enabled": False}}
 
         self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
+
+    def test_config_get_reads_grouped_performance_values(self):
+        config = {
+            "fetch_concurrency": 1,
+            "performance": {
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 4,
+                "concurrent_fetch_instances": ["https://mirror.example"],
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 3,
+            },
+        }
+
+        self.assertIs(config_get(config, "concurrent_fetch_enabled", False), True)
+        self.assertEqual(config_get(config, "fetch_concurrency", 1), 4)
+        self.assertEqual(
+            config_get(config, "concurrent_fetch_instances", []),
+            ["https://mirror.example"],
+        )
+        self.assertIs(config_get(config, "concurrent_prepare_enabled", False), True)
+        self.assertEqual(config_get(config, "prepare_concurrency", 1), 3)
 
     def test_config_get_falls_back_to_flat_value(self):
         config = {"push_targets": ["telegram:FriendMessage:1"]}
@@ -600,6 +660,110 @@ class ConfigCompatTest(unittest.TestCase):
             TWEET_GROUP_TEMPLATE_KEY,
         )
 
+    def test_default_group_migration_assigns_missing_custom_group_ids(self):
+        config = _Config(
+            {
+                "_default_group_config_migrated": True,
+                "tweet_groups": [
+                    {
+                        "name": "Existing",
+                        "group_id": "tech",
+                        "watch_users": ["OpenAI"],
+                    },
+                    {
+                        "name": "Legacy Without ID",
+                        "watch_users": ["NASA"],
+                    },
+                    {
+                        "name": "coser",
+                        "watch_users": ["CoserAccount"],
+                    },
+                    {
+                        "name": "Already Allocated",
+                        "group_id": "group_1",
+                        "watch_users": ["ESA"],
+                    },
+                    {
+                        "name": "Another Legacy",
+                        "watch_users": ["JAXA"],
+                    },
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        groups = config_get(config, "tweet_groups")
+        self.assertEqual([group["group_id"] for group in groups], [
+            "tech",
+            "group_2",
+            "coser",
+            "group_1",
+            "group_3",
+        ])
+        self.assertEqual(_group_config(config, "tech")["watch_users"], ["OpenAI"])
+        self.assertEqual(_group_config(config, "group_2")["name"], "Legacy Without ID")
+        self.assertEqual(_group_config(config, "coser")["watch_users"], ["CoserAccount"])
+        self.assertEqual(_group_config(config, "group_3")["watch_users"], ["JAXA"])
+
+    def test_default_group_migration_preserves_existing_legacy_global_group_id(self):
+        config = _Config(
+            {
+                "tweet_groups": [
+                    {
+                        "name": "Global",
+                        "group_id": "global",
+                        "watch_users": ["NASA"],
+                    }
+                ],
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        groups = config_get(config, "tweet_groups")
+        self.assertEqual(groups[0]["group_id"], "global")
+        self.assertEqual(groups[0]["watch_users"], ["NASA"])
+
+    def test_startup_media_cache_upgrade_cleanup_runs_once(self):
+        config = _Config({})
+        media = _StartupCleanupMedia()
+        plugin = object.__new__(NitterTweetsPlugin)
+        plugin.config = config
+        plugin.media = media
+
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertTrue(config.saved)
+        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
+
+        config.saved = False
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertFalse(config.saved)
+
+    def test_startup_media_cache_upgrade_cleanup_retries_after_failures(self):
+        config = _Config({})
+        media = _StartupCleanupMedia(failed=1)
+        plugin = object.__new__(NitterTweetsPlugin)
+        plugin.config = config
+        plugin.media = media
+
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
+        self.assertFalse(config.saved)
+        self.assertNotIn(MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY, config)
+
+        media.failed = 0
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+        self.assertEqual(media.clear_non_staged_cache_calls, 2)
+        self.assertTrue(config.saved)
+        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
+
     def test_default_group_migration_merges_legacy_global_group(self):
         config = _Config(
             {
@@ -649,7 +813,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from astrbot.core.config.astrbot_config import AstrBotConfig
-from config_compat import config_get, migrate_legacy_grouped_config
+from config import config_get, migrate_legacy_grouped_config
 
 repo = Path.cwd()
 schema = json.loads((repo / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -764,6 +928,94 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(tech_group.deferred_publish_times, [(20, 0)])
         self.assertTrue(tech_group.deferred_publish_enabled)
         self.assertTrue(tech_group.filter_plain_text_enabled)
+        self.assertFalse(global_group.concurrent_fetch_enabled)
+        self.assertEqual(global_group.fetch_concurrency, 3)
+        self.assertEqual(global_group.concurrent_fetch_instances, [])
+        self.assertFalse(global_group.concurrent_prepare_enabled)
+        self.assertEqual(global_group.prepare_concurrency, 2)
+
+    def test_scheduler_reader_preserves_existing_legacy_global_group_id(self):
+        config = {
+            "daily_check_enabled": True,
+            "daily_check_times": ["08:30"],
+            "tweet_groups": [
+                {
+                    "name": "Global",
+                    "group_id": "global",
+                    "watch_users": ["NASA"],
+                    "push_targets": ["telegram:FriendMessage:1"],
+                }
+            ],
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        group = reader.schedule_groups(log_invalid_targets=False)[0]
+
+        self.assertEqual(group.group_id, "global")
+        self.assertEqual(group.name, "默认分组")
+        self.assertEqual(group.daily_check_times, [(8, 30)])
+
+    def test_scheduler_reader_preserves_safe_english_name_as_missing_group_id(self):
+        reader = SchedulerConfigReader({}, context=None)
+
+        group = reader.parse_schedule_group(
+            {
+                "name": "Tech123",
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            3,
+            log_invalid_targets=False,
+        )
+
+        self.assertIsNotNone(group)
+        self.assertEqual(group.group_id, "tech123")
+        self.assertEqual(group.name, "Tech123")
+
+    def test_scheduler_reader_does_not_use_display_name_with_spaces_as_group_id(self):
+        reader = SchedulerConfigReader({}, context=None)
+
+        group = reader.parse_schedule_group(
+            {
+                "name": "Legacy Without ID",
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+            },
+            3,
+            log_invalid_targets=False,
+        )
+
+        self.assertIsNotNone(group)
+        self.assertEqual(group.group_id, "group_3")
+        self.assertEqual(group.name, "Legacy Without ID")
+
+    def test_scheduler_reader_reads_grouped_performance_config(self):
+        config = {
+            "watch_users": ["NASA"],
+            "push_targets": ["telegram:FriendMessage:1"],
+            "performance": {
+                "concurrent_fetch_enabled": True,
+                "fetch_concurrency": 99,
+                "concurrent_fetch_instances": [
+                    "mirror-a.example/",
+                    "https://mirror-b.example",
+                ],
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 0,
+            },
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        group = reader.schedule_groups(log_invalid_targets=False)[0]
+
+        self.assertTrue(group.concurrent_fetch_enabled)
+        self.assertEqual(group.fetch_concurrency, 8)
+        self.assertEqual(
+            group.concurrent_fetch_instances,
+            ["https://mirror-a.example", "https://mirror-b.example"],
+        )
+        self.assertTrue(group.concurrent_prepare_enabled)
+        self.assertEqual(group.prepare_concurrency, 1)
 
     def test_scheduler_reader_keeps_deferred_switch_per_group(self):
         config = {
@@ -1435,7 +1687,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [None])
         self.assertEqual(plugin.scheduler.storage.delete_legacy_seen_kv_calls, 1)
         self.assertIn("范围: 全部分组", event.messages[-1])
-        self.assertIn("SQLite seen 删除: 12 条", event.messages[-1])
+        self.assertIn("SQLite 推送记录删除: 12 条", event.messages[-1])
 
     async def test_clear_seen_command_clears_named_group(self):
         config = _Config(
@@ -1480,7 +1732,17 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.stopped)
         self.assertEqual(
             event.messages[-1],
-            "默认分组: NASA\n科技: OpenAI,SpaceX\n新闻: BBCWorld",
+            "\n".join(
+                [
+                    "Nitter 订阅导出",
+                    "分组数: 3 个",
+                    "订阅账号: 4 个",
+                    "分组账号:",
+                    "默认分组 (default, 1 个): NASA",
+                    "科技 (tech, 2 个): OpenAI,SpaceX",
+                    "新闻 (news, 1 个): BBCWorld",
+                ]
+            ),
         )
 
     async def test_delete_subscriptions_without_group_removes_default_watch_users(self):
@@ -1507,7 +1769,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("删除分组: 默认分组 (default)", event.messages[-1])
         self.assertIn("删除: 1 个", event.messages[-1])
-        self.assertIn("未关注: 1 个", event.messages[-1])
+        self.assertIn("原本未关注: 1 个", event.messages[-1])
 
     async def test_delete_subscriptions_with_group_removes_that_group_watch_users(self):
         config = _Config(
@@ -1549,7 +1811,10 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.synced_groups, [])
         self.assertEqual(config_get(config, "watch_users"), ["NASA"])
         self.assertIn("删除: 0 个", event.messages[-1])
-        self.assertIn("保存结果: 没有删除账号。", event.messages[-1])
+        self.assertIn(
+            "保存结果: 未改动配置，没有匹配到可删除账号。",
+            event.messages[-1],
+        )
 
     async def test_delete_subscriptions_with_unknown_group_after_comma_list_is_rejected(self):
         config = _Config(

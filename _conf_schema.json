@@ -8,7 +8,7 @@
         "description": "存储后端",
         "type": "string",
         "default": "sqlite",
-        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
+        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和推送记录，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
       },
       "instances": {
         "description": "Nitter 实例列表",
@@ -22,7 +22,7 @@
         "description": "手动查询默认条数",
         "type": "int",
         "default": 5,
-        "hint": "用于 /推文 用户名 和 /镜像测试 镜像站 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。"
+        "hint": "用于 /推文 用户名 和 /镜像测试 [用户名] 镜像站URL 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。"
       },
       "request_timeout": {
         "description": "单个 Nitter 实例超时秒数",
@@ -59,7 +59,7 @@
         "description": "发送图片附件",
         "type": "bool",
         "default": true,
-        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。"
+        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。"
       },
       "send_video_attachments": {
         "description": "发送视频/GIF 附件",
@@ -95,12 +95,6 @@
         "type": "float",
         "default": 25.0,
         "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
-      },
-      "media_cache_retention_days": {
-        "description": "媒体缓存保留天数",
-        "type": "float",
-        "default": 3.0,
-        "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 时，本次下载的图片/视频在发送流程结束后立即删除。"
       },
       "xdown_api_url": {
         "description": "xdown 解析 API",
@@ -358,7 +352,7 @@
         "description": "用户分组",
         "type": "template_list",
         "default": [],
-        "hint": "每个分组只配置关注账号、推送目标、是否参与间隔检查、每日检查时间和暂存开关；拉取数量、发送间隔、暂存发布时间等细节使用全局配置。分组里的间隔检查和每日检查时间只有在后台检查总开关开启后才会触发。没有创建分组时保持为空；旧版关注账号和推送目标会自动迁移到默认分组。分组之间的配置和已见推文 ID 互相隔离。",
+        "hint": "每个分组只配置关注账号、推送目标、是否参与间隔检查、每日检查时间和暂存开关；拉取数量、发送间隔、暂存发布时间等细节使用全局配置。分组里的间隔检查和每日检查时间只有在后台检查总开关开启后才会触发。没有创建分组时保持为空；旧版关注账号和推送目标会自动迁移到默认分组。分组之间的配置和推送记录互相隔离。",
         "templates": {
           "group": {
             "name": "用户分组",
@@ -372,10 +366,11 @@
                 "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
               },
               "group_id": {
-                "description": "分组 ID",
+                "description": "内部稳定分组 ID",
                 "type": "string",
                 "default": "",
-                "hint": "可选。用于内部存储已见推文 ID；默认分组使用 default。旧的 global/全局 会作为默认分组别名兼容；新增自定义分组请使用其他稳定 ID。改名但想保留已见记录时，请保持该 ID 不变。"
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录、暂存队列和历史记录断开。",
+                "invisible": true
               },
               "enabled": {
                 "description": "启用分组",
@@ -416,7 +411,7 @@
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图不算媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
               },
               "aliases": {
                 "description": "分组别名",
@@ -521,8 +516,39 @@
   "performance": {
     "description": "并发与限流",
     "type": "object",
-    "hint": "预留栏目：多并发抓取、翻译、评论和识图会在后续实现；当前版本仍按已有串行处理和发送间隔执行。",
-    "items": {}
+    "hint": "控制后台检查的并发抓取和并发准备。默认关闭；建议只在自建 Nitter 镜像和模型额度充足时开启。",
+    "items": {
+      "concurrent_fetch_enabled": {
+        "description": "启用后台并发拉取",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，只有同时配置了并发专用 Nitter 镜像且并发数大于 1，后台检查才会并发拉取多个账号；否则保持旧串行行为。手动 /推文、/镜像测试 不受影响。"
+      },
+      "fetch_concurrency": {
+        "description": "账号拉取并发数",
+        "type": "int",
+        "default": 3,
+        "hint": "后台检查同时拉取多少个账号 RSS，范围 1-8。公共 Nitter 镜像不建议高并发；建议配合自建镜像使用。"
+      },
+      "concurrent_fetch_instances": {
+        "description": "并发专用 Nitter 镜像",
+        "type": "list",
+        "default": [],
+        "hint": "仅供后台并发拉取使用，可填写多个自建 Nitter 镜像。留空时不会启用并发拉取，也不会回退到基础设置里的 instances。公共镜像容易限流或拒绝访问，不建议用于高并发。"
+      },
+      "concurrent_prepare_enabled": {
+        "description": "启用媒体和模型并发准备",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，后台检查发现的新推文会并发执行翻译、媒体下载、AI 识图和 AI 评论；发送和暂存入队仍按关注账号和推文顺序执行。"
+      },
+      "prepare_concurrency": {
+        "description": "推文准备并发数",
+        "type": "int",
+        "default": 2,
+        "hint": "后台检查同时准备多少条推文或账号批次，范围 1-8。数值越大，对 xdown、模型 provider 和本机网络压力越高。"
+      }
+    }
   },
   "_legacy_grouped_config_migrated": {
     "description": "Legacy grouped config migration completed",
@@ -538,11 +564,18 @@
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
   },
+  "_media_cache_send_delete_migrated": {
+    "description": "Media cache send-delete migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
   "storage_backend": {
     "description": "存储后端",
     "type": "string",
     "default": "sqlite",
-    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和已见推文 ID，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
+    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和推送记录，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
     "invisible": true
   },
   "instances": {
@@ -558,7 +591,7 @@
     "description": "手动查询默认条数",
     "type": "int",
     "default": 5,
-    "hint": "用于 /推文 用户名 和 /镜像测试 镜像站 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。",
+    "hint": "用于 /推文 用户名 和 /镜像测试 [用户名] 镜像站URL 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和公共 Nitter 实例压力，建议日常不要一次请求过多。",
     "invisible": true
   },
   "request_timeout": {
@@ -586,7 +619,7 @@
     "description": "发送图片附件",
     "type": "bool",
     "default": true,
-    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；关闭后只保留正文和原帖链接。",
+    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。",
     "invisible": true
   },
   "send_video_attachments": {
@@ -628,13 +661,6 @@
     "type": "float",
     "default": 25.0,
     "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。",
-    "invisible": true
-  },
-  "media_cache_retention_days": {
-    "description": "媒体缓存保留天数",
-    "type": "float",
-    "default": 3.0,
-    "hint": "插件会自动清理 cache/ 中超过该天数的图片、视频和临时文件；设为 0 时，本次下载的图片/视频在发送流程结束后立即删除。",
     "invisible": true
   },
   "xdown_api_url": {
@@ -864,6 +890,41 @@
     "type": "float",
     "default": 0.5,
     "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。",
+    "invisible": true
+  },
+  "concurrent_fetch_enabled": {
+    "description": "启用后台并发拉取",
+    "type": "bool",
+    "default": false,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "fetch_concurrency": {
+    "description": "账号拉取并发数",
+    "type": "int",
+    "default": 3,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "concurrent_fetch_instances": {
+    "description": "并发专用 Nitter 镜像",
+    "type": "list",
+    "default": [],
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "concurrent_prepare_enabled": {
+    "description": "启用媒体和模型并发准备",
+    "type": "bool",
+    "default": false,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
+    "invisible": true
+  },
+  "prepare_concurrency": {
+    "description": "推文准备并发数",
+    "type": "int",
+    "default": 2,
+    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
     "invisible": true
   },
   "merge_tweet_threshold": {

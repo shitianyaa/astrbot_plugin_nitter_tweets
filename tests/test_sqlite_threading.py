@@ -29,7 +29,7 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
-from sqlite_storage import SQLiteStorage
+from storage import SQLiteStorage
 
 
 class SQLiteThreadingTest(unittest.IsolatedAsyncioTestCase):

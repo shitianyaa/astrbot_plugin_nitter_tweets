@@ -22,3 +22,7 @@ class DeliveryAdapter:
     @property
     def should_split_direct_videos(self) -> bool:
         return bool(getattr(self.profile, "should_split_qq_direct_videos", False))
+
+    @property
+    def should_split_direct_images(self) -> bool:
+        return bool(getattr(self.profile, "should_split_qq_direct_images", False))

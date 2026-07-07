@@ -7,35 +7,29 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..config_compat import (
-        TWEET_GROUP_TEMPLATE_KEY,
-        TWEET_GROUP_TEMPLATE_KEY_FIELD,
-        config_get,
-        config_set,
+    from ..config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        set_import_group_users,
+        sync_import_config_groups,
     )
-    from ..group_ids import (
-        DEFAULT_GROUP_ALIASES,
+    from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
-        normalize_group_id,
     )
-    from ..scheduler_config import ScheduleGroup
-    from ..utils import normalize_username
+    from ..scheduler import ScheduleGroup
 except ImportError:
-    from config_compat import (
-        TWEET_GROUP_TEMPLATE_KEY,
-        TWEET_GROUP_TEMPLATE_KEY_FIELD,
-        config_get,
-        config_set,
+    from config.subscriptions import (
+        ensure_default_import_group,
+        normalize_import_username,
+        set_import_group_users,
+        sync_import_config_groups,
     )
-    from group_ids import (
-        DEFAULT_GROUP_ALIASES,
+    from shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
-        normalize_group_id,
     )
-    from scheduler_config import ScheduleGroup
-    from utils import normalize_username
+    from scheduler import ScheduleGroup
 
 
 class SubscriptionCommandMixin:
@@ -73,11 +67,21 @@ class SubscriptionCommandMixin:
     async def _cmd_tweets_export_subscriptions_impl(self, event: AstrMessageEvent):
         """按分组导出已配置的订阅账号。"""
         event.stop_event()
+        groups = self.scheduler.config_reader.schedule_groups(
+            log_invalid_targets=False
+        )
+        total_users = sum(len(group.users) for group in groups)
+        logger.info(
+            "[NitterTweets] 导出订阅配置: "
+            f"groups={len(groups)}, users={total_users}"
+        )
         await event.send(
-            event.plain_result("\n".join(self._export_subscription_lines()))
+            event.plain_result("\n".join(self._export_subscription_lines(groups)))
         )
 
-    async def _cmd_tweets_delete_subscriptions_impl(self, event: AstrMessageEvent, args=GreedyStr):
+    async def _cmd_tweets_delete_subscriptions_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
         """批量删除定时订阅账号，可指定分组。"""
         event.stop_event()
 
@@ -170,10 +174,10 @@ class SubscriptionCommandMixin:
             f"删除分组: {group_label}",
             f"输入项: {len(raw_entries)} 个",
             f"删除: {len(removed)} 个",
-            f"未关注: {len(missing)} 个",
+            f"原本未关注: {len(missing)} 个",
             f"重复输入: {len(duplicate_requests)} 个",
             f"无效: {len(invalid_entries)} 个",
-            f"当前分组关注: {len(remaining_users)} 个",
+            f"操作后分组关注: {len(remaining_users)} 个",
         ]
         if removed:
             lines.append(
@@ -187,10 +191,10 @@ class SubscriptionCommandMixin:
             if sync_error:
                 lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
         else:
-            lines.append("保存结果: 没有删除账号。")
+            lines.append("保存结果: 未改动配置，没有匹配到可删除账号。")
         if missing:
             lines.append(
-                "未关注账号: "
+                "原本未关注账号: "
                 + self._format_limited_values([f"@{user}" for user in missing])
             )
         if duplicate_requests:
@@ -198,6 +202,14 @@ class SubscriptionCommandMixin:
         if invalid_entries:
             lines.append("无效项: " + self._format_limited_values(invalid_entries))
 
+        logger.info(
+            "[NitterTweets] 订阅删除完成: "
+            f"group={group_label}, input={len(raw_entries)}, "
+            f"removed={len(removed)}, missing={len(missing)}, "
+            f"duplicate_input={len(duplicate_requests)}, "
+            f"invalid={len(invalid_entries)}, remaining={len(remaining_users)}, "
+            f"save_error={bool(save_error)}, sync_error={bool(sync_error)}"
+        )
         await event.send(event.plain_result("\n".join(lines)))
 
     async def _cmd_tweets_dedup_impl(self, event: AstrMessageEvent):
@@ -307,9 +319,9 @@ class SubscriptionCommandMixin:
             f"导入分组: {group_label}",
             f"输入项: {len(raw_entries)} 个",
             f"新增: {len(added)} 个",
-            f"重复: {len(duplicates)} 个",
+            f"已存在或重复输入: {len(duplicates)} 个",
             f"无效: {len(invalid_entries)} 个",
-            f"当前分组关注: {len(existing_users) + len(added)} 个",
+            f"操作后分组关注: {len(existing_users) + len(added)} 个",
         ]
         if added:
             lines.append(
@@ -323,12 +335,22 @@ class SubscriptionCommandMixin:
             if sync_error:
                 lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
         else:
-            lines.append("保存结果: 没有新增账号。")
+            lines.append("保存结果: 未改动配置，没有可新增账号。")
         if duplicates:
-            lines.append("重复项: " + self._format_limited_values(duplicates))
+            lines.append(
+                "已存在或重复输入: " + self._format_limited_values(duplicates)
+            )
         if invalid_entries:
             lines.append("无效项: " + self._format_limited_values(invalid_entries))
 
+        logger.info(
+            "[NitterTweets] 订阅导入完成: "
+            f"group={group_label}, input={len(raw_entries)}, "
+            f"added={len(added)}, duplicate_or_existing={len(duplicates)}, "
+            f"invalid={len(invalid_entries)}, "
+            f"total={len(existing_users) + len(added)}, "
+            f"save_error={bool(save_error)}, sync_error={bool(sync_error)}"
+        )
         await event.send(event.plain_result("\n".join(lines)))
 
     def _parse_subscription_import_args(
@@ -433,14 +455,32 @@ class SubscriptionCommandMixin:
         )
         return [f"{group.name} ({group.group_id})" for group in groups]
 
-    def _export_subscription_lines(self) -> list[str]:
-        groups = self.scheduler.config_reader.schedule_groups(
-            log_invalid_targets=False
+    def _export_subscription_lines(
+        self, groups: list[ScheduleGroup] | None = None
+    ) -> list[str]:
+        groups = (
+            self.scheduler.config_reader.schedule_groups(log_invalid_targets=False)
+            if groups is None
+            else groups
         )
-        return [
-            f"{self._export_group_label(group)}: {','.join(group.users)}"
-            for group in groups
+        total_users = sum(len(group.users) for group in groups)
+        lines = [
+            "Nitter 订阅导出",
+            f"分组数: {len(groups)} 个",
+            f"订阅账号: {total_users} 个",
         ]
+        if not groups:
+            lines.append("没有可导出的分组。")
+            return lines
+
+        lines.append("分组账号:")
+        for group in groups:
+            users = ",".join(group.users) if group.users else "（空）"
+            lines.append(
+                f"{self._export_group_label(group)} "
+                f"({group.group_id}, {len(group.users)} 个): {users}"
+            )
+        return lines
 
     @staticmethod
     def _export_group_label(group: ScheduleGroup) -> str:
@@ -467,85 +507,25 @@ class SubscriptionCommandMixin:
     def _set_import_group_users(
         self, group: ScheduleGroup | None, users: list[str]
     ) -> None:
-        if group is None:
-            group = self._ensure_default_import_group()
-
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if isinstance(raw_groups, dict):
-            group_items = [raw_groups]
-        elif isinstance(raw_groups, list):
-            group_items = raw_groups
-        else:
-            group_items = []
-
-        target_group_id = normalize_group_id(group.group_id)
-        for index, raw_group in enumerate(group_items, 1):
-            parsed = self.scheduler.config_reader.parse_schedule_group(
-                raw_group,
-                index,
-                log_invalid_targets=False,
-            )
-            if parsed is None:
-                continue
-            if normalize_group_id(parsed.group_id) != target_group_id:
-                continue
-            raw_group["watch_users"] = users
-            config_set(self.config, "tweet_groups", raw_groups)
-            return
-
-        raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
+        set_import_group_users(
+            self.config,
+            self.scheduler.config_reader,
+            group,
+            users,
+        )
 
     def _ensure_default_import_group(self) -> ScheduleGroup:
-        group = self.scheduler.config_reader.schedule_group(
-            DEFAULT_GROUP_ID, log_invalid_targets=False
+        return ensure_default_import_group(
+            self.config,
+            self.scheduler.config_reader,
         )
-        if group is not None:
-            return group
-
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if isinstance(raw_groups, dict):
-            raw_groups = [raw_groups]
-        elif not isinstance(raw_groups, list):
-            raw_groups = []
-
-        default_group = {
-            TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
-            "name": DEFAULT_GROUP_NAME,
-            "group_id": DEFAULT_GROUP_ID,
-            "aliases": list(DEFAULT_GROUP_ALIASES),
-            "enabled": True,
-            "watch_users": [],
-            "push_targets": [],
-        }
-        raw_groups.insert(0, default_group)
-        config_set(self.config, "tweet_groups", raw_groups)
-
-        parsed = self.scheduler.config_reader.parse_schedule_group(
-            default_group, 1, log_invalid_targets=False
-        )
-        if parsed is None:
-            raise RuntimeError("无法创建默认分组配置")
-        return parsed
 
     async def _sync_import_config_groups(self) -> str:
-        try:
-            schedule_groups = self.scheduler.config_reader.schedule_groups(
-                log_invalid_targets=False
-            )
-            await self.scheduler.storage.migrate_and_sync(schedule_groups)
-        except Exception as exc:
-            logger.warning(f"[NitterTweets] 同步导入订阅失败: {exc}")
-            return str(exc)
-        return ""
+        return await sync_import_config_groups(self.scheduler)
 
     @staticmethod
     def _normalize_import_username(value: str) -> str:
-        value = str(value or "").strip()
-        if value.startswith("@"):
-            value = value[1:].strip()
-        if value.startswith(("http://", "https://")) or "/" in value:
-            return ""
-        return normalize_username(value)
+        return normalize_import_username(value)
 
     @staticmethod
     def _format_limited_values(values: list[str], limit: int = 10) -> str:

@@ -11,9 +11,9 @@ from astrbot.api import logger
 from .extensions import MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, classify_media_path
 
 try:
-    from ..utils import TweetItem, TweetMedia, generate_file_name
+    from ..shared import TweetItem, TweetMedia, generate_file_name
 except ImportError:
-    from utils import TweetItem, TweetMedia, generate_file_name
+    from shared import TweetItem, TweetMedia, generate_file_name
 
 
 @dataclass(slots=True)
@@ -29,9 +29,6 @@ class MediaCacheCleanupResult:
 
 class MediaCacheMixin:
     def cleanup_after_send(self, tweets: list[TweetItem]) -> None:
-        if self.cache_retention_days > 0:
-            return
-
         result = MediaCacheCleanupResult()
         seen_paths: set[Path] = set()
         for tweet in tweets:
@@ -198,6 +195,40 @@ class MediaCacheMixin:
             )
         return result
 
+    def delete_staged_media_group(self, group_id: str) -> MediaCacheCleanupResult:
+        result = MediaCacheCleanupResult()
+        group_root = self.staged_cache_dir / str(group_id or "").strip()
+        if not group_root.exists():
+            return result
+
+        for path in sorted(
+            group_root.rglob("*"),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            if path.is_file():
+                try:
+                    path.unlink()
+                    self._record_removed_media_file(result, path)
+                except OSError as exc:
+                    result.failed += 1
+                    logger.warning(
+                        f"[NitterTweets] 删除分组暂存媒体失败: path={path}, error={exc}"
+                    )
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                    result.removed_empty_dirs += 1
+                except OSError:
+                    pass
+
+        try:
+            group_root.rmdir()
+            result.removed_empty_dirs += 1
+        except OSError:
+            pass
+        return result
+
     def clear_non_staged_cache(self) -> MediaCacheCleanupResult:
         result = MediaCacheCleanupResult()
         seen_dirs: set[Path] = set()
@@ -266,38 +297,6 @@ class MediaCacheMixin:
             except OSError:
                 return removed
             current = current.parent
-
-
-    def cleanup_cache(self, force: bool = False) -> None:
-        if self.cache_retention_days <= 0:
-            return
-
-        now = time.time()
-        if not force and now - self._last_cache_cleanup < self.cache_cleanup_interval:
-            return
-        self._last_cache_cleanup = now
-
-        cutoff = now - self.cache_retention_days * 24 * 60 * 60
-        result = MediaCacheCleanupResult()
-        for path in self.cache_dir.iterdir():
-            if not path.is_file():
-                continue
-            try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
-                    self._record_removed_media_file(result, path)
-            except OSError as exc:
-                result.failed += 1
-                logger.warning(f"[NitterTweets] 清理缓存文件失败: path={path}, error={exc}")
-
-        if result.removed or result.failed:
-            logger.info(
-                "[NitterTweets] 媒体缓存清理完成: "
-                f"共删除 {result.removed} 个过期媒体文件"
-                f"（图片 {result.removed_images}，视频 {result.removed_videos}，"
-                f"其他 {result.removed_other}），失败 {result.failed} 个，"
-                f"保留时间 {self.cache_retention_days:g} 天"
-            )
 
     @staticmethod
     def _record_removed_media_file(

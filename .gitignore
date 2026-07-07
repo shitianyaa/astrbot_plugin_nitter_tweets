@@ -1,8 +1,15 @@
 __pycache__/
 *.py[cod]
+.claude/settings.local.json
+.worktrees/
 cache/
 data/
+diagnostics/
+design_concept/
+docs/superpowers/plans/
+output/
 tests/downloads/
+backups/
 *.db
 *.db-wal
 *.db-shm

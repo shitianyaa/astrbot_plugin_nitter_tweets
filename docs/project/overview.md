@@ -26,17 +26,17 @@
 
 - 插件入口：`main.py`
 - 用户命令：`command_handlers/`
-- 后台调度：`scheduler.py`
+- 后台调度：`scheduler/`
 - Nitter RSS：`media_support/client.py`
 - 媒体：`media_support/service.py`
-- 发送：`sender.py` 和 `delivery/`
-- 配置：`_conf_schema.json`、`config_compat.py`、`scheduler_config.py`
-- 存储：`sqlite_storage.py`、`storage_adapter.py`
+- 发送：`delivery/`
+- 配置：`_conf_schema.json`、`config/`、`scheduler/config.py`
+- 存储：`storage/`
 
 ## 真源
 
 - 配置字段真源：`_conf_schema.json`
-- 配置读取和迁移真源：`config_compat.py`
-- 分组行为真源：`scheduler_config.py`
+- 配置读取和迁移真源：`config/compat.py`
+- 分组行为真源：`scheduler/config.py`
 - 用户说明真源：`README.md` 和 `docs/advanced.md`
 - Agent 维护入口：`AGENTS.md`
