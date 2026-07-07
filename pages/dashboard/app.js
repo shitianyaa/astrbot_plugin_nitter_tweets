@@ -1394,7 +1394,7 @@ function renderHistoryOrphans(payload = state.historyOrphans) {
       ]),
       el("p", {
         className: "muted",
-        text: "这些 group_id 存在于推送历史，但当前配置里已经没有对应分组。删除会清理该 group_id 的推送历史、已见索引和暂存运行数据。",
+        text: "这些 group_id 存在于推送历史，但当前配置里已经没有对应分组。删除会清理该 group_id 的推送历史、防重复推送记录和暂存运行数据。",
       }),
       el("div", { className: "table-wrap" }, [
         el("table", { className: "data-table" }, [
@@ -1857,7 +1857,7 @@ function confirmDeleteHistoryOrphan(groupId) {
   openConfirm({
     kicker: "清理失效分组",
     title: `删除 ${value} 的运行数据？`,
-    desc: "该 group_id 当前不在配置分组里。确认后会删除它的推送历史、已见索引和暂存运行数据，不能恢复。",
+    desc: "该 group_id 当前不在配置分组里。确认后会删除它的推送历史、防重复推送记录和暂存运行数据，不能恢复。",
     confirmText: "删除运行数据",
     action: () =>
       withAction(async () => {

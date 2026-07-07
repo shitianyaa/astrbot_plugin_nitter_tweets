@@ -1687,7 +1687,7 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [None])
         self.assertEqual(plugin.scheduler.storage.delete_legacy_seen_kv_calls, 1)
         self.assertIn("范围: 全部分组", event.messages[-1])
-        self.assertIn("SQLite seen 删除: 12 条", event.messages[-1])
+        self.assertIn("SQLite 推送记录删除: 12 条", event.messages[-1])
 
     async def test_clear_seen_command_clears_named_group(self):
         config = _Config(

@@ -153,7 +153,7 @@ class NitterTweetsPlugin(
 
     @filter.command("镜像测试")
     async def cmd_mirror_probe(self, event: AstrMessageEvent, args=GreedyStr):
-        """测试当前配置的 Nitter 镜像站 RSS 可用性。用法：/镜像测试 [用户名]"""
+        """用临时 Nitter 镜像站测试 RSS。用法：/镜像测试 [用户名] [数量] 镜像站URL"""
         return await self._cmd_mirror_probe_impl(event, args)
 
     @filter.permission_type(filter.PermissionType.ADMIN)

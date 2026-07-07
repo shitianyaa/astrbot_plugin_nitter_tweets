@@ -10,7 +10,7 @@
 
 ### Added
 
-- 新增 AstrBot Plugin Pages 运维面板，可查看概览、关键配置摘要、分组订阅、分组提示、暂存队列、镜像测试和缓存清理；面板不替代 AstrBot 设置页，复杂配置仍在 `_conf_schema.json` 对应配置界面维护。
+- 新增 AstrBot Plugin Pages 运维面板，可查看概览、分组订阅、暂存队列、最近推送、镜像测试和缓存清理；面板不替代 AstrBot 设置页，复杂配置仍在 `_conf_schema.json` 对应配置界面维护。
 - WebUI `分组订阅` 页面改为左侧分组列表 + 右侧详情编辑面板，并新增自定义分组创建、保存和强制删除。
 - WebUI 最近推送历史中的推文链接点击后会复制原推文链接并显示提示；分组 `group_id` 改为内部稳定键，创建和缺失迁移时由插件自动分配。
 - 旧配置中已有的 `group_id` 会继续保留；显式旧 `global` 分组不再被强制改写为 `default`，缺失 ID 但旧运行时已用英文数字名称作为 ID 的分组会继承该名称。
@@ -29,7 +29,7 @@
 - 删除自定义分组时会同步清理对应的 SQLite 运行数据和 `cache/staged/<group_id>/` 暂存媒体目录。
 - 重构代码结构：调度、WebUI API、配置、存储、AI、渲染、共享模型和发送编排分别收敛到 `scheduler/`、`plugin_api/`、`config/`、`storage/`、`ai/`、`rendering/`、`shared/` 和 `delivery/` 包，根目录仅保留插件入口和项目元信息。
 - 后台并发拉取只使用 `concurrent_fetch_instances`，不回退普通 `instances`；专用池内每个镜像总尝试 3 次后再尝试下一个镜像。
-- 启用后台并发拉取或并发准备后，发送、暂存入队和 seen 更新仍按 `watch_users` 与推文原顺序执行。
+- 启用后台并发拉取或并发准备后，发送、暂存入队和推送记录更新仍按 `watch_users` 与推文原顺序执行。
 - 普通图片/视频缓存改为发送流程结束后立即删除，移除 `media_cache_retention_days` 配置；暂存发布媒体仍保留在 `cache/staged/` 并按暂存策略清理。
 - `/推文` 和 `/镜像测试` 继续保留纯文本推文；后台纯文本过滤只按分组开关生效。
 
