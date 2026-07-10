@@ -53,6 +53,16 @@ def _video(resolution: int) -> XdownMediaCandidate:
 
 
 class MediaResolutionTest(unittest.TestCase):
+    def test_grouped_video_duration_config_controls_service_limit(self):
+        service = MediaService(
+            {
+                "max_video_duration_minutes": 8.0,
+                "media": {"max_video_duration_minutes": 3.0},
+            }
+        )
+
+        self.assertEqual(service.max_video_duration_seconds, 180)
+
     def test_media_service_respects_media_urlopen_compat_patch(self):
         service = MediaService({})
         calls = []

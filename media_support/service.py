@@ -12,13 +12,13 @@ from urllib.request import Request
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
+    from ..config import DEFAULT_MAX_VIDEO_DURATION_MINUTES, config_get
     from ..shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )
 except ImportError:
-    from config import config_get
+    from config import DEFAULT_MAX_VIDEO_DURATION_MINUTES, config_get
     from shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
@@ -75,7 +75,11 @@ class MediaService(MediaCacheMixin):
         ).strip().lower()
         self.max_video_duration_seconds = int(
             clamp_float(
-                config_get(config, "max_video_duration_minutes", 8.0),
+                config_get(
+                    config,
+                    "max_video_duration_minutes",
+                    DEFAULT_MAX_VIDEO_DURATION_MINUTES,
+                ),
                 1.0,
                 8.0,
             )
