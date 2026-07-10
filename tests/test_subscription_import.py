@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import types
@@ -151,6 +152,7 @@ if "astrbot.api.all" not in sys.modules:
 from main import NitterTweetsPlugin
 from config import (
     DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
+    DEFAULT_MAX_VIDEO_DURATION_MINUTES,
     LEGACY_CONFIG_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
@@ -432,6 +434,43 @@ class CommandMetadataTest(unittest.TestCase):
 
 
 class ConfigCompatTest(unittest.TestCase):
+    def test_explicit_plugin_versions_are_0_15_0(self):
+        root = Path(__file__).resolve().parents[1]
+        metadata_text = (root / "metadata.yaml").read_text(encoding="utf-8")
+        main_text = (root / "main.py").read_text(encoding="utf-8")
+        readme_text = (root / "README.md").read_text(encoding="utf-8")
+        changelog_text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+
+        metadata_version = re.search(
+            r"^version:\s*([^\s]+)$", metadata_text, re.MULTILINE
+        )
+        main_version = re.search(
+            r'@register\(\s*"astrbot_plugin_nitter_tweets",\s*"[^"]+",\s*"[^"]+",\s*"([^"]+)"',
+            main_text,
+        )
+        readme_version = re.search(
+            r"version-([0-9]+\.[0-9]+\.[0-9]+)-blue", readme_text
+        )
+        changelog_version = re.search(
+            r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]",
+            changelog_text,
+            re.MULTILINE,
+        )
+
+        self.assertIsNotNone(metadata_version)
+        self.assertIsNotNone(main_version)
+        self.assertIsNotNone(readme_version)
+        self.assertIsNotNone(changelog_version)
+        self.assertEqual(
+            [
+                metadata_version.group(1),
+                main_version.group(1),
+                readme_version.group(1),
+                changelog_version.group(1),
+            ],
+            ["0.15.0"] * 4,
+        )
+
     def test_conf_schema_is_grouped(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -456,6 +495,7 @@ class ConfigCompatTest(unittest.TestCase):
             LEGACY_CONFIG_MIGRATION_KEY,
             DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
             MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
+            "_max_video_duration_grouped_config_migrated",
         ]:
             self.assertIn(key, schema)
             self.assertTrue(schema[key]["invisible"])
@@ -491,6 +531,18 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("group_id", group_items)
         self.assertTrue(group_items["group_id"]["invisible"])
 
+    def test_max_video_duration_schema_defaults_match_runtime_default(self):
+        schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        for field in [
+            schema["media"]["items"]["max_video_duration_minutes"],
+            schema["max_video_duration_minutes"],
+        ]:
+            self.assertEqual(
+                field["default"], DEFAULT_MAX_VIDEO_DURATION_MINUTES
+            )
+
     def test_brief_log_config_defaults_enabled_for_old_configs(self):
         self.assertIs(config_get({}, "brief_log_enabled", True), True)
 
@@ -514,6 +566,17 @@ class ConfigCompatTest(unittest.TestCase):
         config = {"basic": {"filter_reposts_enabled": False}}
 
         self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
+
+    def test_config_get_reads_grouped_max_video_duration(self):
+        config = {
+            "max_video_duration_minutes": 8.0,
+            "media": {"max_video_duration_minutes": 3.0},
+        }
+
+        self.assertEqual(
+            config_get(config, "max_video_duration_minutes", 8.0),
+            3.0,
+        )
 
     def test_config_get_reads_grouped_performance_values(self):
         config = {
@@ -555,10 +618,12 @@ class ConfigCompatTest(unittest.TestCase):
         config = _Config(
             {
                 "default_limit": 9,
+                "max_video_duration_minutes": 3.0,
                 "schedule_enabled": True,
                 "watch_users": ["NASA"],
                 "push_targets": ["telegram:FriendMessage:1"],
                 "basic": {"default_limit": 5},
+                "media": {"max_video_duration_minutes": 8.0},
                 "schedule": {"schedule_enabled": False},
                 "push": {"watch_users": [], "push_targets": []},
             }
@@ -574,11 +639,129 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertTrue(config.saved)
         self.assertTrue(config[LEGACY_CONFIG_MIGRATION_KEY])
         self.assertEqual(config["basic"]["default_limit"], 9)
+        self.assertEqual(config["media"]["max_video_duration_minutes"], 3.0)
         self.assertTrue(config["schedule"]["schedule_enabled"])
         self.assertEqual(config["push"]["watch_users"], ["OpenAI"])
         self.assertEqual(
             config["push"]["push_targets"], ["telegram:FriendMessage:1"]
         )
+
+    def test_legacy_group_migration_repairs_late_video_duration_field_once(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "max_video_duration_minutes": 3.0,
+                "media": {"max_video_duration_minutes": 8.0},
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+        config["media"]["max_video_duration_minutes"] = 4.0
+        second_changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertFalse(second_changed)
+        self.assertTrue(config.saved)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"]["max_video_duration_minutes"], 4.0)
+
+    def test_late_video_duration_migration_preserves_custom_grouped_value(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "max_video_duration_minutes": 8.0,
+                "media": {"max_video_duration_minutes": 3.0},
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"]["max_video_duration_minutes"], 3.0)
+
+    def test_late_video_duration_migration_saves_marker_only_once(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "max_video_duration_minutes": 8.0,
+                "media": {"max_video_duration_minutes": 3.0},
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+        self.assertTrue(config.saved)
+        config.saved = False
+        second_changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertFalse(second_changed)
+        self.assertFalse(config.saved)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"]["max_video_duration_minutes"], 3.0)
+
+    def test_late_video_duration_migration_creates_missing_media_group(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "max_video_duration_minutes": 3.0,
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"], {"max_video_duration_minutes": 3.0})
+
+    def test_late_video_duration_migration_replaces_malformed_media_group(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "max_video_duration_minutes": 3.0,
+                "media": "invalid",
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"], {"max_video_duration_minutes": 3.0})
+
+    def test_late_video_duration_migration_normalizes_malformed_media_without_legacy_value(
+        self,
+    ):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "media": "invalid",
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"], {})
+
+    def test_first_group_migration_preserves_custom_video_duration(self):
+        config = _Config(
+            {
+                "max_video_duration_minutes": 8.0,
+                "media": {"max_video_duration_minutes": 3.0},
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config[LEGACY_CONFIG_MIGRATION_KEY])
+        self.assertTrue(config["_max_video_duration_grouped_config_migrated"])
+        self.assertEqual(config["media"]["max_video_duration_minutes"], 3.0)
 
     def test_default_group_migration_leaves_empty_groups_empty(self):
         config = _Config({"tweet_groups": []})

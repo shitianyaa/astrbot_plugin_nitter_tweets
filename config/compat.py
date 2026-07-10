@@ -22,6 +22,10 @@ except ImportError:
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
 DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
+MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
+    "_max_video_duration_grouped_config_migrated"
+)
+DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
 
@@ -36,6 +40,7 @@ CONFIG_GROUP_BY_KEY = {
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "video_resolution_preference": "media",
+    "max_video_duration_minutes": "media",
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
@@ -177,10 +182,13 @@ def config_get(config, key: str, default=None):
 
 
 def migrate_legacy_grouped_config(config) -> bool:
+    changed = _migrate_max_video_duration_grouped_config(config)
     if bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False)):
-        return False
+        save_config = getattr(config, "save_config", None)
+        if changed and callable(save_config):
+            save_config()
+        return changed
 
-    changed = False
     for key in MIGRATABLE_CONFIG_KEYS:
         group_name = CONFIG_GROUP_BY_KEY[key]
         if not _dict_has(config, key):
@@ -204,6 +212,38 @@ def migrate_legacy_grouped_config(config) -> bool:
     if changed and callable(save_config):
         save_config()
     return changed
+
+
+def _migrate_max_video_duration_grouped_config(config) -> bool:
+    if bool(_dict_get(config, MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY, False)):
+        return False
+
+    key = "max_video_duration_minutes"
+    media = _dict_get(config, "media", {})
+    if not isinstance(media, dict):
+        media = {}
+
+    if _dict_has(config, key):
+        legacy_value = _dict_get(config, key)
+        grouped_is_default = key not in media or _numeric_equals(
+            media.get(key), DEFAULT_MAX_VIDEO_DURATION_MINUTES
+        )
+        legacy_is_custom = not _numeric_equals(
+            legacy_value, DEFAULT_MAX_VIDEO_DURATION_MINUTES
+        )
+        if grouped_is_default and legacy_is_custom:
+            media[key] = legacy_value
+
+    config["media"] = media
+    config[MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY] = True
+    return True
+
+
+def _numeric_equals(value, expected: float) -> bool:
+    try:
+        return float(value) == expected
+    except (TypeError, ValueError):
+        return False
 
 
 def migrate_default_group_config(config, *, save: bool = True) -> bool:

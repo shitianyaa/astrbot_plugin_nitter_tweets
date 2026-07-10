@@ -150,6 +150,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、AI 评论、AI 识图
 | `interval_check_enabled` | 是否让该分组参与全局间隔检查；只有 `schedule_enabled` 开启后才会触发。 |
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
 | `deferred_publish_enabled` | 该分组是否启用暂存发布；发布时间和批量上限等使用全局暂存配置。 |
+| `filter_plain_text_enabled` | 是否过滤没有当前作者上传图片、视频或 GIF 的纯文本推文；只影响该分组的后台检查和暂存发布，手动 `/推文`、`/镜像测试` 不受影响。 |
 
 ### 暂存定时发布
 

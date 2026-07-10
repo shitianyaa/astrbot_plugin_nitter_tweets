@@ -571,6 +571,13 @@
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
   },
+  "_max_video_duration_grouped_config_migrated": {
+    "description": "Max video duration grouped config migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
   "storage_backend": {
     "description": "存储后端",
     "type": "string",
