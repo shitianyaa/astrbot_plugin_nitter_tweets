@@ -25,7 +25,7 @@ NitterTweetScheduler
 
 - `@register` 插件注册。
 - 初始化配置迁移。
-- 创建 Nitter、媒体、发送、AI、调度服务。
+- 创建共享 `NetworkClient` 以及 Nitter、媒体、发送、AI、调度服务。
 - 注册 AstrBot 命令。
 - 生命周期启动和停止调度器。
 
@@ -45,11 +45,12 @@ NitterTweetScheduler
 
 1. `NitterClient.fetch_tweets()` 或 `fetch_tweets_with_stats()`
 2. 按实例顺序请求 `/<username>/rss`
-3. 处理 HTTP/SSL/timeout 重试
-4. 解析 RSS item
-5. 过滤转发
-6. 可选过滤纯文本
-7. 根据 cursor 翻页
+3. `NetworkClient` 直连或按启用代理顺序完成整次读取
+4. 处理 HTTP/SSL/timeout 重试
+5. 解析 RSS item
+6. 过滤转发
+7. 可选过滤纯文本
+8. 根据 cursor 翻页
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
@@ -86,8 +87,9 @@ NitterTweetScheduler
 2. xdown 解析候选
 3. 视频/GIF 优先，跳过同条推文里的图片候选
 4. 分辨率、时长、大小限制
-5. 下载到普通缓存或移动到暂存缓存
-6. 普通媒体发送后清理
+5. `NetworkClient` 按代理顺序完整下载，失败尝试会清除临时部分文件
+6. 下载到普通缓存或移动到暂存缓存
+7. 普通媒体发送后清理
 
 升级到发送后删除策略时会自动执行一次普通缓存清理。暂存缓存位于 `cache/staged/<group_id>/<status_id>/`，不能被普通缓存清理误删。
 
@@ -106,7 +108,7 @@ NitterTweetScheduler
 - `scheduler/`: 调度状态机、分组配置、调度结果模型、日志和消息格式。
 - `plugin_api/`: AstrBot Plugin Pages 后端 API 和 WebUI 分组编辑。
 - `delivery/`: `TweetSender`、平台识别和平台适配器。
-- `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
+- `media_support/`: Nitter RSS、代理网络、xdown、媒体下载、缓存和视频探测。
 - `storage/`: SQLite、pending queue、push history、旧 KV seen 迁移。
 - `ai/`: 翻译、AI 识图、AI 评论。
 - `rendering/`: 推文文本、MessageChain、OneBot raw nodes 渲染。

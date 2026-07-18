@@ -506,8 +506,29 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
+        proxy_schema = schema["basic"]["items"]["proxies"]
+        self.assertEqual(proxy_schema["type"], "template_list")
+        self.assertEqual(proxy_schema["default"], [])
+        self.assertEqual(set(proxy_schema["templates"]), {"proxy"})
+        proxy_items = proxy_schema["templates"]["proxy"]["items"]
+        self.assertEqual(
+            list(proxy_items),
+            ["enabled", "type", "host", "port", "username", "password"],
+        )
+        self.assertFalse(proxy_items["enabled"]["default"])
+        self.assertEqual(
+            proxy_items["type"]["options"],
+            ["http", "https", "socks5", "socks5h"],
+        )
+        self.assertNotIn("proxy", schema)
         self.assertNotIn("media_cache_retention_days", schema["media"]["items"])
         self.assertNotIn("media_cache_retention_days", schema)
+        for key, default in [
+            ("media_retry_attempts", 3),
+            ("media_retry_delay_seconds", 5.0),
+        ]:
+            self.assertEqual(schema["media"]["items"][key]["default"], default)
+            self.assertTrue(schema[key]["invisible"])
         performance_items = schema["performance"]["items"]
         for key in [
             "concurrent_fetch_enabled",
@@ -567,6 +588,22 @@ class ConfigCompatTest(unittest.TestCase):
 
         self.assertIs(config_get(config, "filter_reposts_enabled", True), False)
 
+    def test_config_get_reads_grouped_proxy_list(self):
+        proxies = [
+            {
+                "__template_key": "proxy",
+                "enabled": True,
+                "type": "socks5h",
+                "host": "proxy.example",
+                "port": 1080,
+                "username": "user",
+                "password": "secret",
+            }
+        ]
+        config = {"basic": {"proxies": proxies}}
+
+        self.assertEqual(config_get(config, "proxies", []), proxies)
+
     def test_config_get_reads_grouped_max_video_duration(self):
         config = {
             "max_video_duration_minutes": 8.0,
@@ -576,6 +613,21 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(
             config_get(config, "max_video_duration_minutes", 8.0),
             3.0,
+        )
+
+    def test_config_get_reads_grouped_media_retry_values(self):
+        config = {
+            "media_retry_attempts": 2,
+            "media_retry_delay_seconds": 1.0,
+            "media": {
+                "media_retry_attempts": 5,
+                "media_retry_delay_seconds": 0.25,
+            },
+        }
+
+        self.assertEqual(config_get(config, "media_retry_attempts", 3), 5)
+        self.assertEqual(
+            config_get(config, "media_retry_delay_seconds", 5.0), 0.25
         )
 
     def test_config_get_reads_grouped_performance_values(self):
@@ -619,6 +671,8 @@ class ConfigCompatTest(unittest.TestCase):
             {
                 "default_limit": 9,
                 "max_video_duration_minutes": 3.0,
+                "media_retry_attempts": 4,
+                "media_retry_delay_seconds": 1.5,
                 "schedule_enabled": True,
                 "watch_users": ["NASA"],
                 "push_targets": ["telegram:FriendMessage:1"],
@@ -640,6 +694,8 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertTrue(config[LEGACY_CONFIG_MIGRATION_KEY])
         self.assertEqual(config["basic"]["default_limit"], 9)
         self.assertEqual(config["media"]["max_video_duration_minutes"], 3.0)
+        self.assertEqual(config["media"]["media_retry_attempts"], 4)
+        self.assertEqual(config["media"]["media_retry_delay_seconds"], 1.5)
         self.assertTrue(config["schedule"]["schedule_enabled"])
         self.assertEqual(config["push"]["watch_users"], ["OpenAI"])
         self.assertEqual(

@@ -5,6 +5,7 @@ import json
 import ssl
 import time
 from pathlib import Path
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request
@@ -32,7 +33,12 @@ from .extensions import (
     MEDIA_TYPE_VIDEO,
 )
 from . import video_probe
-from .network import compat_urlopen
+from .network import (
+    NetworkClient,
+    ResponseTooLargeError,
+    safe_error_for_log,
+    safe_url_for_log,
+)
 from .xdown import XdownMediaCandidate, XdownMediaParser
 
 
@@ -55,7 +61,8 @@ def _plugin_data_dir() -> Path:
 
 
 class MediaService(MediaCacheMixin):
-    def __init__(self, config):
+    def __init__(self, config, network: NetworkClient | None = None):
+        self.network = network or NetworkClient(config)
         image_config = config_get(config, "send_image_attachments", None)
         if image_config is None:
             image_config = bool(config_get(config, "download_media", True)) and bool(
@@ -107,8 +114,16 @@ class MediaService(MediaCacheMixin):
         self.cache_dir = _plugin_data_dir() / "cache"
         self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.download_retry_attempts = 3
-        self.download_retry_delay_seconds = 5.0
+        retry_attempts = clamp_int(
+            config_get(config, "media_retry_attempts", 3), 1, 10
+        )
+        retry_delay_seconds = clamp_float(
+            config_get(config, "media_retry_delay_seconds", 5.0), 0.0, 60.0
+        )
+        self.resolve_retry_attempts = retry_attempts
+        self.resolve_retry_delay_seconds = retry_delay_seconds
+        self.download_retry_attempts = retry_attempts
+        self.download_retry_delay_seconds = retry_delay_seconds
 
     @property
     def enabled(self) -> bool:
@@ -124,7 +139,10 @@ class MediaService(MediaCacheMixin):
             try:
                 tweet.media = await self.resolve_and_download(tweet)
             except Exception as exc:
-                self._add_media_warning(tweet, f"媒体解析失败，已保留原文链接：{exc}")
+                error = safe_error_for_log(exc, self.xdown_url)
+                self._add_media_warning(
+                    tweet, f"媒体解析失败，已保留原文链接：{error}"
+                )
 
     async def resolve_and_download(self, tweet: TweetItem) -> list[TweetMedia]:
         media_urls = [
@@ -181,10 +199,15 @@ class MediaService(MediaCacheMixin):
                         )
                         continue
                     else:
+                        error = safe_error_for_log(exc, media.url)
                         self._add_media_warning(
-                            tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
+                            tweet, f"视频/GIF 下载失败，已保留原文链接：{error}"
                         )
-                logger.warning(f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}")
+                logger.warning(
+                    "[NitterTweets] 媒体下载失败: "
+                    f"url={safe_url_for_log(media.url)}, "
+                    f"error={safe_error_for_log(exc, media.url)}"
+                )
                 continue
             downloaded.append(media)
         return downloaded
@@ -205,8 +228,9 @@ class MediaService(MediaCacheMixin):
                     break
                 logger.warning(
                     "[NitterTweets] 媒体下载失败，准备重试: "
-                    f"url={media.url}, attempt={attempt}/{attempts}, "
-                    f"delay={delay:g}s, error={exc}"
+                    f"url={safe_url_for_log(media.url)}, "
+                    f"attempt={attempt}/{attempts}, delay={delay:g}s, "
+                    f"error={safe_error_for_log(exc, media.url)}"
                 )
                 if delay > 0:
                     time.sleep(delay)
@@ -225,6 +249,35 @@ class MediaService(MediaCacheMixin):
         log(f"[NitterTweets] {message}: {tweet.x_url}")
 
     def _resolve_media_candidates(self, tweet: TweetItem) -> list[XdownMediaCandidate]:
+        attempts = max(1, int(self.resolve_retry_attempts))
+        delay = max(0.0, float(self.resolve_retry_delay_seconds))
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._resolve_media_candidates_once(tweet)
+            except Exception as exc:
+                if not self._is_retryable_resolve_error(exc):
+                    raise
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                logger.warning(
+                    "[NitterTweets] 媒体解析失败，准备重试: "
+                    f"tweet={safe_url_for_log(tweet.x_url)}, "
+                    f"attempt={attempt}/{attempts}, delay={delay:g}s, "
+                    f"error={safe_error_for_log(exc, self.xdown_url)}"
+                )
+                if delay > 0:
+                    time.sleep(delay)
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("媒体解析失败")
+
+    def _resolve_media_candidates_once(
+        self, tweet: TweetItem
+    ) -> list[XdownMediaCandidate]:
         data = urlencode({"q": tweet.x_url, "lang": "zh-cn"}).encode("utf-8")
         request = Request(
             self.xdown_url,
@@ -238,8 +291,7 @@ class MediaService(MediaCacheMixin):
             },
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
-                raw = response.read(2_000_000)
+            raw = self.network.read(request, self.timeout, 2_000_000).data
         except HTTPError as exc:
             raise RuntimeError(f"xdown HTTP {exc.code}") from exc
         except URLError as exc:
@@ -248,7 +300,9 @@ class MediaService(MediaCacheMixin):
 
         payload = json.loads(raw.decode("utf-8", errors="replace"))
         if payload.get("status") != "ok":
-            return []
+            message = str(payload.get("message") or payload.get("error") or "").strip()
+            detail = f": {message}" if message else ""
+            raise ConnectionError(f"xdown 返回错误状态{detail}")
         html = payload.get("data") or ""
         parser = XdownMediaParser()
         parser.feed(str(html))
@@ -261,7 +315,10 @@ class MediaService(MediaCacheMixin):
             if not kind:
                 kind = XdownMediaParser._detect_kind("", full_url)
             if not kind:
-                logger.info(f"[NitterTweets] 跳过无法识别类型的媒体: url={full_url}")
+                logger.info(
+                    "[NitterTweets] 跳过无法识别类型的媒体: "
+                    f"url={safe_url_for_log(full_url)}"
+                )
                 continue
             result.append(
                 XdownMediaCandidate(
@@ -273,6 +330,19 @@ class MediaService(MediaCacheMixin):
                 )
             )
         return result
+
+    @classmethod
+    def _is_retryable_resolve_error(cls, exc: Exception) -> bool:
+        cause = exc.__cause__
+        if isinstance(cause, HTTPError):
+            return cls._is_retryable_http_status(cause.code)
+        if isinstance(cause, (URLError, TimeoutError, ssl.SSLError, ConnectionError)):
+            return True
+        if isinstance(exc, HTTPError):
+            return cls._is_retryable_http_status(exc.code)
+        if isinstance(exc, (URLError, TimeoutError, ssl.SSLError, ConnectionError)):
+            return True
+        return isinstance(exc, json.JSONDecodeError)
 
     def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
         candidates = self._resolve_media_candidates(tweet)
@@ -448,10 +518,14 @@ class MediaService(MediaCacheMixin):
             },
         )
         try:
-            with compat_urlopen(request, min(self.timeout, 10.0)) as response:
-                data = response.read(1_048_576)
+            data = self.network.read(
+                request, min(self.timeout, 10.0), 1_048_576
+            ).data
         except Exception as exc:
-            logger.debug(f"[NitterTweets] 探测视频时长失败: {exc}")
+            logger.debug(
+                "[NitterTweets] 探测视频时长失败: "
+                f"{safe_error_for_log(exc, url)}"
+            )
             return None
         return self._probe_mp4_duration(data)
 
@@ -502,7 +576,9 @@ class MediaService(MediaCacheMixin):
             file_path.touch()
             return file_path
 
-        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        temp_path = file_path.with_name(
+            f"{file_path.name}.{uuid4().hex}.tmp"
+        )
         request = Request(
             media.url,
             headers={
@@ -511,21 +587,15 @@ class MediaService(MediaCacheMixin):
             },
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
-                content_length = response.headers.get("Content-Length")
-                if content_length and int(content_length) > self.max_bytes:
-                    raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)
-
-                downloaded = 0
-                with temp_path.open("wb") as file:
-                    while True:
-                        chunk = response.read(1024 * 256)
-                        if not chunk:
-                            break
-                        downloaded += len(chunk)
-                        if downloaded > self.max_bytes:
-                            raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)
-                        file.write(chunk)
+            try:
+                self.network.download(
+                    request,
+                    self.timeout,
+                    temp_path,
+                    self.max_bytes,
+                )
+            except ResponseTooLargeError as exc:
+                raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR) from exc
 
             if temp_path.stat().st_size <= 0:
                 raise RuntimeError("empty media")

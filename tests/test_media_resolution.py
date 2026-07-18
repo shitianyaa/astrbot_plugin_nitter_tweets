@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -53,6 +55,23 @@ def _video(resolution: int) -> XdownMediaCandidate:
 
 
 class MediaResolutionTest(unittest.TestCase):
+    def test_grouped_media_retry_config_controls_resolve_and_download(self):
+        service = MediaService(
+            {
+                "media_retry_attempts": 2,
+                "media_retry_delay_seconds": 1.0,
+                "media": {
+                    "media_retry_attempts": 5,
+                    "media_retry_delay_seconds": 0.25,
+                },
+            }
+        )
+
+        self.assertEqual(service.resolve_retry_attempts, 5)
+        self.assertEqual(service.download_retry_attempts, 5)
+        self.assertEqual(service.resolve_retry_delay_seconds, 0.25)
+        self.assertEqual(service.download_retry_delay_seconds, 0.25)
+
     def test_grouped_video_duration_config_controls_service_limit(self):
         service = MediaService(
             {
@@ -91,6 +110,53 @@ class MediaResolutionTest(unittest.TestCase):
 
         self.assertEqual(candidates, [])
         self.assertEqual(calls[0][0], service.xdown_url)
+
+    def test_media_resolve_retries_transient_errors(self):
+        service = MediaService({"media_retry_attempts": 3})
+        service.resolve_retry_delay_seconds = 0
+        calls = []
+
+        def flaky_resolve(_tweet):
+            calls.append(True)
+            if len(calls) < 3:
+                raise URLError("temporary xdown failure")
+            return []
+
+        service._resolve_media_candidates_once = flaky_resolve
+
+        self.assertEqual(service._resolve_media_candidates(_tweet()), [])
+        self.assertEqual(len(calls), 3)
+
+    def test_media_resolve_does_not_retry_non_transient_http_errors(self):
+        service = MediaService({"media_retry_attempts": 3})
+        service.resolve_retry_delay_seconds = 0
+        calls = []
+
+        def fail_not_found(_tweet):
+            calls.append(True)
+            raise HTTPError(service.xdown_url, 404, "Not Found", {}, None)
+
+        service._resolve_media_candidates_once = fail_not_found
+
+        with self.assertRaises(HTTPError):
+            service._resolve_media_candidates(_tweet())
+        self.assertEqual(len(calls), 1)
+
+    def test_media_resolve_retries_xdown_error_status(self):
+        service = MediaService({"media_retry_attempts": 3})
+        service.resolve_retry_delay_seconds = 0
+        responses = [
+            b'{"status":"error","message":"temporarily unavailable"}',
+            b'{"status":"error","message":"temporarily unavailable"}',
+            b'{"status":"ok","data":""}',
+        ]
+
+        service.network.read = lambda *_args: types.SimpleNamespace(
+            data=responses.pop(0)
+        )
+
+        self.assertEqual(service._resolve_media_candidates(_tweet()), [])
+        self.assertEqual(responses, [])
 
     def test_default_highest_keeps_one_video_and_ignores_images(self):
         service = MediaService({})
@@ -346,6 +412,96 @@ class MediaResolutionTest(unittest.TestCase):
 
         self.assertEqual(media, [])
         self.assertEqual(len(calls), 1)
+
+    def test_media_download_logs_strip_signed_query_parameters(self):
+        service = MediaService(
+            {
+                "send_image_attachments": True,
+                "media_retry_attempts": 1,
+            }
+        )
+        tweet = _tweet()
+        media_url = "https://cdn.example.test/image.jpg?token=signed-value"
+        service._resolve_media_urls = lambda _tweet: [TweetMedia("image", media_url)]
+        service._download = lambda _media: (_ for _ in ()).throw(
+            URLError(f"failed {media_url}")
+        )
+        warnings = []
+
+        with patch.object(service_module.logger, "warning", warnings.append):
+            media = asyncio.run(service.resolve_and_download(tweet))
+
+        self.assertEqual(media, [])
+        output = "\n".join(str(item) for item in warnings)
+        self.assertIn("https://cdn.example.test/image.jpg", output)
+        self.assertNotIn("token=", output)
+        self.assertNotIn("signed-value", output)
+
+    def test_concurrent_same_url_failure_does_not_delete_successful_download(self):
+        first_started = threading.Event()
+        success_written = threading.Event()
+        failure_cleaned = threading.Event()
+
+        class _CoordinatedNetwork:
+            def __init__(self):
+                self.calls = 0
+                self.destinations = []
+                self.lock = threading.Lock()
+
+            def download(self, request, timeout, destination, max_bytes):
+                del request, timeout, max_bytes
+                with self.lock:
+                    self.calls += 1
+                    call = self.calls
+                    self.destinations.append(destination)
+                if call == 1:
+                    destination.write_bytes(b"partial")
+                    first_started.set()
+                    self.assert_event(success_written)
+                    destination.unlink(missing_ok=True)
+                    failure_cleaned.set()
+                    raise URLError("connection dropped")
+
+                destination.write_bytes(b"complete")
+                success_written.set()
+                self.assert_event(failure_cleaned)
+                return {}
+
+            @staticmethod
+            def assert_event(event):
+                if not event.wait(5):
+                    raise TimeoutError("concurrent download test timed out")
+
+        network = _CoordinatedNetwork()
+        service = MediaService({"send_image_attachments": True}, network)
+        media = TweetMedia("image", "https://example.test/shared.jpg")
+        results = []
+        errors = []
+
+        def download():
+            try:
+                results.append(service._download(media))
+            except Exception as exc:
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service.cache_dir = Path(temp_dir)
+            failed_thread = threading.Thread(target=download)
+            failed_thread.start()
+            self.assertTrue(first_started.wait(5))
+            successful_thread = threading.Thread(target=download)
+            successful_thread.start()
+            failed_thread.join(5)
+            successful_thread.join(5)
+
+            self.assertFalse(failed_thread.is_alive())
+            self.assertFalse(successful_thread.is_alive())
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].read_bytes(), b"complete")
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], URLError)
+            self.assertEqual(len(set(network.destinations)), 2)
+            self.assertEqual(list(service.cache_dir.glob("*.tmp")), [])
 
     def test_attach_media_uses_existing_media_urls_without_resolving_again(self):
         service = MediaService({"send_image_attachments": True})

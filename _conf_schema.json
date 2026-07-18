@@ -2,7 +2,7 @@
   "basic": {
     "description": "基础设置",
     "type": "object",
-    "hint": "Nitter 请求、存储和手动查询的基础配置。",
+    "hint": "Nitter 请求、可选代理、存储和手动查询的基础配置。",
     "items": {
       "storage_backend": {
         "description": "存储后端",
@@ -47,6 +47,63 @@
         "type": "bool",
         "default": true,
         "hint": "开启后会过滤订阅账号转发他人的推文；博主自己发布的引用或评论推文仍会保留。老配置缺少该项时按开启处理。"
+      },
+      "proxies": {
+        "description": "代理列表",
+        "type": "template_list",
+        "default": [],
+        "hint": "可选。启用的代理按添加顺序尝试，当前代理连接、认证或传输失败时切换下一条；全部失败后报错，不回退直连。列表为空或全部关闭时保持原有网络行为。",
+        "templates": {
+          "proxy": {
+            "name": "代理",
+            "display_item": "host",
+            "hide_hint_in_list": true,
+            "items": {
+              "enabled": {
+                "description": "启用代理",
+                "type": "bool",
+                "default": false,
+                "hint": "填写并确认其余字段后再开启。"
+              },
+              "type": {
+                "description": "代理类型",
+                "type": "string",
+                "default": "http",
+                "options": [
+                  "http",
+                  "https",
+                  "socks5",
+                  "socks5h"
+                ],
+                "hint": "http 支持通过 CONNECT 访问 HTTPS 目标；https 表示客户端先与代理建立 TLS；socks5 在本地解析域名，socks5h 由代理端解析域名。"
+              },
+              "host": {
+                "description": "代理主机",
+                "type": "string",
+                "default": "",
+                "hint": "填写主机名、IPv4 或 IPv6，不要包含协议、路径或账号密码。"
+              },
+              "port": {
+                "description": "代理端口",
+                "type": "int",
+                "default": 7890,
+                "hint": "有效范围 1-65535。"
+              },
+              "username": {
+                "description": "代理用户名",
+                "type": "string",
+                "default": "",
+                "hint": "可选。不认证时与密码都留空；HTTP/HTTPS Basic 认证仅支持 Latin-1 字符，SOCKS 认证必须同时填写用户名和密码。"
+              },
+              "password": {
+                "description": "代理密码",
+                "type": "string",
+                "default": "",
+                "hint": "可选。HTTP/HTTPS Basic 认证仅支持 Latin-1 字符；SOCKS 认证必须同时填写用户名和密码，且各自不超过 127 个 UTF-8 字节。AstrBot 当前按普通字符串保存和展示插件配置，请勿分享包含该字段的配置文件或截图。插件日志不会输出代理用户名和密码。"
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -88,7 +145,20 @@
       "media_timeout": {
         "description": "媒体解析/下载超时秒数",
         "type": "float",
-        "default": 25.0
+        "default": 25.0,
+        "hint": "用于 xdown 解析、视频探测和单次媒体传输的连接/读取超时，范围 5-120 秒。"
+      },
+      "media_retry_attempts": {
+        "description": "媒体网络重试次数",
+        "type": "int",
+        "default": 3,
+        "hint": "xdown 解析和媒体下载遇到临时网络错误时的总尝试次数，范围 1-10。每次下载重试都会从头开始，不是断点续传。"
+      },
+      "media_retry_delay_seconds": {
+        "description": "媒体重试间隔秒数",
+        "type": "float",
+        "default": 5.0,
+        "hint": "xdown 解析和媒体下载两次尝试之间的固定等待时间，范围 0-60 秒。代理列表内部切换不额外等待。"
       },
       "media_max_size_mb": {
         "description": "单个媒体大小上限 MB",
@@ -661,6 +731,21 @@
     "description": "媒体解析/下载超时秒数",
     "type": "float",
     "default": 25.0,
+    "hint": "用于 xdown 解析、视频探测和单次媒体传输的连接/读取超时，范围 5-120 秒。",
+    "invisible": true
+  },
+  "media_retry_attempts": {
+    "description": "媒体网络重试次数",
+    "type": "int",
+    "default": 3,
+    "hint": "xdown 解析和媒体下载遇到临时网络错误时的总尝试次数，范围 1-10。每次下载重试都会从头开始，不是断点续传。",
+    "invisible": true
+  },
+  "media_retry_delay_seconds": {
+    "description": "媒体重试间隔秒数",
+    "type": "float",
+    "default": 5.0,
+    "hint": "xdown 解析和媒体下载两次尝试之间的固定等待时间，范围 0-60 秒。代理列表内部切换不额外等待。",
     "invisible": true
   },
   "media_max_size_mb": {

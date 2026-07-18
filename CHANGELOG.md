@@ -4,7 +4,16 @@
 
 ## [Unreleased]
 
-暂无。
+### Added
+
+- 基础设置新增 `proxies` 代理列表，支持 HTTP、HTTPS、SOCKS5、SOCKS5h、用户名密码认证和多条顺序故障切换，覆盖 Nitter RSS、xdown、视频探测与媒体下载。
+- 新增 `scripts/probe_proxy_fetch.py`，可用单条显式代理验证 Nitter RSS、xdown 和媒体下载完整链路。
+- 新增媒体网络重试次数和间隔配置，统一控制 xdown 解析与媒体下载重试。
+
+### Fixed
+
+- 并发下载同一媒体时改用调用独占的临时文件，避免失败任务删除另一任务的完整下载结果。
+- xdown 解析遇到临时网络错误时会按媒体重试配置再次尝试；媒体日志不再输出下载 URL 查询参数。
 
 ## [0.15.0] - 2026-07-10
 

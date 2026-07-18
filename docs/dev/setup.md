@@ -7,7 +7,7 @@
 - `pytest`
 - `ruff`
 
-依赖文件 `requirements.txt` 目前为空白占位。不要随意新增运行时依赖；优先使用标准库和现有模块。
+运行时依赖由 `requirements.txt` 声明。代理请求使用 `requests`，SOCKS5/SOCKS5h 通过 Requests 官方支持的 `PySocks` 后端实现；更新依赖后需要执行 `python -m pip check`。
 
 ## 常用目录
 
@@ -28,6 +28,7 @@ RSS 抓取：
 python scripts/probe_nitter_fetch.py nasa 5
 python scripts/probe_nitter_fetch.py nasa 5 --include-reposts
 python scripts/probe_nitter_fetch.py nasa 5 --skip-plain-text
+python scripts/probe_proxy_fetch.py socks5h://127.0.0.1:1080
 ```
 
 视频下载：
@@ -35,6 +36,8 @@ python scripts/probe_nitter_fetch.py nasa 5 --skip-plain-text
 ```powershell
 python scripts/test_video_download.py
 ```
+
+`probe_proxy_fetch.py` 默认抓取 `nasa` 1 条带作者媒体的推文，并用同一个显式代理完成 RSS、xdown 和媒体下载。下载使用隔离临时目录，除非传入 `--keep-dir`，否则结束后不会保留媒体文件。
 
 ## 运行数据
 

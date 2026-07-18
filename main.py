@@ -18,7 +18,7 @@ try:
         migrate_legacy_grouped_config,
     )
     from .ai import TweetEnricher, TweetTranslator
-    from .media_support import MediaService, NitterClient
+    from .media_support import MediaService, NetworkClient, NitterClient
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
     from .delivery import TweetSender
@@ -36,7 +36,7 @@ except ImportError:
         migrate_legacy_grouped_config,
     )
     from ai import TweetEnricher, TweetTranslator
-    from media_support import MediaService, NitterClient
+    from media_support import MediaService, NetworkClient, NitterClient
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
     from delivery import TweetSender
@@ -61,8 +61,9 @@ class NitterTweetsPlugin(
         self.config = config
         migrate_legacy_grouped_config(self.config)
         migrate_default_group_config(self.config)
-        self.nitter = NitterClient(config)
-        self.media = MediaService(config)
+        self.network = NetworkClient(config)
+        self.nitter = NitterClient(config, self.network)
+        self.media = MediaService(config, self.network)
         self._cleanup_legacy_media_cache_once()
         self.sender = TweetSender(config)
         self.translator = TweetTranslator(context, config)

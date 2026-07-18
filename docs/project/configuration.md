@@ -4,7 +4,7 @@
 
 ## 分组
 
-- `basic`: Nitter 实例、默认数量、冷却、基础平台字段。
+- `basic`: Nitter 实例、代理列表、默认数量、冷却、基础平台字段。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: 翻译。
 - `ai_comment`: AI 评论。
@@ -32,16 +32,34 @@
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 
+## `proxies`
+
+`proxies` 位于 `basic`，使用 AstrBot `template_list`，模板键为 `proxy`。列表项包含：
+
+- `enabled`: 是否启用。
+- `type`: `http`、`https`、`socks5`、`socks5h`。
+- `host`, `port`: 代理地址。
+- `username`, `password`: 可选用户名密码认证；HTTP/HTTPS 遵循 Basic Latin-1 限制，SOCKS 两项必须同时填写。
+
+运行时由 `NetworkClient` 解析一次并保持原列表顺序。配置了启用代理时不回退直连；无启用代理时沿用原有网络行为。用户名和密码不得进入日志。该字段是全新配置，没有旧扁平发布事实，不加入 `MIGRATABLE_CONFIG_KEYS`。
+
+## 媒体重试
+
+- `media_retry_attempts`: xdown 解析和单个媒体下载的最大尝试次数，默认 `3`，范围 `1-10`。
+- `media_retry_delay_seconds`: 两次尝试之间的等待秒数，默认 `5`，范围 `0-60`。
+
+两项位于 `media` 分组，同时保留顶层 invisible 兼容读取。下载重试会删除失败的 UUID 临时文件并从头下载，不进行断点续传；这是为了避免签名 CDN URL 或不稳定 `Range` 支持造成文件拼接损坏。
+
 ## 新增配置项清单
 
 新增字段必须同步：
 
 - `_conf_schema.json`
 - `config.compat.CONFIG_GROUP_BY_KEY`
-- `config.compat.MIGRATABLE_CONFIG_KEYS`
-- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`
-- `scheduler.config.ScheduleGroup`
-- `SchedulerConfigReader.parse_schedule_group()`
+- `config.compat.MIGRATABLE_CONFIG_KEYS`（需要兼容旧扁平全局字段时）
+- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`（需要迁移旧默认分组字段时）
+- `scheduler.config.ScheduleGroup`（新增调度或 `tweet_groups` 字段时）
+- `SchedulerConfigReader.parse_schedule_group()`（新增调度或 `tweet_groups` 字段时）
 - README 或 `docs/advanced.md`
 - `tests/test_subscription_import.py`
 

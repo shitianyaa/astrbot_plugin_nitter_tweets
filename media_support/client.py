@@ -25,7 +25,7 @@ except ImportError:
         TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
     )
 
-from .network import compat_urlopen
+from .network import NetworkClient
 
 
 class TransientFetchError(RuntimeError):
@@ -195,7 +195,8 @@ class FetchAttemptBudget:
 
 
 class NitterClient:
-    def __init__(self, config):
+    def __init__(self, config, network: NetworkClient | None = None):
+        self.network = network or NetworkClient(config)
         self.instances = load_instances(config_get(config, "instances"))
         self.timeout = clamp_float(
             config_get(config, "request_timeout", 12.0), 3.0, 60.0
@@ -564,9 +565,9 @@ class NitterClient:
             },
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
-                data = response.read(2_000_000)
-                next_cursor = self._header_value(response.headers, "Min-Id")
+            response = self.network.read(request, self.timeout, 2_000_000)
+            data = response.data
+            next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:
             message = f"HTTP {exc.code}"
             if self._is_retryable_http_status(exc.code):

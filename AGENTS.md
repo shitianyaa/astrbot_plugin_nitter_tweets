@@ -39,6 +39,7 @@
   - `formatting.py`: 调度日志和消息格式。
 - `config/compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
 - `media_support/client.py`: Nitter RSS 抓取、分页、转发过滤、纯文本过滤。
+- `media_support/network.py`: 直接请求、代理配置解析、认证和多代理故障切换。
 - `media_support/service.py`: xdown 解析、媒体候选归一化、下载、视频时长/分辨率限制。
 - `media_support/cache.py`: 普通缓存、暂存缓存、发送后清理。
 - `media_support/extensions.py`: 媒体类型和扩展名分类。
@@ -61,6 +62,7 @@
 - `_conf_schema.json`: AstrBot WebUI 配置 schema。
 - `README.md`, `docs/advanced.md`, `CHANGELOG.md`: 用户文档。
 - `scripts/probe_nitter_fetch.py`: 本地诊断 Nitter RSS 抓取。
+- `scripts/probe_proxy_fetch.py`: 使用单条显式代理诊断 RSS、xdown 和媒体下载完整链路。
 
 ## 必守规则
 
@@ -80,12 +82,12 @@
 - `config.compat.CONFIG_GROUP_BY_KEY`，如果是分组后的全局配置
 - `config.compat.MIGRATABLE_CONFIG_KEYS`，如果需要从旧扁平配置迁移
 - `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`，如果是默认分组旧字段
-- `scheduler.config.ScheduleGroup` 和 `SchedulerConfigReader`
+- `scheduler.config.ScheduleGroup` 和 `SchedulerConfigReader`，如果是调度或 `tweet_groups` 字段
 - README 或 `docs/advanced.md`
 - `tests/test_subscription_import.py`
 
 配置分层约定：
-- `basic`: Nitter、默认数量、冷却、平台基础项。
+- `basic`: Nitter、代理列表、默认数量、冷却、平台基础项。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`, `ai_comment`, `ai_vision`: AI 相关。
 - `schedule`: 后台检查总开关、全局检查频率。
@@ -252,6 +254,7 @@ RSS 抓取：
 python scripts/probe_nitter_fetch.py nasa 5
 python scripts/probe_nitter_fetch.py nasa 5 --skip-plain-text
 python scripts/probe_nitter_fetch.py nasa 5 --include-reposts
+python scripts/probe_proxy_fetch.py socks5h://127.0.0.1:1080
 ```
 
 视频下载诊断：
