@@ -119,8 +119,9 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、AI 评论、AI 识图
 
 #### 代理列表
 
-每项代理包含 `enabled`、`type`、`host`、`port`、`username`、`password`：
+每项代理包含 `name`、`enabled`、`type`、`host`、`port`、`username`、`password`：
 
+- `name` 仅用于设置页列表显示和区分代理，例如“香港主代理”“备用 SOCKS”，不参与网络请求。
 - `type` 支持 `http`、`https`、`socks5`、`socks5h`。HTTP 代理可通过 `CONNECT` 访问 HTTPS 目标；HTTPS 代理表示客户端先与代理建立 TLS；`socks5` 在本地解析域名，`socks5h` 由代理端解析域名。
 - 不认证时用户名和密码都留空。HTTP/HTTPS 使用 Basic 认证，凭据仅支持 Latin-1 字符；SOCKS5 使用用户名密码认证，必须同时填写两项且各自不超过 127 个 UTF-8 字节。不额外实现 Digest、NTLM、Kerberos 等企业认证协议。
 - 仅启用且主机、端口、类型有效的项参与请求，并按添加顺序尝试。连接、代理认证或响应传输失败时会完整重试下一条；目标站返回普通 HTTP 业务错误、媒体超过大小限制时不切换。

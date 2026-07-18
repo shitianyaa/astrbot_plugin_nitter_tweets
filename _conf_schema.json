@@ -56,9 +56,15 @@
         "templates": {
           "proxy": {
             "name": "代理",
-            "display_item": "host",
+            "display_item": "name",
             "hide_hint_in_list": true,
             "items": {
+              "name": {
+                "description": "代理名称",
+                "type": "string",
+                "default": "",
+                "hint": "仅用于设置页区分代理，例如 香港主代理、备用 SOCKS；不参与网络请求。"
+              },
               "enabled": {
                 "description": "启用代理",
                 "type": "bool",

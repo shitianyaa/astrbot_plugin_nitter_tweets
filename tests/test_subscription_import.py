@@ -513,8 +513,9 @@ class ConfigCompatTest(unittest.TestCase):
         proxy_items = proxy_schema["templates"]["proxy"]["items"]
         self.assertEqual(
             list(proxy_items),
-            ["enabled", "type", "host", "port", "username", "password"],
+            ["name", "enabled", "type", "host", "port", "username", "password"],
         )
+        self.assertEqual(proxy_schema["templates"]["proxy"]["display_item"], "name")
         self.assertFalse(proxy_items["enabled"]["default"])
         self.assertEqual(
             proxy_items["type"]["options"],

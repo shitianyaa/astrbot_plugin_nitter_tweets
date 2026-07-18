@@ -36,6 +36,7 @@
 
 `proxies` 位于 `basic`，使用 AstrBot `template_list`，模板键为 `proxy`。列表项包含：
 
+- `name`: 设置页显示名称，仅用于区分代理，不参与请求。
 - `enabled`: 是否启用。
 - `type`: `http`、`https`、`socks5`、`socks5h`。
 - `host`, `port`: 代理地址。
