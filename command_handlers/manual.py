@@ -190,7 +190,6 @@ class ManualCommandMixin:
                 username,
                 tweets,
                 translation_report,
-                None,
                 progress_index,
                 progress_total,
             )
@@ -201,7 +200,6 @@ class ManualCommandMixin:
         username: str,
         tweets,
         translation_report=None,
-        enrich_report=None,
         progress_index: int = 0,
         progress_total: int = 0,
     ) -> None:
@@ -213,7 +211,6 @@ class ManualCommandMixin:
                     username,
                     tweet,
                     translation_report,
-                    enrich_report,
                     start + offset,
                     total,
                 )

@@ -19,6 +19,7 @@
 - 后台检查发现新推文后统一即时推送；QQ/aiocqhttp 仍可按 `merge_tweet_threshold` 合并转发。
 - AI 处理仅保留翻译；`metadata.yaml`、运维面板文案与 agent/项目文档同步为当前能力边界。
 - 回补最小调度与平台发送回归：seen watermark、发送失败不写 seen、QQ 合并顺序、Telegram flood control。
+- 清理删除后的死字段与兼容别名：`queued_tweets` / `pending_ids` / `image_caption` / `ai_comment`、`clear_non_staged_cache` 与 enrichment 日志参数。
 
 ## [0.15.0] - 2026-07-10
 

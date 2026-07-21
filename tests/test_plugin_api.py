@@ -285,7 +285,6 @@ class _CheckResult:
         self.group_name = "科技"
         self.skipped_reason = ""
         self.new_tweet_count = 2
-        self.queued_tweet_count = 0
         self.pushed_target_successes = 1
         self.pushed_target_attempts = 1
 

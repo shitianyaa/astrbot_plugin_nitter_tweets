@@ -137,12 +137,12 @@ class MediaCleanupTest(unittest.TestCase):
             cache_dir.mkdir()
             image = cache_dir / "image.jpg"
             temp = cache_dir / "video.mp4.tmp"
-            staged_dir = cache_dir / "staged"
-            staged_dir.mkdir()
-            staged_image = staged_dir / "queued.jpg"
+            nested_dir = cache_dir / "nested"
+            nested_dir.mkdir()
+            nested_image = nested_dir / "extra.jpg"
             image.write_bytes(b"image")
             temp.write_bytes(b"temp")
-            staged_image.write_bytes(b"queued")
+            nested_image.write_bytes(b"extra")
             service = MediaService({})
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
@@ -154,8 +154,8 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertEqual(result.removed_empty_dirs, 1)
             self.assertFalse(image.exists())
             self.assertFalse(temp.exists())
-            self.assertFalse(staged_image.exists())
-            self.assertFalse(staged_dir.exists())
+            self.assertFalse(nested_image.exists())
+            self.assertFalse(nested_dir.exists())
 
     def test_clear_cache_also_clears_legacy_cache_files_and_subdirectories(self):
         with TemporaryDirectory() as temp_dir:
@@ -165,12 +165,12 @@ class MediaCleanupTest(unittest.TestCase):
             legacy_cache_dir.mkdir()
             current_image = cache_dir / "image.jpg"
             legacy_video = legacy_cache_dir / "video.mp4"
-            legacy_staged_dir = legacy_cache_dir / "staged"
-            legacy_staged_dir.mkdir()
-            legacy_staged_video = legacy_staged_dir / "queued.mp4"
+            legacy_nested_dir = legacy_cache_dir / "nested"
+            legacy_nested_dir.mkdir()
+            legacy_nested_video = legacy_nested_dir / "extra.mp4"
             current_image.write_bytes(b"image")
             legacy_video.write_bytes(b"video")
-            legacy_staged_video.write_bytes(b"queued")
+            legacy_nested_video.write_bytes(b"extra")
             service = MediaService({})
             service.cache_dir = cache_dir
             service.legacy_cache_dir = legacy_cache_dir
@@ -182,8 +182,8 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertEqual(result.removed_empty_dirs, 1)
             self.assertFalse(current_image.exists())
             self.assertFalse(legacy_video.exists())
-            self.assertFalse(legacy_staged_video.exists())
-            self.assertFalse(legacy_staged_dir.exists())
+            self.assertFalse(legacy_nested_video.exists())
+            self.assertFalse(legacy_nested_dir.exists())
 
 
 

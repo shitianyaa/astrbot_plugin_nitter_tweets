@@ -990,8 +990,6 @@ class SQLiteStorage:
                 "media_warnings": tweet.media_warnings,
                 "ai_warnings": tweet.ai_warnings,
                 "translation": tweet.translation,
-                "image_caption": tweet.image_caption,
-                "ai_comment": tweet.ai_comment,
             },
             ensure_ascii=False,
         )
@@ -1027,8 +1025,6 @@ class SQLiteStorage:
                 if str(item)
             ],
             translation=str(data.get("translation") or ""),
-            image_caption=str(data.get("image_caption") or ""),
-            ai_comment=str(data.get("ai_comment") or ""),
         )
         return tweet
 

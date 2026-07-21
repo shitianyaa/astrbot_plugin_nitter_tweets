@@ -95,7 +95,6 @@ def format_ai_tweet_summary(
     username: str,
     tweet: TweetItem,
     translation_report: TranslationReport | None = None,
-    enrichment_report=None,
     index: int = 1,
     total: int = 1,
 ) -> str:

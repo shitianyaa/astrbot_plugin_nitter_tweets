@@ -76,10 +76,6 @@ class MediaCacheMixin:
         )
         return result
 
-    # Backward-compatible alias for older call sites.
-    def clear_non_staged_cache(self) -> MediaCacheCleanupResult:
-        return self.clear_cache()
-
     @staticmethod
     def _clear_cache_dir(
         cache_dir: Path, result: MediaCacheCleanupResult

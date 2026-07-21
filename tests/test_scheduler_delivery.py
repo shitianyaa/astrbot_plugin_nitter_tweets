@@ -307,24 +307,13 @@ class _NoConcurrentNitter(_MultiUserNitter):
 class _Media:
     def __init__(self):
         self.attached = 0
-        self.moved = 0
         self.cleaned = 0
-        self.staged_cleaned = 0
 
     async def attach_media(self, tweets):
         self.attached += len(tweets)
 
-    async def move_tweets_media_to_staged(self, group_id, username, tweets, interval):
-        self.moved += len(tweets)
-
     def cleanup_after_send(self, tweets):
         self.cleaned += len(tweets)
-
-    def cleanup_expired_staged_media(self, retention_hours, protected_paths=None):
-        return None
-
-    def cleanup_staged_media_for_tweets(self, tweets):
-        self.staged_cleaned += len(tweets)
 
 
 class _RecordingMedia(_Media):
@@ -377,21 +366,6 @@ class _OutOfOrderTranslator(_Translator):
         self.events.append(f"translate_done:{status_id}")
         await super().attach_translations(tweets, target)
 
-
-class _RecordingEnricher:
-    def __init__(self, events, fail_status_ids=None):
-        self.events = events
-        self.fail_status_ids = set(fail_status_ids or [])
-
-    async def attach_enrichments(self, tweets, target):
-        status_ids = [tweet.status_id for tweet in tweets]
-        self.events.append("enrich:" + ",".join(status_ids))
-        failed = self.fail_status_ids.intersection(status_ids)
-        if failed:
-            raise RuntimeError(f"enrich failed: {','.join(sorted(failed))}")
-        for tweet in tweets:
-            tweet.ai_comment = "comment"
-        return types.SimpleNamespace(visible_notices=lambda: [])
 
 
 class _Sender:

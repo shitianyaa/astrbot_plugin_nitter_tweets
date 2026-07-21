@@ -43,7 +43,6 @@ try:
         format_group_schedule as scheduler_format_group_schedule,
         format_merge_threshold as scheduler_format_merge_threshold,
         format_next_daily_time as scheduler_format_next_daily_time,
-        format_pending_user_counts as scheduler_format_pending_user_counts,
         format_timestamp as scheduler_format_timestamp,
     )
     from .models import (
@@ -84,7 +83,6 @@ except ImportError:
         format_group_schedule as scheduler_format_group_schedule,
         format_merge_threshold as scheduler_format_merge_threshold,
         format_next_daily_time as scheduler_format_next_daily_time,
-        format_pending_user_counts as scheduler_format_pending_user_counts,
         format_timestamp as scheduler_format_timestamp,
     )
     from scheduler.models import (
@@ -1359,7 +1357,6 @@ class NitterTweetScheduler:
                     username,
                     tweet,
                     translation_report,
-                    None,
                     start + offset,
                     total,
                 )
@@ -1396,8 +1393,7 @@ class NitterTweetScheduler:
         status_ids = tuple(
             str(getattr(tweet, "status_id", "")) for tweet in batch.tweets
         )
-        pending_ids = tuple(str(item) for item in batch.pending_ids)
-        return repr((batch.username, batch.instance, status_ids, pending_ids))
+        return repr((batch.username, batch.instance, status_ids))
 
     async def _record_batch_push_history(
         self,
@@ -1771,10 +1767,6 @@ class NitterTweetScheduler:
     def _format_limited_values(values: list[str], limit: int = 10) -> str:
         return scheduler_format_limited_values(values, limit=limit)
 
-
-
-    def _format_pending_user_counts(user_counts: list[tuple[str, int]]) -> str:
-        return scheduler_format_pending_user_counts(user_counts)
     @staticmethod
     def _format_daily_times(times: list[tuple[int, int]]) -> str:
         return scheduler_format_daily_times(times)

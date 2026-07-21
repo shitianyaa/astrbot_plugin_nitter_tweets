@@ -37,8 +37,6 @@ class TweetItem:
     media_warnings: list[str] = field(default_factory=list)
     ai_warnings: list[str] = field(default_factory=list)
     translation: str = ""
-    image_caption: str = ""
-    ai_comment: str = ""
 
     @property
     def status_id(self) -> str:

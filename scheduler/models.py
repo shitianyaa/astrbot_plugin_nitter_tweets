@@ -26,7 +26,6 @@ class PendingTweetBatch:
     tweets: list
     fetched_ids: list[str]
     seen_ids: list[str]
-    pending_ids: list[int] = field(default_factory=list)
     delivered_targets: set[str] = field(default_factory=set)
     account_index: int = 0
     account_total: int = 0
@@ -71,18 +70,11 @@ class ScheduledCheckResult:
     merged_push_success_targets: int = 0
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
-    queued_tweets: dict[str, int] = field(default_factory=dict)
     plain_text_filtered: int = 0
 
     @property
     def new_tweet_count(self) -> int:
-        if self.push_mode == "deferred":
-            return self.queued_tweet_count
         return sum(push.new_count for push in self.pushes)
-
-    @property
-    def queued_tweet_count(self) -> int:
-        return sum(self.queued_tweets.values())
 
     @property
     def pushed_target_successes(self) -> int:
@@ -110,7 +102,6 @@ class ScheduledCheckResult:
             + len(self.empty_users)
             + len(self.failed_users)
             + len(self.pushes)
-            + len(self.queued_tweets)
         )
 
     def has_visible_no_update(self) -> bool:
@@ -167,7 +158,6 @@ class ScheduledCheckResult:
             f"mode={self.push_mode}, "
             f"checked={self.checked_user_count}, "
             f"new={self.new_tweet_count}, "
-            f"queued={self.queued_tweet_count}, "
             f"push_success={self.pushed_target_successes}/"
             f"{self.pushed_target_attempts}, "
             f"failed={len(self.failed_users)}, "
@@ -236,7 +226,6 @@ class ScheduledCheckResult:
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
                 "unknown_group": "未找到指定分组",
-                "no_pending_tweets": "没有待发布推文",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
             if self.available_groups:
@@ -251,13 +240,6 @@ class ScheduledCheckResult:
                 for username, count in self.initialized_users.items()
             ]
             lines.append("首次记录: " + _format_limited_values(items))
-
-        if self.queued_tweets:
-            items = [
-                f"@{username} {count} 条"
-                for username, count in self.queued_tweets.items()
-            ]
-            lines.append("已暂存: " + _format_limited_values(items, separator="; "))
 
         if self.pushes and self.push_mode == "merged":
             items = [
