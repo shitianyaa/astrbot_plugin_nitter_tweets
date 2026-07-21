@@ -156,8 +156,6 @@ from main import NitterTweetsPlugin
 from plugin_api import NitterWebAPI
 from scheduler import SchedulerConfigReader
 from storage import (
-    PendingQueueSummary,
-    PendingTweetRecord,
     PushHistoryGroupSummary,
     PushHistoryRecord,
 )
@@ -188,8 +186,6 @@ class _Context:
 
 class _Storage:
     def __init__(self):
-        self.summaries: dict[str, PendingQueueSummary] = {}
-        self.records: dict[str, list[PendingTweetRecord]] = {}
         self.synced_groups = []
         self.clear_seen_calls = []
         self.delete_legacy_seen_kv_calls = 0
@@ -198,11 +194,6 @@ class _Storage:
         self.history: list[PushHistoryRecord] = []
         self.history_group_summaries: list[PushHistoryGroupSummary] = []
 
-    async def get_pending_queue_summary(self, group_id):
-        return self.summaries.get(group_id, PendingQueueSummary(group_id=group_id))
-
-    async def get_pending_tweets(self, group_id, limit):
-        return list(self.records.get(group_id, []))[:limit]
 
     async def migrate_and_sync(self, schedule_groups):
         self.synced_groups = list(schedule_groups)
@@ -222,8 +213,6 @@ class _Storage:
             "users_deleted": 1,
             "targets_deleted": 1,
             "seen_deleted": 1,
-            "pending_deleted": 2,
-            "pending_media_deleted": 3,
             "push_history_deleted": 4,
         }
 
@@ -234,8 +223,6 @@ class _Storage:
             "users_deleted": 0,
             "targets_deleted": 0,
             "seen_deleted": 1,
-            "pending_deleted": 2,
-            "pending_media_deleted": 3,
             "push_history_deleted": 4,
         }
 
@@ -312,7 +299,6 @@ class _Scheduler:
         self.storage = _Storage()
         self.is_running = True
         self.run_check_calls = []
-        self.publish_pending_calls = []
         self.replay_push_history_calls = []
 
     @property
@@ -326,9 +312,6 @@ class _Scheduler:
         self.run_check_calls.append(kwargs)
         return _CheckResult("已执行检查")
 
-    async def publish_pending(self, **kwargs):
-        self.publish_pending_calls.append(kwargs)
-        return _CheckResult("已发布暂存队列")
 
     async def replay_push_history(self, record_id, target_umos=None):
         self.replay_push_history_calls.append((record_id, target_umos))
@@ -347,11 +330,10 @@ class _Scheduler:
 
 class _Media:
     def __init__(self):
-        self.clear_non_staged_cache_calls = 0
-        self.delete_staged_media_group_calls = []
+        self.clear_cache_calls = 0
 
-    def clear_non_staged_cache(self):
-        self.clear_non_staged_cache_calls += 1
+    def clear_cache(self):
+        self.clear_cache_calls += 1
         return types.SimpleNamespace(
             removed=3,
             failed=0,
@@ -362,26 +344,9 @@ class _Media:
             removed_empty_dirs=0,
         )
 
-    def delete_staged_media_group(self, group_id):
-        self.delete_staged_media_group_calls.append(group_id)
-        return types.SimpleNamespace(
-            removed=2,
-            failed=0,
-            skipped_dirs=0,
-            removed_images=1,
-            removed_videos=1,
-            removed_other=0,
-            removed_empty_dirs=2,
-        )
-
-
 class _FailingMedia:
-    def clear_non_staged_cache(self):
+    def clear_cache(self):
         raise RuntimeError("disk denied")
-
-    def delete_staged_media_group(self, group_id):
-        raise RuntimeError("media locked")
-
 
 class _Nitter:
     def __init__(self):
@@ -472,9 +437,9 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "/astrbot_plugin_nitter_tweets/web/history/orphans": ["GET"],
                 "/astrbot_plugin_nitter_tweets/web/history/orphans/delete": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/history/replay": ["POST"],
-                "/astrbot_plugin_nitter_tweets/web/pending": ["GET"],
+
                 "/astrbot_plugin_nitter_tweets/web/check": ["POST"],
-                "/astrbot_plugin_nitter_tweets/web/publish": ["POST"],
+
                 "/astrbot_plugin_nitter_tweets/web/cache/clear": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/seen/clear": ["POST"],
                 "/astrbot_plugin_nitter_tweets/web/subscriptions/import": ["POST"],
@@ -495,11 +460,9 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(group["name"], "新分组 1")
         self.assertFalse(group["enabled"])
         self.assertTrue(group["interval_check_enabled"])
-        self.assertFalse(group["deferred_publish_enabled"])
         self.assertFalse(group["filter_plain_text_enabled"])
         self.assertEqual(group["watch_users"], [])
         self.assertEqual(group["push_targets"], [])
-        self.assertEqual(group["pending_summary"]["pending_count"], 0)
         self.assertTrue(config.saved)
 
     async def test_create_group_rejects_custom_group_id(self):
@@ -567,7 +530,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                             "push_targets": ["telegram:FriendMessage:1"],
                             "interval_check_enabled": True,
                             "daily_check_times": [],
-                            "deferred_publish_enabled": False,
+                            
                             "filter_plain_text_enabled": False,
                         }
                     ]
@@ -583,7 +546,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "enabled": False,
                 "interval_check_enabled": False,
                 "daily_check_times": ["08:30", "21:05"],
-                "deferred_publish_enabled": True,
+                
                 "filter_plain_text_enabled": True,
             }
         )
@@ -593,7 +556,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["group"]["enabled"])
         self.assertFalse(payload["group"]["interval_check_enabled"])
         self.assertEqual(payload["group"]["daily_check_times"], ["08:30", "21:05"])
-        self.assertTrue(payload["group"]["deferred_publish_enabled"])
         self.assertTrue(payload["group"]["filter_plain_text_enabled"])
         self.assertTrue(config.saved)
         self.assertEqual(_group_config(config, "tech")["name"], "科技新闻")
@@ -610,7 +572,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                             "watch_users": ["OpenAI"],
                             "push_targets": ["telegram:FriendMessage:1"],
                             "interval_check_enabled": True,
-                            "deferred_publish_enabled": True,
+                            
                             "filter_plain_text_enabled": True,
                         }
                     ]
@@ -625,7 +587,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "name": "科技",
                 "enabled": "false",
                 "interval_check_enabled": "0",
-                "deferred_publish_enabled": "off",
+                
                 "filter_plain_text_enabled": "no",
             }
         )
@@ -633,7 +595,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["success"])
         self.assertFalse(payload["group"]["enabled"])
         self.assertFalse(payload["group"]["interval_check_enabled"])
-        self.assertFalse(payload["group"]["deferred_publish_enabled"])
         self.assertFalse(payload["group"]["filter_plain_text_enabled"])
 
     async def test_update_group_saves_push_targets(self):
@@ -784,16 +745,12 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "users_deleted": 1,
                 "targets_deleted": 1,
                 "seen_deleted": 1,
-                "pending_deleted": 2,
-                "pending_media_deleted": 3,
                 "push_history_deleted": 4,
             },
         )
-        self.assertEqual(payload["media_summary"]["removed"], 2)
         self.assertEqual(
             plugin.scheduler.storage.delete_group_runtime_data_calls, ["tech"]
         )
-        self.assertEqual(plugin.media.delete_staged_media_group_calls, ["tech"])
         self.assertEqual(
             [group.group_id for group in plugin.scheduler.storage.synced_groups],
             ["default"],
@@ -826,7 +783,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["group_id"], "tech")
         self.assertEqual(payload["cleanup_status"], "partial_failure")
         self.assertEqual(payload["runtime_error"], "runtime locked")
-        self.assertEqual(payload["media_error"], "media locked")
         self.assertIn("分组已删除", payload["message"])
         self.assertEqual(
             [group.group_id for group in plugin.scheduler.storage.synced_groups],
@@ -847,103 +803,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("配置保存失败", payload["error"])
         self.assertEqual(config_get(config, "tweet_groups", []), [])
 
-    async def test_overview_counts_groups_watch_users_push_targets_and_pending(self):
-        config = _Config(
-            {
-                "basic": {"default_limit": 12},
-                "schedule": {"schedule_enabled": True},
-                "media": {"send_image_attachments": True, "send_video_attachments": False},
-                "ai_translation": {"translate_enabled": True},
-                "ai_vision": {"vision_enabled": False},
-                "ai_comment": {"comment_enabled": True},
-                "deferred": {"deferred_publish_batch_limit": 80},
-                "performance": {
-                    "concurrent_fetch_enabled": True,
-                    "concurrent_prepare_enabled": False,
-                },
-                "push": {
-                    "merge_tweet_threshold": 4,
-                    "send_target_interval": 2.5,
-                    "tweet_groups": [
-                        {
-                            "name": "默认分组",
-                            "group_id": "default",
-                            "enabled": True,
-                            "watch_users": ["NASA", "@NASA", "bad user"],
-                            "push_targets": [
-                                "telegram:FriendMessage:1",
-                                "bad-target",
-                            ],
-                            "deferred_publish_enabled": True,
-                        },
-                        {
-                            "name": "科技",
-                            "group_id": "tech",
-                            "enabled": False,
-                            "watch_users": ["OpenAI"],
-                            "push_targets": ["aiocqhttp:GroupMessage:2"],
-                        },
-                    ]
-                },
-            }
-        )
-        plugin = _plugin(config)
-        plugin.scheduler.storage.summaries = {
-            "default": PendingQueueSummary(
-                group_id="default",
-                pending_count=4,
-                failed_count=1,
-                media_count=3,
-            ),
-            "tech": PendingQueueSummary(
-                group_id="tech",
-                pending_count=2,
-                failed_count=0,
-                media_count=1,
-            ),
-        }
-
-        payload = await NitterWebAPI(plugin).build_overview()
-
-        self.assertTrue(payload["success"])
-        self.assertEqual(payload["scheduler"]["running"], True)
-        self.assertEqual(payload["scheduler"]["schedule_enabled"], True)
-        self.assertEqual(
-            payload["counts"],
-            {
-                "groups": 2,
-                "enabled_groups": 1,
-                "watch_users": 2,
-                "raw_watch_users": 4,
-                "duplicate_watch_users": 1,
-                "invalid_watch_users": 1,
-                "push_targets": 2,
-                "invalid_push_targets": 1,
-                "pending_tweets": 6,
-                "failed_pending_tweets": 1,
-                "pending_media": 4,
-            },
-        )
-        self.assertEqual(payload["features"]["deferred_publish_groups"], 1)
-        self.assertEqual(
-            payload["config_summary"],
-            {
-                "nitter_instance_count": 1,
-                "default_limit": 12,
-                "scheduled_fetch_limit": 5,
-                "check_interval_minutes": 30,
-                "merge_tweet_threshold": 4,
-                "send_target_interval": 2.5,
-                "deferred_publish_batch_limit": 80,
-                "concurrent_fetch_enabled": True,
-                "concurrent_prepare_enabled": False,
-            },
-        )
-        self.assertEqual(payload["terminology"]["push_targets"], "推送目标")
-        attention_keys = {item["key"] for item in payload["attention_items"]}
-        self.assertIn("invalid_push_targets", attention_keys)
-        self.assertIn("invalid_watch_users", attention_keys)
-        self.assertIn("failed_pending_tweets", attention_keys)
 
     async def test_overview_attention_items_explain_inactive_group_configuration(self):
         config = _Config(
@@ -954,8 +813,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                     "daily_check_enabled": False,
                 },
                 "deferred": {
-                    "deferred_publish_enabled": True,
-                    "deferred_publish_times": [],
+                    
                 },
                 "push": {
                     "tweet_groups": [
@@ -967,7 +825,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                             "push_targets": [],
                             "interval_check_enabled": False,
                             "daily_check_enabled": False,
-                            "deferred_publish_enabled": True,
+                            
                         },
                         {
                             "name": "无目标",
@@ -989,7 +847,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("groups_without_watch_users", attention)
         self.assertIn("groups_without_push_targets", attention)
         self.assertIn("groups_without_check_triggers", attention)
-        self.assertIn("deferred_without_publish_times", attention)
         self.assertIn("空分组", attention["groups_without_watch_users"]["detail"])
         self.assertIn("无目标", attention["groups_without_push_targets"]["detail"])
 
@@ -1013,7 +870,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                         }
                     ],
                 },
-                "deferred": {"deferred_publish_batch_limit": "bad"},
             }
         )
         plugin = _plugin(config)
@@ -1046,10 +902,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             payload["config_summary"]["merge_tweet_threshold"],
             configured_merge_tweet_threshold(config),
         )
-        self.assertEqual(
-            payload["config_summary"]["deferred_publish_batch_limit"],
-            group.deferred_publish_batch_limit,
-        )
 
     async def test_groups_payload_serializes_push_target_details(self):
         config = _Config(
@@ -1068,7 +920,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                             ],
                             "interval_check_enabled": True,
                             "daily_check_times": ["08:30"],
-                            "deferred_publish_enabled": True,
+                            
                             "filter_plain_text_enabled": True,
                         }
                     ]
@@ -1086,7 +938,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(group["invalid_push_targets"], ["invalid target"])
         self.assertEqual(group["aliases"], ["tech-news"])
         self.assertTrue(group["interval_check_enabled"])
-        self.assertTrue(group["deferred_publish_enabled"])
         self.assertTrue(group["filter_plain_text_enabled"])
         self.assertEqual(group["push_target_count"], 1)
         self.assertEqual(group["invalid_push_target_count"], 1)
@@ -1108,12 +959,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             }
         )
         plugin = _plugin(config)
-        plugin.scheduler.storage.summaries["broken"] = PendingQueueSummary(
-            group_id="broken",
-            pending_count=3,
-            failed_count=2,
-            media_count=1,
-        )
 
         payload = await NitterWebAPI(plugin).build_groups()
 
@@ -1128,81 +973,10 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 "no_push_targets",
                 "invalid_watch_users",
                 "invalid_push_targets",
-                "failed_pending_tweets",
             },
         )
 
-    async def test_pending_payload_does_not_expose_local_media_paths(self):
-        config = _Config(
-            {
-                "push": {
-                    "tweet_groups": [
-                        {
-                            "name": "科技",
-                            "group_id": "tech",
-                            "watch_users": ["OpenAI"],
-                            "push_targets": ["telegram:FriendMessage:1"],
-                        }
-                    ]
-                }
-            }
-        )
-        plugin = _plugin(config)
-        local_path = Path("D:/secret/cache/staged/tech/123/00_image.jpg")
-        plugin.scheduler.storage.summaries["tech"] = PendingQueueSummary(
-            group_id="tech",
-            pending_count=1,
-            failed_count=1,
-            media_count=1,
-        )
-        plugin.scheduler.storage.records["tech"] = [
-            PendingTweetRecord(
-                id=9,
-                group_id="tech",
-                username="OpenAI",
-                status_id="123",
-                instance="https://nitter.test",
-                tweet=TweetItem(
-                    text="hello",
-                    link="https://x.com/OpenAI/status/123",
-                    published="2026-07-05",
-                    media=[
-                        TweetMedia(
-                            "image",
-                            "https://example.test/image.jpg",
-                            local_path,
-                        )
-                    ],
-                ),
-                created_at=100,
-                scheduled_at=200,
-                failed_at=300,
-                fail_count=2,
-                last_error="send failed",
-                delivered_targets=("telegram:FriendMessage:1",),
-            )
-        ]
 
-        payload = await NitterWebAPI(plugin).build_pending("tech", 20)
-
-        row = payload["records"][0]
-        self.assertEqual(row["media_count"], 1)
-        self.assertEqual(row["media_kinds"], ["image"])
-        self.assertEqual(row["delivered_target_count"], 1)
-        self.assertNotIn("path", row)
-        self.assertNotIn("delivered_targets", row)
-        self.assertNotIn("D:/secret", repr(payload))
-        self.assertNotIn("telegram:FriendMessage:1", repr(payload))
-
-    async def test_clear_cache_only_calls_non_staged_cache_cleanup(self):
-        plugin = _plugin(_Config({}))
-
-        payload = await NitterWebAPI(plugin).clear_cache()
-
-        self.assertTrue(payload["success"])
-        self.assertEqual(plugin.media.clear_non_staged_cache_calls, 1)
-        self.assertEqual(plugin.scheduler.storage.clear_seen_calls, [])
-        self.assertEqual(payload["result"]["removed"], 3)
 
     async def test_route_handler_returns_json_error_when_operation_raises(self):
         plugin = _plugin(_Config({}))
@@ -1647,10 +1421,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             ["deleted"],
         )
         self.assertEqual(plugin.scheduler.storage.delete_group_runtime_data_calls, [])
-        self.assertEqual(plugin.media.delete_staged_media_group_calls, ["deleted"])
-        self.assertEqual(confirmed["summary"]["pending_deleted"], 2)
         self.assertEqual(confirmed["summary"]["push_history_deleted"], 4)
-        self.assertEqual(confirmed["media_summary"]["removed"], 2)
 
     async def test_delete_push_history_orphan_uses_raw_global_group_id(self):
         plugin = _plugin(
@@ -1675,7 +1446,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
             ["global"],
         )
         self.assertEqual(plugin.scheduler.storage.delete_group_runtime_data_calls, [])
-        self.assertEqual(plugin.media.delete_staged_media_group_calls, ["global"])
 
     async def test_replay_push_history_uses_scheduler_result(self):
         plugin = _plugin(_Config({}))

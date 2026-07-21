@@ -20,8 +20,8 @@
 核心能力：
 - 通过 Nitter RSS 获取公开 X/Twitter 推文。
 - 支持手动 `/推文`、`/镜像测试`。
-- 支持按 `tweet_groups` 分组定时检查、即时推送、暂存发布。
-- 支持图片、视频/GIF、翻译、AI 识图、AI 评论。
+- 支持按 `tweet_groups` 分组定时检查并即时推送。
+- 支持图片、视频/GIF、翻译。
 - 支持 QQ/OneBot 合并转发、Telegram、Lark/Feishu、weixin_oc 和默认平台发送。
 - 使用 SQLite 存储 seen 索引和 pending queue。
 
@@ -32,7 +32,7 @@
   - `manual.py`: `/推文`、`/镜像测试`。
   - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen、队列、发布。
   - `subscriptions.py`: 订阅导入、删除、导出、去重。
-- `scheduler/`: 后台检查、seen 对比、暂存发布、推送编排。高风险模块。
+- `scheduler/`: 后台检查、seen 对比、推送编排。高风险模块。
   - `runner.py`: `NitterTweetScheduler` 主状态机。
   - `config.py`: 分组配置解析，生成 `ScheduleGroup`。
   - `models.py`: 调度结果、批次模型。
@@ -40,7 +40,7 @@
 - `config/compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
 - `media_support/client.py`: Nitter RSS 抓取、分页、转发过滤、纯文本过滤。
 - `media_support/service.py`: xdown 解析、媒体候选归一化、下载、视频时长/分辨率限制。
-- `media_support/cache.py`: 普通缓存、暂存缓存、发送后清理。
+- `media_support/cache.py`: 普通缓存、发送后清理。
 - `media_support/extensions.py`: 媒体类型和扩展名分类。
 - `delivery/`: 平台适配器。
   - `delivery/sender.py`: 发送编排、合并转发、降级、平台能力判断入口。
@@ -51,7 +51,7 @@
   - `telegram.py`: Telegram flood control retry。
   - `default.py`: AstrBot 通用 MessageChain 发送。
 - `rendering/tweets.py`: 推文文本、MessageChain、OneBot raw nodes 渲染。
-- `ai/enrichment.py`: 翻译、AI 识图、AI 评论。
+- `ai/enrichment.py`: 翻译。
 - `storage/`: SQLite 存储、pending queue、push history 和旧 KV 迁移。
   - `sqlite.py`: SQLite schema 和查询。
   - `adapter.py`: 异步存储适配层。
@@ -87,9 +87,8 @@
 配置分层约定：
 - `basic`: Nitter、默认数量、冷却、平台基础项。
 - `media`: 图片、视频、xdown、缓存。
-- `ai_translation`, `ai_comment`, `ai_vision`: AI 相关。
+- `ai_translation`: AI 翻译。
 - `schedule`: 后台检查总开关、全局检查频率。
-- `deferred`: 暂存发布全局参数。
 - `push`: `tweet_groups`、推送间隔、合并阈值。
 - `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
@@ -101,7 +100,7 @@
 - 已有 `group_id` 必须保留；旧 `global` 可作为显式存储 ID 保留，也作为默认分组旧别名兼容。
 - 旧配置缺失 `group_id` 时，安全英文数字分组名（如 `coser`）是旧运行时事实 ID，必须继承；普通显示名才生成 `group_N`。
 - seen 索引按 `group_id + username` 隔离。
-- 每个分组的 `watch_users`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`deferred_publish_enabled`、`filter_plain_text_enabled` 都是独立行为。
+- 每个分组的 `watch_users`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_plain_text_enabled` 都是独立行为。
 
 ## RSS 抓取和过滤
 
@@ -115,7 +114,7 @@
 - 真正空 RSS feed 才能触发 empty feed。
 
 纯文本过滤规则：
-- 只在后台定时/暂存发布按分组开关启用。
+- 只在后台定时检查按分组开关启用。
 - 手动 `/推文`、`/镜像测试` 不受影响。
 - `/pic/media` 和 `<video>` 算作者上传媒体。
 - `/pic/card_img` 不算作者上传媒体。
@@ -131,7 +130,7 @@ python scripts/probe_nitter_fetch.py nasa 5 --include-reposts
 python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20 --retry-delay 0
 ```
 
-## 调度、seen 和暂存发布
+## 调度和 seen
 
 `scheduler/` 是高风险目录。修改前先读对应测试。
 
@@ -139,12 +138,10 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 首次启用账号只初始化 seen，不推送历史。
 - 后台检查先发现本轮所有新推文，再按目标类型发送。
 - 普通目标可以逐条即时发送；QQ/OneBot 目标会按阈值缓冲到后面合并发送。
-- `force_immediate=True` 的手动 `/推文检查` 必须绕过暂存队列，只发当前会话。
-- 暂存发布开启时，本轮新推文写入 SQLite pending queue。
-- 暂存媒体应移动到 `cache/staged/<group_id>/<status_id>/`。
-- 发布成功后清理 sent rows 和暂存媒体；目标失败时保留待重试记录。
+- 手动 `/推文检查` 只向当前会话即时发送。
+- 发送成功后更新 seen；失败时记录错误。
 - seen 更新时机不能提前到发送成功之前，避免准备或发送失败导致漏推。
-- 取消、异常、发送失败路径必须清理本轮普通缓存，但不能误删暂存媒体。
+- 取消、异常、发送失败路径必须清理本轮普通缓存。
 
 新增调度字段或结果字段时同步：
 - `ScheduleGroup`
@@ -167,13 +164,12 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 缓存规则：
 - 普通缓存位于 AstrBot 插件数据目录。
 - 普通媒体在本轮发送流程结束后删除。
-- 暂存缓存不能被普通发送后清理误删。
+- 普通缓存发送后清理。
 - 清理逻辑要统计 removed、failed、images、videos、other、empty_dirs。
 
 修改媒体逻辑时优先补：
 - `tests/test_media_resolution.py`
 - `tests/test_media_cleanup.py`
-- 必要时补 `tests/test_deferred_scheduler.py`
 
 ## 平台发送
 
@@ -189,7 +185,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 不要只按 UMO 第一段判断平台类型；使用 `PlatformResolver`。
 
 修改平台发送时优先补：
-- `tests/test_deferred_scheduler.py` 中 custom platform、OneBot、Telegram、video split 相关测试。
+- 相关平台发送测试。
 - `tests/test_subscription_import.py` 中 Lark 标题和命令行为测试。
 
 ## AI 处理
@@ -197,13 +193,10 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 处理顺序：
 - 翻译
 - 媒体下载
-- AI 识图
-- AI 评论
 
 规则：
 - 翻译和评论 provider 通过配置读取，不要硬编码。
-- 评论不会仅凭原文触发；必须有翻译结果或识图结果。
-- AI 失败需要区分正常跳过和用户可见 warning。
+- - AI 失败需要区分正常跳过和用户可见 warning。
 - 手动查询按单条推文准备后立即发送，避免一条慢推文阻塞全部结果。
 
 修改 AI 行为时优先补 `tests/test_subscription_import.py` 的 `TweetEnricherTest` 相关测试。
@@ -220,7 +213,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 文档风格：
 - 直接写行为和用法，不写泛泛介绍。
 - 配置名、命令、文件名使用反引号。
-- 行为边界必须明确，例如“手动命令不受影响”“暂存发布只由分组开关控制”。
+- 行为边界必须明确，例如“手动命令不受影响”。
 
 ## 测试选择矩阵
 
@@ -234,11 +227,11 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 
 按变更类型选择：
 - RSS、分页、转发过滤、纯文本过滤：`python -m pytest -q tests/test_nitter_pagination.py`
-- 调度、seen、暂存、发送顺序、平台发送：`python -m pytest -q tests/test_deferred_scheduler.py`
+- 调度、seen、发送顺序：`python -m pytest -q tests/`
 - 配置 schema、迁移、命令解析、订阅维护、AI：`python -m pytest -q tests/test_subscription_import.py`
 - 媒体解析、视频限制、下载重试：`python -m pytest -q tests/test_media_resolution.py`
-- 缓存和暂存媒体清理：`python -m pytest -q tests/test_media_cleanup.py`
-- SQLite pending queue：`python -m pytest -q tests/test_pending_storage.py`
+- 缓存清理：`python -m pytest -q tests/test_media_cleanup.py`
+- SQLite pending queue：`python -m pytest -q tests/test_storage_adapter.py`
 - 存储适配和旧 KV 迁移：`python -m pytest -q tests/test_storage_adapter.py`
 - SQLite 线程安全：`python -m pytest -q tests/test_sqlite_threading.py`
 
@@ -268,7 +261,7 @@ python scripts/test_video_download.py
 - 是否只改了任务相关文件。
 - 是否保留手动命令和后台调度的行为差异。
 - 是否没有提前写 seen 导致失败后漏推。
-- 是否没有把暂存媒体当普通缓存删除。
+- 是否正确清理普通媒体缓存。
 - 是否没有把 Lark/Telegram/weixin_oc 当 OneBot 处理。
 - 是否没有把引用推文媒体当当前作者媒体。
 - 是否同步 schema、`config/compat.py`、README/docs、测试。

@@ -34,29 +34,6 @@ from shared import TweetItem, TweetMedia
 
 
 class MediaCleanupTest(unittest.TestCase):
-    def test_delete_staged_media_group_removes_only_selected_group(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            tech_dir = cache_dir / "staged" / "tech" / "200"
-            default_dir = cache_dir / "staged" / "default" / "100"
-            tech_dir.mkdir(parents=True)
-            default_dir.mkdir(parents=True)
-
-            tech_media = tech_dir / "00_image.jpg"
-            default_media = default_dir / "00_image.jpg"
-            tech_media.write_bytes(b"tech")
-            default_media.write_bytes(b"default")
-
-            service = MediaService({})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
-
-            result = service.delete_staged_media_group("tech")
-
-            self.assertEqual(result.removed, 1)
-            self.assertEqual(result.failed, 0)
-            self.assertFalse(tech_dir.exists())
-            self.assertTrue(default_media.exists())
 
     def test_send_cleanup_deletes_downloaded_media_after_send(self):
         with TemporaryDirectory() as temp_dir:
@@ -154,7 +131,7 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertIsNone(first.path)
             self.assertIsNone(second.path)
 
-    def test_clear_non_staged_cache_deletes_only_cache_root_files(self):
+    def test_clear_cache_deletes_files_and_subdirectories(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
             cache_dir.mkdir()
@@ -170,16 +147,17 @@ class MediaCleanupTest(unittest.TestCase):
             service.cache_dir = cache_dir
             service.legacy_cache_dir = cache_dir
 
-            result = service.clear_non_staged_cache()
+            result = service.clear_cache()
 
-            self.assertEqual(result.removed, 2)
+            self.assertEqual(result.removed, 3)
             self.assertEqual(result.failed, 0)
-            self.assertEqual(result.skipped_dirs, 1)
+            self.assertEqual(result.removed_empty_dirs, 1)
             self.assertFalse(image.exists())
             self.assertFalse(temp.exists())
-            self.assertTrue(staged_image.exists())
+            self.assertFalse(staged_image.exists())
+            self.assertFalse(staged_dir.exists())
 
-    def test_clear_non_staged_cache_also_clears_legacy_cache_root_files(self):
+    def test_clear_cache_also_clears_legacy_cache_files_and_subdirectories(self):
         with TemporaryDirectory() as temp_dir:
             cache_dir = Path(temp_dir) / "cache"
             legacy_cache_dir = Path(temp_dir) / "legacy_cache"
@@ -197,129 +175,16 @@ class MediaCleanupTest(unittest.TestCase):
             service.cache_dir = cache_dir
             service.legacy_cache_dir = legacy_cache_dir
 
-            result = service.clear_non_staged_cache()
+            result = service.clear_cache()
 
-            self.assertEqual(result.removed, 2)
+            self.assertEqual(result.removed, 3)
             self.assertEqual(result.failed, 0)
-            self.assertEqual(result.skipped_dirs, 1)
+            self.assertEqual(result.removed_empty_dirs, 1)
             self.assertFalse(current_image.exists())
             self.assertFalse(legacy_video.exists())
-            self.assertTrue(legacy_staged_video.exists())
+            self.assertFalse(legacy_staged_video.exists())
+            self.assertFalse(legacy_staged_dir.exists())
 
-    def test_move_media_to_staged_then_cleanup_staged_media(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            cache_dir.mkdir()
-            image = cache_dir / "image.jpg"
-            image.write_bytes(b"image")
-            media = TweetMedia("image", "https://example.test/image.jpg", image)
-            tweet = TweetItem(
-                text="tweet",
-                link="https://x.com/example/status/123",
-                published="",
-                media=[media],
-            )
-            service = MediaService({})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
 
-            service._move_tweets_media_to_staged("global", "example", [tweet])
-            staged_path = media.path
-            clear_result = service.clear_non_staged_cache()
 
-            self.assertEqual(clear_result.removed, 0)
-            self.assertIsNotNone(staged_path)
-            self.assertFalse(image.exists())
-            self.assertTrue(staged_path.exists())
-            self.assertIn("staged", staged_path.parts)
 
-            service.cleanup_staged_media_for_tweets([tweet])
-
-            self.assertFalse(staged_path.exists())
-            self.assertIsNone(media.path)
-
-    def test_send_cleanup_keeps_staged_media(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            staged_dir = cache_dir / "staged" / "global" / "123"
-            staged_dir.mkdir(parents=True)
-            staged_path = staged_dir / "00_image.jpg"
-            staged_path.write_bytes(b"image")
-            media = TweetMedia("image", "https://example.test/image.jpg", staged_path)
-            tweet = TweetItem(
-                text="tweet",
-                link="https://x.com/example/status/123",
-                published="",
-                media=[media],
-            )
-            service = MediaService({})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
-
-            service.cleanup_after_send([tweet])
-
-            self.assertTrue(staged_path.exists())
-            self.assertEqual(media.path, staged_path)
-
-    def test_expired_staged_cleanup_keeps_protected_paths(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            staged_dir = cache_dir / "staged" / "global" / "123"
-            staged_dir.mkdir(parents=True)
-            protected = staged_dir / "00_keep.jpg"
-            expired = staged_dir / "01_delete.jpg"
-            protected.write_bytes(b"keep")
-            expired.write_bytes(b"delete")
-            old_time = 1
-            os.utime(protected, (old_time, old_time))
-            os.utime(expired, (old_time, old_time))
-            service = MediaService({})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
-
-            result = service.cleanup_expired_staged_media(
-                retention_hours=1,
-                protected_paths={str(protected)},
-            )
-
-            self.assertEqual(result.removed, 1)
-            self.assertTrue(protected.exists())
-            self.assertFalse(expired.exists())
-
-    def test_expired_staged_cleanup_logs_media_type_and_empty_dir_counts(self):
-        with TemporaryDirectory() as temp_dir:
-            cache_dir = Path(temp_dir) / "cache"
-            image_dir = cache_dir / "staged" / "images" / "nested"
-            video_dir = cache_dir / "staged" / "videos" / "nested"
-            other_dir = cache_dir / "staged" / "other" / "nested"
-            for directory in (image_dir, video_dir, other_dir):
-                directory.mkdir(parents=True)
-
-            image = image_dir / "expired.jpg"
-            video = video_dir / "expired.mp4"
-            other = other_dir / "expired.bin"
-            for path in (image, video, other):
-                path.write_bytes(b"data")
-                os.utime(path, (1, 1))
-
-            service = MediaService({})
-            service.cache_dir = cache_dir
-            service.legacy_cache_dir = cache_dir
-
-            with patch.object(cache_module.logger, "info") as info_log:
-                result = service.cleanup_expired_staged_media(retention_hours=1)
-
-            logged = "\n".join(str(call.args[0]) for call in info_log.call_args_list)
-            self.assertIn("过期暂存媒体清理完成", logged)
-            self.assertIn("图片 1", logged)
-            self.assertIn("视频 1", logged)
-            self.assertIn("其他 1", logged)
-            self.assertRegex(logged, r"空目录 [1-9]\d* 个")
-            self.assertEqual(result.removed, 3)
-            self.assertGreater(result.removed_empty_dirs, 0)
-            self.assertFalse(image.exists())
-            self.assertFalse(video.exists())
-            self.assertFalse(other.exists())
-
-if __name__ == "__main__":
-    unittest.main()

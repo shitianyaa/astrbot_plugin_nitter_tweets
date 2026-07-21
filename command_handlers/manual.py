@@ -185,17 +185,16 @@ class ManualCommandMixin:
     ) -> list[str]:
         translation_report = await self.translator.attach_translations(tweets, umo)
         await self.media.attach_media(tweets)
-        enrich_report = await self.enricher.attach_enrichments(tweets, umo)
         if username:
             self._log_ai_process_results(
                 username,
                 tweets,
                 translation_report,
-                enrich_report,
+                None,
                 progress_index,
                 progress_total,
             )
-        return enrich_report.visible_notices()
+        return []
 
     def _log_ai_process_results(
         self,

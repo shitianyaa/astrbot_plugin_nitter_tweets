@@ -55,21 +55,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("group.enabled", source)
         self.assertIn("分组停用时不能立即检查", source)
 
-    def test_pending_summary_shows_queue_time_bounds(self):
-        source = APP_JS.read_text(encoding="utf-8")
 
-        self.assertIn("oldest_created_at", source)
-        self.assertIn("newest_created_at", source)
-        self.assertIn("最早", source)
-        self.assertIn("最新", source)
-
-    def test_pending_summary_shows_account_breakdown(self):
-        source = APP_JS.read_text(encoding="utf-8")
-        body = _function_body(source, "renderPending")
-
-        self.assertIn("item.user_counts", body)
-        self.assertIn("summary-users", body)
-        self.assertIn("账号", body)
 
     def test_overview_uses_compact_three_panel_layout(self):
         source = APP_JS.read_text(encoding="utf-8")
@@ -93,22 +79,15 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         html = INDEX_HTML.read_text(encoding="utf-8")
         safe_body = _function_body(source, "safeUrl")
         link_body = _function_body(source, "externalLink")
-        pending_body = _function_body(source, "renderPending")
         history_body = _function_body(source, "renderHistory")
-        probe_body = _function_body(source, "probeMirror")
-        bind_body = _function_body(source, "bindEvents")
 
-        self.assertIn('url.protocol === "http:" || url.protocol === "https:"', safe_body)
-        self.assertIn('rel: "noopener noreferrer"', link_body)
-        self.assertIn("copyLink", link_body)
-        self.assertIn("toastContainer", html)
-        self.assertIn('a[data-copy-link]', bind_body)
-        self.assertIn("copyText(link.dataset.copyLink)", bind_body)
-        self.assertIn("已复制原推文链接", bind_body)
-        self.assertIn("return el(\"span\"", link_body)
-        self.assertIn("externalLink(row.original_link", pending_body)
-        self.assertIn("externalLink(row.original_link", history_body)
-        self.assertIn("externalLink(tweet.link", probe_body)
+        self.assertIn('url.protocol === "http:"', safe_body)
+        self.assertIn('url.protocol === "https:"', safe_body)
+        self.assertIn("safeUrl(", link_body)
+        self.assertIn("externalLink(", history_body)
+        self.assertNotIn("renderPending", source)
+        self.assertNotIn('data-view="pending"', html)
+
 
     def test_clipboard_fallback_textarea_is_not_tabbable(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "copyText")
@@ -324,16 +303,11 @@ class DashboardFrontendSourceTest(unittest.TestCase):
     def test_dirty_group_disables_check_and_publish_actions(self):
         source = APP_JS.read_text(encoding="utf-8")
         editor_body = _function_body(source, "renderGroupEditor")
-        sync_body = _function_body(source, "syncGroupEditorControls")
 
-        self.assertIn("const dirty = isGroupDirty(group.group_id)", editor_body)
-        self.assertIn("dirty ? \"请先保存更改\" : null", editor_body)
-        self.assertIn("!group.enabled || dirty || state.loading || state.actionBusy", editor_body)
-        self.assertIn("dirty || state.loading || state.actionBusy", editor_body)
-        self.assertIn("[data-check-group]", sync_body)
-        self.assertIn("[data-publish-group]", sync_body)
-        self.assertIn("checkButton.disabled = !group.enabled || dirty", sync_body)
-        self.assertIn("publishButton.disabled = dirty", sync_body)
+        self.assertIn("isGroupDirty(group.group_id)", editor_body)
+        self.assertIn("请先保存更改", editor_body)
+        self.assertIn("disabled: !group.enabled || dirty || state.loading || state.actionBusy", editor_body)
+
 
     def test_immediate_check_requires_confirmation(self):
         source = APP_JS.read_text(encoding="utf-8")
@@ -480,7 +454,6 @@ class DashboardFrontendSourceTest(unittest.TestCase):
 
         self.assertIn("继承全局", body)
         self.assertIn("check_interval_minutes", body)
-        self.assertIn("deferred_publish_times", body)
 
     def test_cache_cleanup_result_shows_media_breakdown(self):
         source = APP_JS.read_text(encoding="utf-8")

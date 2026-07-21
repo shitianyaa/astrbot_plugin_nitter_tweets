@@ -64,12 +64,6 @@ class ScheduleGroup:
     send_target_interval: float
     send_user_interval: float
     notify_no_updates: bool
-    deferred_publish_enabled: bool
-    deferred_publish_times: list[tuple[int, int]]
-    deferred_publish_batch_limit: int
-    deferred_prefetch_media: bool
-    deferred_media_retention_hours: float
-    deferred_media_download_interval_seconds: float
     concurrent_fetch_enabled: bool
     fetch_concurrency: int
     concurrent_fetch_instances: list[str]
@@ -113,12 +107,6 @@ class SchedulerConfigReader:
             send_target_interval=1.5,
             send_user_interval=2.0,
             notify_no_updates=False,
-            deferred_publish_enabled=False,
-            deferred_publish_times=[],
-            deferred_publish_batch_limit=50,
-            deferred_prefetch_media=True,
-            deferred_media_retention_hours=72.0,
-            deferred_media_download_interval_seconds=0.5,
             concurrent_fetch_enabled=False,
             fetch_concurrency=3,
             concurrent_fetch_instances=[],
@@ -219,9 +207,6 @@ class SchedulerConfigReader:
         interval_check_default = self.default_group_legacy_config(
             group_id, "interval_check_enabled", True
         )
-        deferred_publish_default = self.default_group_legacy_config(
-            group_id, "deferred_publish_enabled", False
-        )
         filter_plain_text_default = self.default_group_legacy_config(
             group_id, "filter_plain_text_enabled", False
         )
@@ -252,34 +237,6 @@ class SchedulerConfigReader:
             ),
             notify_no_updates=self.parse_bool(
                 config_get(self.config, "notify_no_updates", False), False
-            ),
-            deferred_publish_enabled=self.parse_bool(
-                raw_group.get("deferred_publish_enabled", deferred_publish_default),
-                False,
-            ),
-            deferred_publish_times=self.parse_daily_times(
-                config_get(self.config, "deferred_publish_times", [])
-            ),
-            deferred_publish_batch_limit=clamp_int(
-                config_get(self.config, "deferred_publish_batch_limit", 50),
-                1,
-                500,
-            ),
-            deferred_prefetch_media=self.parse_bool(
-                config_get(self.config, "deferred_prefetch_media", True),
-                True,
-            ),
-            deferred_media_retention_hours=clamp_float(
-                config_get(self.config, "deferred_media_retention_hours", 72.0),
-                1.0,
-                8760.0,
-            ),
-            deferred_media_download_interval_seconds=clamp_float(
-                config_get(
-                    self.config, "deferred_media_download_interval_seconds", 0.5
-                ),
-                0.0,
-                60.0,
             ),
             concurrent_fetch_enabled=self.parse_bool(
                 config_get(self.config, "concurrent_fetch_enabled", False),

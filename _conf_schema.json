@@ -153,81 +153,6 @@
       }
     }
   },
-  "ai_comment": {
-    "description": "AI 评论",
-    "type": "object",
-    "hint": "控制推文评论生成开关、概率、服务商和提示词。",
-    "items": {
-      "comment_enabled": {
-        "description": "启用 AI 评论",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。"
-      },
-      "comment_provider_id": {
-        "description": "AI 评论使用的模型",
-        "type": "string",
-        "_special": "select_provider",
-        "default": "",
-        "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。"
-      },
-      "comment_probability": {
-        "description": "AI 评论触发概率",
-        "type": "float",
-        "default": 0.3,
-        "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。"
-      },
-      "comment_max_chars": {
-        "description": "AI 评论输入最大字符数",
-        "type": "int",
-        "default": 2000,
-        "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。"
-      },
-      "comment_prompt": {
-        "description": "AI 评论提示词",
-        "type": "text",
-        "default": "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，生成一句简短、自然、有信息量的中文点评。不要复述原文，不要使用 Markdown。\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}",
-        "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。"
-      }
-    }
-  },
-  "ai_vision": {
-    "description": "AI 识图",
-    "type": "object",
-    "hint": "控制图片识别开关、概率、图片数量和提示词。识图结果不会单独显示在推文消息中，主要作为 AI 评论的图片上下文；如果未启用 AI 评论，识图成功结果只会写入处理日志。",
-    "items": {
-      "vision_enabled": {
-        "description": "启用 AI 识图",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后会按 vision_probability 概率调用视觉模型识别已下载图片。识图结果不会直接发出，主要提供给 AI 评论使用；未启用 AI 评论时仅记录到处理日志。"
-      },
-      "vision_provider_id": {
-        "description": "AI 识图使用的模型",
-        "type": "string",
-        "_special": "select_provider",
-        "default": "",
-        "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。"
-      },
-      "vision_probability": {
-        "description": "AI 识图触发概率",
-        "type": "float",
-        "default": 0.3,
-        "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。"
-      },
-      "vision_prompt": {
-        "description": "AI 识图提示词",
-        "type": "text",
-        "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。"
-      },
-      "vision_max_images": {
-        "description": "AI 识图最大图片数",
-        "type": "int",
-        "default": 1,
-        "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。"
-      }
-    }
-  },
   "schedule": {
     "description": "后台检查",
     "type": "object",
@@ -262,52 +187,6 @@
         "type": "int",
         "default": 5,
         "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
-      }
-    }
-  },
-  "deferred": {
-    "description": "暂存发布",
-    "type": "object",
-    "hint": "控制暂存发布时间、发布上限、暂存媒体预下载和清理策略；是否启用暂存由每个用户分组单独决定。",
-    "items": {
-      "deferred_publish_enabled": {
-        "description": "启用暂存定时发布",
-        "type": "bool",
-        "default": false,
-        "hint": "旧版兼容字段。新配置请在用户分组中开启暂存发布。",
-        "invisible": true
-      },
-      "deferred_publish_times": {
-        "description": "暂存发布时间列表",
-        "type": "list",
-        "default": [
-          "08:00"
-        ],
-        "hint": "格式 HH:MM，每行一个。启用暂存发布的用户分组会按这些时间统一发布。"
-      },
-      "deferred_publish_batch_limit": {
-        "description": "每次暂存发布上限",
-        "type": "int",
-        "default": 50,
-        "hint": "每次从暂存队列最多发布多少条推文，范围 1-500。"
-      },
-      "deferred_prefetch_media": {
-        "description": "暂存时预下载媒体",
-        "type": "bool",
-        "default": true,
-        "hint": "开启后，定时检查入队时就下载图片/视频到 cache/staged/；发布成功后删除。关闭时只暂存文本和已生成的翻译/评论。"
-      },
-      "deferred_media_retention_hours": {
-        "description": "暂存媒体保留小时数",
-        "type": "float",
-        "default": 72.0,
-        "hint": "用于清理长期未发布或失败重试遗留的 cache/staged/ 媒体文件，范围 1-8760。"
-      },
-      "deferred_media_download_interval_seconds": {
-        "description": "暂存媒体下载间隔秒数",
-        "type": "float",
-        "default": 0.5,
-        "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。"
       }
     }
   },
@@ -352,7 +231,7 @@
         "description": "用户分组",
         "type": "template_list",
         "default": [],
-        "hint": "每个分组只配置关注账号、推送目标、是否参与间隔检查、每日检查时间和暂存开关；拉取数量、发送间隔、暂存发布时间等细节使用全局配置。分组里的间隔检查和每日检查时间只有在后台检查总开关开启后才会触发。没有创建分组时保持为空；旧版关注账号和推送目标会自动迁移到默认分组。分组之间的配置和推送记录互相隔离。",
+        "hint": "每个分组只配置关注账号、推送目标、是否参与间隔检查和每日检查时间；拉取数量、发送间隔等细节使用全局配置。分组里的间隔检查和每日检查时间只有在后台检查总开关开启后才会触发。没有创建分组时保持为空；旧版关注账号和推送目标会自动迁移到默认分组。分组之间的配置和推送记录互相隔离。",
         "templates": {
           "group": {
             "name": "用户分组",
@@ -369,7 +248,7 @@
                 "description": "内部稳定分组 ID",
                 "type": "string",
                 "default": "",
-                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录、暂存队列和历史记录断开。",
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录和历史记录断开。",
                 "invisible": true
               },
               "enabled": {
@@ -401,17 +280,11 @@
                 "default": [],
                 "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
               },
-              "deferred_publish_enabled": {
-                "description": "启用暂存发布",
-                "type": "bool",
-                "default": false,
-                "hint": "开启后，该分组检查发现的新推文先写入 SQLite 暂存队列；发布时间、批量上限、媒体预下载和清理策略使用全局暂存发布配置。"
-              },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送和暂存发布会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
               },
               "aliases": {
                 "description": "分组别名",
@@ -461,38 +334,6 @@
                 "type": "float",
                 "default": 2.0,
                 "invisible": true
-              },
-              "deferred_publish_times": {
-                "description": "暂存发布时间列表",
-                "type": "list",
-                "default": [
-                  "08:00"
-                ],
-                "invisible": true
-              },
-              "deferred_publish_batch_limit": {
-                "description": "每次暂存发布上限",
-                "type": "int",
-                "default": 50,
-                "invisible": true
-              },
-              "deferred_prefetch_media": {
-                "description": "暂存时预下载媒体",
-                "type": "bool",
-                "default": true,
-                "invisible": true
-              },
-              "deferred_media_retention_hours": {
-                "description": "暂存媒体保留小时数",
-                "type": "float",
-                "default": 72.0,
-                "invisible": true
-              },
-              "deferred_media_download_interval_seconds": {
-                "description": "暂存媒体下载间隔秒数",
-                "type": "float",
-                "default": 0.5,
-                "invisible": true
               }
             }
           }
@@ -509,7 +350,7 @@
         "description": "后台日志简略模式",
         "type": "bool",
         "default": true,
-        "hint": "开启后只保留每轮检查或暂存发布的结果摘要、失败详情、推送成功率和关键 warning/error；关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
+        "hint": "开启后只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
       }
     }
   },
@@ -540,7 +381,7 @@
         "description": "启用媒体和模型并发准备",
         "type": "bool",
         "default": false,
-        "hint": "开启后，后台检查发现的新推文会并发执行翻译、媒体下载、AI 识图和 AI 评论；发送和暂存入队仍按关注账号和推文顺序执行。"
+        "hint": "开启后，后台检查发现的新推文会并发执行翻译和媒体下载；发送仍按关注账号和推文顺序执行。"
       },
       "prepare_concurrency": {
         "description": "推文准备并发数",
@@ -726,77 +567,6 @@
     "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。",
     "invisible": true
   },
-  "comment_enabled": {
-    "description": "启用 AI 评论",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后会按 comment_probability 概率调用大模型，为推文追加一句 AI 评论。",
-    "invisible": true
-  },
-  "comment_provider_id": {
-    "description": "AI 评论使用的模型",
-    "type": "string",
-    "_special": "select_provider",
-    "default": "",
-    "hint": "留空时，手动命令优先使用当前会话模型；定时推送会尝试使用推送目标默认模型，最后兜底为第一个 provider。",
-    "invisible": true
-  },
-  "comment_probability": {
-    "description": "AI 评论触发概率",
-    "type": "float",
-    "default": 0.3,
-    "hint": "范围 0-1。每条推文独立抽样，0 表示不触发，1 表示每条都触发。",
-    "invisible": true
-  },
-  "comment_max_chars": {
-    "description": "AI 评论输入最大字符数",
-    "type": "int",
-    "default": 2000,
-    "hint": "发送给评论模型的单条推文最大正文长度，范围 100-10000。",
-    "invisible": true
-  },
-  "comment_prompt": {
-    "description": "AI 评论提示词",
-    "type": "text",
-    "default": "你是社交媒体评论助手。请基于下面的推文内容和可选图片描述，生成一句简短、自然、有信息量的中文点评。不要复述原文，不要使用 Markdown。\n\n推文：{text}\n中文翻译：{translation}\n图片描述：{image_caption}",
-    "hint": "可使用 {text}、{translation}、{image_caption}、{link} 占位符；如果缺少内容占位符，插件会自动追加推文、译文和图片描述。",
-    "invisible": true
-  },
-  "vision_enabled": {
-    "description": "启用 AI 识图",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后会按 vision_probability 概率调用视觉模型识别已下载图片。识图结果不会直接发出，主要提供给 AI 评论使用；未启用 AI 评论时仅记录到处理日志。",
-    "invisible": true
-  },
-  "vision_provider_id": {
-    "description": "AI 识图使用的模型",
-    "type": "string",
-    "_special": "select_provider",
-    "default": "",
-    "hint": "留空时优先使用 AstrBot 全局图片描述模型 default_image_caption_provider_id；没有配置时再尝试当前会话模型。找不到可用视觉模型或识图调用失败时，手动查询会显示一次提示，定时推送只写日志。",
-    "invisible": true
-  },
-  "vision_probability": {
-    "description": "AI 识图触发概率",
-    "type": "float",
-    "default": 0.3,
-    "hint": "范围 0-1。每条推文独立抽样，只有已下载到本地的图片会参与识图。",
-    "invisible": true
-  },
-  "vision_prompt": {
-    "description": "AI 识图提示词",
-    "type": "text",
-    "default": "请简要描述这张图片的主要内容、可见文字、关键信息和可能的语境。输出自然简体中文，不要使用 Markdown。",
-    "invisible": true
-  },
-  "vision_max_images": {
-    "description": "AI 识图最大图片数",
-    "type": "int",
-    "default": 1,
-    "hint": "每条推文最多识别几张图片，范围 1-12。设为 1 表示只识别第一张图片。值越大消耗的 API 额度越多。",
-    "invisible": true
-  },
   "schedule_enabled": {
     "description": "启用定时检查",
     "type": "bool",
@@ -853,50 +623,6 @@
     "type": "int",
     "default": 5,
     "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。",
-    "invisible": true
-  },
-  "deferred_publish_enabled": {
-    "description": "启用暂存定时发布",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后，定时检查发现的新推文会先写入 SQLite 暂存队列，不立即发送；到 deferred_publish_times 配置的时间再统一发布。",
-    "invisible": true
-  },
-  "deferred_publish_times": {
-    "description": "暂存发布时间列表",
-    "type": "list",
-    "default": [
-      "08:00"
-    ],
-    "hint": "格式 HH:MM，每行一个。只有 deferred_publish_enabled 开启时生效。",
-    "invisible": true
-  },
-  "deferred_publish_batch_limit": {
-    "description": "每次暂存发布上限",
-    "type": "int",
-    "default": 50,
-    "hint": "每次从暂存队列最多发布多少条推文，范围 1-500。",
-    "invisible": true
-  },
-  "deferred_prefetch_media": {
-    "description": "暂存时预下载媒体",
-    "type": "bool",
-    "default": true,
-    "hint": "开启后，定时检查入队时就下载图片/视频到 cache/staged/；发布成功后删除。关闭时只暂存文本和已生成的翻译/评论。",
-    "invisible": true
-  },
-  "deferred_media_retention_hours": {
-    "description": "暂存媒体保留小时数",
-    "type": "float",
-    "default": 72.0,
-    "hint": "用于清理长期未发布或失败重试遗留的 cache/staged/ 媒体文件，范围 1-8760。",
-    "invisible": true
-  },
-  "deferred_media_download_interval_seconds": {
-    "description": "暂存媒体下载间隔秒数",
-    "type": "float",
-    "default": 0.5,
-    "hint": "暂存媒体预下载后的额外节流等待，降低连续下载压力，范围 0-60。",
     "invisible": true
   },
   "concurrent_fetch_enabled": {

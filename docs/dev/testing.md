@@ -13,11 +13,10 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 改动类型 | 最小检查 | 关注点 |
 | --- | --- | --- |
 | RSS、分页、转发过滤、纯文本过滤 | `python -m pytest -q tests/test_nitter_pagination.py` | cursor 翻页、empty feed、引用媒体、card_img |
-| 调度、seen、暂存、发送顺序 | `python -m pytest -q tests/test_deferred_scheduler.py` | seen 时机、失败保留、缓存清理、合并转发 |
+| 调度、seen、发送顺序 | `python -m pytest -q tests/` | seen 时机、失败保留、缓存清理、合并转发 |
 | 配置 schema、迁移、命令解析、订阅维护、AI | `python -m pytest -q tests/test_subscription_import.py` | 旧配置、默认分组、命令参数、provider fallback |
 | 媒体解析、视频限制、下载重试 | `python -m pytest -q tests/test_media_resolution.py` | xdown、分辨率、时长、大小、重试 |
-| 缓存和暂存媒体清理 | `python -m pytest -q tests/test_media_cleanup.py` | staged 保护、类型统计、空目录 |
-| SQLite pending queue | `python -m pytest -q tests/test_pending_storage.py` | 序列化、失败重试、delivered targets |
+| 缓存清理 | `python -m pytest -q tests/test_media_cleanup.py` | 递归清理、类型统计、空目录 |
 | 存储适配和旧 KV 迁移 | `python -m pytest -q tests/test_storage_adapter.py` | KV 到 SQLite |
 | SQLite 线程安全 | `python -m pytest -q tests/test_sqlite_threading.py` | `asyncio.to_thread` 调用 |
 
@@ -26,7 +25,6 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 改动 | 风险 | 要求 |
 | --- | --- | --- |
 | seen 写入时机 | 失败后漏推 | 补调度测试 |
-| pending queue | 重复发或丢队列 | 补 pending 和 scheduler 测试 |
 | OneBot 合并转发 | 重复推送、视频节点失败 | 补 OneBot 平台测试 |
 | Lark post | 图片或文本降级异常 | 补 Lark 行为测试 |
 | 纯文本过滤 | 引用媒体误判 | 补 RSS HTML 片段测试 |

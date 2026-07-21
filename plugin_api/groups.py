@@ -62,7 +62,6 @@ class WebUIGroupEditor:
                 "push_targets": [],
                 "interval_check_enabled": True,
                 "daily_check_times": [],
-                "deferred_publish_enabled": False,
                 "filter_plain_text_enabled": False,
             }
         )
@@ -111,12 +110,6 @@ class WebUIGroupEditor:
         )
         raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
-        raw_group["deferred_publish_enabled"] = self._bool(
-            data.get(
-                "deferred_publish_enabled",
-                raw_group.get("deferred_publish_enabled", False),
-            )
-        )
         raw_group["filter_plain_text_enabled"] = self._bool(
             data.get(
                 "filter_plain_text_enabled",

@@ -23,8 +23,6 @@ try:
     )
     from ..scheduler import ScheduleGroup
     from ..storage import (
-        PendingQueueSummary,
-        PendingTweetRecord,
         PushHistoryGroupSummary,
         PushHistoryRecord,
     )
@@ -47,8 +45,6 @@ except ImportError:
     from delivery import PlatformResolver, parse_umo
     from scheduler import ScheduleGroup
     from storage import (
-        PendingQueueSummary,
-        PendingTweetRecord,
         PushHistoryGroupSummary,
         PushHistoryRecord,
     )
@@ -78,9 +74,7 @@ class NitterWebAPI:
             ("web/history/orphans", "handle_history_orphans", ["GET"]),
             ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
-            ("web/pending", "handle_pending", ["GET"]),
             ("web/check", "handle_check", ["POST"]),
-            ("web/publish", "handle_publish", ["POST"]),
             ("web/cache/clear", "handle_cache_clear", ["POST"]),
             ("web/seen/clear", "handle_seen_clear", ["POST"]),
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
@@ -101,15 +95,6 @@ class NitterWebAPI:
     async def handle_groups(self):
         return await self._json_response(self.build_groups)
 
-    async def handle_pending(self):
-        async def action():
-            group_id = str(request.args.get("group_id", "") or "").strip()
-            limit = self._parse_int(
-                request.args.get("limit"), 50, minimum=1, maximum=200
-            )
-            return await self.build_pending(group_id, limit)
-
-        return await self._json_response(action)
 
     async def handle_history(self):
         async def action():
@@ -177,12 +162,6 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
-    async def handle_publish(self):
-        async def action():
-            data = await self._request_json()
-            return await self.publish_pending(data)
-
-        return await self._json_response(action)
 
     async def handle_cache_clear(self):
         return await self._json_response(self.clear_cache)
@@ -221,7 +200,6 @@ class NitterWebAPI:
 
     async def build_overview(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        summaries = await self._pending_summaries(groups)
 
         total_raw_users = sum(group.users_info.raw_count for group in groups)
         total_duplicates = sum(len(group.users_info.duplicates) for group in groups)
@@ -239,11 +217,6 @@ class NitterWebAPI:
             "invalid_push_targets": sum(
                 len(group.invalid_targets) for group in groups
             ),
-            "pending_tweets": sum(item.pending_count for item in summaries.values()),
-            "failed_pending_tweets": sum(
-                item.failed_count for item in summaries.values()
-            ),
-            "pending_media": sum(item.media_count for item in summaries.values()),
         }
         scheduler_state = {
             "running": bool(getattr(self.scheduler, "is_running", False)),
@@ -255,11 +228,6 @@ class NitterWebAPI:
             "images": bool(config_get(self.config, "send_image_attachments", True)),
             "videos": bool(config_get(self.config, "send_video_attachments", False)),
             "translation": bool(config_get(self.config, "translate_enabled", False)),
-            "ai_vision": bool(config_get(self.config, "vision_enabled", False)),
-            "ai_comment": bool(config_get(self.config, "comment_enabled", False)),
-            "deferred_publish_groups": sum(
-                1 for group in groups if group.deferred_publish_enabled
-            ),
         }
         instances = list(getattr(getattr(self.plugin, "nitter", None), "instances", []))
         return self._ok(
@@ -276,10 +244,9 @@ class NitterWebAPI:
 
     async def build_groups(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        summaries = await self._pending_summaries(groups)
         return self._ok(
             groups=[
-                self._serialize_group(group, summaries.get(group.group_id))
+                self._serialize_group(group)
                 for group in groups
             ],
             terminology=self._terminology(),
@@ -294,9 +261,8 @@ class NitterWebAPI:
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
         payload = self._ok(
-            group=self._serialize_group(group, summary),
+            group=self._serialize_group(group),
         )
         if sync_error:
             payload["sync_error"] = sync_error
@@ -312,9 +278,8 @@ class NitterWebAPI:
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
         payload = self._ok(
-            group=self._serialize_group(group, summary),
+            group=self._serialize_group(group),
         )
         if sync_error:
             payload["sync_error"] = sync_error
@@ -327,9 +292,7 @@ class NitterWebAPI:
             return result
 
         runtime_summary = None
-        media_summary = None
         runtime_error = ""
-        media_error = ""
         try:
             runtime_summary = await self.storage.delete_group_runtime_data(
                 result["group_id"]
@@ -340,40 +303,20 @@ class NitterWebAPI:
                 "[NitterTweets] WebUI 删除分组运行数据清理失败: "
                 f"group={result['group_id']}, error={runtime_error}"
             )
-        try:
-            media_summary = await asyncio.to_thread(
-                self.plugin.media.delete_staged_media_group,
-                result["group_id"],
-            )
-        except Exception as exc:
-            media_error = str(exc)
-            logger.warning(
-                "[NitterTweets] WebUI 删除分组暂存媒体清理失败: "
-                f"group={result['group_id']}, error={media_error}"
-            )
         sync_error = await self._sync_groups()
         payload = self._ok(
             group_id=result["group_id"],
             group_name=result["group_name"],
             runtime_summary=runtime_summary,
-            media_summary=(
-                self._serialize_cache_result(media_summary)
-                if media_summary is not None
-                else None
-            ),
-            cleanup_status=(
-                "partial_failure" if runtime_error or media_error else "ok"
-            ),
+            media_summary=None,
+            cleanup_status=("partial_failure" if runtime_error else "ok"),
         )
         if runtime_error:
             payload["runtime_error"] = runtime_error
-        if media_error:
-            payload["media_error"] = media_error
-        if runtime_error or media_error:
             payload["message"] = "分组已删除，但部分运行数据清理失败，请查看详情"
         if sync_error:
             payload["sync_error"] = sync_error
-            if runtime_error or media_error:
+            if runtime_error:
                 payload["message"] += f"；数据库同步失败：{sync_error}"
             else:
                 payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
@@ -467,38 +410,6 @@ class NitterWebAPI:
             return "non_onebot"
         return "default"
 
-    async def build_pending(self, group_id: str = "", limit: int = 50) -> dict[str, Any]:
-        groups = self._schedule_groups()
-        selected_groups = self._select_groups(groups, group_id)
-        if group_id and not selected_groups:
-            return self._error(f"未找到分组：{group_id}")
-
-        summaries = await self._pending_summaries(groups)
-        records: list[dict[str, Any]] = []
-        group_names = {group.group_id: group.name for group in groups}
-        remaining = max(1, int(limit))
-        for group in selected_groups:
-            if remaining <= 0:
-                break
-            group_records = await self.storage.get_pending_tweets(
-                group.group_id, remaining
-            )
-            records.extend(
-                self._serialize_pending_record(record, group_names)
-                for record in group_records
-            )
-            remaining -= len(group_records)
-
-        return self._ok(
-            selected_group_id=group_id.strip(),
-            summaries=[
-                self._serialize_pending_summary(summary, group_names)
-                for summary in summaries.values()
-            ],
-            records=records,
-            limit=limit,
-            terminology=self._terminology(),
-        )
 
     async def build_history(
         self,
@@ -577,14 +488,9 @@ class NitterWebAPI:
             return self._error("清理失效分组运行数据需要显式确认")
 
         summary = await self.storage.delete_orphan_group_runtime_data(group_id)
-        media_summary = await asyncio.to_thread(
-            self.plugin.media.delete_staged_media_group,
-            group_id,
-        )
         return self._ok(
             group_id=group_id,
             summary=summary,
-            media_summary=self._serialize_cache_result(media_summary),
         )
 
     async def replay_history(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -616,32 +522,15 @@ class NitterWebAPI:
             reason="webui",
             notify_no_updates=False,
             group_name=group.group_id,
-            force_immediate=True,
         )
         return self._ok(
             message=result.format_message(),
             result=self._serialize_check_result(result),
         )
 
-    async def publish_pending(self, data: dict[str, Any]) -> dict[str, Any]:
-        group_id = self._data_text(data, "group_id") or self._data_text(
-            data, "group_name"
-        )
-        group, error = self._resolve_group(group_id)
-        if error:
-            return self._error(error)
-
-        result = await self.scheduler.publish_pending(
-            group_name=group.group_id,
-            reason="webui_publish",
-        )
-        return self._ok(
-            message=result.format_message("Nitter 暂存发布结果"),
-            result=self._serialize_check_result(result),
-        )
 
     async def clear_cache(self) -> dict[str, Any]:
-        result = await asyncio.to_thread(self.plugin.media.clear_non_staged_cache)
+        result = await asyncio.to_thread(self.plugin.media.clear_cache)
         return self._ok(result=self._serialize_cache_result(result))
 
     async def clear_seen(self, group_id: str = "", confirm: str = "") -> dict[str, Any]:
@@ -865,18 +754,6 @@ class NitterWebAPI:
             return error
         return ""
 
-    async def _pending_summaries(
-        self, groups: list[ScheduleGroup]
-    ) -> dict[str, PendingQueueSummary]:
-        if not groups:
-            return {}
-        results = await asyncio.gather(
-            *[
-                self.storage.get_pending_queue_summary(group.group_id)
-                for group in groups
-            ]
-        )
-        return {group.group_id: summary for group, summary in zip(groups, results)}
 
     def _select_groups(
         self, groups: list[ScheduleGroup], group_id: str
@@ -956,9 +833,6 @@ class NitterWebAPI:
             "send_target_interval": self._group_value(
                 effective_group, "send_target_interval", 1.5
             ),
-            "deferred_publish_batch_limit": self._group_value(
-                effective_group, "deferred_publish_batch_limit", 50
-            ),
             "concurrent_fetch_enabled": bool(
                 self._group_value(effective_group, "concurrent_fetch_enabled", False)
             ),
@@ -1017,7 +891,7 @@ class NitterWebAPI:
                     "key": "scheduler_not_running",
                     "level": "warning",
                     "title": "调度器未运行",
-                    "detail": "后台检查和暂存发布不会自动执行。",
+                    "detail": "后台检查不会自动执行。",
                 }
             )
         if not scheduler_state.get("schedule_enabled", False):
@@ -1026,7 +900,7 @@ class NitterWebAPI:
                     "key": "schedule_disabled",
                     "level": "warning",
                     "title": "后台检查总开关关闭",
-                    "detail": "定时检查和暂存发布时间不会自动触发。",
+                    "detail": "定时检查不会自动触发。",
                 }
             )
         if not instances:
@@ -1074,16 +948,9 @@ class NitterWebAPI:
                     "detail": f"{counts['invalid_watch_users']} 个关注账号格式无效。",
                 }
             )
-        if int(counts.get("failed_pending_tweets", 0)) > 0:
-            items.append(
-                {
-                    "key": "failed_pending_tweets",
-                    "level": "warning",
-                    "title": "暂存队列有失败记录",
-                    "detail": f"{counts['failed_pending_tweets']} 条待发布推文需要关注。",
-                }
-            )
-        items.extend(NitterWebAPI._overview_group_diagnostics(groups or []))
+        if groups:
+            items.extend(NitterWebAPI._overview_group_diagnostics(groups))
+
         if not items:
             items.append(
                 {
@@ -1110,11 +977,6 @@ class NitterWebAPI:
             group
             for group in enabled_groups
             if not group.interval_check_enabled and not group.daily_check_enabled
-        ]
-        deferred_without_times = [
-            group
-            for group in enabled_groups
-            if group.deferred_publish_enabled and not group.deferred_publish_times
         ]
 
         if no_watch_users:
@@ -1153,18 +1015,6 @@ class NitterWebAPI:
                     ),
                 }
             )
-        if deferred_without_times:
-            items.append(
-                {
-                    "key": "deferred_without_publish_times",
-                    "level": "warning",
-                    "title": "暂存发布没有发布时间",
-                    "detail": (
-                        "这些分组已开启暂存发布，但全局发布时间为空："
-                        + NitterWebAPI._format_group_names(deferred_without_times)
-                    ),
-                }
-            )
         return items
 
     @staticmethod
@@ -1177,9 +1027,7 @@ class NitterWebAPI:
     def _serialize_group(
         self,
         group: ScheduleGroup,
-        summary: PendingQueueSummary | None = None,
     ) -> dict[str, Any]:
-        pending_summary = summary or PendingQueueSummary(group_id=group.group_id)
         return {
             "group_id": group.group_id,
             "name": group.name,
@@ -1199,23 +1047,13 @@ class NitterWebAPI:
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
             "scheduled_fetch_limit": group.scheduled_fetch_limit,
-            "deferred_publish_enabled": group.deferred_publish_enabled,
-            "deferred_publish_times": self._format_times(
-                group.deferred_publish_times
-            ),
-            "deferred_publish_batch_limit": group.deferred_publish_batch_limit,
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
-            "pending_summary": self._serialize_pending_summary(
-                pending_summary,
-                {group.group_id: group.name},
-            ),
-            "attention_items": self._group_attention_items(group, pending_summary),
+            "attention_items": self._group_attention_items(group),
         }
 
     @staticmethod
     def _group_attention_items(
         group: ScheduleGroup,
-        summary: PendingQueueSummary,
     ) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         if not group.enabled:
@@ -1263,66 +1101,7 @@ class NitterWebAPI:
                     "detail": f"{len(group.invalid_targets)} 个推送目标未通过 UMO 校验。",
                 }
             )
-        if summary.failed_count > 0:
-            items.append(
-                {
-                    "key": "failed_pending_tweets",
-                    "level": "warning",
-                    "title": "暂存发布失败",
-                    "detail": f"{summary.failed_count} 条待发布推文有失败记录。",
-                }
-            )
         return items
-
-    @staticmethod
-    def _serialize_pending_summary(
-        summary: PendingQueueSummary,
-        group_names: dict[str, str],
-    ) -> dict[str, Any]:
-        return {
-            "group_id": summary.group_id,
-            "group_name": group_names.get(summary.group_id, summary.group_id),
-            "pending_count": summary.pending_count,
-            "failed_count": summary.failed_count,
-            "media_count": summary.media_count,
-            "oldest_created_at": summary.oldest_created_at,
-            "newest_created_at": summary.newest_created_at,
-            "user_counts": [
-                {"username": username, "count": count}
-                for username, count in summary.user_counts
-            ],
-        }
-
-    @staticmethod
-    def _serialize_pending_record(
-        record: PendingTweetRecord,
-        group_names: dict[str, str],
-    ) -> dict[str, Any]:
-        media_kinds = list(dict.fromkeys(media.kind for media in record.tweet.media))
-        return {
-            "id": record.id,
-            "group_id": record.group_id,
-            "group_name": group_names.get(record.group_id, record.group_id),
-            "username": record.username,
-            "status_id": record.status_id,
-            "instance": record.instance,
-            "original_link": record.tweet.x_url,
-            "published": record.tweet.published,
-            "text_preview": NitterWebAPI._text_preview(record.tweet.text),
-            "created_at": record.created_at,
-            "scheduled_at": record.scheduled_at,
-            "published_at": record.published_at,
-            "sent_at": record.sent_at,
-            "failed_at": record.failed_at,
-            "fail_count": record.fail_count,
-            "last_error": record.last_error,
-            "delivered_target_count": len(record.delivered_targets),
-            "media_count": len(record.tweet.media),
-            "media_kinds": media_kinds,
-            "has_translation": bool(record.tweet.translation),
-            "has_ai_comment": bool(record.tweet.ai_comment),
-            "has_image_caption": bool(record.tweet.image_caption),
-        }
 
     @staticmethod
     def _serialize_history_record(
@@ -1481,7 +1260,6 @@ class NitterWebAPI:
             "watch_users": "关注账号",
             "push_targets": "推送目标",
             "seen": "推送记录",
-            "pending_queue": "暂存队列",
         }
 
     @staticmethod

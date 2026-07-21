@@ -32,22 +32,9 @@ except ImportError:
     from shared import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ORPHAN_SEEN_RETENTION_DAYS = 30
 
-PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
-    "instance": "ALTER TABLE pending_tweets ADD COLUMN instance TEXT NOT NULL DEFAULT ''",
-    "published_at": "ALTER TABLE pending_tweets ADD COLUMN published_at INTEGER",
-    "failed_at": "ALTER TABLE pending_tweets ADD COLUMN failed_at INTEGER",
-    "fail_count": "ALTER TABLE pending_tweets ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0",
-    "last_error": "ALTER TABLE pending_tweets ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
-}
-PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS: dict[str, str] = {
-    "delivered_targets": (
-        "ALTER TABLE pending_tweets "
-        "ADD COLUMN delivered_targets TEXT NOT NULL DEFAULT '[]'"
-    ),
-}
 PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
     "delivery_status": (
         "ALTER TABLE push_history "
@@ -58,36 +45,9 @@ PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
         "ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"
     ),
 }
-SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media", "push_history"}
+SQLITE_TABLE_NAMES = {"push_history"}
 
 
-@dataclass(slots=True)
-class PendingTweetRecord:
-    id: int
-    group_id: str
-    username: str
-    status_id: str
-    instance: str
-    tweet: TweetItem
-    created_at: int
-    scheduled_at: int | None = None
-    published_at: int | None = None
-    sent_at: int | None = None
-    failed_at: int | None = None
-    fail_count: int = 0
-    last_error: str = ""
-    delivered_targets: tuple[str, ...] = ()
-
-
-@dataclass(slots=True)
-class PendingQueueSummary:
-    group_id: str
-    pending_count: int = 0
-    failed_count: int = 0
-    media_count: int = 0
-    oldest_created_at: int | None = None
-    newest_created_at: int | None = None
-    user_counts: list[tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -273,60 +233,6 @@ class SQLiteStorage:
                 ON seen_tweets(group_id, username)
             """)
 
-            # pending_tweets 表：待推/发送队列
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pending_tweets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    group_id TEXT NOT NULL,
-                    username TEXT NOT NULL,
-                    status_id TEXT NOT NULL,
-                    instance TEXT NOT NULL DEFAULT '',
-                    tweet_data TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    scheduled_at INTEGER,
-                    published_at INTEGER,
-                    sent_at INTEGER,
-                    failed_at INTEGER,
-                    fail_count INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT NOT NULL DEFAULT '',
-                    delivered_targets TEXT NOT NULL DEFAULT '[]'
-                )
-            """)
-            cursor.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tweets_unique
-                ON pending_tweets(group_id, username, status_id)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_tweets_schedule
-                ON pending_tweets(group_id, scheduled_at)
-                WHERE sent_at IS NULL
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_tweets_unsent
-                ON pending_tweets(group_id, created_at)
-                WHERE sent_at IS NULL
-            """)
-
-            # pending_media 表：暂存推文媒体，按推文 ID + 媒体索引绑定
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pending_media (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pending_tweet_id INTEGER NOT NULL,
-                    media_index INTEGER NOT NULL,
-                    kind TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    path TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    FOREIGN KEY(pending_tweet_id)
-                        REFERENCES pending_tweets(id)
-                        ON DELETE CASCADE,
-                    UNIQUE(pending_tweet_id, media_index)
-                )
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_media_tweet_id
-                ON pending_media(pending_tweet_id)
-            """)
 
             self._create_push_history_table(cursor)
 
@@ -345,6 +251,8 @@ class SQLiteStorage:
             self._migrate_schema_v5(cursor)
         if stored_version < 6:
             self._migrate_schema_v6(cursor)
+        if stored_version < 7:
+            self._migrate_schema_v7(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -357,41 +265,24 @@ class SQLiteStorage:
         )
 
     def _migrate_schema_v2(self, cursor: sqlite3.Cursor) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        columns = self._table_columns(cursor, "pending_tweets")
-        for name, statement in PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS.items():
-            if name not in columns:
-                cursor.execute(statement)
-        cursor.execute(
-            """
-            DELETE FROM pending_tweets
-            WHERE id NOT IN (
-                SELECT MIN(id)
-                FROM pending_tweets
-                GROUP BY group_id, username, status_id
-            )
-            """
-        )
+        return
 
     def _migrate_schema_v3(self, cursor: sqlite3.Cursor) -> None:
         return
 
     def _migrate_schema_v4(self, cursor: sqlite3.Cursor) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        columns = self._table_columns(cursor, "pending_tweets")
-        for name, statement in PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS.items():
-            if name not in columns:
-                cursor.execute(statement)
+        return
 
     def _migrate_schema_v5(self, cursor: sqlite3.Cursor) -> None:
         self._create_push_history_table(cursor)
 
     def _migrate_schema_v6(self, cursor: sqlite3.Cursor) -> None:
         self._ensure_push_history_delivery_columns(cursor)
+
+    def _migrate_schema_v7(self, cursor: sqlite3.Cursor) -> None:
+        # Pending/deferred queue feature removed.
+        cursor.execute("DROP TABLE IF EXISTS pending_media")
+        cursor.execute("DROP TABLE IF EXISTS pending_tweets")
 
     def _create_push_history_table(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("""
@@ -469,7 +360,6 @@ class SQLiteStorage:
             default_id=default_id,
             key_column=("username", "status_id"),
         )
-        self._merge_pending_tweets(cursor, legacy_id=legacy_id, default_id=default_id)
 
     def _merge_group_key_table(
         self,
@@ -502,46 +392,6 @@ class SQLiteStorage:
             (default_id, legacy_id),
         )
 
-    def _merge_pending_tweets(
-        self,
-        cursor: sqlite3.Cursor,
-        legacy_id: str,
-        default_id: str,
-    ) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        duplicate_ids = [
-            int(row[0])
-            for row in cursor.execute(
-                """
-                SELECT source.id
-                FROM pending_tweets AS source
-                WHERE source.group_id = ?
-                  AND EXISTS (
-                      SELECT 1
-                      FROM pending_tweets AS target
-                      WHERE target.group_id = ?
-                        AND target.username = source.username
-                        AND target.status_id = source.status_id
-                  )
-                """,
-                (legacy_id, default_id),
-            ).fetchall()
-        ]
-        if duplicate_ids:
-            cursor.executemany(
-                "DELETE FROM pending_media WHERE pending_tweet_id = ?",
-                [(pending_id,) for pending_id in duplicate_ids],
-            )
-            cursor.executemany(
-                "DELETE FROM pending_tweets WHERE id = ?",
-                [(pending_id,) for pending_id in duplicate_ids],
-            )
-        cursor.execute(
-            "UPDATE pending_tweets SET group_id = ? WHERE group_id = ?",
-            (default_id, legacy_id),
-        )
 
     @staticmethod
     def _table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:
@@ -873,299 +723,25 @@ class SQLiteStorage:
             cursor = self.conn.execute("DELETE FROM seen_tweets")
         return int(cursor.rowcount or 0)
 
-    def enqueue_pending_tweets(
-        self,
-        group_id: str,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        scheduled_at: int | None = None,
-    ) -> int:
-        """Add tweets to the pending publish queue."""
-        assert self.conn is not None
 
-        normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
-        if not normalized_username or not tweets:
-            return 0
 
-        now = int(time.time())
-        inserted = 0
-        for tweet in tweets:
-            status_id = str(tweet.status_id or "").strip()
-            if not status_id:
-                continue
-            cursor = self.conn.execute(
-                """
-                INSERT OR IGNORE INTO pending_tweets (
-                    group_id, username, status_id, instance, tweet_data,
-                    created_at, scheduled_at, published_at, sent_at,
-                    failed_at, fail_count, last_error, delivered_targets
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, '', '[]')
-                """,
-                (
-                    normalized_group_id,
-                    normalized_username,
-                    status_id,
-                    instance or "",
-                    self._serialize_tweet(tweet),
-                    now,
-                    scheduled_at,
-                ),
-            )
-            if int(cursor.rowcount or 0) <= 0:
-                continue
 
-            pending_tweet_id = int(cursor.lastrowid)
-            media_rows = [
-                (
-                    pending_tweet_id,
-                    media_index,
-                    media.kind,
-                    media.url,
-                    str(media.path) if media.path else "",
-                    now,
-                )
-                for media_index, media in enumerate(tweet.media)
-            ]
-            if media_rows:
-                self.conn.executemany(
-                    """
-                    INSERT INTO pending_media (
-                        pending_tweet_id, media_index, kind, url, path, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    media_rows,
-                )
-            inserted += 1
-        return inserted
 
-    def get_pending_tweets(
-        self,
-        group_id: str,
-        limit: int,
-    ) -> list[PendingTweetRecord]:
-        """Get unsent pending tweets for a group."""
-        assert self.conn is not None
 
-        with self._conn_lock:
-            normalized_group_id = normalize_stable_group_id(group_id)
-            rows = self.conn.execute(
-                """
-                SELECT * FROM pending_tweets
-                WHERE group_id = ? AND sent_at IS NULL
-                ORDER BY created_at ASC, id ASC
-                LIMIT ?
-                """,
-                (normalized_group_id, max(1, int(limit))),
-            ).fetchall()
-            if not rows:
-                return []
 
-            pending_ids = [int(row["id"]) for row in rows]
-            media_map = self._pending_media_map(pending_ids)
-            return [self._pending_record_from_row(row, media_map) for row in rows]
 
-    def get_pending_queue_summary(self, group_id: str) -> PendingQueueSummary:
-        """Get pending queue counts for a group."""
-        assert self.conn is not None
-
-        normalized_group_id = normalize_stable_group_id(group_id)
-        row = self.conn.execute(
-            """
-            SELECT
-                COUNT(*) AS pending_count,
-                SUM(CASE WHEN failed_at IS NOT NULL THEN 1 ELSE 0 END)
-                    AS failed_count,
-                MIN(created_at) AS oldest_created_at,
-                MAX(created_at) AS newest_created_at
-            FROM pending_tweets
-            WHERE group_id = ? AND sent_at IS NULL
-            """,
-            (normalized_group_id,),
-        ).fetchone()
-        media_row = self.conn.execute(
-            """
-            SELECT COUNT(*) AS media_count
-            FROM pending_media
-            WHERE pending_tweet_id IN (
-                SELECT id FROM pending_tweets
-                WHERE group_id = ? AND sent_at IS NULL
-            )
-            """,
-            (normalized_group_id,),
-        ).fetchone()
-        user_rows = self.conn.execute(
-            """
-            SELECT username, COUNT(*) AS pending_count
-            FROM pending_tweets
-            WHERE group_id = ? AND sent_at IS NULL
-            GROUP BY username
-            ORDER BY pending_count DESC, username COLLATE NOCASE ASC
-            LIMIT 10
-            """,
-            (normalized_group_id,),
-        ).fetchall()
-        return PendingQueueSummary(
-            group_id=normalized_group_id,
-            pending_count=int(row["pending_count"] or 0),
-            failed_count=int(row["failed_count"] or 0),
-            media_count=int(media_row["media_count"] or 0),
-            oldest_created_at=row["oldest_created_at"],
-            newest_created_at=row["newest_created_at"],
-            user_counts=[
-                (str(item["username"]), int(item["pending_count"] or 0))
-                for item in user_rows
-            ],
-        )
-
-    def get_pending_media_paths(self) -> set[str]:
-        """Get staged media paths still referenced by unsent queue rows."""
-        assert self.conn is not None
-        rows = self.conn.execute(
-            """
-            SELECT pending_media.path
-            FROM pending_media
-            JOIN pending_tweets
-                ON pending_tweets.id = pending_media.pending_tweet_id
-            WHERE pending_tweets.sent_at IS NULL
-              AND pending_media.path != ''
-            """
-        ).fetchall()
-        return {str(row[0]) for row in rows if row[0]}
-
-    def mark_pending_tweets_published(self, pending_ids: list[int]) -> None:
-        """Mark pending tweets as sent."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        now = int(time.time())
-        self.conn.executemany(
-            """
-            UPDATE pending_tweets
-            SET published_at = COALESCE(published_at, ?),
-                sent_at = ?,
-                last_error = '',
-                delivered_targets = '[]'
-            WHERE id = ?
-            """,
-            [(now, now, pending_id) for pending_id in ids],
-        )
-
-    def mark_pending_tweets_delivered(
-        self, pending_ids: list[int], target: str
-    ) -> None:
-        """Record that pending tweets reached one configured target."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        normalized_target = str(target or "").strip()
-        if not ids or not normalized_target:
-            return
-
-        placeholders = ",".join("?" for _ in ids)
-        rows = self.conn.execute(
-            f"""
-            SELECT id, delivered_targets
-            FROM pending_tweets
-            WHERE sent_at IS NULL
-              AND id IN ({placeholders})
-            """,
-            ids,
-        ).fetchall()
-        updates: list[tuple[str, int]] = []
-        for row in rows:
-            delivered = list(
-                self._deserialize_delivered_targets(row["delivered_targets"])
-            )
-            if normalized_target in delivered:
-                continue
-            delivered.append(normalized_target)
-            updates.append(
-                (self._serialize_delivered_targets(delivered), int(row["id"]))
-            )
-        if updates:
-            self.conn.executemany(
-                """
-                UPDATE pending_tweets
-                SET delivered_targets = ?
-                WHERE id = ? AND sent_at IS NULL
-                """,
-                updates,
-            )
-
-    def mark_pending_tweets_failed(
-        self, pending_ids: list[int], error: str
-    ) -> None:
-        """Record a publish failure for pending tweets."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        now = int(time.time())
-        message = str(error or "")[:1000]
-        self.conn.executemany(
-            """
-            UPDATE pending_tweets
-            SET failed_at = ?,
-                fail_count = fail_count + 1,
-                last_error = ?
-            WHERE id = ? AND sent_at IS NULL
-            """,
-            [(now, message, pending_id) for pending_id in ids],
-        )
-
-    def delete_pending_tweets(self, pending_ids: list[int]) -> None:
-        """Delete pending tweets and their media rows."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        self.conn.executemany(
-            "DELETE FROM pending_media WHERE pending_tweet_id = ?",
-            [(pending_id,) for pending_id in ids],
-        )
-        self.conn.executemany(
-            "DELETE FROM pending_tweets WHERE id = ?",
-            [(pending_id,) for pending_id in ids],
-        )
 
     def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
-        pending_ids = [
-            int(row[0])
-            for row in self.conn.execute(
-                "SELECT id FROM pending_tweets WHERE group_id = ?",
-                (normalized_group_id,),
-            ).fetchall()
-        ]
         summary = {
             "groups_deleted": 0,
             "users_deleted": 0,
             "targets_deleted": 0,
             "seen_deleted": 0,
-            "pending_deleted": 0,
-            "pending_media_deleted": 0,
             "push_history_deleted": 0,
         }
-        if pending_ids:
-            placeholders = ",".join("?" for _ in pending_ids)
-            summary["pending_media_deleted"] = int(
-                self.conn.execute(
-                    f"DELETE FROM pending_media WHERE pending_tweet_id IN ({placeholders})",
-                    pending_ids,
-                ).rowcount
-                or 0
-            )
-        summary["pending_deleted"] = int(
-            self.conn.execute(
-                "DELETE FROM pending_tweets WHERE group_id = ?",
-                (normalized_group_id,),
-            ).rowcount
-            or 0
-        )
         summary["seen_deleted"] = int(
             self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
@@ -1203,21 +779,6 @@ class SQLiteStorage:
         )
         return summary
 
-    def cleanup_sent_pending_tweets(self, older_than: int) -> int:
-        """Delete sent pending tweet rows at or before the timestamp."""
-        assert self.conn is not None
-        ids = [
-            int(row[0])
-            for row in self.conn.execute(
-                """
-                SELECT id FROM pending_tweets
-                WHERE sent_at IS NOT NULL AND sent_at <= ?
-                """,
-                (older_than,),
-            ).fetchall()
-        ]
-        self.delete_pending_tweets(ids)
-        return len(ids)
 
     def record_push_history(
         self,
@@ -1488,74 +1049,7 @@ class SQLiteStorage:
             dict.fromkeys(str(item).strip() for item in data if str(item).strip())
         )
 
-    def _pending_media_map(
-        self, pending_ids: list[int]
-    ) -> dict[int, list[TweetMedia]]:
-        if not pending_ids:
-            return {}
-        assert self.conn is not None
-        ids = [(int(item),) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return {}
-        self.conn.execute(
-            """
-            CREATE TEMP TABLE IF NOT EXISTS temp_pending_media_ids (
-                id INTEGER PRIMARY KEY
-            )
-            """
-        )
-        self.conn.execute("DELETE FROM temp_pending_media_ids")
-        self.conn.executemany(
-            "INSERT OR IGNORE INTO temp_pending_media_ids (id) VALUES (?)",
-            ids,
-        )
-        rows = self.conn.execute(
-            """
-            SELECT pending_tweet_id, kind, url, path
-            FROM pending_media
-            JOIN temp_pending_media_ids
-                ON temp_pending_media_ids.id = pending_media.pending_tweet_id
-            ORDER BY pending_tweet_id, media_index
-            """,
-        ).fetchall()
-        media_map: dict[int, list[TweetMedia]] = {}
-        for row in rows:
-            media_path = str(row["path"] or "")
-            media_map.setdefault(int(row["pending_tweet_id"]), []).append(
-                TweetMedia(
-                    kind=str(row["kind"] or ""),
-                    url=str(row["url"] or ""),
-                    path=Path(media_path) if media_path else None,
-                )
-            )
-        return media_map
 
-    def _pending_record_from_row(
-        self,
-        row: sqlite3.Row,
-        media_map: dict[int, list[TweetMedia]],
-    ) -> PendingTweetRecord:
-        pending_id = int(row["id"])
-        tweet = self._deserialize_tweet(row["tweet_data"])
-        tweet.media = media_map.get(pending_id, [])
-        return PendingTweetRecord(
-            id=pending_id,
-            group_id=str(row["group_id"]),
-            username=str(row["username"]),
-            status_id=str(row["status_id"]),
-            instance=str(row["instance"] or ""),
-            tweet=tweet,
-            created_at=int(row["created_at"]),
-            scheduled_at=row["scheduled_at"],
-            published_at=row["published_at"],
-            sent_at=row["sent_at"],
-            failed_at=row["failed_at"],
-            fail_count=int(row["fail_count"] or 0),
-            last_error=str(row["last_error"] or ""),
-            delivered_targets=self._deserialize_delivered_targets(
-                row["delivered_targets"]
-            ),
-        )
 
     def _push_history_record_from_row(self, row: sqlite3.Row) -> PushHistoryRecord:
         return PushHistoryRecord(
@@ -1746,15 +1240,7 @@ for _method_name in (
     "add_seen_ids",
     "get_group_seen_map",
     "clear_seen_tweets",
-    "enqueue_pending_tweets",
-    "get_pending_tweets",
-    "get_pending_queue_summary",
-    "get_pending_media_paths",
-    "mark_pending_tweets_published",
-    "mark_pending_tweets_failed",
-    "delete_pending_tweets",
     "delete_group_runtime_data",
-    "cleanup_sent_pending_tweets",
     "record_push_history",
     "get_push_history",
     "count_push_history",

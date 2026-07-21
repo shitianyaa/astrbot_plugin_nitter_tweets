@@ -103,12 +103,11 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
                 )
 
             try:
-                summary = await adapter.get_pending_queue_summary("global")
+                seen_ids = await adapter.get_seen_ids("default", "NASA")
             finally:
                 adapter.close()
 
-            self.assertEqual(summary.group_id, "global")
-            self.assertEqual(summary.pending_count, 0)
+            self.assertEqual(seen_ids, [])
             self.assertTrue(db_path.exists())
 
     async def test_legacy_seen_kv_is_deleted_after_migration(self):

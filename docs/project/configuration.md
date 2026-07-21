@@ -7,10 +7,7 @@
 - `basic`: Nitter 实例、默认数量、冷却、基础平台字段。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: 翻译。
-- `ai_comment`: AI 评论。
-- `ai_vision`: AI 识图。
 - `schedule`: 后台检查总开关和全局频率。
-- `deferred`: 暂存发布全局参数。
 - `push`: `tweet_groups`、推送间隔、合并阈值。
 - `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
@@ -27,7 +24,6 @@
 - `push_targets`: 分组推送目标 UMO。
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
-- `deferred_publish_enabled`: 是否启用暂存发布。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。

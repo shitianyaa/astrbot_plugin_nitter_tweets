@@ -8,11 +8,11 @@ const state = {
   groups: [],
   groupDrafts: {},
   targetProbeResults: {},
-  pending: null,
+
   history: null,
   historyOrphans: null,
   selectedGroupId: "",
-  pendingGroupId: "",
+
   historyGroupId: "",
   historyUsername: "",
   historyLimit: 10,
@@ -42,10 +42,7 @@ const els = {
   createGroupBtn: document.getElementById("createGroupBtn"),
   groupList: document.getElementById("groupList"),
   groupEditor: document.getElementById("groupEditor"),
-  pendingGroupSelect: document.getElementById("pendingGroupSelect"),
-  pendingRefreshBtn: document.getElementById("pendingRefreshBtn"),
-  publishSelectedBtn: document.getElementById("publishSelectedBtn"),
-  pendingContent: document.getElementById("pendingContent"),
+
   historyGroupSelect: document.getElementById("historyGroupSelect"),
   historyUsername: document.getElementById("historyUsername"),
   historyLimit: document.getElementById("historyLimit"),
@@ -86,10 +83,7 @@ const viewMeta = {
     title: "订阅分组与博主管理",
     desc: "维护关注账号、推送目标和分组级检查策略。",
   },
-  pending: {
-    title: "推文暂存发布队列",
-    desc: "查看待发布推文、失败原因和已送达推送目标，并按分组发布。",
-  },
+
   history: {
     title: "最近推送历史",
     desc: "查看成功送达记录，按分组和博主筛选，并选择当前推送目标重新推送。",
@@ -320,12 +314,7 @@ function renderRailStatus() {
     scheduler.schedule_enabled ? "已开启" : "已关闭",
     scheduler.schedule_enabled ? "status-ok" : "status-warn",
   );
-  const pendingCount = Number(counts.pending_tweets || 0);
-  setStatusBadge(
-    els.railPendingStatus,
-    `${formatNumber(pendingCount)} 条`,
-    pendingCount > 0 ? "status-warn" : "status-ok",
-  );
+
   const invalidTargets = Number(counts.invalid_push_targets || 0);
   setStatusBadge(
     els.railTargetStatus,
@@ -377,8 +366,6 @@ function setBusy(isBusy) {
   state.loading = isBusy;
   const noGroups = !state.groups.length;
   const groupDependentButtons = [
-    els.pendingRefreshBtn,
-    els.publishSelectedBtn,
     els.historyRefreshBtn,
     els.historyPrevBtn,
     els.historyNextBtn,
@@ -386,8 +373,6 @@ function setBusy(isBusy) {
   [
     els.refreshBtn,
     els.createGroupBtn,
-    els.pendingRefreshBtn,
-    els.publishSelectedBtn,
     els.historyRefreshBtn,
     els.historyOrphanBtn,
     els.historyPrevBtn,
@@ -513,9 +498,7 @@ function selectedGroupId() {
   return state.selectedGroupId || "";
 }
 
-function selectedPendingGroupId() {
-  return els.pendingGroupSelect.value || state.pendingGroupId || "";
-}
+
 
 function selectedHistoryGroupId() {
   return els.historyGroupSelect.value || state.historyGroupId || "";
@@ -554,16 +537,6 @@ function syncSelectors() {
     state.seenGroupId && (state.seenGroupId === "" || groupIds.has(state.seenGroupId))
       ? state.seenGroupId
       : "";
-  els.pendingGroupSelect.replaceChildren(...groupOptions(false));
-  els.historyGroupSelect.replaceChildren(...groupOptions(true));
-  els.seenGroupSelect.replaceChildren(...groupOptions(true));
-  els.pendingGroupSelect.value = currentPending;
-  els.historyGroupSelect.value = currentHistory;
-  els.seenGroupSelect.value = currentSeen;
-  if (!els.pendingGroupSelect.value && state.groups[0]) {
-    els.pendingGroupSelect.value = state.groups[0].group_id;
-  }
-  state.pendingGroupId = els.pendingGroupSelect.value;
   state.historyGroupId = els.historyGroupSelect.value;
   state.seenGroupId = els.seenGroupSelect.value;
 }
@@ -738,7 +711,6 @@ function snapshotEditableGroup(group) {
     enabled: !!group.enabled,
     interval_check_enabled: !!group.interval_check_enabled,
     daily_check_times: [...(group.daily_check_times || [])],
-    deferred_publish_enabled: !!group.deferred_publish_enabled,
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
     push_targets: [...(group.push_targets || [])],
   };
@@ -805,10 +777,6 @@ function syncGroupEditorControls(groupId) {
   const publishButton = [...els.groupEditor.querySelectorAll("[data-publish-group]")].find(
     (node) => node.dataset.publishGroup === groupId,
   );
-  if (publishButton) {
-    publishButton.disabled = dirty || state.loading || state.actionBusy;
-    publishButton.title = dirty ? "请先保存更改" : "";
-  }
   const title = [...els.groupEditor.querySelectorAll("[data-group-title]")].find(
     (node) => node.dataset.groupTitle === groupId,
   );
@@ -874,16 +842,11 @@ function renderOverview() {
     ["关注账号", formatNumber(counts.watch_users)],
     ["推送目标", formatNumber(counts.push_targets)],
     ["无效推送目标", formatNumber(counts.invalid_push_targets)],
-    ["待发布推文", formatNumber(counts.pending_tweets)],
-    ["失败待发布", formatNumber(counts.failed_pending_tweets)],
   ];
   const featureRows = [
     ["图片附件", formatBool(features.images)],
     ["视频/GIF", formatBool(features.videos)],
     ["翻译", formatBool(features.translation)],
-    ["AI 识图", formatBool(features.ai_vision)],
-    ["AI 评论", formatBool(features.ai_comment)],
-    ["暂存发布分组", formatNumber(features.deferred_publish_groups)],
   ];
   const configRows = [
     ["Nitter 实例", formatNumber(configSummary.nitter_instance_count)],
@@ -892,7 +855,6 @@ function renderOverview() {
     ["检查间隔", `${formatNumber(configSummary.check_interval_minutes)} 分钟`],
     ["合并阈值", formatNumber(configSummary.merge_tweet_threshold)],
     ["目标间隔", `${formatNumber(configSummary.send_target_interval)} 秒`],
-    ["暂存批量", formatNumber(configSummary.deferred_publish_batch_limit)],
     ["并发拉取", formatBool(configSummary.concurrent_fetch_enabled)],
     ["并发准备", formatBool(configSummary.concurrent_prepare_enabled)],
   ];
@@ -911,7 +873,7 @@ function renderOverview() {
       ["原始关注项", formatNumber(counts.raw_watch_users)],
       ["重复关注项", formatNumber(counts.duplicate_watch_users)],
       ["无效关注项", formatNumber(counts.invalid_watch_users)],
-      ["暂存媒体", formatNumber(counts.pending_media)],
+
     ]),
     buildPanel("功能开关", featureRows),
     buildPanel("配置摘要", configRows),
@@ -980,8 +942,6 @@ function renderGroupEditor() {
   }
   const draft = groupDraft(group);
   const dirty = isGroupDirty(group.group_id);
-  const pendingSummary = group.pending_summary || {};
-  const globalPublishTimes = (group.deferred_publish_times || []).join("，") || "未设置";
   const checkButton = el(
     "button",
     {
@@ -998,19 +958,6 @@ function renderGroupEditor() {
       disabled: !group.enabled || dirty || state.loading || state.actionBusy,
     },
     [iconSpan("play"), "立即检查"],
-  );
-  const publishButton = el(
-    "button",
-    {
-      className: "button primary small",
-      attrs: {
-        type: "button",
-        title: dirty ? "请先保存更改" : null,
-      },
-      dataset: { publishGroup: group.group_id },
-      disabled: dirty || state.loading || state.actionBusy,
-    },
-    [iconSpan("send"), "发布暂存"],
   );
   const saveButton = el(
     "button",
@@ -1056,7 +1003,6 @@ function renderGroupEditor() {
       ]),
       el("div", { className: "row-actions" }, [
         checkButton,
-        publishButton,
         saveButton,
         deleteButton,
       ]),
@@ -1088,18 +1034,6 @@ function renderGroupEditor() {
           (draft.daily_check_times || []).join(","),
           "08:30,21:05",
         ),
-      ),
-      editorField(
-        "暂存发布",
-        toggleField(
-          group.group_id,
-          "deferred_publish_enabled",
-          draft.deferred_publish_enabled,
-        ),
-      ),
-      editorField(
-        "发布时间",
-        readonlyField(`继承全局 ${globalPublishTimes}`),
       ),
       editorField(
         "纯文本过滤",
@@ -1165,8 +1099,7 @@ function renderGroupEditor() {
     el("section", { className: "editor-section" }, [
       el("div", { className: "section-head" }, [el("h3", { text: "运行摘要" })]),
       el("div", { className: "runtime-grid" }, [
-        groupRuntimeCard("待发布推文", formatNumber(pendingSummary.pending_count)),
-        groupRuntimeCard("失败待发布", formatNumber(pendingSummary.failed_count)),
+
         groupRuntimeCard("无效推送目标", formatNumber(group.invalid_push_target_count)),
         groupRuntimeCard("无效关注账号", formatNumber(group.invalid_watch_users?.length)),
       ]),
@@ -1181,98 +1114,7 @@ function renderGroups() {
   renderGroupEditor();
 }
 
-function renderPending() {
-  const payload = state.pending;
-  if (!payload) {
-    els.pendingContent.replaceChildren(emptyState("正在加载暂存队列"));
-    return;
-  }
-  const summaries = payload.summaries || [];
-  const records = payload.records || [];
-  const summaryStrip = el(
-    "div",
-    { className: "summary-strip" },
-    summaries.map((item) => {
-      const summary = el("div", { className: "summary-item" }, [
-        el("span", { text: item.group_name }),
-        el("strong", { text: formatNumber(item.pending_count) }),
-        el("small", {
-          text: `失败 ${formatNumber(item.failed_count)} · 媒体 ${formatNumber(item.media_count)}`,
-        }),
-        el("small", {
-          text: `最早 ${formatTime(item.oldest_created_at)} · 最新 ${formatTime(item.newest_created_at)}`,
-        }),
-      ]);
-      if ((item.user_counts || []).length) {
-        summary.appendChild(
-          el(
-            "div",
-            {
-              className: "summary-users",
-              attrs: { "aria-label": "账号队列分布" },
-            },
-            (item.user_counts || []).map((entry) =>
-              el("span", {
-                text: `@${entry.username} ${formatNumber(entry.count)}`,
-              }),
-            ),
-          ),
-        );
-      }
-      return summary;
-    }),
-  );
 
-  let content = emptyState("当前分组没有待发布推文");
-  if (records.length) {
-    const tbody = el(
-      "tbody",
-      {},
-      records.map((row) => {
-        const tweetCell = el("td");
-        tweetCell.append(
-          externalLink(row.original_link, row.status_id || row.original_link),
-          el("span", { text: row.text_preview || "" }),
-        );
-        const failedCell = el("td", {}, [formatNumber(row.fail_count)]);
-        if (row.last_error) {
-          failedCell.appendChild(
-            el("span", { className: "error-text", text: row.last_error }),
-          );
-        }
-        return el("tr", {}, [
-          el("td", { text: `@${row.username}` }),
-          tweetCell,
-          el("td", { text: formatTime(row.created_at) }),
-          el("td", { text: formatTime(row.scheduled_at) }),
-          failedCell,
-          el("td", { text: formatNumber(row.delivered_target_count) }),
-          el("td", {
-            text: `${formatNumber(row.media_count)} ${(row.media_kinds || []).join(", ")}`,
-          }),
-        ]);
-      }),
-    );
-    content = el("div", { className: "table-wrap" }, [
-      el("table", { className: "data-table" }, [
-        el("thead", {}, [
-          el("tr", {}, [
-            el("th", { text: "账号" }),
-            el("th", { text: "推文" }),
-            el("th", { text: "入队" }),
-            el("th", { text: "计划" }),
-            el("th", { text: "失败" }),
-            el("th", { text: "已送达推送目标" }),
-            el("th", { text: "媒体" }),
-          ]),
-        ]),
-        tbody,
-      ]),
-    ]);
-  }
-
-  els.pendingContent.replaceChildren(summaryStrip, content);
-}
 
 function renderHistory() {
   const payload = state.history;
@@ -1453,7 +1295,6 @@ function renderAll() {
   renderRailStatus();
   renderOverview();
   renderGroups();
-  renderPending();
   renderHistory();
   renderHistoryOrphans();
   renderMirrorBase();
@@ -1461,11 +1302,7 @@ function renderAll() {
   mountIcons();
 }
 
-async function loadPending(groupId = selectedPendingGroupId()) {
-  state.pendingGroupId = groupId;
-  state.pending = await apiGet("web/pending", { group_id: groupId, limit: 80 });
-  renderPending();
-}
+
 
 async function loadHistory() {
   state.historyGroupId = selectedHistoryGroupId();
@@ -1515,15 +1352,11 @@ async function reloadAll(options = {}) {
     if (!state.groups.some((group) => group.group_id === state.selectedGroupId)) {
       state.selectedGroupId = state.groups[0]?.group_id || "";
     }
-    if (!state.groups.some((group) => group.group_id === state.pendingGroupId)) {
-      state.pendingGroupId = state.selectedGroupId || state.groups[0]?.group_id || "";
-    }
     if (options.preserveDrafts === false) {
       state.groupDrafts = {};
     }
     syncGroupDrafts();
     syncSelectors();
-    await loadPending(state.pendingGroupId);
     await loadHistory();
     state.lastUpdated = new Date().toLocaleTimeString("zh-CN", {
       hour: "2-digit",
@@ -1752,18 +1585,7 @@ async function runGroupCheck(groupId) {
   });
 }
 
-function confirmPublish(groupId) {
-  const group = state.groups.find((item) => item.group_id === groupId);
-  openConfirm({
-    kicker: "发布暂存",
-    title: "发布暂存队列？",
-    desc: `${group?.name || groupId} 的待发布推文会发送到该分组的推送目标。`,
-    confirmText: "发布",
-    danger: false,
-    action: () =>
-      withAction(() => apiPost("web/publish", { group_id: groupId }), "发布完成"),
-  });
-}
+
 
 function subscriptionEntriesInput() {
   return document.getElementById("groupSubscriptionInput");
@@ -2128,20 +1950,6 @@ function bindEvents() {
   });
   els.refreshBtn.addEventListener("click", refreshDashboard);
   els.createGroupBtn.addEventListener("click", createGroup);
-  els.pendingRefreshBtn.addEventListener("click", () =>
-    withAction(() => loadPending(selectedPendingGroupId()), "暂存队列已刷新", {
-      reload: false,
-    }),
-  );
-  els.publishSelectedBtn.addEventListener("click", () =>
-    confirmPublish(selectedPendingGroupId()),
-  );
-  els.pendingGroupSelect.addEventListener("change", (event) => {
-    state.pendingGroupId = event.target.value;
-    withAction(() => loadPending(state.pendingGroupId), "暂存队列已刷新", {
-      reload: false,
-    });
-  });
   els.historyRefreshBtn.addEventListener("click", () =>
     withAction(() => {
       resetHistoryPage();
@@ -2239,7 +2047,6 @@ function bindEvents() {
     if (!target) return;
     if (state.loading || state.actionBusy) return;
     if (target.dataset.checkGroup) runGroupCheck(target.dataset.checkGroup);
-    if (target.dataset.publishGroup) confirmPublish(target.dataset.publishGroup);
     if (target.dataset.saveGroup) saveGroupEdits(target.dataset.saveGroup);
     if (target.dataset.deleteGroup) confirmDeleteGroup(target.dataset.deleteGroup);
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);

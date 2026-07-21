@@ -28,7 +28,6 @@ try:
         migrate_default_group_config,
     )
     from ..ai import (
-        EnrichmentReport,
         TranslationReport,
         format_ai_tweet_summary,
     )
@@ -70,7 +69,6 @@ except ImportError:
         migrate_default_group_config,
     )
     from ai import (
-        EnrichmentReport,
         TranslationReport,
         format_ai_tweet_summary,
     )
@@ -139,13 +137,12 @@ class UserFetchResult:
 class PreparedBatchResult:
     batch: PendingTweetBatch
     translation_report: TranslationReport | None = None
-    enrich_report: EnrichmentReport | None = None
     error: SchedulerTaskError | None = None
 
 
 class NitterTweetScheduler:
     def __init__(
-        self, owner, context, config, nitter, media, sender, translator, enricher=None
+        self, owner, context, config, nitter, media, sender, translator
     ):
         self.owner = owner
         self.context = context
@@ -154,14 +151,12 @@ class NitterTweetScheduler:
         self.media = media
         self.sender = sender
         self.translator = translator
-        self.enricher = enricher
         migrate_default_group_config(config)
         self.config_reader = SchedulerConfigReader(config, context)
         self.storage = StorageAdapter(owner, config, context)
         self._task: asyncio.Task | None = None
         self._last_interval_slots: dict[str, int] = {}
         self._daily_slots: dict[str, set[str]] = {}
-        self._deferred_publish_slots: dict[str, set[str]] = {}
         self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
@@ -300,16 +295,6 @@ class NitterTweetScheduler:
                     reason=", ".join(reasons),
                     group_name=group.group_id,
                 )
-            publish_reasons = self._deferred_publish_reasons(group, now)
-            if publish_reasons:
-                self._log_verbose_info(
-                    "[NitterTweets] 暂存发布已触发: "
-                    f"group={group.group_id}, reasons={', '.join(publish_reasons)}"
-                )
-                await self.publish_pending(
-                    group_name=group.group_id,
-                    reason=", ".join(publish_reasons),
-                )
 
     def _scheduled_reasons(
         self, group: ScheduleGroup, now: dt.datetime
@@ -351,27 +336,6 @@ class NitterTweetScheduler:
 
         return reasons
 
-    def _deferred_publish_reasons(
-        self, group: ScheduleGroup, now: dt.datetime
-    ) -> list[str]:
-        if not group.deferred_publish_enabled:
-            return []
-
-        publish_slots = self._deferred_publish_slots.setdefault(group.group_id, set())
-        reasons: list[str] = []
-        for hour, minute in group.deferred_publish_times:
-            if now.hour == hour and now.minute == minute:
-                slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
-                if slot_key not in publish_slots:
-                    publish_slots.add(slot_key)
-                    reasons.append(f"deferred:{hour:02d}:{minute:02d}")
-
-        if len(publish_slots) > 256:
-            today = now.date().isoformat()
-            self._deferred_publish_slots[group.group_id] = {
-                slot for slot in publish_slots if slot.startswith(today)
-            }
-        return reasons
 
     def _seed_schedule_slots(self, group: ScheduleGroup, now: dt.datetime) -> None:
         group_id = group.group_id
@@ -393,7 +357,6 @@ class NitterTweetScheduler:
         notify_no_updates: bool | None = None,
         group_name: str = GLOBAL_GROUP_ID,
         target_override: list[str] | None = None,
-        force_immediate: bool = False,
     ) -> ScheduledCheckResult:
         group = self._schedule_group(group_name)
         if group is None:
@@ -413,7 +376,6 @@ class NitterTweetScheduler:
                 reason,
                 notify_no_updates,
                 target_override,
-                force_immediate,
             )
 
     def _new_check_result(
@@ -440,16 +402,12 @@ class NitterTweetScheduler:
         reason: str,
         notify_no_updates: bool | None,
         target_override: list[str] | None = None,
-        force_immediate: bool = False,
     ) -> ScheduledCheckResult:
         result = self._new_check_result(reason, group, target_override)
         users = result.users
         targets = result.targets
         merge_threshold = self._merge_tweet_threshold()
         result.merge_tweet_threshold = merge_threshold
-        deferred_enabled = group.deferred_publish_enabled and not force_immediate
-        if deferred_enabled:
-            result.push_mode = "deferred"
         pending_batches = []
         immediate_targets, buffered_targets = self._split_immediate_targets(
             targets, merge_threshold
@@ -588,30 +546,22 @@ class NitterTweetScheduler:
         immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
         self._set_discovered_batch_progress(discovered_batches)
         if self._should_use_concurrent_prepare(group):
-            if deferred_enabled:
-                pending_batches = await self._prepare_deferred_batches_concurrently(
+            pending_batches, immediate_batches_sent = (
+                await self._prepare_immediate_batches_concurrently(
                     group,
                     discovered_batches,
                     result,
                     targets[0],
+                    seen_map,
+                    immediate_targets,
+                    buffered_targets,
+                    target_interval,
+                    user_interval,
+                    group_label,
+                    immediate_batch_summary_tracker,
+                    immediate_batches_sent,
                 )
-            else:
-                pending_batches, immediate_batches_sent = (
-                    await self._prepare_immediate_batches_concurrently(
-                        group,
-                        discovered_batches,
-                        result,
-                        targets[0],
-                        seen_map,
-                        immediate_targets,
-                        buffered_targets,
-                        target_interval,
-                        user_interval,
-                        group_label,
-                        immediate_batch_summary_tracker,
-                        immediate_batches_sent,
-                    )
-                )
+            )
         else:
             pending_batches, immediate_batches_sent = (
                 await self._prepare_discovered_batches_serial(
@@ -620,7 +570,6 @@ class NitterTweetScheduler:
                     result,
                     targets[0],
                     seen_map,
-                    deferred_enabled,
                     immediate_targets,
                     buffered_targets,
                     target_interval,
@@ -631,19 +580,7 @@ class NitterTweetScheduler:
                 )
             )
 
-        if pending_batches and deferred_enabled:
-            await self._enqueue_pending_batches(group, pending_batches, result)
-            await self._store_pending_seen_ids(group.group_id, pending_batches, seen_map)
-
         result.seen_users = len(seen_map)
-        if deferred_enabled:
-            for batch in pending_batches:
-                await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
-            self._log_check_result(result)
-            if self._should_notify_no_updates(result, notify_no_updates, group):
-                await self._send_no_update_notice(result, target_interval)
-            return result
-
         if pending_batches:
             try:
                 await self._send_prepared_batches(
@@ -659,6 +596,21 @@ class NitterTweetScheduler:
                     history_group_id=group.group_id,
                     history_source="scheduled",
                 )
+                # Buffered/merge targets are not marked as seen during prepare.
+                # Write seen only after at least one target accepted the batch.
+                for batch in pending_batches:
+                    if not batch.delivered_targets:
+                        continue
+                    status_ids = [
+                        tweet.status_id for tweet in batch.tweets if tweet.status_id
+                    ]
+                    if status_ids:
+                        await self._store_incremental_seen_ids(
+                            group.group_id,
+                            batch.username,
+                            status_ids,
+                            seen_map,
+                        )
             finally:
                 for batch in pending_batches:
                     await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
@@ -686,18 +638,6 @@ class NitterTweetScheduler:
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
-        queue_summary_results = await asyncio.gather(
-            *[
-                self.storage.get_pending_queue_summary(item.group_id)
-                for item in groups
-            ]
-        )
-        queue_summaries = {
-            item.group_id: summary
-            for item, summary in zip(groups, queue_summary_results)
-        }
-        total_pending = sum(item.pending_count for item in queue_summaries.values())
-        total_pending_media = sum(item.media_count for item in queue_summaries.values())
         seen_map_results = await asyncio.gather(
             *[self._get_seen_map(item.group_id) for item in groups]
         )
@@ -724,7 +664,6 @@ class NitterTweetScheduler:
             f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
             f"全部分组已记录账号索引: {total_seen_users} 个",
-            f"全部分组待发布: {total_pending} 条（媒体 {total_pending_media} 个）",
         ]
         if default_group is not None:
             lines.append("默认分组详情:")
@@ -927,7 +866,6 @@ class NitterTweetScheduler:
         result: ScheduledCheckResult,
         target_umo: str,
         seen_map: dict[str, list[str]],
-        deferred_enabled: bool,
         immediate_targets: list[str],
         buffered_targets: list[str],
         target_interval: float,
@@ -940,64 +878,45 @@ class NitterTweetScheduler:
         for discovered_batch in discovered_batches:
             username = discovered_batch.username
             new_tweets = discovered_batch.tweets
-            prepared_count = len(new_tweets) if deferred_enabled else 0
-
-            if deferred_enabled:
+            prepared_count = 0
+            for tweet_index, tweet in enumerate(new_tweets, 1):
+                batch = self._single_tweet_batch(
+                    discovered_batch,
+                    tweet,
+                    tweet_index,
+                    seen_map,
+                )
                 try:
-                    prepared = await self._prepare_deferred_batch(
-                        group, discovered_batch, target_umo
+                    prepared = await self._prepare_immediate_batch(
+                        batch, target_umo
                     )
                 except Exception as exc:
-                    prepared = PreparedBatchResult(
-                        batch=discovered_batch,
-                        error=SchedulerTaskError.from_exception(exc),
+                    await self._record_prepare_failure(
+                        result, username, tweet, tweet_index, [tweet], exc
                     )
-                prepared_batch = await self._handle_deferred_prepare_result(
-                    prepared, result
-                )
-                if prepared_batch is None:
                     continue
 
-                pending_batches.append(prepared_batch)
-            else:
-                for tweet_index, tweet in enumerate(new_tweets, 1):
-                    batch = self._single_tweet_batch(
-                        discovered_batch,
-                        tweet,
-                        tweet_index,
+                await self._handle_immediate_prepare_success(
+                    group, prepared, seen_map
+                )
+                prepared_count += 1
+                pending_batches, immediate_batches_sent = (
+                    await self._send_or_buffer_immediate_batch(
+                        batch,
+                        group,
+                        pending_batches,
+                        result,
+                        immediate_targets,
+                        buffered_targets,
+                        target_interval,
+                        user_interval,
+                        group_label,
+                        immediate_batch_summary_tracker,
+                        immediate_batches_sent,
                         seen_map,
+                        batch_progress=(tweet_index, len(new_tweets)),
                     )
-                    try:
-                        prepared = await self._prepare_immediate_batch(
-                            batch, target_umo
-                        )
-                    except Exception as exc:
-                        await self._record_prepare_failure(
-                            result, username, tweet, tweet_index, [tweet], exc
-                        )
-                        continue
-
-                    await self._handle_immediate_prepare_success(
-                        group, prepared, seen_map
-                    )
-                    prepared_count += 1
-                    pending_batches, immediate_batches_sent = (
-                        await self._send_or_buffer_immediate_batch(
-                            batch,
-                            group,
-                            pending_batches,
-                            result,
-                            immediate_targets,
-                            buffered_targets,
-                            target_interval,
-                            user_interval,
-                            group_label,
-                            immediate_batch_summary_tracker,
-                            immediate_batches_sent,
-                            seen_map,
-                            batch_progress=(tweet_index, len(new_tweets)),
-                        )
-                    )
+                )
             self._log_prepare_progress(username, prepared_count, len(new_tweets))
         return pending_batches, immediate_batches_sent
 
@@ -1021,26 +940,6 @@ class NitterTweetScheduler:
 
         return list(await asyncio.gather(*[prepare(batch) for batch in batches]))
 
-    async def _prepare_deferred_batches_concurrently(
-        self,
-        group: ScheduleGroup,
-        discovered_batches: list[PendingTweetBatch],
-        result: ScheduledCheckResult,
-        target_umo: str,
-    ) -> list[PendingTweetBatch]:
-        prepared_results = await self._prepare_batches_concurrently(
-            discovered_batches,
-            group.prepare_concurrency,
-            lambda batch: self._prepare_deferred_batch(group, batch, target_umo),
-        )
-        pending_batches: list[PendingTweetBatch] = []
-        for prepared in prepared_results:
-            batch = await self._handle_deferred_prepare_result(prepared, result)
-            if batch is None:
-                continue
-            pending_batches.append(batch)
-            self._log_prepare_progress(batch.username, len(batch.tweets), len(batch.tweets))
-        return pending_batches
 
     async def _prepare_immediate_batches_concurrently(
         self,
@@ -1138,28 +1037,6 @@ class NitterTweetScheduler:
             )
         return pending_batches, immediate_batches_sent
 
-    async def _prepare_deferred_batch(
-        self,
-        group: ScheduleGroup,
-        batch: PendingTweetBatch,
-        target_umo: str,
-    ) -> PreparedBatchResult:
-        translation_report = await self.translator.attach_translations(
-            batch.tweets, target_umo
-        )
-        if group.deferred_prefetch_media:
-            await self._attach_deferred_media(group, batch.username, batch.tweets)
-        if self.enricher is not None:
-            enrich_report = await self.enricher.attach_enrichments(
-                batch.tweets, target_umo
-            )
-        else:
-            enrich_report = None
-        return PreparedBatchResult(
-            batch=batch,
-            translation_report=translation_report,
-            enrich_report=enrich_report,
-        )
 
     async def _prepare_immediate_batch(
         self,
@@ -1170,16 +1047,9 @@ class NitterTweetScheduler:
             batch.tweets, target_umo
         )
         await self.media.attach_media(batch.tweets)
-        if self.enricher is not None:
-            enrich_report = await self.enricher.attach_enrichments(
-                batch.tweets, target_umo
-            )
-        else:
-            enrich_report = None
         return PreparedBatchResult(
             batch=batch,
             translation_report=translation_report,
-            enrich_report=enrich_report,
         )
 
     @staticmethod
@@ -1224,40 +1094,7 @@ class NitterTweetScheduler:
             f"username={username}, status={status_id}, error={error_message}"
         )
 
-    async def _handle_deferred_prepare_result(
-        self,
-        prepared: PreparedBatchResult,
-        result: ScheduledCheckResult,
-    ) -> PendingTweetBatch | None:
-        batch = prepared.batch
-        if prepared.error:
-            await self._record_deferred_prepare_failure(result, batch, prepared.error)
-            return None
 
-        self._log_ai_process_results(
-            batch.username,
-            batch.tweets,
-            prepared.translation_report,
-            prepared.enrich_report,
-        )
-        return batch
-
-    async def _record_deferred_prepare_failure(
-        self,
-        result: ScheduledCheckResult,
-        batch: PendingTweetBatch,
-        error: SchedulerTaskError | Exception,
-    ) -> None:
-        if isinstance(error, SchedulerTaskError):
-            error_message = error.message
-        else:
-            error_message = str(error)
-        await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
-        result.failed_users[batch.username] = f"推文准备失败: {error_message}"
-        logger.warning(
-            f"[NitterTweets] 定时推送准备 @{batch.username} 失败: "
-            f"{error_message}"
-        )
 
     async def _handle_immediate_prepare_success(
         self,
@@ -1270,7 +1107,6 @@ class NitterTweetScheduler:
             batch.username,
             batch.tweets,
             prepared.translation_report,
-            prepared.enrich_report,
             progress_index=batch.tweet_index,
             progress_total=batch.tweet_total,
         )
@@ -1510,7 +1346,6 @@ class NitterTweetScheduler:
         username: str,
         tweets,
         translation_report=None,
-        enrich_report=None,
         progress_index: int = 0,
         progress_total: int = 0,
     ) -> None:
@@ -1524,7 +1359,7 @@ class NitterTweetScheduler:
                     username,
                     tweet,
                     translation_report,
-                    enrich_report,
+                    None,
                     start + offset,
                     total,
                 )
@@ -1672,354 +1507,8 @@ class NitterTweetScheduler:
             f"users={len(batches)}, qq_targets={success}/{attempts}"
         )
 
-    async def _enqueue_pending_batches(
-        self,
-        group: ScheduleGroup,
-        batches: list[PendingTweetBatch],
-        result: ScheduledCheckResult,
-    ) -> None:
-        for batch in batches:
-            queued = await self.storage.enqueue_pending_tweets(
-                group.group_id,
-                batch.username,
-                batch.instance,
-                batch.tweets,
-            )
-            if queued:
-                result.queued_tweets[batch.username] = queued
-            self._log_verbose_info(
-                "[NitterTweets] 暂存推文已入队: "
-                f"group={group.group_id}, user=@{batch.username}, "
-                f"queued={queued}, prepared={len(batch.tweets)}"
-            )
 
-    async def _attach_deferred_media(
-        self,
-        group: ScheduleGroup,
-        username: str,
-        tweets: list[TweetItem],
-    ) -> None:
-        for index, tweet in enumerate(tweets):
-            await self.media.attach_media([tweet])
-            await self.media.move_tweets_media_to_staged(
-                group.group_id,
-                username,
-                [tweet],
-                0.0,
-            )
-            if (
-                index < len(tweets) - 1
-                and group.deferred_media_download_interval_seconds > 0
-            ):
-                await asyncio.sleep(group.deferred_media_download_interval_seconds)
 
-    async def publish_pending(
-        self,
-        group_name: str = GLOBAL_GROUP_ID,
-        reason: str = "manual_publish",
-    ) -> ScheduledCheckResult:
-        group = self._schedule_group(group_name)
-        if group is None:
-            result = self._unknown_group_result(reason, group_name)
-            logger.warning(result.format_log_summary())
-            return result
-
-        if self._check_lock.locked():
-            result = self._new_check_result(reason, group)
-            result.skipped_reason = "check_already_running"
-            logger.warning(result.format_log_summary())
-            return result
-
-        async with self._check_lock:
-            return await self._publish_pending_unlocked(group, reason)
-
-    async def _publish_pending_unlocked(
-        self, group: ScheduleGroup, reason: str
-    ) -> ScheduledCheckResult:
-        result = self._new_check_result(reason, group)
-        result.merge_tweet_threshold = self._merge_tweet_threshold()
-        result.fetch_limit = group.deferred_publish_batch_limit
-        if not group.targets:
-            result.skipped_reason = "no_push_targets"
-            self._log_check_result(result)
-            return result
-
-        records = await self.storage.get_pending_tweets(
-            group.group_id,
-            group.deferred_publish_batch_limit,
-        )
-        if not records:
-            result.skipped_reason = "no_pending_tweets"
-            self._log_check_result(result)
-            return result
-
-        batches = self._pending_records_to_batches(records)
-        pending_ids = [record.id for record in records]
-        pending_targets = self._pending_publish_targets(records, result.targets)
-        target_interval = group.send_target_interval
-        user_interval = group.send_user_interval
-        group_label = self._push_group_label(group)
-        batch_summary = self._format_push_batch_summary(
-            batches,
-            group_label,
-            action_text="本次发布",
-        )
-        cleanup_retention_hours = group.deferred_media_retention_hours
-        try:
-            protected_media_paths = await self.storage.get_pending_media_paths()
-            await asyncio.to_thread(
-                self.media.cleanup_expired_staged_media,
-                cleanup_retention_hours,
-                protected_media_paths,
-            )
-            if pending_targets:
-                merge_targets, ordinary_targets = self._split_merge_targets(
-                    pending_targets
-                )
-                placeholder_target = (
-                    merge_targets[0]
-                    if merge_targets and not ordinary_targets
-                    else ""
-                )
-                for target_index, target in enumerate(pending_targets):
-                    target_records = [
-                        record
-                        for record in records
-                        if target not in record.delivered_targets
-                    ]
-                    if not target_records:
-                        continue
-                    target_batches = self._pending_records_to_batches(target_records)
-                    await self._send_prepared_batches(
-                        target_batches,
-                        result,
-                        [target],
-                        target_interval,
-                        user_interval,
-                        record_merge_placeholders=target == placeholder_target,
-                        merge_existing_stats=True,
-                        group_label=group_label,
-                        batch_summary=batch_summary,
-                        on_target_delivered=lambda batch, umo: self.storage.mark_pending_tweets_delivered(
-                            batch.pending_ids, umo
-                        ),
-                        history_group_id=group.group_id,
-                        history_source="publish",
-                    )
-                    if target_index < len(pending_targets) - 1 and target_interval > 0:
-                        await asyncio.sleep(target_interval)
-            else:
-                result.push_mode = "already_delivered"
-                self._log_verbose_info(
-                    "[NitterTweets] 暂存发布无需发送，所有当前目标已送达: "
-                    f"group={group.group_id}, pending={len(pending_ids)}, "
-                    f"targets={len(result.targets)}"
-                )
-            if (
-                result.pushed_target_attempts
-                and result.pushed_target_successes < result.pushed_target_attempts
-            ):
-                raise RuntimeError(
-                    "暂存发布仅成功到达 "
-                    f"{result.pushed_target_successes}/"
-                    f"{result.pushed_target_attempts} 个配置目标"
-                )
-            await self.storage.mark_pending_tweets_published(pending_ids)
-            for batch in batches:
-                try:
-                    await asyncio.to_thread(
-                        self.media.cleanup_staged_media_for_tweets, batch.tweets
-                    )
-                except Exception as cleanup_exc:
-                    logger.warning(
-                        "[NitterTweets] 暂存媒体清理失败: "
-                        f"group={group.group_id}, error={cleanup_exc}"
-                    )
-            await self.storage.cleanup_sent_pending_tweets(int(time.time()))
-        except Exception as exc:
-            await self.storage.mark_pending_tweets_failed(pending_ids, str(exc))
-            result.failed_users["publish"] = str(exc)
-            logger.warning(
-                f"[NitterTweets] 暂存发布失败: "
-                f"group={group.group_id}, error={exc}"
-            )
-
-        self._log_check_result(result)
-        return result
-
-    async def replay_push_history(
-        self,
-        record_id: int,
-        target_umos: list[str] | None = None,
-    ) -> dict[str, object]:
-        record = await self.storage.get_push_history_record(record_id)
-        if record is None:
-            return {"success": False, "error": "未找到推送记录"}
-
-        group = self._schedule_group(record.group_id)
-        if group is None:
-            return {
-                "success": False,
-                "error": f"未找到分组：{record.group_id}",
-            }
-        if not group.enabled:
-            return {
-                "success": False,
-                "error": f"分组已停用：{self._push_group_label(group)}",
-            }
-        if not group.targets:
-            return {
-                "success": False,
-                "error": "当前分组没有有效推送目标，请先维护推送目标",
-            }
-        selected_targets = self._dedupe_targets(
-            [str(target or "").strip() for target in (target_umos or [])]
-        )
-        if selected_targets:
-            current_targets = set(group.targets)
-            invalid_targets = [
-                target for target in selected_targets if target not in current_targets
-            ]
-            if invalid_targets:
-                return {
-                    "success": False,
-                    "error": "只能选择当前分组当前配置中的推送目标",
-                    "invalid_targets": invalid_targets,
-                }
-            targets = selected_targets
-        else:
-            targets = list(group.targets)
-        if not targets:
-            return {
-                "success": False,
-                "error": "请选择要重新推送的推送目标",
-            }
-
-        batch = PendingTweetBatch(
-            username=record.username,
-            instance=record.instance,
-            tweets=[record.tweet],
-            fetched_ids=[record.status_id] if record.status_id else [],
-            seen_ids=[],
-            account_index=1,
-            account_total=1,
-            tweet_index=1,
-            tweet_total=1,
-        )
-        try:
-            await self.media.attach_media(batch.tweets)
-        except Exception as exc:
-            logger.warning(
-                "[NitterTweets] 重新推送媒体准备失败，继续发送文本: "
-                f"record={record_id}, error={exc}"
-            )
-        success_targets = 0
-        failed_targets: dict[str, str] = {}
-        group_label = self._push_group_label(group)
-        try:
-            for target_index, target in enumerate(targets):
-                try:
-                    outcome = await self.sender.send_to_umo_with_outcome(
-                        self.context,
-                        target,
-                        record.username,
-                        record.instance,
-                        [record.tweet],
-                        group_label=group_label,
-                        header_text=f"@{record.username} 重新推送",
-                        batch_summary="",
-                        tweet_start_index=1,
-                    )
-                    if outcome.success:
-                        await self._record_batch_push_history(
-                            group.group_id,
-                            batch,
-                            target,
-                            "replay",
-                            delivery_status=getattr(
-                                outcome, "delivery_status", "success"
-                            ),
-                            delivery_error=getattr(outcome, "delivery_error", ""),
-                        )
-                        success_targets += 1
-                    else:
-                        failed_targets[target] = (
-                            getattr(outcome, "error", "") or "send failed"
-                        )
-                except Exception as exc:
-                    failed_targets[target] = str(exc)
-                    logger.warning(
-                        "[NitterTweets] 重新推送失败: "
-                        f"record={record_id}, target={target}, error={exc}"
-                    )
-                if target_index < len(targets) - 1 and group.send_target_interval > 0:
-                    await asyncio.sleep(group.send_target_interval)
-        finally:
-            await asyncio.to_thread(
-                self.media.cleanup_after_send,
-                batch.tweets,
-            )
-
-        return {
-            "success": success_targets > 0,
-            "error": "" if success_targets > 0 else "重新推送失败",
-            "record_id": record_id,
-            "target_count": len(targets),
-            "success_targets": success_targets,
-            "total_targets": len(targets),
-            "failed_targets": failed_targets,
-        }
-
-    @staticmethod
-    def _dedupe_targets(targets: list[str]) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for target in targets:
-            if not target or target in seen:
-                continue
-            seen.add(target)
-            result.append(target)
-        return result
-
-    @staticmethod
-    def _pending_publish_targets(records, targets: list[str]) -> list[str]:
-        if not records:
-            return list(targets)
-
-        delivered_by_all = set(targets)
-        for record in records:
-            delivered_by_all &= set(record.delivered_targets)
-        return [target for target in targets if target not in delivered_by_all]
-
-    def _pending_records_to_batches(self, records) -> list[PendingTweetBatch]:
-        batches: list[PendingTweetBatch] = []
-        batch_by_key: dict[tuple[str, str], PendingTweetBatch] = {}
-        for record in records:
-            key = (record.username, record.instance)
-            batch = batch_by_key.get(key)
-            if batch is None:
-                batch = PendingTweetBatch(
-                    username=record.username,
-                    instance=record.instance,
-                    tweets=[],
-                    fetched_ids=[],
-                    seen_ids=[],
-                    pending_ids=[],
-                    delivered_targets=set(record.delivered_targets),
-                )
-                batch_by_key[key] = batch
-                batches.append(batch)
-            else:
-                batch.delivered_targets.intersection_update(record.delivered_targets)
-            batch.tweets.append(record.tweet)
-            batch.pending_ids.append(record.id)
-        account_total = len(batches)
-        for account_index, batch in enumerate(batches, 1):
-            batch.account_index = account_index
-            batch.account_total = account_total
-            batch.tweet_index = len(batch.tweets)
-            batch.tweet_total = len(batch.tweets)
-        return batches
 
     async def _send_prepared_batches(
         self,
@@ -2198,17 +1687,6 @@ class NitterTweetScheduler:
             return DEFAULT_GROUP_NAME
         return str(group.name or group.group_id).strip() or group.group_id
 
-    async def _store_pending_seen_ids(
-        self,
-        group_id: str,
-        batches: list[PendingTweetBatch],
-        seen_map: dict[str, list[str]],
-    ) -> None:
-        for batch in batches:
-            seen_map[batch.username] = self._merge_seen_ids(
-                batch.fetched_ids, batch.seen_ids
-            )
-        await self._put_seen_map(group_id, seen_map)
 
     async def _store_incremental_seen_ids(
         self,
@@ -2259,13 +1737,6 @@ class NitterTweetScheduler:
         )
         if seen_count is not None:
             lines.append(f"  已记录账号索引: {seen_count} 个")
-        if group.deferred_publish_enabled:
-            lines.append(
-                "  暂存发布: 已启用，"
-                f"发布时间 {self._format_daily_times(group.deferred_publish_times)}"
-            )
-        else:
-            lines.append("  暂存发布: 已关闭")
         daily_times = group.daily_check_times
         if daily_times:
             formatted_times = ", ".join(
@@ -2300,79 +1771,8 @@ class NitterTweetScheduler:
     def _format_limited_values(values: list[str], limit: int = 10) -> str:
         return scheduler_format_limited_values(values, limit=limit)
 
-    async def pending_queue_summary(self, group_name: str = "") -> str:
-        group = self._schedule_group(group_name or GLOBAL_GROUP_ID)
-        if group is None:
-            requested = str(group_name or "").strip() or GLOBAL_GROUP_ID
-            available = scheduler_format_limited_values(
-                [
-                    f"{item.name} ({item.group_id})"
-                    for item in self._schedule_groups(log_invalid_targets=False)
-                ]
-            )
-            return f"Nitter 暂存队列\n未找到分组: {requested}\n可用分组: {available}"
 
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
-        lines = [
-            "Nitter 暂存队列",
-            f"分组: {group.name} ({group.group_id})",
-            f"暂存发布: {'已启用' if group.deferred_publish_enabled else '已关闭'}",
-            f"待发布: {summary.pending_count} 条",
-            f"失败待重试: {summary.failed_count} 条",
-            f"暂存媒体: {summary.media_count} 个",
-            f"发布时间: {self._format_daily_times(group.deferred_publish_times)}",
-            f"每次发布上限: {group.deferred_publish_batch_limit} 条",
-        ]
-        if summary.user_counts:
-            lines.append(
-                "暂存账号: "
-                + self._format_pending_user_counts(summary.user_counts)
-            )
-        if summary.oldest_created_at:
-            lines.append(
-                "最早暂存: "
-                + self._format_timestamp(summary.oldest_created_at)
-            )
-        if summary.newest_created_at:
-            lines.append(
-                "最新暂存: "
-                + self._format_timestamp(summary.newest_created_at)
-            )
-        return "\n".join(lines)
 
-    async def check_pending_brief(self, group: ScheduleGroup) -> str:
-        if not group.deferred_publish_enabled:
-            return "当前分组暂存: 已关闭"
-
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
-        suffix = self._group_command_suffix(group)
-        lines = [
-            "当前分组暂存:",
-            f"待发布: {summary.pending_count} 条",
-            f"失败待重试: {summary.failed_count} 条",
-            "暂存账号: "
-            + (
-                self._format_pending_user_counts(summary.user_counts)
-                if summary.user_counts
-                else "无"
-            ),
-            "下次发布时间: "
-            + self._format_next_daily_time(group.deferred_publish_times),
-            "",
-            "可用命令:",
-            f" /推文队列{suffix}",
-            f" /推文发布{suffix}",
-        ]
-        return "\n".join(lines)
-
-    @staticmethod
-    def _group_command_suffix(group: ScheduleGroup) -> str:
-        if is_default_group(group.group_id):
-            return ""
-        name = str(group.name or group.group_id).strip()
-        return f" {name}" if name else ""
-
-    @staticmethod
     def _format_pending_user_counts(user_counts: list[tuple[str, int]]) -> str:
         return scheduler_format_pending_user_counts(user_counts)
     @staticmethod

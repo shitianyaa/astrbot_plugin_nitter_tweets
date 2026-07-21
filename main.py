@@ -17,7 +17,7 @@ try:
         migrate_default_group_config,
         migrate_legacy_grouped_config,
     )
-    from .ai import TweetEnricher, TweetTranslator
+    from .ai import TweetTranslator
     from .media_support import MediaService, NitterClient
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
@@ -35,7 +35,7 @@ except ImportError:
         migrate_default_group_config,
         migrate_legacy_grouped_config,
     )
-    from ai import TweetEnricher, TweetTranslator
+    from ai import TweetTranslator
     from media_support import MediaService, NitterClient
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
@@ -66,7 +66,6 @@ class NitterTweetsPlugin(
         self._cleanup_legacy_media_cache_once()
         self.sender = TweetSender(config)
         self.translator = TweetTranslator(context, config)
-        self.enricher = TweetEnricher(context, config)
         self.scheduler = NitterTweetScheduler(
             self,
             context,
@@ -75,7 +74,6 @@ class NitterTweetsPlugin(
             self.media,
             self.sender,
             self.translator,
-            self.enricher,
         )
         self.web_api = NitterWebAPI(self)
         self.web_api.register(context)
@@ -93,7 +91,7 @@ class NitterTweetsPlugin(
             return
 
         try:
-            result = self.media.clear_non_staged_cache()
+            result = self.media.clear_cache()
         except Exception as exc:
             logger.warning(
                 "[NitterTweets] 升级清理普通媒体缓存失败，"
@@ -128,7 +126,6 @@ class NitterTweetsPlugin(
             f"image:{'on' if self.media.send_image_attachments else 'off'},"
             f"video:{'on' if self.media.send_video_attachments else 'off'}, "
             f"translate={'on' if self.translator.enabled else 'off'}, "
-            f"ai_enrich={'on' if self.enricher.enabled else 'off'}, "
             f"qq_merge_threshold={self.sender.merge_tweet_threshold}"
         )
         self.scheduler.start(reason="initialize")
@@ -175,7 +172,7 @@ class NitterTweetsPlugin(
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文缓存清理")
     async def cmd_tweets_clear_cache(self, event: AstrMessageEvent):
-        """清理普通图片/视频缓存，保留暂存队列媒体。"""
+        """清理普通图片/视频缓存。"""
         return await self._cmd_tweets_clear_cache_impl(event)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -184,25 +181,7 @@ class NitterTweetsPlugin(
         """清理已推送记录，可按分组清理。用法：/推文记录清理 [分组名] 确认"""
         return await self._cmd_tweets_clear_seen_impl(event, args)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文队列")
-    async def cmd_tweets_queue(
-        self,
-        event: AstrMessageEvent,
-        group_name: str = "",
-    ):
-        """查看暂存发布队列中的待发送推文。用法：/推文队列 [分组名]"""
-        return await self._cmd_tweets_queue_impl(event, group_name)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("推文发布")
-    async def cmd_tweets_publish(
-        self,
-        event: AstrMessageEvent,
-        group_name: str = "",
-    ):
-        """立即发布暂存队列中的推文。用法：/推文发布 [分组名]"""
-        return await self._cmd_tweets_publish_impl(event, group_name)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("订阅列表")

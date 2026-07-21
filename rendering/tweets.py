@@ -768,10 +768,6 @@ class TweetMessageRenderer:
         if translation:
             blocks.append(f"翻译：\n{translation}")
 
-        ai_comment = normalize_external_links(tweet.ai_comment).strip()
-        if ai_comment:
-            blocks.append(f"评论：\n{ai_comment}")
-
         if tweet.ai_warnings:
             blocks.append(
                 "AI提示：\n"

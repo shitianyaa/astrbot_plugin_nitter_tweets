@@ -61,9 +61,9 @@ NitterTweetScheduler
 4. 按账号抓取 RSS。
 5. 首次账号初始化 seen，不推送历史。
 6. 非首次账号按 seen 找新推文。
-7. 立即模式准备并发送；暂存模式写入 pending queue。
+7. 准备并立即发送。
 8. 发送成功后更新 seen 或标记 pending。
-9. 清理普通缓存，保留需要重试的暂存缓存。
+9. 清理普通缓存。
 
 ## 发送链路
 
@@ -86,10 +86,10 @@ NitterTweetScheduler
 2. xdown 解析候选
 3. 视频/GIF 优先，跳过同条推文里的图片候选
 4. 分辨率、时长、大小限制
-5. 下载到普通缓存或移动到暂存缓存
+5. 下载到普通缓存
 6. 普通媒体发送后清理
 
-升级到发送后删除策略时会自动执行一次普通缓存清理。暂存缓存位于 `cache/staged/<group_id>/<status_id>/`，不能被普通缓存清理误删。
+升级到发送后删除策略时会自动执行一次普通缓存清理。
 
 ## 存储链路
 
@@ -108,7 +108,7 @@ NitterTweetScheduler
 - `delivery/`: `TweetSender`、平台识别和平台适配器。
 - `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
 - `storage/`: SQLite、pending queue、push history、旧 KV seen 迁移。
-- `ai/`: 翻译、AI 识图、AI 评论。
+- `ai/`: 翻译。
 - `rendering/`: 推文文本、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。
