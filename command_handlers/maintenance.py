@@ -6,10 +6,8 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
-    from ..shared.group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
     from ..delivery import TweetSender
 except ImportError:
-    from shared.group_ids import DEFAULT_GROUP_ID, DEFAULT_GROUP_NAME
     from delivery import TweetSender
 
 
