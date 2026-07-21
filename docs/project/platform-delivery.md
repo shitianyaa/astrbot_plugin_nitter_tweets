@@ -71,7 +71,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 不确定送达错误按可能已送达处理，避免重复推送。
 
 测试入口：
-- `tests/test_deferred_scheduler.py` 中 `qq`、`onebot`、`merged`、`video`、`custom_platform` 相关测试。
+- `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
 
 ## Lark/Feishu
 
@@ -84,7 +84,6 @@ sender._should_use_merge_for_count(tweet_count)
 
 测试入口：
 - `tests/test_subscription_import.py::test_lark_title_uses_manual_header_override`
-- `tests/test_deferred_scheduler.py` 中 Lark 或 default direct 相关发送测试。
 
 ## Telegram
 
@@ -95,8 +94,8 @@ sender._should_use_merge_for_count(tweet_count)
 - retry 失败返回失败结果，避免重复发送不可控。
 
 测试入口：
-- `tests/test_deferred_scheduler.py::test_telegram_flood_control_waits_and_retries_same_message`
-- `tests/test_deferred_scheduler.py::test_telegram_flood_control_retry_failure_skips_fallback`
+- `tests/test_scheduler_delivery.py::test_telegram_flood_control_waits_and_retries_same_message`
+- `tests/test_scheduler_delivery.py::test_telegram_flood_control_retry_failure_skips_fallback`
 
 ## weixin_oc 和其他平台
 

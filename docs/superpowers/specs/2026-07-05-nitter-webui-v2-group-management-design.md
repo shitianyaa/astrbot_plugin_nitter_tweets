@@ -1,5 +1,8 @@
 # Nitter Plugin WebUI V2 Group Management Design
 
+> **Historical design note:** This document predates the 0.16.0 removal of deferred publish and non-translation AI features. Treat it as design archaeology, not current product behavior.
+
+
 ## Goal
 
 Extend the existing AstrBot Plugin Pages dashboard with an interactive group-management surface that turns the current read-mostly `分组订阅` tab into a practical control panel for day-to-day administration.

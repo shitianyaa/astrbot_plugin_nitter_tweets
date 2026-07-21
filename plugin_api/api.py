@@ -553,7 +553,7 @@ class NitterWebAPI:
             deleted=deleted,
             legacy_deleted=bool(legacy_deleted),
             warning=(
-                "推送记录已清理；关注账号、推送目标、暂存队列和媒体文件不会被删除。"
+                "推送记录已清理；关注账号、推送目标和媒体文件不会被删除。"
             ),
         )
 
@@ -1125,7 +1125,6 @@ class NitterWebAPI:
             "published": tweet.published,
             "text_preview": NitterWebAPI._text_preview(tweet.text),
             "translation_preview": NitterWebAPI._text_preview(tweet.translation),
-            "ai_comment_preview": NitterWebAPI._text_preview(tweet.ai_comment),
         }
 
     @staticmethod
@@ -1207,7 +1206,6 @@ class NitterWebAPI:
             "group_name": getattr(result, "group_name", ""),
             "skipped_reason": getattr(result, "skipped_reason", ""),
             "new_tweet_count": getattr(result, "new_tweet_count", 0),
-            "queued_tweet_count": getattr(result, "queued_tweet_count", 0),
             "pushed_target_successes": getattr(
                 result, "pushed_target_successes", 0
             ),

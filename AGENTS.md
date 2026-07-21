@@ -23,14 +23,14 @@
 - 支持按 `tweet_groups` 分组定时检查并即时推送。
 - 支持图片、视频/GIF、翻译。
 - 支持 QQ/OneBot 合并转发、Telegram、Lark/Feishu、weixin_oc 和默认平台发送。
-- 使用 SQLite 存储 seen 索引和 pending queue。
+- 使用 SQLite 存储 seen 索引和 push history。
 
 ## 代码地图
 
 - `main.py`: AstrBot 插件入口、命令注册、服务编排。不要把复杂业务逻辑塞进这里。
 - `command_handlers/`: 命令实现。
   - `manual.py`: `/推文`、`/镜像测试`。
-  - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen、队列、发布。
+  - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen。
   - `subscriptions.py`: 订阅导入、删除、导出、去重。
 - `scheduler/`: 后台检查、seen 对比、推送编排。高风险模块。
   - `runner.py`: `NitterTweetScheduler` 主状态机。
@@ -52,7 +52,7 @@
   - `default.py`: AstrBot 通用 MessageChain 发送。
 - `rendering/tweets.py`: 推文文本、MessageChain、OneBot raw nodes 渲染。
 - `ai/enrichment.py`: 翻译。
-- `storage/`: SQLite 存储、pending queue、push history 和旧 KV 迁移。
+- `storage/`: SQLite 存储、push history 和旧 KV 迁移。
   - `sqlite.py`: SQLite schema 和查询。
   - `adapter.py`: 异步存储适配层。
   - `seen.py`: 旧 KV seen 迁移和 seen ID 合并规则。
@@ -195,11 +195,11 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 媒体下载
 
 规则：
-- 翻译和评论 provider 通过配置读取，不要硬编码。
-- - AI 失败需要区分正常跳过和用户可见 warning。
+- 翻译 provider 通过配置读取，不要硬编码。
+- AI 失败需要区分正常跳过和用户可见 warning。
 - 手动查询按单条推文准备后立即发送，避免一条慢推文阻塞全部结果。
 
-修改 AI 行为时优先补 `tests/test_subscription_import.py` 的 `TweetEnricherTest` 相关测试。
+修改 AI 行为时优先补 `tests/test_subscription_import.py` 中翻译相关测试。
 
 ## 文档同步
 
@@ -231,7 +231,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 - 配置 schema、迁移、命令解析、订阅维护、AI：`python -m pytest -q tests/test_subscription_import.py`
 - 媒体解析、视频限制、下载重试：`python -m pytest -q tests/test_media_resolution.py`
 - 缓存清理：`python -m pytest -q tests/test_media_cleanup.py`
-- SQLite pending queue：`python -m pytest -q tests/test_storage_adapter.py`
+- 调度 seen / QQ 合并 / Telegram flood：`python -m pytest -q tests/test_scheduler_delivery.py`
 - 存储适配和旧 KV 迁移：`python -m pytest -q tests/test_storage_adapter.py`
 - SQLite 线程安全：`python -m pytest -q tests/test_sqlite_threading.py`
 

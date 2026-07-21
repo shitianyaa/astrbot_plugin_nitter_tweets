@@ -425,7 +425,7 @@ class CommandMetadataTest(unittest.TestCase):
 
 
 class ConfigCompatTest(unittest.TestCase):
-    def test_explicit_plugin_versions_are_0_15_0(self):
+    def test_explicit_plugin_versions_are_0_16_0(self):
         root = Path(__file__).resolve().parents[1]
         metadata_text = (root / "metadata.yaml").read_text(encoding="utf-8")
         main_text = (root / "main.py").read_text(encoding="utf-8")
@@ -459,7 +459,7 @@ class ConfigCompatTest(unittest.TestCase):
                 readme_version.group(1),
                 changelog_version.group(1),
             ],
-            ["0.15.0"] * 4,
+            ["0.16.0"] * 4,
         )
 
     def test_conf_schema_is_grouped(self):

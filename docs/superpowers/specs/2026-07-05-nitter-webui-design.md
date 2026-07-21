@@ -1,5 +1,8 @@
 # Nitter Plugin WebUI Design
 
+> **Historical design note:** This document predates the 0.16.0 removal of deferred publish and non-translation AI features. Treat it as design archaeology, not current product behavior.
+
+
 ## Goal
 
 Add an AstrBot Plugin Pages dashboard for `astrbot_plugin_nitter_tweets` that makes operational state visible and exposes the safest existing maintenance actions through a native AstrBot WebUI.

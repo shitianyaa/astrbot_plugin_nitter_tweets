@@ -34,7 +34,6 @@ const els = {
   themeToggleBtn: document.getElementById("themeToggleBtn"),
   railSchedulerStatus: document.getElementById("railSchedulerStatus"),
   railScheduleStatus: document.getElementById("railScheduleStatus"),
-  railPendingStatus: document.getElementById("railPendingStatus"),
   railTargetStatus: document.getElementById("railTargetStatus"),
   alert: document.getElementById("alert"),
   toastContainer: document.getElementById("toastContainer"),
@@ -77,7 +76,7 @@ const els = {
 const viewMeta = {
   overview: {
     title: "Nitter 推文控制台总览",
-    desc: "聚合查看博主订阅分组、推送目标状态、暂存队列以及 Nitter 节点连通性。",
+    desc: "聚合查看博主订阅分组、推送目标状态以及 Nitter 节点连通性。",
   },
   groups: {
     title: "订阅分组与博主管理",
@@ -526,17 +525,6 @@ function syncSelectors() {
   if (!groupIds.has(state.selectedGroupId)) {
     state.selectedGroupId = firstGroupId;
   }
-  const currentPending = groupIds.has(selectedPendingGroupId())
-    ? selectedPendingGroupId()
-    : state.selectedGroupId || firstGroupId;
-  const currentHistory =
-    state.historyGroupId && (state.historyGroupId === "" || groupIds.has(state.historyGroupId))
-      ? state.historyGroupId
-      : "";
-  const currentSeen =
-    state.seenGroupId && (state.seenGroupId === "" || groupIds.has(state.seenGroupId))
-      ? state.seenGroupId
-      : "";
   state.historyGroupId = els.historyGroupSelect.value;
   state.seenGroupId = els.seenGroupSelect.value;
 }
@@ -1236,7 +1224,7 @@ function renderHistoryOrphans(payload = state.historyOrphans) {
       ]),
       el("p", {
         className: "muted",
-        text: "这些 group_id 存在于推送历史，但当前配置里已经没有对应分组。删除会清理该 group_id 的推送历史、防重复推送记录和暂存运行数据。",
+        text: "这些 group_id 存在于推送历史，但当前配置里已经没有对应分组。删除会清理该 group_id 的推送历史和防重复推送记录。",
       }),
       el("div", { className: "table-wrap" }, [
         el("table", { className: "data-table" }, [
@@ -1645,7 +1633,7 @@ function confirmDeletePushTarget(groupId, indexText) {
   openConfirm({
     kicker: "删除推送目标",
     title: "删除这个推送目标？",
-    desc: "只会从当前分组配置移除推送目标，不会删除关注账号、暂存队列、媒体、推送记录或发送历史。",
+    desc: "只会从当前分组配置移除推送目标，不会删除关注账号、媒体、推送记录或发送历史。",
     confirmText: "删除",
     action: () =>
       withAction(async () => {
@@ -1679,7 +1667,7 @@ function confirmDeleteHistoryOrphan(groupId) {
   openConfirm({
     kicker: "清理失效分组",
     title: `删除 ${value} 的运行数据？`,
-    desc: "该 group_id 当前不在配置分组里。确认后会删除它的推送历史、防重复推送记录和暂存运行数据，不能恢复。",
+    desc: "该 group_id 当前不在配置分组里。确认后会删除它的推送历史和防重复推送记录，不能恢复。",
     confirmText: "删除运行数据",
     action: () =>
       withAction(async () => {
@@ -1779,7 +1767,7 @@ function confirmDeleteGroup(groupId) {
   openConfirm({
     kicker: "删除分组",
     title: "删除这个分组？",
-    desc: "会同时删除该分组的推送记录、暂存队列和暂存媒体，且无法恢复。",
+    desc: "会同时删除该分组的推送记录和运行数据，且无法恢复。",
     confirmText: "确认删除",
     action: () =>
       withAction(async () => {
@@ -1803,7 +1791,7 @@ function confirmDeleteSubscriptions(groupId = selectedGroupId()) {
   openConfirm({
     kicker: "删除关注账号",
     title: "删除关注账号？",
-    desc: "只会从所选用户分组移除关注账号，不会删除推送目标、暂存队列或媒体文件。",
+    desc: "只会从所选用户分组移除关注账号，不会删除推送目标或媒体文件。",
     confirmText: "删除",
     action: () =>
       withAction(async () => {
@@ -1824,7 +1812,7 @@ function confirmDeleteWatchUser(groupId, username) {
   openConfirm({
     kicker: "删除关注账号",
     title: `删除 ${username}？`,
-    desc: "只会从当前用户分组移除这个关注账号，不会删除推送目标、暂存队列或媒体文件。",
+    desc: "只会从当前用户分组移除这个关注账号，不会删除推送目标或媒体文件。",
     confirmText: "删除",
     action: () =>
       withAction(() =>
@@ -1894,7 +1882,7 @@ function confirmClearCache() {
   openConfirm({
     kicker: "缓存清理",
     title: "清理媒体缓存？",
-    desc: "普通媒体缓存会被删除，暂存队列使用的媒体会保留。",
+    desc: "普通媒体缓存会被删除。",
     confirmText: "清理",
     action: () =>
       withAction(async () => {
@@ -1922,7 +1910,7 @@ function confirmClearSeen() {
   openConfirm({
     kicker: "推送记录",
     title: "清理推送记录？",
-    desc: `清理范围：${scope}。不会删除关注账号、推送目标、暂存队列或媒体文件，但旧推文可能重新参与检查。`,
+    desc: `清理范围：${scope}。不会删除关注账号、推送目标或媒体文件，但旧推文可能重新参与检查。`,
     confirmText: "清理",
     action: () =>
       withAction(async () => {

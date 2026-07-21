@@ -7,7 +7,7 @@ main.py
   -> command_handlers/
   -> media_support.NitterClient / MediaService
   -> delivery.TweetSender
-  -> ai.TweetTranslator / TweetEnricher
+  -> ai.TweetTranslator
   -> scheduler.NitterTweetScheduler
   -> plugin_api.NitterWebAPI
 
@@ -36,7 +36,7 @@ NitterTweetScheduler
 `command_handlers/` 只负责命令参数、权限、用户提示和调用服务。
 
 - `manual.py`: 手动查询和镜像测试。
-- `maintenance.py`: 状态、检查、缓存、seen、队列、发布。
+- `maintenance.py`: 状态、检查、缓存、seen。
 - `subscriptions.py`: 订阅导入、删除、导出、去重。
 
 命令必须调用 `event.stop_event()`。管理员命令必须加 AstrBot admin 权限装饰器。
@@ -62,7 +62,7 @@ NitterTweetScheduler
 5. 首次账号初始化 seen，不推送历史。
 6. 非首次账号按 seen 找新推文。
 7. 准备并立即发送。
-8. 发送成功后更新 seen 或标记 pending。
+8. 发送成功后更新 seen。
 9. 清理普通缓存。
 
 ## 发送链路
@@ -96,8 +96,7 @@ NitterTweetScheduler
 - SQLite 是运行期存储。
 - 旧 KV seen 只用于迁移。
 - seen 按 `group_id + username` 隔离。
-- pending queue 记录 tweet、media、delivered targets、失败状态。
-- 发布成功后清理 sent rows。
+- push history 记录成功/部分失败的推送快照，供 WebUI 历史查看和重推。
 
 不要把运行时 SQLite、缓存、`data/` 提交到 Git。
 
@@ -107,7 +106,7 @@ NitterTweetScheduler
 - `plugin_api/`: AstrBot Plugin Pages 后端 API 和 WebUI 分组编辑。
 - `delivery/`: `TweetSender`、平台识别和平台适配器。
 - `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
-- `storage/`: SQLite、pending queue、push history、旧 KV seen 迁移。
+- `storage/`: SQLite、push history、旧 KV seen 迁移。
 - `ai/`: 翻译。
 - `rendering/`: 推文文本、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。

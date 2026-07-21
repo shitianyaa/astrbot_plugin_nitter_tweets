@@ -6,6 +6,20 @@
 
 暂无。
 
+## [0.16.0] - 2026-07-21
+
+### Removed
+
+- 移除暂存定时发布：配置项、`/推文队列` / `/推文发布` 命令、WebUI 暂存队列页、SQLite `pending_tweets` / `pending_media` 表与 `cache/staged/` 暂存媒体流程。
+- 移除非翻译 AI 能力：AI 摘要、智能过滤、改写、识图、AI 评论及相关配置、渲染与 WebUI 展示。
+- 升级后启动会 drop 旧 pending 表；相关旧配置会被忽略。
+
+### Changed
+
+- 后台检查发现新推文后统一即时推送；QQ/aiocqhttp 仍可按 `merge_tweet_threshold` 合并转发。
+- AI 处理仅保留翻译；`metadata.yaml`、运维面板文案与 agent/项目文档同步为当前能力边界。
+- 回补最小调度与平台发送回归：seen watermark、发送失败不写 seen、QQ 合并顺序、Telegram flood control。
+
 ## [0.15.0] - 2026-07-10
 
 ### Fixed

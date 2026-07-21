@@ -13,7 +13,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 改动类型 | 最小检查 | 关注点 |
 | --- | --- | --- |
 | RSS、分页、转发过滤、纯文本过滤 | `python -m pytest -q tests/test_nitter_pagination.py` | cursor 翻页、empty feed、引用媒体、card_img |
-| 调度、seen、发送顺序 | `python -m pytest -q tests/` | seen 时机、失败保留、缓存清理、合并转发 |
+| 调度、seen、QQ 合并、Telegram flood | `python -m pytest -q tests/test_scheduler_delivery.py` | seen watermark、失败不写 seen、合并顺序、限流重试 |
 | 配置 schema、迁移、命令解析、订阅维护、AI | `python -m pytest -q tests/test_subscription_import.py` | 旧配置、默认分组、命令参数、provider fallback |
 | 媒体解析、视频限制、下载重试 | `python -m pytest -q tests/test_media_resolution.py` | xdown、分辨率、时长、大小、重试 |
 | 缓存清理 | `python -m pytest -q tests/test_media_cleanup.py` | 递归清理、类型统计、空目录 |

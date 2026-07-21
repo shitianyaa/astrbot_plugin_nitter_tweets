@@ -812,9 +812,6 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                     "interval_check_enabled": False,
                     "daily_check_enabled": False,
                 },
-                "deferred": {
-                    
-                },
                 "push": {
                     "tweet_groups": [
                         {

@@ -88,6 +88,19 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertNotIn("renderPending", source)
         self.assertNotIn('data-view="pending"', html)
 
+    def test_sync_selectors_does_not_call_removed_pending_helpers(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "syncSelectors")
+
+        self.assertIn("state.selectedGroupId", body)
+        self.assertIn("historyGroupSelect", body)
+        self.assertIn("seenGroupSelect", body)
+        self.assertNotIn("selectedPendingGroupId", body)
+        self.assertNotIn("currentPending", body)
+        self.assertNotIn("selectedPendingGroupId", source)
+        self.assertNotIn("railPendingStatus", source)
+        self.assertNotIn("暂存", source)
+
 
     def test_clipboard_fallback_textarea_is_not_tabbable(self):
         body = _function_body(APP_JS.read_text(encoding="utf-8"), "copyText")
