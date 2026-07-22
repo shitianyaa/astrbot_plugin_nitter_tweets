@@ -447,6 +447,9 @@ class NitterTweetScheduler:
                 "[NitterTweets] 重新推送媒体准备失败，继续发送文本: "
                 f"record={record_id}, error={exc}"
             )
+        except BaseException:
+            await self._cleanup_batch_media(batch)
+            raise
 
         success_targets = 0
         failed_targets: dict[str, str] = {}
@@ -490,10 +493,7 @@ class NitterTweetScheduler:
                 if target_index < len(targets) - 1 and group.send_target_interval > 0:
                     await asyncio.sleep(group.send_target_interval)
         finally:
-            await asyncio.to_thread(
-                self.media.cleanup_after_send,
-                batch.tweets,
-            )
+            await self._cleanup_batch_media(batch)
 
         return {
             "success": success_targets > 0,
@@ -793,7 +793,7 @@ class NitterTweetScheduler:
                         )
             finally:
                 for batch in pending_batches:
-                    await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+                    await self._cleanup_batch_media(batch)
 
         for username, (anchor_status_ids, selected_ids) in (
             watermark_candidates.items()
@@ -1115,49 +1115,59 @@ class NitterTweetScheduler:
         immediate_batches_sent: int,
     ) -> tuple[list[PendingTweetBatch], int]:
         pending_batches: list[PendingTweetBatch] = []
-        for discovered_batch in discovered_batches:
-            username = discovered_batch.username
-            new_tweets = discovered_batch.tweets
-            prepared_count = 0
-            for tweet_index, tweet in enumerate(new_tweets, 1):
-                batch = self._single_tweet_batch(
-                    discovered_batch,
-                    tweet,
-                    tweet_index,
-                    seen_map,
-                )
-                try:
-                    prepared = await self._prepare_immediate_batch(
-                        batch, target_umo
-                    )
-                except Exception as exc:
-                    await self._record_prepare_failure(
-                        result, username, tweet, tweet_index, [tweet], exc
-                    )
-                    continue
-
-                await self._handle_immediate_prepare_success(
-                    group, prepared, seen_map
-                )
-                prepared_count += 1
-                pending_batches, immediate_batches_sent = (
-                    await self._send_or_buffer_immediate_batch(
-                        batch,
-                        group,
-                        pending_batches,
-                        result,
-                        immediate_targets,
-                        buffered_targets,
-                        target_interval,
-                        user_interval,
-                        group_label,
-                        immediate_batch_summary_tracker,
-                        immediate_batches_sent,
+        current_batch: PendingTweetBatch | None = None
+        try:
+            for discovered_batch in discovered_batches:
+                username = discovered_batch.username
+                new_tweets = discovered_batch.tweets
+                prepared_count = 0
+                for tweet_index, tweet in enumerate(new_tweets, 1):
+                    current_batch = self._single_tweet_batch(
+                        discovered_batch,
+                        tweet,
+                        tweet_index,
                         seen_map,
-                        batch_progress=(tweet_index, len(new_tweets)),
                     )
-                )
-            self._log_prepare_progress(username, prepared_count, len(new_tweets))
+                    try:
+                        prepared = await self._prepare_immediate_batch(
+                            current_batch, target_umo
+                        )
+                    except Exception as exc:
+                        await self._record_prepare_failure(
+                            result, current_batch, exc
+                        )
+                        current_batch = None
+                        continue
+
+                    await self._handle_immediate_prepare_success(
+                        group, prepared, seen_map
+                    )
+                    prepared_count += 1
+                    pending_batches, immediate_batches_sent = (
+                        await self._send_or_buffer_immediate_batch(
+                            current_batch,
+                            group,
+                            pending_batches,
+                            result,
+                            immediate_targets,
+                            buffered_targets,
+                            target_interval,
+                            user_interval,
+                            group_label,
+                            immediate_batch_summary_tracker,
+                            immediate_batches_sent,
+                            seen_map,
+                            batch_progress=(tweet_index, len(new_tweets)),
+                        )
+                    )
+                    current_batch = None
+                self._log_prepare_progress(username, prepared_count, len(new_tweets))
+        except BaseException:
+            batches_to_clean = list(pending_batches)
+            if current_batch is not None:
+                batches_to_clean.append(current_batch)
+            await self._cleanup_batch_media_many(batches_to_clean)
+            raise
         return pending_batches, immediate_batches_sent
 
     async def _prepare_batches_concurrently(
@@ -1208,11 +1218,15 @@ class NitterTweetScheduler:
                     )
                 )
 
-        prepared_results = await self._prepare_batches_concurrently(
-            single_batches,
-            group.prepare_concurrency,
-            lambda batch: self._prepare_immediate_batch(batch, target_umo),
-        )
+        try:
+            prepared_results = await self._prepare_batches_concurrently(
+                single_batches,
+                group.prepare_concurrency,
+                lambda batch: self._prepare_immediate_batch(batch, target_umo),
+            )
+        except BaseException:
+            await self._cleanup_batch_media_many(single_batches)
+            raise
         pending_batches: list[PendingTweetBatch] = []
         prepared_count_by_user: dict[str, int] = {}
         total_by_user: dict[str, int] = {}
@@ -1220,21 +1234,14 @@ class NitterTweetScheduler:
             total_by_user[batch.username] = (
                 total_by_user.get(batch.username, 0) + len(batch.tweets)
             )
-        consumed_count = 0
         try:
             for prepared in prepared_results:
                 batch = prepared.batch
                 tweet = batch.tweets[0]
                 tweet_index = batch.tweet_index
-                consumed_count += 1
                 if prepared.error:
                     await self._record_prepare_failure(
-                        result,
-                        batch.username,
-                        tweet,
-                        tweet_index,
-                        batch.tweets,
-                        prepared.error,
+                        result, batch, prepared.error
                     )
                     continue
 
@@ -1262,10 +1269,9 @@ class NitterTweetScheduler:
                     )
                 )
         except BaseException:
-            for remaining in prepared_results[consumed_count:]:
-                await asyncio.to_thread(
-                    self.media.cleanup_after_send, remaining.batch.tweets
-                )
+            await self._cleanup_batch_media_many(
+                [*single_batches, *pending_batches]
+            )
             raise
 
         for discovered_batch in discovered_batches:
@@ -1314,18 +1320,18 @@ class NitterTweetScheduler:
     async def _record_prepare_failure(
         self,
         result: ScheduledCheckResult,
-        username: str,
-        tweet: TweetItem,
-        tweet_index: int,
-        tweets: list[TweetItem],
+        batch: PendingTweetBatch,
         error: SchedulerTaskError | Exception,
     ) -> None:
+        username = batch.username
+        tweet = batch.tweets[0]
+        tweet_index = batch.tweet_index
         status_id = tweet.status_id or f"index-{tweet_index}"
         if isinstance(error, SchedulerTaskError):
             error_message = error.message
         else:
             error_message = str(error)
-        await asyncio.to_thread(self.media.cleanup_after_send, tweets)
+        await self._cleanup_batch_media(batch)
         result.failed_users[f"{username}:{status_id}"] = (
             f"推文准备失败: {error_message}"
         )
@@ -1406,7 +1412,7 @@ class NitterTweetScheduler:
                     immediate_batches_sent += 1
                 pending_batches.append(batch)
             except BaseException:
-                await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+                await self._cleanup_batch_media(batch)
                 raise
             return pending_batches, immediate_batches_sent
 
@@ -1435,8 +1441,25 @@ class NitterTweetScheduler:
                     )
                 immediate_batches_sent += 1
         finally:
-            await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+            await self._cleanup_batch_media(batch)
         return pending_batches, immediate_batches_sent
+
+    async def _cleanup_batch_media(self, batch: PendingTweetBatch) -> None:
+        """Clean one prepared batch at most once, including cancellation paths."""
+        if batch.media_cleaned:
+            return
+        batch.media_cleaned = True
+        try:
+            await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+        except BaseException:
+            batch.media_cleaned = False
+            raise
+
+    async def _cleanup_batch_media_many(
+        self, batches: list[PendingTweetBatch]
+    ) -> None:
+        for batch in batches:
+            await self._cleanup_batch_media(batch)
 
     async def _send_per_user_updates(
         self,

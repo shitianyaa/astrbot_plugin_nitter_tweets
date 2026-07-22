@@ -46,6 +46,12 @@ _MEDIA_SRC_RE = re.compile(
     r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)"
 )
 _ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
+# ElementTree blocks external entities by default but still permits DTD-defined
+# entities; reject both declarations before parsing so the plugin needs no new
+# runtime dependency just to process untrusted RSS responses.
+_UNSAFE_XML_DECLARATION_RE = re.compile(
+    br"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE
+)
 _HTML_VOID_TAGS = frozenset(
     {
         "area",
@@ -221,6 +227,7 @@ class FetchAttemptBudget:
 
 class NitterClient:
     SCHEDULER_SCAN_LIMIT = 300
+    RSS_RESPONSE_LIMIT = 2_000_000
 
     def __init__(self, config):
         self.instances = load_instances(config_get(config, "instances"))
@@ -835,7 +842,7 @@ class NitterClient:
         )
         try:
             with compat_urlopen(request, self.timeout) as response:
-                data = response.read(2_000_000)
+                data = response.read(self.RSS_RESPONSE_LIMIT + 1)
                 next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:
             message = f"HTTP {exc.code}"
@@ -915,6 +922,12 @@ class NitterClient:
         skip_plain_text: bool = False,
         username: str = "",
     ) -> tuple[list[TweetItem], int, list[str], int]:
+        if len(data) > self.RSS_RESPONSE_LIMIT:
+            raise ValueError(
+                f"RSS 响应超过安全上限 {self.RSS_RESPONSE_LIMIT} 字节"
+            )
+        if _UNSAFE_XML_DECLARATION_RE.search(data):
+            raise ValueError("RSS XML 包含禁止的 DTD 或实体声明")
         root = ET.fromstring(data)
         channel = root.find("channel") if root.tag.lower().endswith("rss") else root
         if channel is None:

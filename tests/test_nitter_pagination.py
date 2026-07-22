@@ -113,6 +113,31 @@ def _rss_with_descriptions(items: list[tuple[str, str, str]]) -> bytes:
 
 
 class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
+    def test_parse_rss_rejects_dtd_and_entity_declarations(self):
+        client = NitterClient({"instances": ["https://nitter.example"]})
+        malicious_feed = b"""<?xml version="1.0"?>
+        <!DOCTYPE rss [<!ENTITY repeated "expanded">]>
+        <rss><channel><item><title>&repeated;</title></item></channel></rss>
+        """
+
+        with self.assertRaisesRegex(ValueError, "DTD"):
+            client._parse_rss(
+                malicious_feed,
+                "https://nitter.example",
+                0,
+            )
+
+    def test_parse_rss_rejects_response_over_size_limit(self):
+        client = NitterClient({"instances": ["https://nitter.example"]})
+        oversized_feed = b"x" * (client.RSS_RESPONSE_LIMIT + 1)
+
+        with self.assertRaisesRegex(ValueError, "超过安全上限"):
+            client._parse_rss(
+                oversized_feed,
+                "https://nitter.example",
+                0,
+            )
+
     async def test_scheduler_fetch_reads_complete_first_page_without_watermark(self):
         client = NitterClient(
             {"instances": ["https://nitter.example"], "request_timeout": 12}

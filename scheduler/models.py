@@ -31,6 +31,7 @@ class PendingTweetBatch:
     account_total: int = 0
     tweet_index: int = 0
     tweet_total: int = 0
+    media_cleaned: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass(slots=True)

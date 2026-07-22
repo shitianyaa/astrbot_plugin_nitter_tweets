@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 import unittest
@@ -365,6 +366,30 @@ class _RecordingMedia(_Media):
 
     def cleanup_after_send(self, tweets):
         self.events.append("cleanup:" + ",".join(tweet.status_id for tweet in tweets))
+        super().cleanup_after_send(tweets)
+
+
+class _BlockingMedia(_Media):
+    def __init__(self, block_status_id, expected_attached=2):
+        super().__init__()
+        self.block_status_id = str(block_status_id)
+        self.expected_attached = expected_attached
+        self.attached_ids = []
+        self.cleaned_ids = []
+        self.all_attached = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def attach_media(self, tweets):
+        status_ids = [str(tweet.status_id) for tweet in tweets]
+        self.attached_ids.extend(status_ids)
+        await super().attach_media(tweets)
+        if len(self.attached_ids) >= self.expected_attached:
+            self.all_attached.set()
+        if self.block_status_id in status_ids:
+            await self.release.wait()
+
+    def cleanup_after_send(self, tweets):
+        self.cleaned_ids.extend(str(tweet.status_id) for tweet in tweets)
         super().cleanup_after_send(tweets)
 
 
@@ -1098,6 +1123,99 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Nitter 本次检查发现 2 条新推文", merged_summary)
         self.assertIn("分组：默认分组", merged_summary)
         self.assertIn("更新账号：@NASA 1 条，@NASAHubble 1 条", merged_summary)
+
+    async def test_serial_prepare_cancellation_cleans_buffered_and_inflight_media(self):
+        target = "aiocqhttp:GroupMessage:1"
+        media = _BlockingMedia("102")
+        sender = _Sender(merge_targets={target})
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "merge_tweet_threshold": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        task = asyncio.create_task(
+            scheduler.run_check(reason="test_serial_prepare_cancel")
+        )
+        await asyncio.wait_for(media.all_attached.wait(), timeout=1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(media.attached_ids, ["101", "102"])
+        self.assertEqual(media.cleaned_ids, ["101", "102"])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("global", "NASA"),
+            ["100"],
+        )
+
+    async def test_concurrent_prepare_cancellation_cleans_all_started_media(self):
+        target = "aiocqhttp:GroupMessage:1"
+        media = _BlockingMedia("102")
+        sender = _Sender(merge_targets={target})
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "102"),
+                    self._make_tweet("NASA", "101"),
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "merge_tweet_threshold": 2,
+                "concurrent_prepare_enabled": True,
+                "prepare_concurrency": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            media=media,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        task = asyncio.create_task(
+            scheduler.run_check(reason="test_concurrent_prepare_cancel")
+        )
+        await asyncio.wait_for(media.all_attached.wait(), timeout=1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertCountEqual(media.attached_ids, ["101", "102"])
+        self.assertCountEqual(media.cleaned_ids, ["101", "102"])
+        self.assertEqual(len(media.cleaned_ids), 2)
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("global", "NASA"),
+            ["100"],
+        )
 
     async def test_telegram_flood_control_waits_and_retries_same_message(self):
         sender = TweetSender({})
