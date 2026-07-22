@@ -43,13 +43,13 @@ NitterTweetScheduler
 
 ## RSS 链路
 
-1. `NitterClient.fetch_tweets()` 或 `fetch_tweets_with_stats()`
+1. 手动路径调用 `NitterClient.fetch_tweets()` / `fetch_tweets_with_stats()`；后台路径调用 watermark-aware scheduler API。
 2. 按实例顺序请求 `/<username>/rss`
 3. 处理 HTTP/SSL/timeout 重试
 4. 解析 RSS item
 5. 过滤转发
 6. 可选过滤纯文本
-7. 根据 cursor 翻页
+7. 手动路径按请求数量停止；后台路径扫描首屏约 20 条，并在首屏未出现旧基准时按 `Min-Id` 翻页到该基准
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
@@ -57,13 +57,13 @@ NitterTweetScheduler
 
 1. `scheduler.runner.NitterTweetScheduler._tick()` 找到到期分组。
 2. `run_check()` 加锁，避免并发检查。
-3. 读取该分组 seen map。
-4. 按账号抓取 RSS。
-5. 首次账号初始化 seen，不推送历史。
-6. 非首次账号按 seen 找新推文。
-7. 准备并立即发送。
-8. 发送成功后更新 seen。
-9. 清理普通缓存。
+3. 读取该分组 seen map 和独立扫描水位。
+4. 按账号完整扫描 RSS 首屏；未遇到旧水位时继续分页。
+5. 首次账号初始化 seen 和扫描水位，不推送历史；空 feed 或全过滤结果也会记录初始化状态。
+6. 非首次账号按扫描水位确定时间边界，再用 seen 排除已成功送达的推文。
+7. 按推文 ID 与 seen 做差集，所有新推文都在本轮准备并发送。
+8. 发送成功后更新 seen；扫描完整且找到旧基准后推进扫描水位。
+9. 分页、准备或发送失败时不跨过未送达推文，并清理普通缓存。
 
 ## 发送链路
 
@@ -96,6 +96,7 @@ NitterTweetScheduler
 - SQLite 是运行期存储。
 - 旧 KV seen 只用于迁移。
 - seen 按 `group_id + username` 隔离。
+- scan watermark 按 `group_id + username` 独立存储，负责 RSS 分页边界和首次初始化状态；它不等同于 seen 最大 ID。
 - push history 记录成功/部分失败的推送快照，供 WebUI 历史查看和重推。
 
 不要把运行时 SQLite、缓存、`data/` 提交到 Git。

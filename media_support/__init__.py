@@ -1,5 +1,5 @@
 from .cache import MediaCacheCleanupResult
-from .client import NitterClient
+from .client import NitterClient, SchedulerFetchResult
 from .service import MEDIA_SIZE_LIMIT_ERROR, MediaService
 from .xdown import XdownMediaCandidate, XdownMediaParser
 
@@ -8,6 +8,7 @@ __all__ = [
     "MediaCacheCleanupResult",
     "MediaService",
     "NitterClient",
+    "SchedulerFetchResult",
     "XdownMediaCandidate",
     "XdownMediaParser",
 ]

@@ -842,7 +842,6 @@ function renderOverview() {
   const configRows = [
     ["Nitter 实例", formatNumber(configSummary.nitter_instance_count)],
     ["手动默认数量", formatNumber(configSummary.default_limit)],
-    ["后台拉取数量", formatNumber(configSummary.scheduled_fetch_limit)],
     ["检查间隔", `${formatNumber(configSummary.check_interval_minutes)} 分钟`],
     ["合并阈值", formatNumber(configSummary.merge_tweet_threshold)],
     ["目标间隔", `${formatNumber(configSummary.send_target_interval)} 秒`],

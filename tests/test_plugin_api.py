@@ -462,6 +462,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(group["filter_plain_text_enabled"])
         self.assertEqual(group["watch_users"], [])
         self.assertEqual(group["push_targets"], [])
+        self.assertNotIn("scheduled_fetch_limit", group)
         self.assertTrue(config.saved)
 
     async def test_create_group_rejects_custom_group_id(self):
@@ -571,6 +572,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                             "deferred_publish_enabled": True,
                             "comment_enabled": True,
                             "vision_enabled": True,
+                            "scheduled_fetch_limit": 19,
                         }
                     ]
                 }
@@ -587,6 +589,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("deferred_publish_enabled", group)
         self.assertNotIn("comment_enabled", group)
         self.assertNotIn("vision_enabled", group)
+        self.assertNotIn("scheduled_fetch_limit", group)
         self.assertEqual(group["watch_users"], ["OpenAI"])
 
     async def test_update_group_parses_string_booleans(self):
@@ -913,10 +916,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
                 config_get(config, "default_limit"), 5
             ),
         )
-        self.assertEqual(
-            payload["config_summary"]["scheduled_fetch_limit"],
-            group.scheduled_fetch_limit,
-        )
+        self.assertNotIn("scheduled_fetch_limit", payload["config_summary"])
         self.assertEqual(
             payload["config_summary"]["check_interval_minutes"],
             group.check_interval_minutes,

@@ -33,6 +33,7 @@ MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
+IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
 
 REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
 REMOVED_FEATURE_CONFIG_KEYS = frozenset(
@@ -54,6 +55,7 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "deferred_prefetch_media",
         "deferred_media_retention_hours",
         "deferred_media_download_interval_seconds",
+        "scheduled_fetch_limit",
     }
 )
 REMOVED_FEATURE_CONFIG_NAMES = (
@@ -92,7 +94,6 @@ CONFIG_GROUP_BY_KEY = {
     "check_interval_minutes": "schedule",
     "daily_check_enabled": "schedule",
     "daily_check_times": "schedule",
-    "scheduled_fetch_limit": "schedule",
     "brief_log_enabled": "logging",
     "concurrent_fetch_enabled": "performance",
     "fetch_concurrency": "performance",
@@ -137,7 +138,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "check_interval_minutes",
     "daily_check_enabled",
     "daily_check_times",
-    "scheduled_fetch_limit",
     "concurrent_fetch_enabled",
     "fetch_concurrency",
     "concurrent_fetch_instances",
@@ -178,13 +178,16 @@ def config_get(config, key: str, default=None):
 
 
 def sanitize_removed_feature_config(config) -> bool:
-    """Remove configuration left by deleted deferred and non-translation AI features."""
+    """Remove configuration left by deleted or retired features."""
     return _sanitize_removed_feature_value(config)
 
 
 def sanitize_removed_feature_group(group: dict) -> bool:
-    """Remove deleted feature fields before a tweet group is persisted."""
-    return _sanitize_removed_feature_value(group)
+    """Remove deleted and ignored fields before a tweet group is persisted."""
+    changed = _sanitize_removed_feature_value(group)
+    if _sanitize_ignored_tweet_group_config(group):
+        changed = True
+    return changed
 
 
 def migrate_legacy_grouped_config(config) -> bool:
@@ -236,6 +239,15 @@ def _sanitize_removed_feature_value(value) -> bool:
         for item in value:
             if _sanitize_removed_feature_value(item):
                 changed = True
+    return changed
+
+
+def _sanitize_ignored_tweet_group_config(group: dict) -> bool:
+    changed = False
+    for key in IGNORED_TWEET_GROUP_CONFIG_KEYS:
+        if key in group:
+            del group[key]
+            changed = True
     return changed
 
 
@@ -493,6 +505,8 @@ def _ensure_tweet_group_template_keys(groups: list) -> bool:
     for group in groups:
         if not isinstance(group, dict):
             continue
+        if _sanitize_ignored_tweet_group_config(group):
+            changed = True
         if _ensure_tweet_group_template_key(group):
             changed = True
     return changed

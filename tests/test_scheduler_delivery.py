@@ -245,6 +245,40 @@ class _MultiUserNitter:
         return "https://concurrent.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
+class _SchedulerNitter:
+    """Fake the dedicated scheduler scan API while preserving RSS ordering."""
+
+    def __init__(self, scans_by_user):
+        self.scans_by_user = {
+            username: list(scans) for username, scans in scans_by_user.items()
+        }
+        self.calls = []
+
+    async def fetch_tweets_for_scheduler(
+        self, username, watermark, skip_plain_text=False
+    ):
+        del skip_plain_text
+        self.calls.append((username, watermark))
+        scans = self.scans_by_user[username]
+        scan = scans.pop(0) if len(scans) > 1 else scans[0]
+        return (
+            "https://scheduler.test",
+            types.SimpleNamespace(
+                tweets=list(scan.get("tweets", [])),
+                scanned_status_ids=list(scan.get("scanned_status_ids", [])),
+                anchor_status_ids=list(
+                    scan.get(
+                        "anchor_status_ids",
+                        scan.get("scanned_status_ids", [])[:20],
+                    )
+                ),
+                latest_status_id=str(scan.get("latest_status_id", "")),
+                plain_text_filtered=0,
+                complete=scan.get("complete", True),
+            ),
+        )
+
+
 class _PartiallyFailingNitter(_MultiUserNitter):
     def __init__(self, tweets_by_user, failures_by_user, events=None):
         super().__init__(tweets_by_user, events=events)
@@ -448,6 +482,23 @@ class _Sender:
         )
 
 
+class _FailOnceStatusSender(_Sender):
+    def __init__(self, failed_status_id, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failed_status_id = str(failed_status_id)
+        self.failed = False
+
+    async def send_to_umo_with_outcome(self, *args, **kwargs):
+        tweets = args[4]
+        status_id = str(tweets[0].status_id) if tweets else ""
+        outcome = await super().send_to_umo_with_outcome(*args, **kwargs)
+        if status_id == self.failed_status_id and not self.failed:
+            self.failed = True
+            outcome.success = False
+            outcome.warning = ""
+            outcome.error = "send failed once"
+        return outcome
+
 
 class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -606,10 +657,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.new_tweet_count, 0)
         self.assertEqual(sender.sent, [])
         self.assertIn("NASA", result.no_new_users)
-        self.assertIn("150", seen_ids)
+        self.assertNotIn("150", seen_ids)
         self.assertIn("200", seen_ids)
 
-    async def test_scheduler_sends_only_unseen_tweets_newer_than_seen_watermark(self):
+    async def test_scheduler_sends_all_unseen_tweets_before_scan_baseline(self):
         sender = _Sender()
         nitter = _MultiUserNitter(
             {
@@ -638,20 +689,74 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         result = await scheduler.run_check(reason="test_seen_watermark_mixed")
         seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
 
-        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(result.new_tweet_count, 2)
         self.assertEqual(
-            sender.sent,
-            [
-                (
-                    "telegram:FriendMessage:1",
-                    "NASA",
-                    "https://nitter.test",
-                    ["201"],
-                )
-            ],
+            [item[3] for item in sender.sent],
+            [["150"], ["201"]],
         )
         self.assertIn("150", seen_ids)
         self.assertIn("201", seen_ids)
+
+    async def test_scheduler_uses_surviving_anchor_when_newest_anchor_is_deleted(self):
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "scanned_status_ids": [
+                            str(status_id) for status_id in range(120, 100, -1)
+                        ],
+                        "latest_status_id": "120",
+                    },
+                    {
+                        "tweets": [
+                            self._make_tweet("NASA", str(status_id))
+                            for status_id in range(125, 120, -1)
+                        ],
+                        "scanned_status_ids": [
+                            "125",
+                            "124",
+                            "123",
+                            "122",
+                            "121",
+                            "119",
+                        ],
+                        "anchor_status_ids": [
+                            str(status_id) for status_id in range(125, 105, -1)
+                        ],
+                        "latest_status_id": "125",
+                    },
+                ]
+            }
+        )
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        first = await scheduler.run_check(reason="test_deleted_newest_anchor_seed")
+        second = await scheduler.run_check(reason="test_deleted_newest_anchor_update")
+
+        self.assertEqual(first.new_tweet_count, 0)
+        self.assertEqual(second.new_tweet_count, 5)
+        self.assertEqual(
+            [status_id for item in sender.sent for status_id in item[3]],
+            ["121", "122", "123", "124", "125"],
+        )
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": [str(status_id) for status_id in range(125, 105, -1)]},
+        )
 
     async def test_failed_scheduled_push_does_not_mark_seen(self):
         sender = _Sender(success=False)
@@ -682,6 +787,242 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("201", seen_ids)
 
+    async def test_scheduler_backlog_is_sent_across_rounds_without_loss(self):
+        tweets = [
+            self._make_tweet("NASA", str(status_id))
+            for status_id in range(110, 100, -1)
+        ]
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": tweets,
+                        "scanned_status_ids": [
+                            str(status_id) for status_id in range(110, 100, -1)
+                        ],
+                        "latest_status_id": "110",
+                    }
+                ]
+            }
+        )
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 5,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.set_scan_watermark("global", "NASA", "100")
+
+        first = await scheduler.run_check(reason="test_backlog_first")
+        second = await scheduler.run_check(reason="test_backlog_second")
+
+        sent_ids = [status_id for item in sender.sent for status_id in item[3]]
+        self.assertEqual((first.new_tweet_count, second.new_tweet_count), (10, 0))
+        self.assertEqual(sent_ids, [str(status_id) for status_id in range(101, 111)])
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": [str(status_id) for status_id in range(110, 100, -1)]},
+        )
+
+    async def test_failed_old_tweet_does_not_advance_watermark_across_gap(self):
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [
+                            self._make_tweet("NASA", "102"),
+                            self._make_tweet("NASA", "101"),
+                        ],
+                        "scanned_status_ids": ["102", "101"],
+                        "latest_status_id": "102",
+                    }
+                ]
+            }
+        )
+        sender = _FailOnceStatusSender("101")
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 5,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.set_scan_watermark("global", "NASA", "100")
+
+        await scheduler.run_check(reason="test_gap_first")
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["100"]},
+        )
+        await scheduler.run_check(reason="test_gap_retry")
+
+        self.assertEqual(
+            [status_id for item in sender.sent for status_id in item[3]],
+            ["101", "102", "101"],
+        )
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["102", "101"]},
+        )
+
+    async def test_empty_or_filtered_initial_scan_allows_next_tweet(self):
+        for username, initial_scan in (
+            (
+                "NASA",
+                {"scanned_status_ids": ["100"], "latest_status_id": "100"},
+            ),
+            ("OpenAI", {"scanned_status_ids": [], "latest_status_id": ""}),
+        ):
+            with self.subTest(username=username, initial_scan=initial_scan):
+                nitter = _SchedulerNitter(
+                    {
+                        username: [
+                            initial_scan,
+                            {
+                                "tweets": [self._make_tweet(username, "101")],
+                                "scanned_status_ids": ["101"],
+                                "latest_status_id": "101",
+                            },
+                        ]
+                    }
+                )
+                sender = _Sender()
+                scheduler = self._create_scheduler(
+                    {
+                        "schedule_enabled": True,
+                        "watch_users": [username],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                        "scheduled_fetch_limit": 5,
+                        "send_target_interval": 0,
+                        "send_user_interval": 0,
+                    },
+                    nitter=nitter,
+                    sender=sender,
+                )
+                await scheduler.storage.migrate_and_sync(
+                    scheduler._schedule_groups(log_invalid_targets=False)
+                )
+
+                first = await scheduler.run_check(reason="test_empty_initial")
+                second = await scheduler.run_check(reason="test_empty_next")
+
+                self.assertEqual(first.new_tweet_count, 0)
+                self.assertEqual(second.new_tweet_count, 1)
+                self.assertEqual(sender.sent[-1][3], ["101"])
+
+    async def test_empty_scan_after_initialization_preserves_watermark(self):
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "scanned_status_ids": ["100"],
+                        "latest_status_id": "100",
+                    },
+                    {
+                        "scanned_status_ids": [],
+                        "latest_status_id": "",
+                    },
+                    {
+                        "tweets": [
+                            self._make_tweet("NASA", "101"),
+                            self._make_tweet("NASA", "99"),
+                        ],
+                        "scanned_status_ids": ["101", "100", "99"],
+                        "latest_status_id": "101",
+                    },
+                ]
+            }
+        )
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 5,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="test_empty_after_initial")
+        await scheduler.run_check(reason="test_empty_after_initial_empty")
+        result = await scheduler.run_check(reason="test_empty_after_initial_next")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["101"])
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["101", "100", "99"]},
+        )
+
+    async def test_incomplete_scan_does_not_advance_seen_or_watermark(self):
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [self._make_tweet("NASA", "101")],
+                        "scanned_status_ids": ["101"],
+                        "latest_status_id": "101",
+                        "complete": False,
+                    }
+                ]
+            }
+        )
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 5,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+        await scheduler.storage.set_scan_watermark("global", "NASA", "100")
+
+        result = await scheduler.run_check(reason="test_incomplete_scan")
+
+        self.assertEqual(result.new_tweet_count, 0)
+        self.assertEqual(sender.sent, [])
+        self.assertEqual(await scheduler.storage.get_seen_ids("global", "NASA"), ["100"])
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["100"]},
+        )
+
     async def test_ordinary_targets_send_per_account_but_qq_merges_at_end(self):
         events = []
         media = _Media()
@@ -692,12 +1033,12 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         nitter = _MultiUserNitter(
             {
                 "NASA": [
-                    self._make_tweet("NASA", "100"),
                     self._make_tweet("NASA", "101"),
+                    self._make_tweet("NASA", "100"),
                 ],
                 "NASAHubble": [
-                    self._make_tweet("NASAHubble", "200"),
                     self._make_tweet("NASAHubble", "201"),
+                    self._make_tweet("NASAHubble", "200"),
                 ],
             },
             events=events,

@@ -476,6 +476,7 @@ class ConfigCompatTest(unittest.TestCase):
         group_items = schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"]
         self.assertIn("group_id", group_items)
         self.assertTrue(group_items["group_id"]["invisible"])
+        self.assertNotIn("scheduled_fetch_limit", group_items)
 
     def test_max_video_duration_schema_defaults_match_runtime_default(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
@@ -831,6 +832,32 @@ class ConfigCompatTest(unittest.TestCase):
             TWEET_GROUP_TEMPLATE_KEY,
         )
 
+    def test_default_group_migration_removes_ignored_group_fetch_limit(self):
+        config = _Config(
+            {
+                "_default_group_config_migrated": True,
+                "schedule": {"scheduled_fetch_limit": 7},
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "__template_key": "group",
+                            "name": "Tech",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                            "scheduled_fetch_limit": 19,
+                        }
+                    ]
+                },
+            }
+        )
+
+        changed = migrate_default_group_config(config)
+
+        self.assertTrue(changed)
+        self.assertTrue(config.saved)
+        self.assertNotIn("scheduled_fetch_limit", _group_config(config, "tech"))
+        self.assertIsNone(config_get(config, "scheduled_fetch_limit"))
+
     def test_default_group_migration_assigns_missing_custom_group_ids(self):
         config = _Config(
             {
@@ -985,6 +1012,7 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(default_group["watch_users"], ["NASA", "ESA", "OpenAI"])
         self.assertEqual(default_group["push_targets"], ["telegram:FriendMessage:1"])
         self.assertEqual(config_get(config, "scheduled_fetch_limit"), 3)
+        self.assertNotIn("scheduled_fetch_limit", default_group)
         self.assertIn("global", default_group["aliases"])
         self.assertEqual(
             [group["group_id"] for group in config_get(config, "tweet_groups")],
@@ -1090,7 +1118,7 @@ with TemporaryDirectory() as temp_dir:
         self.assertTrue(global_group.enabled)
         self.assertEqual(global_group.users, ["NASA"])
         self.assertEqual(global_group.targets, ["telegram:FriendMessage:1"])
-        self.assertEqual(global_group.scheduled_fetch_limit, 7)
+        self.assertEqual(global_group.scheduled_fetch_limit, 20)
         self.assertEqual(global_group.check_interval_minutes, 11)
         self.assertTrue(global_group.check_on_startup)
         self.assertTrue(global_group.notify_no_updates)
@@ -1099,7 +1127,10 @@ with TemporaryDirectory() as temp_dir:
         self.assertEqual(tech_group.users, ["OpenAI"])
         self.assertEqual(tech_group.targets, ["telegram:FriendMessage:2"])
         self.assertEqual(tech_group.daily_check_times, [(8, 30)])
-        self.assertEqual(tech_group.scheduled_fetch_limit, 7)
+        self.assertEqual(tech_group.scheduled_fetch_limit, 20)
+        self.assertNotIn(
+            "scheduled_fetch_limit", _group_config(config, "tech")
+        )
         self.assertEqual(tech_group.send_target_interval, 0.25)
         self.assertEqual(tech_group.send_user_interval, 0.5)
         self.assertTrue(tech_group.filter_plain_text_enabled)

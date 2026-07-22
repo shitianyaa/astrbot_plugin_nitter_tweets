@@ -156,7 +156,7 @@
   "schedule": {
     "description": "后台检查",
     "type": "object",
-    "hint": "控制后台检查总开关、全局间隔、启动检查、无更新提示和每次拉取数量；分组里的间隔检查开关和每日检查时间只有在此处总开关开启后才会生效。",
+    "hint": "控制后台检查总开关、全局间隔、启动检查和无更新提示；分组里的间隔检查开关和每日检查时间只有在此处总开关开启后才会生效。",
     "items": {
       "schedule_enabled": {
         "description": "启用后台检查",
@@ -181,12 +181,6 @@
         "type": "int",
         "default": 30,
         "hint": "这里只设置间隔时间，不是间隔检查总开关；后台检查总开关开启后，启用间隔检查的用户分组都会按这个全局间隔运行，范围 1-1440。"
-      },
-      "scheduled_fetch_limit": {
-        "description": "后台检查每账号拉取条数",
-        "type": "int",
-        "default": 5,
-        "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。"
       }
     }
   },
@@ -315,12 +309,6 @@
                 "description": "启用每日定点检查",
                 "type": "bool",
                 "default": true,
-                "invisible": true
-              },
-              "scheduled_fetch_limit": {
-                "description": "每账号拉取条数",
-                "type": "int",
-                "default": 5,
                 "invisible": true
               },
               "send_target_interval": {
@@ -623,13 +611,6 @@
       "08:00"
     ],
     "hint": "格式 HH:MM，每行一个。",
-    "invisible": true
-  },
-  "scheduled_fetch_limit": {
-    "description": "定时检查每账号拉取条数",
-    "type": "int",
-    "default": 5,
-    "hint": "每次每个账号从 RSS 拉取最近多少条用于对比新推文，范围 1-20。",
     "invisible": true
   },
   "concurrent_fetch_enabled": {

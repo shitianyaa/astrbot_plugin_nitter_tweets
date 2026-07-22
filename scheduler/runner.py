@@ -126,6 +126,10 @@ class UserFetchResult:
     username: str
     instance: str = ""
     tweets: list[TweetItem] = field(default_factory=list)
+    scanned_status_ids: list[str] = field(default_factory=list)
+    anchor_status_ids: list[str] = field(default_factory=list)
+    latest_status_id: str = ""
+    scan_complete: bool = True
     plain_text_filtered: int = 0
     error: SchedulerTaskError | None = None
 
@@ -546,8 +550,11 @@ class NitterTweetScheduler:
             return result
 
         seen_map = await self._get_seen_map(group.group_id)
+        scan_watermarks = await self._get_scan_watermarks(
+            group.group_id, seen_map
+        )
         result.seen_users = len(seen_map)
-        fetch_limit = group.scheduled_fetch_limit
+        fetch_limit = 20
         result.fetch_limit = fetch_limit
         target_interval = group.send_target_interval
         user_interval = group.send_user_interval
@@ -560,7 +567,7 @@ class NitterTweetScheduler:
             f"group={group.group_id}, reason={reason}, "
             f"users={len(users)}, targets={len(targets)}, "
             f"invalid_targets={len(result.invalid_targets)}, "
-            f"fetch_limit={fetch_limit}, qq_merge_threshold={merge_threshold}, "
+            f"首屏扫描={fetch_limit}, qq_merge_threshold={merge_threshold}, "
             f"skip_plain_text={skip_plain_text}, "
             f"拉取并发={'开' if use_fetch_parallel else '关'}, "
             f"拉取数={group.fetch_concurrency}, "
@@ -570,7 +577,10 @@ class NitterTweetScheduler:
         )
         discovered_batches: list[PendingTweetBatch] = []
         group_plain_text_filtered_total = 0
-        fetch_results = await self._fetch_group_users(group, fetch_limit, skip_plain_text)
+        fetch_results = await self._fetch_group_users(
+            group, fetch_limit, skip_plain_text, scan_watermarks
+        )
+        watermark_candidates: dict[str, tuple[list[str], set[str]]] = {}
         for fetch_result in fetch_results:
             username = fetch_result.username
             if fetch_result.error:
@@ -583,6 +593,38 @@ class NitterTweetScheduler:
 
             instance = fetch_result.instance
             tweets = fetch_result.tweets
+            scanned_status_ids = list(
+                dict.fromkeys(
+                    str(item)
+                    for item in fetch_result.scanned_status_ids
+                    if str(item)
+                )
+            )
+            watermark = scan_watermarks.get(username)
+            if watermark and scanned_status_ids:
+                boundary_ids = set(watermark)
+                boundary_index = next(
+                    (
+                        index
+                        for index, status_id in enumerate(scanned_status_ids)
+                        if status_id in boundary_ids
+                    ),
+                    None,
+                )
+                if boundary_index is not None:
+                    scanned_status_ids = scanned_status_ids[: boundary_index + 1]
+                    allowed_status_ids = set(scanned_status_ids)
+                    tweets = [
+                        tweet
+                        for tweet in tweets
+                        if str(tweet.status_id or "") in allowed_status_ids
+                    ]
+            if not fetch_result.scan_complete:
+                result.failed_users[username] = "RSS 分页未完整扫描，已跳过本轮"
+                logger.warning(
+                    f"[NitterTweets] 定时抓取 @{username} 未完整扫描，跳过本轮"
+                )
+                continue
             plain_text_filtered = fetch_result.plain_text_filtered
             if skip_plain_text and plain_text_filtered > 0:
                 group_plain_text_filtered_total += plain_text_filtered
@@ -592,29 +634,31 @@ class NitterTweetScheduler:
                 )
 
             tweets = [tweet for tweet in tweets if tweet.status_id]
-            if not tweets:
-                result.empty_users.append(username)
-                self._log_verbose_info(
-                    f"[NitterTweets] 定时检查 @{username}: 没有有效推文 ID"
-                )
-                continue
-
-            fetched_ids = [tweet.status_id for tweet in tweets]
             seen_ids = seen_map.get(username)
 
-            if not isinstance(seen_ids, list):
-                seen_map[username] = self.storage.initial_seen_ids(fetched_ids)
+            if username not in scan_watermarks:
+                seed_ids = scanned_status_ids or [
+                    tweet.status_id for tweet in tweets if tweet.status_id
+                ]
+                seen_map[username] = self.storage.initial_seen_ids(seed_ids)
                 await self._put_seen_map(group.group_id, seen_map)
-                result.initialized_users[username] = len(fetched_ids)
+                await self._set_scan_watermark(
+                    group.group_id, username, fetch_result.anchor_status_ids
+                )
+                result.initialized_users[username] = len(seed_ids)
                 self._log_verbose_info(
                     "[NitterTweets] 首次记录已初始化: "
                     f"group={group.group_id}, username={username}, "
-                    f"seen={len(fetched_ids)}"
+                    f"seen={len(seed_ids)}"
                 )
                 continue
 
+            if not isinstance(seen_ids, list):
+                seen_ids = []
             new_tweets, historical_unseen_ids = (
-                self._select_new_tweets_after_seen_watermark(tweets, seen_ids)
+                self._select_new_tweets_after_scan_watermark(
+                    tweets, seen_ids, watermark
+                )
             )
             if historical_unseen_ids:
                 seen_ids = self._merge_seen_ids(historical_unseen_ids, seen_ids)
@@ -628,12 +672,19 @@ class NitterTweetScheduler:
 
             if new_tweets:
                 new_tweets.reverse()
+                selected_ids = {
+                    tweet.status_id for tweet in new_tweets if tweet.status_id
+                }
+                watermark_candidates[username] = (
+                    fetch_result.anchor_status_ids,
+                    selected_ids,
+                )
                 discovered_batches.append(
                     PendingTweetBatch(
                         username=username,
                         instance=instance,
                         tweets=new_tweets,
-                        fetched_ids=fetched_ids,
+                        fetched_ids=scanned_status_ids,
                         seen_ids=seen_ids,
                         tweet_index=len(new_tweets),
                         tweet_total=len(new_tweets),
@@ -645,8 +696,14 @@ class NitterTweetScheduler:
                     f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
                     f"username={username}"
                 )
-                seen_map[username] = self._merge_seen_ids(fetched_ids, seen_ids)
+                seen_map[username] = self._merge_seen_ids(
+                    scanned_status_ids, seen_ids
+                )
                 await self._put_seen_map(group.group_id, seen_map)
+                if fetch_result.anchor_status_ids:
+                    await self._set_scan_watermark(
+                        group.group_id, username, fetch_result.anchor_status_ids
+                    )
 
         if skip_plain_text and group_plain_text_filtered_total > 0:
             result.plain_text_filtered = group_plain_text_filtered_total
@@ -737,6 +794,16 @@ class NitterTweetScheduler:
             finally:
                 for batch in pending_batches:
                     await asyncio.to_thread(self.media.cleanup_after_send, batch.tweets)
+
+        for username, (anchor_status_ids, selected_ids) in (
+            watermark_candidates.items()
+        ):
+            current_seen = set(seen_map.get(username, []))
+            if selected_ids and not selected_ids.issubset(current_seen):
+                continue
+            await self._set_scan_watermark(
+                group.group_id, username, anchor_status_ids
+            )
 
         self._log_check_result(result)
         if self._should_notify_no_updates(result, notify_no_updates, group):
@@ -859,6 +926,7 @@ class NitterTweetScheduler:
         group: ScheduleGroup,
         fetch_limit: int,
         skip_plain_text: bool,
+        scan_watermarks: dict[str, list[str]],
     ) -> list[UserFetchResult]:
         if not self._should_use_concurrent_fetch(group):
             results = []
@@ -870,6 +938,7 @@ class NitterTweetScheduler:
                         username,
                         fetch_limit,
                         skip_plain_text,
+                        scan_watermarks.get(username),
                         concurrent=False,
                     )
                 )
@@ -885,6 +954,7 @@ class NitterTweetScheduler:
                     username,
                     fetch_limit,
                     skip_plain_text,
+                    scan_watermarks.get(username),
                     concurrent=True,
                 )
 
@@ -901,10 +971,50 @@ class NitterTweetScheduler:
         username: str,
         fetch_limit: int,
         skip_plain_text: bool,
+        scan_watermark: list[str] | None,
         *,
         concurrent: bool,
     ) -> UserFetchResult:
         try:
+            scheduler_method = (
+                "fetch_tweets_for_scheduler_from_instances"
+                if concurrent
+                else "fetch_tweets_for_scheduler"
+            )
+            fetch_for_scheduler = getattr(self.nitter, scheduler_method, None)
+            if callable(fetch_for_scheduler):
+                if concurrent:
+                    instance, scan_result = await fetch_for_scheduler(
+                        username,
+                        scan_watermark,
+                        group.concurrent_fetch_instances,
+                        start_index=index,
+                        skip_plain_text=skip_plain_text,
+                        retry_attempts=3,
+                    )
+                else:
+                    instance, scan_result = await fetch_for_scheduler(
+                        username,
+                        scan_watermark,
+                        skip_plain_text=skip_plain_text,
+                    )
+                return UserFetchResult(
+                    index=index,
+                    username=username,
+                    instance=instance,
+                    tweets=list(scan_result.tweets),
+                    scanned_status_ids=list(scan_result.scanned_status_ids),
+                    anchor_status_ids=list(
+                        getattr(scan_result, "anchor_status_ids", [])
+                        or list(scan_result.scanned_status_ids)[:20]
+                    ),
+                    latest_status_id=str(scan_result.latest_status_id or ""),
+                    scan_complete=bool(scan_result.complete),
+                    plain_text_filtered=int(
+                        scan_result.plain_text_filtered or 0
+                    ),
+                )
+
             if concurrent:
                 instance, tweets, plain_text_filtered = (
                     await self.nitter.fetch_tweets_with_stats_from_instances(
@@ -933,6 +1043,13 @@ class NitterTweetScheduler:
             username=username,
             instance=instance,
             tweets=tweets,
+            scanned_status_ids=[
+                tweet.status_id for tweet in tweets if tweet.status_id
+            ],
+            anchor_status_ids=[
+                tweet.status_id for tweet in tweets[:20] if tweet.status_id
+            ],
+            latest_status_id=(tweets[0].status_id if tweets else ""),
             plain_text_filtered=plain_text_filtered,
         )
 
@@ -1917,6 +2034,45 @@ class NitterTweetScheduler:
     ) -> dict[str, list[str]]:
         return await self.storage.get_group_seen_map(group_id)
 
+    async def _get_scan_watermarks(
+        self,
+        group_id: str,
+        seen_map: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        getter = getattr(self.storage, "get_group_scan_watermarks", None)
+        if callable(getter):
+            stored_watermarks = await getter(group_id)
+            # Older databases and lightweight test adapters may contain seen
+            # IDs but no dedicated anchor row yet. Infer only the missing
+            # entries; an explicit empty anchor window means the source was
+            # initialized with no historical status ID and must be preserved.
+            for username, status_ids in seen_map.items():
+                if username in stored_watermarks:
+                    continue
+                if not isinstance(status_ids, list):
+                    continue
+                if status_ids:
+                    stored_watermarks[username] = list(status_ids[:20])
+            return stored_watermarks
+
+        # Keep older storage fakes and external adapters usable while they add
+        # the dedicated scan-anchor API.
+        return {
+            username: list(status_ids[:20])
+            for username, status_ids in seen_map.items()
+            if isinstance(status_ids, list) and status_ids
+        }
+
+    async def _set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None,
+    ) -> None:
+        setter = getattr(self.storage, "set_scan_watermark", None)
+        if callable(setter):
+            await setter(group_id, username, status_ids)
+
     async def _put_seen_map(
         self, group_id: str, seen_map: dict[str, list[str]]
     ) -> None:
@@ -1926,33 +2082,23 @@ class NitterTweetScheduler:
         return self.storage.merge_seen_ids(new_ids, old_ids)
 
     @classmethod
-    def _select_new_tweets_after_seen_watermark(
+    def _select_new_tweets_after_scan_watermark(
         cls,
         tweets: list[TweetItem],
         seen_ids: list[str],
+        watermark_ids: list[str] | None,
     ) -> tuple[list[TweetItem], list[str]]:
+        del watermark_ids
         seen_set = set(str(item) for item in seen_ids)
-        watermark = cls._max_numeric_status_id(seen_ids)
         new_tweets: list[TweetItem] = []
-        historical_unseen_ids: list[str] = []
 
         for tweet in tweets:
             status_id = str(tweet.status_id or "")
             if not status_id or status_id in seen_set:
                 continue
-
-            status_number = cls._parse_numeric_status_id(status_id)
-            if (
-                watermark is not None
-                and status_number is not None
-                and status_number <= watermark
-            ):
-                historical_unseen_ids.append(status_id)
-                continue
-
             new_tweets.append(tweet)
 
-        return new_tweets, historical_unseen_ids
+        return new_tweets, []
 
     @classmethod
     def _max_numeric_status_id(cls, seen_ids: list[str]) -> int | None:

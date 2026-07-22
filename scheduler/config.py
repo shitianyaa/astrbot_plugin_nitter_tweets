@@ -103,7 +103,7 @@ class SchedulerConfigReader:
             check_interval_minutes=30,
             daily_check_enabled=False,
             daily_check_times=[],
-            scheduled_fetch_limit=5,
+            scheduled_fetch_limit=20,
             send_target_interval=1.5,
             send_user_interval=2.0,
             notify_no_updates=False,
@@ -226,9 +226,7 @@ class SchedulerConfigReader:
             ),
             daily_check_enabled=daily_check_enabled,
             daily_check_times=daily_check_times,
-            scheduled_fetch_limit=clamp_int(
-                config_get(self.config, "scheduled_fetch_limit", 5), 1, 20
-            ),
+            scheduled_fetch_limit=20,
             send_target_interval=clamp_float(
                 config_get(self.config, "send_target_interval", 1.5), 0.0, 60.0
             ),

@@ -142,6 +142,31 @@ class StorageAdapter:
             sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
         )
 
+    async def get_group_scan_watermarks(
+        self, group_id: str
+    ) -> dict[str, list[str]]:
+        """Get initialized scan anchor windows for every user in a group."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_group_scan_watermarks,
+            self._storage_group_id(group_id),
+        )
+
+    async def set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """Set one user's scan anchor window and mark the source initialized."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.set_scan_watermark,
+            self._storage_group_id(group_id),
+            username,
+            status_ids,
+        )
+
     async def clear_seen_records(self, group_id: str | None = None) -> int:
         """Clear SQLite seen records for a group, or all groups when omitted."""
         sqlite = await self._ensure_sqlite_connected()

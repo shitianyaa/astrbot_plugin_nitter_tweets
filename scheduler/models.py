@@ -58,6 +58,7 @@ class ScheduledCheckResult:
     invalid_targets: list[str] = field(default_factory=list)
     available_groups: list[str] = field(default_factory=list)
     seen_users: int = 0
+    # Fixed RSS first-page size used by the background scanner.
     fetch_limit: int = 0
     skipped_reason: str = ""
     initialized_users: dict[str, int] = field(default_factory=dict)
@@ -212,7 +213,7 @@ class ScheduledCheckResult:
             f"已记录账号索引: {self.seen_users} 个",
         ]
         if self.fetch_limit:
-            lines.append(f"每账号拉取: {self.fetch_limit} 条")
+            lines.append(f"后台首屏扫描: {self.fetch_limit} 条")
         if self.merge_tweet_threshold > 0:
             lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:

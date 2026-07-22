@@ -113,6 +113,332 @@ def _rss_with_descriptions(items: list[tuple[str, str, str]]) -> bytes:
 
 
 class NitterPaginationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_scheduler_fetch_reads_complete_first_page_without_watermark(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            return _FakeResponse(_rss_page(100, 20), {"Min-Id": "80"})
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            instance, result = await client.fetch_tweets_for_scheduler("nasa", None)
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://nitter.example")
+        self.assertEqual(len(result.tweets), 20)
+        self.assertEqual(result.scanned_status_ids, [str(item) for item in range(100, 80, -1)])
+        self.assertEqual(result.latest_status_id, "100")
+        self.assertTrue(result.complete)
+        self.assertFalse(result.reached_watermark)
+        self.assertEqual(calls, ["https://nitter.example/nasa/rss"])
+
+    async def test_scheduler_fetch_initializes_a_truly_empty_feed(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(b"<rss><channel></channel></rss>")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            instance, result = await client.fetch_tweets_for_scheduler("nasa", None)
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://nitter.example")
+        self.assertEqual(result.tweets, [])
+        self.assertEqual(result.scanned_status_ids, [])
+        self.assertEqual(result.latest_status_id, "")
+        self.assertTrue(result.complete)
+
+    async def test_scheduler_fetch_after_empty_initialization_scans_to_feed_end(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_page(120, 20), {"Min-Id": "100"})
+            if cursor == "100":
+                return _FakeResponse(_rss_page(100, 20))
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            _, result = await client.fetch_tweets_for_scheduler("nasa", "")
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(len(result.tweets), 40)
+        self.assertEqual(result.latest_status_id, "120")
+        self.assertTrue(result.complete)
+        self.assertEqual(len(calls), 2)
+
+    async def test_scheduler_fetch_uses_surviving_anchor_when_newest_is_deleted(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_page(120, 20), {"Min-Id": "100"})
+            if cursor == "100":
+                return _FakeResponse(_rss_page(100, 20), {"Min-Id": "80"})
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            _, result = await client.fetch_tweets_for_scheduler(
+                "nasa", ["999", "95"]
+            )
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(len(result.tweets), 26)
+        self.assertEqual(result.latest_status_id, "120")
+        self.assertEqual(
+            result.anchor_status_ids,
+            [str(status_id) for status_id in range(120, 100, -1)],
+        )
+        self.assertTrue(result.complete)
+        self.assertTrue(result.reached_watermark)
+        self.assertEqual(len(calls), 2)
+
+    async def test_scheduler_fetch_rejects_feed_end_without_any_anchor(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_page(120, 20), {"Min-Id": "100"})
+            if cursor == "100":
+                return _FakeResponse(b"<rss><channel></channel></rss>")
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            with self.assertRaisesRegex(RuntimeError, "未找到任何已记录基准 ID"):
+                await client.fetch_tweets_for_scheduler("nasa", ["90"])
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(len(calls), 2)
+
+    async def test_scheduler_fetch_rejects_scan_over_safety_limit(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        client.SCHEDULER_SCAN_LIMIT = 20
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_page(100, 20), {"Min-Id": "next"})
+            if cursor == "next":
+                return _FakeResponse(_rss_page(80, 1))
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            with self.assertRaisesRegex(RuntimeError, "超过安全上限"):
+                await client.fetch_tweets_for_scheduler("nasa", "50")
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+    async def test_scheduler_fetch_detects_filtered_watermark(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+
+        def fake_urlopen(request, timeout):
+            del request, timeout
+            return _FakeResponse(
+                _rss_with_descriptions(
+                    [
+                        ("/BBCWorld/status/110", "repost", "转发纯文本"),
+                        ("/nasa/status/109", "plain", "本账号纯文本"),
+                        (
+                            "/nasa/status/108",
+                            "media",
+                            '<img src="https://nitter.net/pic/media%2Fa.jpg" />',
+                        ),
+                        ("/nasa/status/107", "watermark", "水位纯文本"),
+                    ]
+                ),
+                {"Min-Id": "next"},
+            )
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            _, result = await client.fetch_tweets_for_scheduler(
+                "nasa", "107", skip_plain_text=True
+            )
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(result.scanned_status_ids, ["110", "109", "108", "107"])
+        self.assertEqual([tweet.status_id for tweet in result.tweets], ["108"])
+        self.assertEqual(result.plain_text_filtered, 2)
+        self.assertEqual(result.reposts_filtered, 1)
+        self.assertTrue(result.reached_watermark)
+
+    async def test_scheduler_fetch_does_not_stop_on_older_repost_id(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(
+                    _rss_from_links(["/BBCWorld/status/50", "/nasa/status/110"]),
+                    {"Min-Id": "next"},
+                )
+            if cursor == "next":
+                return _FakeResponse(_rss_from_links(["/nasa/status/100"]))
+            raise AssertionError(f"unexpected cursor: {cursor}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            _, result = await client.fetch_tweets_for_scheduler("nasa", "100")
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(result.reached_watermark)
+        self.assertEqual([tweet.status_id for tweet in result.tweets], ["110", "100"])
+
+    async def test_scheduler_fetch_discards_partial_results_on_pagination_failure(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            cursor = parse_qs(urlparse(request.full_url).query).get("cursor", [""])[0]
+            if not cursor:
+                return _FakeResponse(_rss_page(120, 20), {"Min-Id": "100"})
+            raise HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            with self.assertRaisesRegex(RuntimeError, "未获得可用 RSS"):
+                await client.fetch_tweets_for_scheduler("nasa", "90")
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(len(calls), 3)
+
+    async def test_scheduler_dedicated_pool_retries_each_page_before_next_instance(self):
+        client = NitterClient(
+            {
+                "instances": ["https://unused.example"],
+                "request_timeout": 12,
+            }
+        )
+        client.retry_delay_seconds = 0
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            parsed = urlparse(request.full_url)
+            cursor = parse_qs(parsed.query).get("cursor", [""])[0]
+            if request.full_url.startswith("https://limited.example"):
+                if not cursor:
+                    return _FakeResponse(
+                        _rss_page(120, 20), {"Min-Id": "100"}
+                    )
+                raise HTTPError(
+                    request.full_url, 503, "Service Unavailable", {}, None
+                )
+            if request.full_url.startswith("https://working.example") and not cursor:
+                return _FakeResponse(_rss_page(100, 20))
+            raise AssertionError(f"unexpected request: {request.full_url}")
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            instance, result = await client.fetch_tweets_for_scheduler_from_instances(
+                "nasa",
+                "90",
+                ["https://limited.example", "https://working.example"],
+                retry_attempts=3,
+            )
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual(instance, "https://working.example")
+        self.assertEqual(len(result.tweets), 11)
+        self.assertEqual(
+            calls,
+            [
+                "https://limited.example/nasa/rss",
+                "https://limited.example/nasa/rss?cursor=100",
+                "https://limited.example/nasa/rss?cursor=100",
+                "https://limited.example/nasa/rss?cursor=100",
+                "https://working.example/nasa/rss",
+            ],
+        )
+
+    async def test_manual_fetch_limit_remains_exact(self):
+        client = NitterClient(
+            {"instances": ["https://nitter.example"], "request_timeout": 12}
+        )
+        calls: list[str] = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            return _FakeResponse(_rss_page(100, 20), {"Min-Id": "80"})
+
+        original_urlopen = network_module.stdlib_urlopen
+        network_module.stdlib_urlopen = fake_urlopen
+        try:
+            _, tweets = await client.fetch_tweets("nasa", 5)
+        finally:
+            network_module.stdlib_urlopen = original_urlopen
+
+        self.assertEqual([tweet.status_id for tweet in tweets], ["100", "99", "98", "97", "96"])
+        self.assertEqual(len(calls), 1)
+
     async def test_fetch_tweets_paginates_after_nitter_first_page_limit(self):
         client = NitterClient(
             {

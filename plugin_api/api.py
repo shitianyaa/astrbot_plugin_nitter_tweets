@@ -822,9 +822,6 @@ class NitterWebAPI:
         return {
             "nitter_instance_count": len(instances),
             "default_limit": self._default_limit(),
-            "scheduled_fetch_limit": self._group_value(
-                effective_group, "scheduled_fetch_limit", 5
-            ),
             "check_interval_minutes": self._group_value(
                 effective_group, "check_interval_minutes", 30
             ),
@@ -1045,7 +1042,6 @@ class NitterWebAPI:
             "check_interval_minutes": group.check_interval_minutes,
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
-            "scheduled_fetch_limit": group.scheduled_fetch_limit,
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
             "attention_items": self._group_attention_items(group),
         }

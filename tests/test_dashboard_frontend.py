@@ -69,6 +69,14 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("repeat(3, minmax(0, 1fr))", style)
         self.assertIn("align-items: start", style)
 
+    def test_overview_does_not_render_removed_scheduled_limit(self):
+        source = APP_JS.read_text(encoding="utf-8")
+        body = _function_body(source, "renderOverview")
+
+        self.assertNotIn("后台每轮处理上限", body)
+        self.assertNotIn("后台拉取数量", body)
+        self.assertNotIn("scheduled_fetch_limit", source)
+
     def test_dashboard_does_not_assign_innerhtml(self):
         source = APP_JS.read_text(encoding="utf-8")
 

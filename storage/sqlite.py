@@ -32,8 +32,9 @@ except ImportError:
     from shared import TweetItem, TweetMedia, normalize_username
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 ORPHAN_SEEN_RETENTION_DAYS = 30
+SCAN_ANCHOR_LIMIT = 20
 
 PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
     "delivery_status": (
@@ -233,6 +234,9 @@ class SQLiteStorage:
                 ON seen_tweets(group_id, username)
             """)
 
+            # scan_watermarks 表：每个分组账号的连续扫描水位和初始化状态
+            self._create_scan_watermarks_table(cursor)
+
 
             self._create_push_history_table(cursor)
 
@@ -253,6 +257,10 @@ class SQLiteStorage:
             self._migrate_schema_v6(cursor)
         if stored_version < 7:
             self._migrate_schema_v7(cursor)
+        if stored_version < 8:
+            self._migrate_schema_v8(cursor)
+        if stored_version < 9:
+            self._migrate_schema_v9(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -283,6 +291,182 @@ class SQLiteStorage:
         # Pending/deferred publishing was removed in 0.16.0.
         cursor.execute("DROP TABLE IF EXISTS pending_media")
         cursor.execute("DROP TABLE IF EXISTS pending_tweets")
+
+    def _migrate_schema_v8(self, cursor: sqlite3.Cursor) -> None:
+        self._create_scan_watermarks_table(cursor)
+        self._backfill_scan_watermarks(cursor)
+
+    def _migrate_schema_v9(self, cursor: sqlite3.Cursor) -> None:
+        if not self._table_exists(cursor, "scan_watermarks"):
+            self._create_scan_watermarks_table(cursor)
+            self._backfill_scan_watermarks(cursor)
+            return
+
+        columns = {
+            str(row[1])
+            for row in cursor.execute(
+                "PRAGMA table_info(scan_watermarks)"
+            ).fetchall()
+        }
+        if "status_id" not in columns or "status_ids" in columns:
+            self._create_scan_watermarks_table(cursor)
+            self._backfill_scan_watermarks(cursor)
+            return
+
+        cursor.execute("ALTER TABLE scan_watermarks RENAME TO scan_watermarks_v8")
+        self._create_scan_watermarks_table(cursor)
+        rows = cursor.execute(
+            """
+            SELECT group_id, username, initialized, status_id, updated_at
+            FROM scan_watermarks_v8
+            """
+        ).fetchall()
+        for row in rows:
+            anchors = self._normalize_scan_anchor_ids([row[3]])
+            cursor.execute(
+                """
+                INSERT INTO scan_watermarks
+                (group_id, username, initialized, status_ids, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row[0]),
+                    str(row[1]),
+                    int(row[2] or 0),
+                    json.dumps(anchors, ensure_ascii=False),
+                    int(row[4] or 0),
+                ),
+            )
+        cursor.execute("DROP TABLE scan_watermarks_v8")
+        self._create_scan_watermarks_table(cursor)
+        self._backfill_scan_watermarks(cursor)
+
+    @staticmethod
+    def _create_scan_watermarks_table(cursor: sqlite3.Cursor) -> None:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scan_watermarks (
+                group_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                initialized INTEGER NOT NULL DEFAULT 0,
+                status_ids TEXT NOT NULL DEFAULT '[]',
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (group_id, username)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_scan_watermarks_group_user
+            ON scan_watermarks(group_id, username)
+        """)
+
+    @classmethod
+    def _backfill_scan_watermarks(cls, cursor: sqlite3.Cursor) -> None:
+        """Backfill a recent anchor window from existing seen IDs."""
+        if not cls._table_exists(cursor, "seen_tweets"):
+            return
+
+        rows = cursor.execute(
+            """
+            SELECT group_id, username, MAX(seen_at) AS updated_at
+            FROM seen_tweets
+            GROUP BY group_id, username
+            """
+        ).fetchall()
+        for row in rows:
+            group_id = str(row[0])
+            username = str(row[1])
+            seen_rows = cursor.execute(
+                """
+                SELECT status_id FROM seen_tweets
+                WHERE group_id = ? AND username = ?
+                ORDER BY seen_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (group_id, username, SCAN_ANCHOR_LIMIT),
+            ).fetchall()
+            seen_anchors = cls._normalize_scan_anchor_ids(
+                [row[0] for row in seen_rows]
+            )
+            existing = cursor.execute(
+                """
+                SELECT initialized, status_ids, updated_at
+                FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (group_id, username),
+            ).fetchone()
+            if existing is not None:
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*cls._decode_scan_anchor_ids(existing[1]), *seen_anchors]
+                )
+                updated_at = max(int(row[2] or 0), int(existing[2] or 0))
+                cursor.execute(
+                    """
+                    UPDATE scan_watermarks
+                    SET initialized = ?, status_ids = ?, updated_at = ?
+                    WHERE group_id = ? AND username = ?
+                    """,
+                    (
+                        1,
+                        json.dumps(anchors, ensure_ascii=False),
+                        updated_at,
+                        group_id,
+                        username,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO scan_watermarks
+                    (group_id, username, initialized, status_ids, updated_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    """,
+                    (
+                        group_id,
+                        username,
+                        json.dumps(seen_anchors, ensure_ascii=False),
+                        int(row[2] or 0),
+                    ),
+                )
+
+    @staticmethod
+    def _decode_scan_anchor_ids(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        text = str(value or "").strip()
+        if not text:
+            return []
+        try:
+            decoded = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return [text]
+        if not isinstance(decoded, list):
+            return [text]
+        return [str(item) for item in decoded]
+
+    @classmethod
+    def _normalize_scan_anchor_ids(cls, values: object) -> list[str]:
+        if isinstance(values, (str, bytes)) or values is None:
+            raw_values = cls._decode_scan_anchor_ids(values)
+        else:
+            try:
+                raw_values = list(values)
+            except TypeError:
+                raw_values = [values]
+        return list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in raw_values
+                if str(value or "").strip().isdigit()
+            )
+        )[:SCAN_ANCHOR_LIMIT]
+
+    @staticmethod
+    def _max_numeric_status_id(first: object, second: object) -> str | None:
+        values = [str(value).strip() for value in (first, second) if value]
+        numeric = [value for value in values if value.isdigit()]
+        if numeric:
+            return max(numeric, key=lambda value: (len(value), value))
+        return values[0] if values else None
 
     def _create_push_history_table(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("""
@@ -360,6 +544,78 @@ class SQLiteStorage:
             default_id=default_id,
             key_column=("username", "status_id"),
         )
+        self._merge_scan_watermarks(cursor, legacy_id, default_id)
+
+    @classmethod
+    def _merge_scan_watermarks(
+        cls,
+        cursor: sqlite3.Cursor,
+        legacy_id: str,
+        default_id: str,
+    ) -> None:
+        if not cls._table_exists(cursor, "scan_watermarks"):
+            return
+
+        legacy_rows = cursor.execute(
+            """
+            SELECT username, initialized, status_ids, updated_at
+            FROM scan_watermarks
+            WHERE group_id = ?
+            """,
+            (legacy_id,),
+        ).fetchall()
+        for row in legacy_rows:
+            username = str(row[0])
+            target = cursor.execute(
+                """
+                SELECT initialized, status_ids, updated_at
+                FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (default_id, username),
+            ).fetchone()
+            if target is None:
+                cursor.execute(
+                    """
+                    UPDATE scan_watermarks
+                    SET group_id = ?
+                    WHERE group_id = ? AND username = ?
+                    """,
+                    (default_id, legacy_id, username),
+                )
+                continue
+
+            legacy_anchors = cls._decode_scan_anchor_ids(row[2])
+            target_anchors = cls._decode_scan_anchor_ids(target[1])
+            if int(row[3] or 0) >= int(target[2] or 0):
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*legacy_anchors, *target_anchors]
+                )
+            else:
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*target_anchors, *legacy_anchors]
+                )
+            cursor.execute(
+                """
+                UPDATE scan_watermarks
+                SET initialized = ?, status_ids = ?, updated_at = ?
+                WHERE group_id = ? AND username = ?
+                """,
+                (
+                    1 if bool(row[1]) or bool(target[0]) else 0,
+                    json.dumps(anchors, ensure_ascii=False),
+                    max(int(row[3] or 0), int(target[2] or 0)),
+                    default_id,
+                    username,
+                ),
+            )
+            cursor.execute(
+                """
+                DELETE FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (legacy_id, username),
+            )
 
     def _merge_group_key_table(
         self,
@@ -629,7 +885,7 @@ class SQLiteStorage:
             """
             SELECT status_id FROM seen_tweets
             WHERE group_id = ? AND username = ?
-            ORDER BY seen_at DESC
+            ORDER BY seen_at DESC, rowid DESC
             LIMIT ?
             """,
             (normalized_group_id, normalized_username, SEEN_LIMIT_PER_USER),
@@ -654,7 +910,9 @@ class SQLiteStorage:
 
         now = int(time.time())
 
-        # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）
+        # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）。输入列表是
+        # newest-first，因此反向写入，让同秒记录按 rowid DESC 读取时仍
+        # 保持原顺序，同时保证后续调用写入的新 ID 不会被限额清理误删。
         self.conn.executemany(
             """
             REPLACE INTO seen_tweets (group_id, username, status_id, seen_at)
@@ -662,7 +920,7 @@ class SQLiteStorage:
             """,
             [
                 (normalized_group_id, normalized_username, sid, now)
-                for sid in status_ids
+                for sid in reversed(status_ids)
                 if sid
             ],
         )
@@ -675,7 +933,7 @@ class SQLiteStorage:
               AND rowid NOT IN (
                   SELECT rowid FROM seen_tweets
                   WHERE group_id = ? AND username = ?
-                  ORDER BY seen_at DESC
+                  ORDER BY seen_at DESC, rowid DESC
                   LIMIT ?
               )
             """,
@@ -694,7 +952,7 @@ class SQLiteStorage:
             """
             SELECT username, status_id FROM seen_tweets
             WHERE group_id = ?
-            ORDER BY username, seen_at DESC
+            ORDER BY username, seen_at DESC, rowid DESC
             """,
             (normalized_group_id,),
         ).fetchall()
@@ -710,17 +968,75 @@ class SQLiteStorage:
 
         return seen_map
 
+    def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:
+        """获取分组中已初始化账号的最近扫描基准组。"""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_stable_group_id(group_id)
+        rows = self.conn.execute(
+            """
+            SELECT username, status_ids
+            FROM scan_watermarks
+            WHERE group_id = ? AND initialized = 1
+            ORDER BY username
+            """,
+            (normalized_group_id,),
+        ).fetchall()
+        return {
+            str(row[0]): self._decode_scan_anchor_ids(row[1])
+            for row in rows
+        }
+
+    def set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """设置一个分组账号的最近扫描基准组并标记为已初始化。"""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_stable_group_id(group_id)
+        normalized_username = normalize_username(username)
+        if not normalized_username:
+            return
+
+        normalized_status_ids = self._normalize_scan_anchor_ids(status_ids)
+        self.conn.execute(
+            """
+            INSERT INTO scan_watermarks
+            (group_id, username, initialized, status_ids, updated_at)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(group_id, username) DO UPDATE SET
+                initialized = 1,
+                status_ids = excluded.status_ids,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized_group_id,
+                normalized_username,
+                json.dumps(normalized_status_ids, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+
     def clear_seen_tweets(self, group_id: str | None = None) -> int:
         """清理 seen 记录；group_id 为空时清理全部分组."""
         assert self.conn is not None
 
         if group_id:
+            normalized_group_id = normalize_stable_group_id(group_id)
             cursor = self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
-                (normalize_stable_group_id(group_id),),
+                (normalized_group_id,),
+            )
+            self.conn.execute(
+                "DELETE FROM scan_watermarks WHERE group_id = ?",
+                (normalized_group_id,),
             )
         else:
             cursor = self.conn.execute("DELETE FROM seen_tweets")
+            self.conn.execute("DELETE FROM scan_watermarks")
         return int(cursor.rowcount or 0)
 
 
@@ -740,11 +1056,19 @@ class SQLiteStorage:
             "users_deleted": 0,
             "targets_deleted": 0,
             "seen_deleted": 0,
+            "scan_watermarks_deleted": 0,
             "push_history_deleted": 0,
         }
         summary["seen_deleted"] = int(
             self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
+                (normalized_group_id,),
+            ).rowcount
+            or 0
+        )
+        summary["scan_watermarks_deleted"] = int(
+            self.conn.execute(
+                "DELETE FROM scan_watermarks WHERE group_id = ?",
                 (normalized_group_id,),
             ).rowcount
             or 0
@@ -953,7 +1277,7 @@ class SQLiteStorage:
         return self._push_history_record_from_row(row)
 
     def cleanup_orphan_seen_tweets(self) -> int:
-        """清理长期不在订阅配置中的 seen 记录."""
+        """清理长期不在订阅配置中的 seen 和扫描水位记录."""
         assert self.conn is not None
 
         cutoff = int(time.time()) - ORPHAN_SEEN_RETENTION_DAYS * 86400
@@ -965,6 +1289,18 @@ class SQLiteStorage:
                   SELECT 1 FROM group_users
                   WHERE group_users.group_id = seen_tweets.group_id
                     AND group_users.username = seen_tweets.username
+              )
+            """,
+            (cutoff,),
+        )
+        self.conn.execute(
+            """
+            DELETE FROM scan_watermarks
+            WHERE updated_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM group_users
+                  WHERE group_users.group_id = scan_watermarks.group_id
+                    AND group_users.username = scan_watermarks.username
               )
             """,
             (cutoff,),
@@ -1121,12 +1457,16 @@ class SQLiteStorage:
                             """,
                             [
                                 (normalized_group_id, normalized_username, sid, now)
-                                for sid in limited_ids
+                                for sid in reversed(limited_ids)
                                 if sid
                             ],
                         )
                         total_users += 1
                         total_ids += len(limited_ids)
+
+            # KV 导入发生在 schema v8 迁移之后，因此为新导入的 seen
+            # 同步建立扫描水位，避免首次启动后重复初始化账号。
+            self._backfill_scan_watermarks(cursor)
 
             # 标记迁移完成
             cursor.execute(
@@ -1171,6 +1511,17 @@ class SQLiteStorage:
             fingerprint_data.append({
                 "group_id": group.group_id,
                 "name": group.name,
+                "enabled": group.enabled,
+                "check_on_startup": group.check_on_startup,
+                "interval_check_enabled": group.interval_check_enabled,
+                "check_interval_minutes": group.check_interval_minutes,
+                "daily_check_enabled": group.daily_check_enabled,
+                "daily_check_times": group.daily_check_times,
+                "scheduled_fetch_limit": group.scheduled_fetch_limit,
+                "send_target_interval": group.send_target_interval,
+                "send_user_interval": group.send_user_interval,
+                "notify_no_updates": group.notify_no_updates,
+                "aliases": sorted(group.aliases),
                 "users": sorted(group.users),
                 "targets": sorted(group.targets),
             })
@@ -1235,6 +1586,8 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "get_group_scan_watermarks",
+    "set_scan_watermark",
     "clear_seen_tweets",
     "delete_group_runtime_data",
     "record_push_history",
