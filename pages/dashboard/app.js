@@ -525,6 +525,12 @@ function syncSelectors() {
   if (!groupIds.has(state.selectedGroupId)) {
     state.selectedGroupId = firstGroupId;
   }
+  const currentHistory =
+    state.historyGroupId && groupIds.has(state.historyGroupId)
+      ? state.historyGroupId
+      : "";
+  els.historyGroupSelect.replaceChildren(...groupOptions(true));
+  els.historyGroupSelect.value = currentHistory;
   state.historyGroupId = els.historyGroupSelect.value;
   state.seenGroupId = els.seenGroupSelect.value;
 }
@@ -762,9 +768,6 @@ function syncGroupEditorControls(groupId) {
         ? "请先保存更改"
         : "";
   }
-  const publishButton = [...els.groupEditor.querySelectorAll("[data-publish-group]")].find(
-    (node) => node.dataset.publishGroup === groupId,
-  );
   const title = [...els.groupEditor.querySelectorAll("[data-group-title]")].find(
     (node) => node.dataset.groupTitle === groupId,
   );

@@ -5,8 +5,11 @@ from .compat import (
     DEFAULT_MAX_VIDEO_DURATION_MINUTES,
     LEGACY_CONFIG_MIGRATION_KEY,
     LIST_MERGE_KEYS,
+    MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     MIGRATABLE_CONFIG_KEYS,
+    REMOVED_FEATURE_CONFIG_GROUPS,
+    REMOVED_FEATURE_CONFIG_KEYS,
     TWEET_GROUP_TEMPLATE_KEY,
     TWEET_GROUP_TEMPLATE_KEY_FIELD,
     config_get,
@@ -15,6 +18,8 @@ from .compat import (
     ensure_tweet_group_template_keys,
     migrate_default_group_config,
     migrate_legacy_grouped_config,
+    sanitize_removed_feature_config,
+    sanitize_removed_feature_group,
 )
 
 __all__ = [
@@ -24,8 +29,11 @@ __all__ = [
     "DEFAULT_MAX_VIDEO_DURATION_MINUTES",
     "LEGACY_CONFIG_MIGRATION_KEY",
     "LIST_MERGE_KEYS",
+    "MEDIA_CACHE_CLEANUP_MIGRATION_KEY",
     "MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY",
     "MIGRATABLE_CONFIG_KEYS",
+    "REMOVED_FEATURE_CONFIG_GROUPS",
+    "REMOVED_FEATURE_CONFIG_KEYS",
     "TWEET_GROUP_TEMPLATE_KEY",
     "TWEET_GROUP_TEMPLATE_KEY_FIELD",
     "config_get",
@@ -34,4 +42,6 @@ __all__ = [
     "ensure_tweet_group_template_keys",
     "migrate_default_group_config",
     "migrate_legacy_grouped_config",
+    "sanitize_removed_feature_config",
+    "sanitize_removed_feature_group",
 ]

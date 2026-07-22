@@ -154,6 +154,7 @@ from config import (
     DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     DEFAULT_MAX_VIDEO_DURATION_MINUTES,
     LEGACY_CONFIG_MIGRATION_KEY,
+    MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
     TWEET_GROUP_TEMPLATE_KEY_FIELD,
@@ -161,8 +162,9 @@ from config import (
     config_set,
     migrate_default_group_config,
     migrate_legacy_grouped_config,
+    sanitize_removed_feature_config,
 )
-from scheduler import SchedulerConfigReader
+from scheduler import ScheduledCheckResult, SchedulerConfigReader
 from shared import TweetItem
 
 
@@ -290,40 +292,6 @@ class _StartupCleanupMedia:
         return types.SimpleNamespace(removed=2, failed=self.failed, skipped_dirs=1)
 
 
-class _ManualEnricher:
-    def __init__(self, events):
-        self.events = events
-
-    async def attach_enrichments(self, tweets, umo=None):
-        self.events.append("enrich:" + ",".join(tweet.status_id for tweet in tweets))
-        return types.SimpleNamespace(visible_notices=lambda: [])
-
-
-class _LLMContext:
-    def __init__(self):
-        self.calls = []
-
-    async def llm_generate(self, **kwargs):
-        self.calls.append(kwargs)
-        return types.SimpleNamespace(completion_text="这是一句评论")
-
-
-class _QueuedLLMContext:
-    def __init__(self, outcomes):
-        self.outcomes = list(outcomes)
-        self.calls = []
-
-    async def llm_generate(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.outcomes:
-            outcome = self.outcomes.pop(0)
-        else:
-            outcome = "ok"
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return types.SimpleNamespace(completion_text=str(outcome))
-
-
 class _ManualRenderer:
     def format_plain(
         self,
@@ -379,7 +347,6 @@ def _manual_plugin(config):
     plugin.nitter = _ManualNitter()
     plugin.translator = None
     plugin.media = None
-    plugin.enricher = None
     plugin.sender = None
     plugin._cooldowns = {}
     plugin.cooldown_seconds = 0
@@ -474,6 +441,7 @@ class ConfigCompatTest(unittest.TestCase):
         for key in [
             LEGACY_CONFIG_MIGRATION_KEY,
             DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
+            MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
             MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
             "_max_video_duration_grouped_config_migrated",
         ]:
@@ -623,6 +591,48 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(
             config["push"]["push_targets"], ["telegram:FriendMessage:1"]
         )
+
+    def test_removed_feature_config_is_cleaned_after_legacy_migration_completed(self):
+        config = _Config(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "ai_comment": {"comment_enabled": True},
+                "ai_vision": {"vision_enabled": True},
+                "deferred": {"deferred_publish_enabled": True},
+                "comment_enabled": True,
+                "vision_max_total": 6,
+                "deferred_publish_times": ["08:00"],
+                "ai_translation": {"translate_enabled": True},
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                            "deferred_publish_enabled": True,
+                        }
+                    ]
+                },
+            }
+        )
+
+        changed = migrate_legacy_grouped_config(config)
+        config.saved = False
+        second_changed = sanitize_removed_feature_config(config)
+
+        self.assertTrue(changed)
+        self.assertFalse(second_changed)
+        self.assertFalse(config.saved)
+        self.assertNotIn("ai_comment", config)
+        self.assertNotIn("ai_vision", config)
+        self.assertNotIn("deferred", config)
+        self.assertNotIn("comment_enabled", config)
+        self.assertNotIn("vision_max_total", config)
+        self.assertNotIn("deferred_publish_times", config)
+        self.assertTrue(config["ai_translation"]["translate_enabled"])
+        group = config["push"]["tweet_groups"][0]
+        self.assertNotIn("deferred_publish_enabled", group)
+        self.assertEqual(group["watch_users"], ["OpenAI"])
 
     def test_legacy_group_migration_repairs_late_video_duration_field_once(self):
         config = _Config(
@@ -906,6 +916,21 @@ class ConfigCompatTest(unittest.TestCase):
         NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
         self.assertEqual(media.clear_cache_calls, 1)
         self.assertFalse(config.saved)
+
+    def test_startup_media_cache_cleanup_does_not_reuse_legacy_marker(self):
+        # A truthy marker from the previous release must not skip the current
+        # cleanup pass.
+        config = _Config({"_media_cache_send_delete_migrated": True})
+        media = _StartupCleanupMedia()
+        plugin = object.__new__(NitterTweetsPlugin)
+        plugin.config = config
+        plugin.media = media
+
+        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
+
+        self.assertEqual(media.clear_cache_calls, 1)
+        self.assertTrue(config[MEDIA_CACHE_CLEANUP_MIGRATION_KEY])
+        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
 
     def test_startup_media_cache_upgrade_cleanup_retries_after_failures(self):
         config = _Config({})
@@ -1191,6 +1216,17 @@ with TemporaryDirectory() as temp_dir:
 
 
 
+class SchedulerModelFormattingTest(unittest.TestCase):
+    def test_failure_label_formats_all_users_as_accounts(self):
+        result = ScheduledCheckResult(reason="test")
+        result.failed_users["NASA"] = "failed"
+        result.failed_users["@OpenAI"] = "failed"
+
+        lines = result.format_brief_log_lines()
+        self.assertIn("@NASA: failed", lines[1])
+        self.assertIn("@OpenAI: failed", lines[1])
+
+
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
     async def test_manual_tweets_uses_default_limit_without_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -1219,12 +1255,11 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.nitter.calls, [])
         self.assertIn("数量需要大于 0", event.messages[-1])
 
-    async def test_manual_tweets_send_each_tweet_after_ai_prepare(self):
+    async def test_manual_tweets_send_each_tweet_after_translation_and_media_prepare(self):
         events = []
         plugin = _manual_plugin(_Config({"default_limit": 5}))
         plugin.translator = _ManualTranslator(events)
         plugin.media = _ManualMedia(events)
-        plugin.enricher = _ManualEnricher(events)
         plugin.sender = _ManualSender(events)
         event = _Event()
         tweets = [

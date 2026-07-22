@@ -11,6 +11,7 @@ try:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        sanitize_removed_feature_group,
     )
     from ..shared.group_ids import (
         infer_legacy_group_id_from_name,
@@ -24,6 +25,7 @@ except ImportError:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        sanitize_removed_feature_group,
     )
     from shared.group_ids import (
         infer_legacy_group_id_from_name,
@@ -161,6 +163,9 @@ class WebUIGroupEditor:
         previous_groups: list[dict[str, Any]],
         next_groups: list[dict[str, Any]],
     ) -> str:
+        for group in next_groups:
+            if isinstance(group, dict):
+                sanitize_removed_feature_group(group)
         config_set(self.config, "tweet_groups", next_groups)
         save_config = getattr(self.config, "save_config", None)
         if not callable(save_config):

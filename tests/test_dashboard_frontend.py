@@ -95,10 +95,13 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("state.selectedGroupId", body)
         self.assertIn("historyGroupSelect", body)
         self.assertIn("seenGroupSelect", body)
+        self.assertIn("els.historyGroupSelect.replaceChildren(...groupOptions(true));", body)
+        self.assertIn("els.historyGroupSelect.value = currentHistory;", body)
         self.assertNotIn("selectedPendingGroupId", body)
         self.assertNotIn("currentPending", body)
         self.assertNotIn("selectedPendingGroupId", source)
         self.assertNotIn("railPendingStatus", source)
+        self.assertNotIn("publishButton", source)
         self.assertNotIn("暂存", source)
 
 
@@ -313,7 +316,7 @@ class DashboardFrontendSourceTest(unittest.TestCase):
         self.assertIn("snapshotEditableGroup", body)
         self.assertIn("push_targets", snapshot_body)
 
-    def test_dirty_group_disables_check_and_publish_actions(self):
+    def test_dirty_group_disables_check_action(self):
         source = APP_JS.read_text(encoding="utf-8")
         editor_body = _function_body(source, "renderGroupEditor")
 

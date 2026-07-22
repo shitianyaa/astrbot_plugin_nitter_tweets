@@ -184,6 +184,21 @@ class MediaCleanupTest(unittest.TestCase):
             self.assertFalse(legacy_nested_video.exists())
             self.assertFalse(legacy_nested_dir.exists())
 
+    def test_clear_cache_removes_legacy_staged_media(self):
+        with TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            staged_dir = cache_dir / "staged" / "default" / "status-1"
+            staged_dir.mkdir(parents=True)
+            staged_image = staged_dir / "image.jpg"
+            staged_image.write_bytes(b"staged")
+            service = MediaService({})
+            service.cache_dir = cache_dir
+            service.legacy_cache_dir = cache_dir
 
+            result = service.clear_cache()
+
+            self.assertEqual(result.removed, 1)
+            self.assertFalse(staged_image.exists())
+            self.assertFalse((cache_dir / "staged").exists())
 
 

@@ -375,6 +375,132 @@ class NitterTweetScheduler:
                 target_override,
             )
 
+    async def replay_push_history(
+        self,
+        record_id: int,
+        target_umos: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Replay one stored delivery to current targets in its group."""
+        record = await self.storage.get_push_history_record(record_id)
+        if record is None:
+            return {"success": False, "error": "未找到推送记录"}
+
+        group = self._schedule_group(record.group_id)
+        if group is None:
+            return {
+                "success": False,
+                "error": f"未找到分组：{record.group_id}",
+            }
+        if not group.enabled:
+            return {
+                "success": False,
+                "error": f"分组已停用：{self._push_group_label(group)}",
+            }
+        if not group.targets:
+            return {
+                "success": False,
+                "error": "当前分组没有有效推送目标，请先维护推送目标",
+            }
+
+        selected_targets = self._dedupe_targets(
+            [str(target or "").strip() for target in (target_umos or [])]
+        )
+        if selected_targets:
+            current_targets = set(group.targets)
+            invalid_targets = [
+                target for target in selected_targets if target not in current_targets
+            ]
+            if invalid_targets:
+                return {
+                    "success": False,
+                    "error": "只能选择当前分组当前配置中的推送目标",
+                    "invalid_targets": invalid_targets,
+                }
+            targets = selected_targets
+        else:
+            targets = list(group.targets)
+        if not targets:
+            return {
+                "success": False,
+                "error": "请选择要重新推送的推送目标",
+            }
+
+        batch = PendingTweetBatch(
+            username=record.username,
+            instance=record.instance,
+            tweets=[record.tweet],
+            fetched_ids=[record.status_id] if record.status_id else [],
+            seen_ids=[],
+            account_index=1,
+            account_total=1,
+            tweet_index=1,
+            tweet_total=1,
+        )
+        try:
+            await self.media.attach_media(batch.tweets)
+        except Exception as exc:
+            logger.warning(
+                "[NitterTweets] 重新推送媒体准备失败，继续发送文本: "
+                f"record={record_id}, error={exc}"
+            )
+
+        success_targets = 0
+        failed_targets: dict[str, str] = {}
+        group_label = self._push_group_label(group)
+        try:
+            for target_index, target in enumerate(targets):
+                try:
+                    outcome = await self.sender.send_to_umo_with_outcome(
+                        self.context,
+                        target,
+                        record.username,
+                        record.instance,
+                        [record.tweet],
+                        group_label=group_label,
+                        header_text=f"@{record.username} 重新推送",
+                        batch_summary="",
+                        tweet_start_index=1,
+                    )
+                    if outcome.success:
+                        await self._record_batch_push_history(
+                            group.group_id,
+                            batch,
+                            target,
+                            "replay",
+                            delivery_status=getattr(
+                                outcome, "delivery_status", "success"
+                            ),
+                            delivery_error=getattr(outcome, "delivery_error", ""),
+                        )
+                        success_targets += 1
+                    else:
+                        failed_targets[target] = (
+                            getattr(outcome, "error", "") or "send failed"
+                        )
+                except Exception as exc:
+                    failed_targets[target] = str(exc)
+                    logger.warning(
+                        "[NitterTweets] 重新推送失败: "
+                        f"record={record_id}, target={target}, error={exc}"
+                    )
+                if target_index < len(targets) - 1 and group.send_target_interval > 0:
+                    await asyncio.sleep(group.send_target_interval)
+        finally:
+            await asyncio.to_thread(
+                self.media.cleanup_after_send,
+                batch.tweets,
+            )
+
+        return {
+            "success": success_targets > 0,
+            "error": "" if success_targets > 0 else "重新推送失败",
+            "record_id": record_id,
+            "target_count": len(targets),
+            "success_targets": success_targets,
+            "total_targets": len(targets),
+            "failed_targets": failed_targets,
+        }
+
     def _new_check_result(
         self,
         reason: str,
@@ -1614,6 +1740,17 @@ class NitterTweetScheduler:
         if not merge_targets:
             return targets, []
         return ordinary_targets, merge_targets
+
+    @staticmethod
+    def _dedupe_targets(targets: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for target in targets:
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            result.append(target)
+        return result
 
     def _split_merge_targets(self, targets: list[str]) -> tuple[list[str], list[str]]:
         merge_targets = []

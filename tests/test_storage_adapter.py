@@ -87,7 +87,7 @@ class StorageAdapterTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.to_thread(db_path.with_suffix(".db-wal").unlink, missing_ok=True)
             await asyncio.to_thread(db_path.with_suffix(".db-shm").unlink, missing_ok=True)
 
-    async def test_queue_summary_connects_sqlite_lazily(self):
+    async def test_seen_lookup_connects_sqlite_lazily(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"
 

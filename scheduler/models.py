@@ -198,8 +198,6 @@ class ScheduledCheckResult:
     @staticmethod
     def _failure_label(user: str) -> str:
         user = str(user or "").strip()
-        if user == "publish":
-            return user
         if user.startswith("@"):
             return user
         return f"@{user}"

@@ -12,6 +12,7 @@ try:
         SubscriptionCommandMixin,
     )
     from .config import (
+        MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
@@ -30,6 +31,7 @@ except ImportError:
         SubscriptionCommandMixin,
     )
     from config import (
+        MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
         migrate_default_group_config,
@@ -87,7 +89,7 @@ class NitterTweetsPlugin(
         self.scheduler.start(reason="__init__")
 
     def _cleanup_legacy_media_cache_once(self) -> None:
-        if bool(self.config.get(MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY, False)):
+        if bool(self.config.get(MEDIA_CACHE_CLEANUP_MIGRATION_KEY, False)):
             return
 
         try:
@@ -108,6 +110,9 @@ class NitterTweetsPlugin(
             )
             return
 
+        self.config[MEDIA_CACHE_CLEANUP_MIGRATION_KEY] = True
+        # Preserve the legacy marker for older tooling/config inspectors.  It
+        # is intentionally not consulted when deciding whether to run cleanup.
         self.config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY] = True
         save_config = getattr(self.config, "save_config", None)
         if callable(save_config):

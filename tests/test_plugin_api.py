@@ -559,6 +559,36 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(config.saved)
         self.assertEqual(_group_config(config, "tech")["name"], "科技新闻")
 
+    async def test_update_group_removes_deleted_feature_fields(self):
+        config = _Config(
+            {
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "name": "科技",
+                            "group_id": "tech",
+                            "watch_users": ["OpenAI"],
+                            "deferred_publish_enabled": True,
+                            "comment_enabled": True,
+                            "vision_enabled": True,
+                        }
+                    ]
+                }
+            }
+        )
+        plugin = _plugin(config)
+
+        payload = await NitterWebAPI(plugin).update_group(
+            {"group_id": "tech", "name": "科技新闻"}
+        )
+
+        self.assertTrue(payload["success"])
+        group = _group_config(config, "tech")
+        self.assertNotIn("deferred_publish_enabled", group)
+        self.assertNotIn("comment_enabled", group)
+        self.assertNotIn("vision_enabled", group)
+        self.assertEqual(group["watch_users"], ["OpenAI"])
+
     async def test_update_group_parses_string_booleans(self):
         config = _Config(
             {
@@ -737,6 +767,7 @@ class NitterWebAPITest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["group_id"], "tech")
         self.assertEqual(payload["group_name"], "科技")
+        self.assertNotIn("media_summary", payload)
         self.assertEqual(
             payload["runtime_summary"],
             {

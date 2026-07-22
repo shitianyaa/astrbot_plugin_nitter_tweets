@@ -21,6 +21,11 @@ except ImportError:
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
 DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
+# Keep the 0.16 cleanup pass independent from the older send-delete migration
+# so users who completed the old migration still receive the current cleanup.
+MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
+# Keep the old key available for existing configs and callers. It is no
+# longer used as the guard for the current cleanup pass.
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
     "_max_video_duration_grouped_config_migrated"
@@ -28,6 +33,32 @@ MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
+
+REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
+REMOVED_FEATURE_CONFIG_KEYS = frozenset(
+    {
+        "comment_enabled",
+        "comment_provider_id",
+        "comment_probability",
+        "comment_max_chars",
+        "comment_prompt",
+        "vision_enabled",
+        "vision_provider_id",
+        "vision_probability",
+        "vision_prompt",
+        "vision_max_images",
+        "vision_max_total",
+        "deferred_publish_enabled",
+        "deferred_publish_times",
+        "deferred_publish_batch_limit",
+        "deferred_prefetch_media",
+        "deferred_media_retention_hours",
+        "deferred_media_download_interval_seconds",
+    }
+)
+REMOVED_FEATURE_CONFIG_NAMES = (
+    REMOVED_FEATURE_CONFIG_GROUPS | REMOVED_FEATURE_CONFIG_KEYS
+)
 
 CONFIG_GROUP_BY_KEY = {
     "storage_backend": "basic",
@@ -146,8 +177,20 @@ def config_get(config, key: str, default=None):
     return _dict_get(config, key, default)
 
 
+def sanitize_removed_feature_config(config) -> bool:
+    """Remove configuration left by deleted deferred and non-translation AI features."""
+    return _sanitize_removed_feature_value(config)
+
+
+def sanitize_removed_feature_group(group: dict) -> bool:
+    """Remove deleted feature fields before a tweet group is persisted."""
+    return _sanitize_removed_feature_value(group)
+
+
 def migrate_legacy_grouped_config(config) -> bool:
-    changed = _migrate_max_video_duration_grouped_config(config)
+    changed = sanitize_removed_feature_config(config)
+    if _migrate_max_video_duration_grouped_config(config):
+        changed = True
     if bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False)):
         save_config = getattr(config, "save_config", None)
         if changed and callable(save_config):
@@ -176,6 +219,23 @@ def migrate_legacy_grouped_config(config) -> bool:
     save_config = getattr(config, "save_config", None)
     if changed and callable(save_config):
         save_config()
+    return changed
+
+
+def _sanitize_removed_feature_value(value) -> bool:
+    changed = False
+    if isinstance(value, dict):
+        for key in list(value):
+            if key in REMOVED_FEATURE_CONFIG_NAMES:
+                del value[key]
+                changed = True
+                continue
+            if _sanitize_removed_feature_value(value[key]):
+                changed = True
+    elif isinstance(value, list):
+        for item in value:
+            if _sanitize_removed_feature_value(item):
+                changed = True
     return changed
 
 

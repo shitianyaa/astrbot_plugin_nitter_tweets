@@ -280,7 +280,7 @@ class SQLiteStorage:
         self._ensure_push_history_delivery_columns(cursor)
 
     def _migrate_schema_v7(self, cursor: sqlite3.Cursor) -> None:
-        # Pending/deferred queue feature removed.
+        # Pending/deferred publishing was removed in 0.16.0.
         cursor.execute("DROP TABLE IF EXISTS pending_media")
         cursor.execute("DROP TABLE IF EXISTS pending_tweets")
 

@@ -308,7 +308,6 @@ class NitterWebAPI:
             group_id=result["group_id"],
             group_name=result["group_name"],
             runtime_summary=runtime_summary,
-            media_summary=None,
             cleanup_status=("partial_failure" if runtime_error else "ok"),
         )
         if runtime_error:

@@ -496,6 +496,85 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             published="",
         )
 
+    async def test_replay_push_history_uses_real_scheduler_and_records_delivery(self):
+        events = []
+        sender = _Sender(events=events)
+        media = _RecordingMedia(events)
+        target = "telegram:FriendMessage:1"
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target, "weixin:FriendMessage:2"],
+                "send_target_interval": 0,
+            },
+            sender=sender,
+            media=media,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "global",
+            "NASA",
+            self._make_tweet("NASA", "901"),
+            target,
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(record_id, [target])
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["success_targets"], 1)
+        self.assertEqual(
+            sender.sent[-1],
+            (target, "NASA", "https://nitter.test", ["901"]),
+        )
+        self.assertEqual(events, ["media:901", f"send:{target}:NASA", "cleanup:901"])
+        replay_rows = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertTrue(
+            any(
+                row.source == "replay" and row.target_umo == target
+                for row in replay_rows
+            )
+        )
+
+    async def test_replay_push_history_rejects_stale_target_before_media_prepare(self):
+        events = []
+        sender = _Sender(events=events)
+        media = _RecordingMedia(events)
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "send_target_interval": 0,
+            },
+            sender=sender,
+            media=media,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        record_id = await scheduler.storage.record_push_history(
+            "global",
+            "NASA",
+            self._make_tweet("NASA", "902"),
+            "telegram:FriendMessage:1",
+            "scheduled",
+            "https://nitter.test",
+        )
+
+        result = await scheduler.replay_push_history(
+            record_id,
+            ["telegram:FriendMessage:missing"],
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["invalid_targets"], ["telegram:FriendMessage:missing"])
+        self.assertEqual(events, [])
+
     async def test_scheduler_ignores_unseen_tweets_older_than_seen_watermark(self):
         sender = _Sender()
         nitter = _MultiUserNitter(

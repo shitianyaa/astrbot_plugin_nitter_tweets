@@ -12,7 +12,7 @@
 
 - 移除暂存定时发布：配置项、`/推文队列` / `/推文发布` 命令、WebUI 暂存队列页、SQLite `pending_tweets` / `pending_media` 表与 `cache/staged/` 暂存媒体流程。
 - 移除非翻译 AI 能力：AI 摘要、智能过滤、改写、识图、AI 评论及相关配置、渲染与 WebUI 展示。
-- 升级后启动会 drop 旧 pending 表；相关旧配置会被忽略。
+- 升级时删除旧 pending 表和 `cache/staged/` 媒体；独立的 0.16 缓存迁移标记确保清理不会被旧 marker 跳过，相关旧配置会被清理。
 
 ### Changed
 
