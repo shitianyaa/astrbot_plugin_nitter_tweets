@@ -998,16 +998,21 @@ class NitterTweetScheduler:
                         scan_watermark,
                         skip_plain_text=skip_plain_text,
                     )
+                raw_anchor_status_ids = getattr(
+                    scan_result, "anchor_status_ids", None
+                )
+                anchor_status_ids = (
+                    list(scan_result.scanned_status_ids)[:20]
+                    if raw_anchor_status_ids is None
+                    else list(raw_anchor_status_ids)
+                )
                 return UserFetchResult(
                     index=index,
                     username=username,
                     instance=instance,
                     tweets=list(scan_result.tweets),
                     scanned_status_ids=list(scan_result.scanned_status_ids),
-                    anchor_status_ids=list(
-                        getattr(scan_result, "anchor_status_ids", [])
-                        or list(scan_result.scanned_status_ids)[:20]
-                    ),
+                    anchor_status_ids=anchor_status_ids,
                     latest_status_id=str(scan_result.latest_status_id or ""),
                     scan_complete=bool(scan_result.complete),
                     plain_text_filtered=int(

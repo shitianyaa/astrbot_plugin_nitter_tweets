@@ -572,6 +572,40 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             published="",
         )
 
+    async def test_scheduler_fetch_preserves_explicit_empty_anchor_ids(self):
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "scanned_status_ids": ["102", "101"],
+                        "anchor_status_ids": [],
+                        "latest_status_id": "102",
+                    }
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+            },
+            nitter=nitter,
+        )
+        group = scheduler._schedule_groups(log_invalid_targets=False)[0]
+
+        result = await scheduler._fetch_group_user(
+            group,
+            0,
+            "NASA",
+            20,
+            False,
+            None,
+            concurrent=False,
+        )
+
+        self.assertEqual(result.scanned_status_ids, ["102", "101"])
+        self.assertEqual(result.anchor_status_ids, [])
+
     async def test_replay_push_history_uses_real_scheduler_and_records_delivery(self):
         events = []
         sender = _Sender(events=events)
