@@ -267,7 +267,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 账号键为 `q:<casefold query>`。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 users 与 queries。
 - 标签首次空结果不初始化 seen，避免下一页刷屏。
-- 管理命令：、；与 、 按类型互斥。
+- 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。
 
 ### 查询规则
 

@@ -678,7 +678,7 @@ function addWatchQuery(groupId) {
   const input = document.getElementById("groupQueryInput");
   const raw = String(input?.value || "").trim();
   if (!raw) {
-    setStatus("请输入查询内容", true);
+    showAlert("请输入查询内容", "error");
     return;
   }
   const draft =
@@ -697,7 +697,7 @@ function addWatchQuery(groupId) {
       (item) => String(item.query).toLowerCase() === query.toLowerCase(),
     )
   ) {
-    setStatus("查询已存在", true);
+    showAlert("查询已存在", "error");
     return;
   }
   next.push({ query, type });
