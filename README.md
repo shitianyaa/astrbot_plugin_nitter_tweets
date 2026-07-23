@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.0-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.17.0-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -12,7 +12,7 @@
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
-通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、镜像测试、图片附件、翻译、定时推送和 SQLite 推送记录存储。
+通过 Nitter RSS / HTML 搜索获取指定 X/Twitter 公开推文，支持手动查询与搜索、镜像测试、图片附件、翻译、按博主/标签分组定时推送和 SQLite 推送记录存储。
 
 兼容 AstrBot `>=4.16.0`。
 
