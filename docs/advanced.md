@@ -258,3 +258,35 @@ python scripts\probe_nitter_fetch.py nasa 5 --include-reposts
 ```text
 python scripts\test_video_download.py https://x.com/user/status/123 --resolution highest --max-duration-minutes 8
 ```
+
+## 标签分组与 HTML 搜索（feat/tag-query-search）
+
+### 分组类型
+
+- `group_type: blogger`：只使用 `watch_users`，RSS 主路径；`user_html_fallback` 开启时 RSS 失败/空结果可回退 HTML 用户页（`blogger_html_instances`）。
+- `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 账号键为 `q:<casefold query>`。
+- 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 users 与 queries。
+- 标签首次空结果不初始化 seen，避免下一页刷屏。
+- 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。
+
+### 查询规则
+
+- 前导 `#` → `type=tag`（保存时可补 `#`）；否则 `type=phrase`（禁止自动加 `#`）。
+- 运行时优先信存盘 `type`；tag 可回退 `/hashtag/`，phrase 仅 `/search`。
+- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。
+
+### 实例列表
+
+| 列表 | 用途 |
+|------|------|
+| `instances` | 博主 RSS |
+| `blogger_html_instances` | 博主 HTML 回退 |
+| `search_instances` | 搜索 HTML（不要放 nitter.net） |
+
+HTML 全局串行节流；429 冷却约 30s 起、封顶 5 分钟。Cookie 落在插件数据目录 `html_sessions/`。
+
+## RSS 重试与本轮跳过（第二刀）
+
+- `retry_attempts` / `retry_delay_seconds`：全局 basic 配置，默认 2 / 5s。
+- 一次定时检查或一次手动 `/推文` 期间，若某 RSS 镜像出现 429/可重试失败，本轮后续账号跳过该 host；检查结束即丢弃（不写盘、不跨 tick）。
+- HTML 搜索限流仍用 `html_backend` 的 host 冷却（30s 起、封顶 5min），并已加线程锁。

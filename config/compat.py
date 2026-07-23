@@ -27,9 +27,7 @@ MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
 # Keep the old key available for existing configs and callers. It is no
 # longer used as the guard for the current cleanup pass.
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
-MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
-    "_max_video_duration_grouped_config_migrated"
-)
+MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY = "group"
@@ -67,9 +65,21 @@ CONFIG_GROUP_BY_KEY = {
     "instances": "basic",
     "default_limit": "basic",
     "request_timeout": "basic",
+    "retry_attempts": "basic",
+    "retry_delay_seconds": "basic",
     "cooldown_seconds": "basic",
     "user_agent": "basic",
     "filter_reposts_enabled": "basic",
+    "user_html_fallback": "basic",
+    "blogger_html_instances": "basic",
+    "search_enabled": "basic",
+    "search_instances": "basic",
+    "search_cooldown_seconds": "basic",
+    "search_default_limit": "basic",
+    "search_max_limit": "basic",
+    "html_min_interval": "basic",
+    "html_max_pages": "basic",
+    "html_request_timeout": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "video_resolution_preference": "media",
@@ -115,8 +125,20 @@ MIGRATABLE_CONFIG_KEYS = {
     "instances",
     "default_limit",
     "request_timeout",
+    "retry_attempts",
+    "retry_delay_seconds",
     "cooldown_seconds",
     "user_agent",
+    "user_html_fallback",
+    "blogger_html_instances",
+    "search_enabled",
+    "search_instances",
+    "search_cooldown_seconds",
+    "search_default_limit",
+    "search_max_limit",
+    "html_min_interval",
+    "html_max_pages",
+    "html_request_timeout",
     "send_image_attachments",
     "send_video_attachments",
     "video_resolution_preference",
@@ -186,11 +208,27 @@ def parse_config_bool(value, default: bool = False) -> bool:
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {
-            "1", "true", "yes", "on", "enable", "enabled", "是", "开", "开启"
+            "1",
+            "true",
+            "yes",
+            "on",
+            "enable",
+            "enabled",
+            "是",
+            "开",
+            "开启",
         }:
             return True
         if normalized in {
-            "0", "false", "no", "off", "disable", "disabled", "否", "关", "关闭"
+            "0",
+            "false",
+            "no",
+            "off",
+            "disable",
+            "disabled",
+            "否",
+            "关",
+            "关闭",
         }:
             return False
         return default
@@ -203,17 +241,13 @@ def resolve_send_image_attachments(config) -> bool:
     if image_setting is None:
         return parse_config_bool(
             config_get(config, "download_media", True), True
-        ) and parse_config_bool(
-            config_get(config, "download_images", True), True
-        )
+        ) and parse_config_bool(config_get(config, "download_images", True), True)
     return parse_config_bool(image_setting, True)
 
 
 def resolve_send_video_attachments(config) -> bool:
     """Resolve effective video/GIF-attachment delivery."""
-    return parse_config_bool(
-        config_get(config, "send_video_attachments", False), False
-    )
+    return parse_config_bool(config_get(config, "send_video_attachments", False), False)
 
 
 def media_only_unavailable_reason(

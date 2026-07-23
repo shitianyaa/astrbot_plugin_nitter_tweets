@@ -21,7 +21,7 @@ try:
         normalize_stable_group_id,
     )
     from .seen import SEEN_LIMIT_PER_USER
-    from ..shared import TweetItem, TweetMedia, normalize_username
+    from ..shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
 except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
@@ -29,7 +29,7 @@ except ImportError:
         normalize_stable_group_id,
     )
     from storage.seen import SEEN_LIMIT_PER_USER
-    from shared import TweetItem, TweetMedia, normalize_username
+    from shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
 
 
 SCHEMA_VERSION = 9
@@ -876,7 +876,7 @@ class SQLiteStorage:
         assert self.conn is not None
 
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
+        normalized_username = normalize_seen_account_key(username)
 
         if not normalized_username:
             return []
@@ -903,7 +903,7 @@ class SQLiteStorage:
         assert self.conn is not None
 
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
+        normalized_username = normalize_seen_account_key(username)
 
         if not normalized_username or not status_ids:
             return
@@ -997,7 +997,7 @@ class SQLiteStorage:
         assert self.conn is not None
 
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
+        normalized_username = normalize_seen_account_key(username)
         if not normalized_username:
             return
 
@@ -1119,7 +1119,7 @@ class SQLiteStorage:
         """Record one successfully pushed tweet/target pair."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username) or str(username or "").strip()
+        normalized_username = normalize_seen_account_key(username) or str(username or "").strip()
         status_id = str(getattr(tweet, "status_id", "") or "").strip()
         if not normalized_group_id or not normalized_username or not status_id:
             return 0
@@ -1441,7 +1441,7 @@ class SQLiteStorage:
                 normalized_group_id = normalize_stable_group_id(group_id)
 
                 for username, status_ids in seen_map.items():
-                    normalized_username = normalize_username(username)
+                    normalized_username = normalize_seen_account_key(username)
                     if not normalized_username:
                         continue
 

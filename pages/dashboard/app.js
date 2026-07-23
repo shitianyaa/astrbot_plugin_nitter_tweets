@@ -596,6 +596,125 @@ function buildWatchUserSection(group) {
   return el("div", {}, [el("b", { text: "关注账号" }), list]);
 }
 
+function buildWatchQuerySection(group, draft) {
+  const queries = Array.isArray(draft.watch_queries) ? draft.watch_queries : [];
+  const list = el("div", { className: "chip-list" });
+  if (!queries.length) {
+    list.appendChild(el("span", { className: "muted", text: "空" }));
+  } else {
+    list.append(
+      ...queries.map((item, index) =>
+        el(
+          "button",
+          {
+            className: "chip chip-action",
+            attrs: {
+              type: "button",
+              title: `删除查询 ${item.query}`,
+            },
+            dataset: {
+              deleteWatchQueryIndex: String(index),
+              deleteWatchQueryGroup: group.group_id,
+            },
+            disabled: state.loading || state.actionBusy,
+          },
+          `${item.query} (${item.type})`,
+        ),
+      ),
+    );
+  }
+  const queryInput = el("input", {
+    attrs: {
+      id: "groupQueryInput",
+      type: "text",
+      placeholder: "#标签 或 短语关键词",
+    },
+    disabled: state.loading || state.actionBusy,
+  });
+  return el("section", { className: "editor-section" }, [
+    el("div", { className: "section-head" }, [el("h3", { text: "搜索订阅" })]),
+    el("p", {
+      className: "helper-text",
+      text: "前导 # 为标签；否则为短语。不会自动给短语加 #。",
+    }),
+    el("div", { className: "input-with-actions" }, [
+      editorField("添加查询", queryInput),
+      el(
+        "button",
+        {
+          className: "button primary",
+          attrs: { type: "button" },
+          dataset: { addWatchQuery: group.group_id },
+          disabled: state.loading || state.actionBusy,
+        },
+        [iconSpan("plus"), "添加"],
+      ),
+    ]),
+    el("div", { className: "details-grid" }, [
+      el("div", {}, [el("b", { text: "当前查询" }), list]),
+      buildChipSection(
+        "无效查询",
+        group.invalid_watch_queries,
+        "chip-list bad",
+      ),
+      buildChipSection(
+        "重复查询",
+        group.duplicate_watch_queries,
+        "chip-list warn",
+      ),
+    ]),
+  ]);
+}
+
+function inferQueryType(query) {
+  return String(query || "")
+    .trim()
+    .startsWith("#")
+    ? "tag"
+    : "phrase";
+}
+
+function addWatchQuery(groupId) {
+  const input = document.getElementById("groupQueryInput");
+  const raw = String(input?.value || "").trim();
+  if (!raw) {
+    showAlert("请输入查询内容", "error");
+    return;
+  }
+  const draft =
+    state.groupDrafts[groupId] ||
+    snapshotEditableGroup(
+      state.groups.find((item) => item.group_id === groupId) || {},
+    );
+  const next = [...(draft.watch_queries || [])];
+  const type = inferQueryType(raw);
+  let query = raw;
+  if (type === "tag" && !query.startsWith("#")) {
+    query = `#${query}`;
+  }
+  if (
+    next.some(
+      (item) => String(item.query).toLowerCase() === query.toLowerCase(),
+    )
+  ) {
+    showAlert("查询已存在", "error");
+    return;
+  }
+  next.push({ query, type });
+  updateGroupDraft(groupId, "watch_queries", next);
+  if (input) input.value = "";
+  renderGroupEditor();
+}
+
+function deleteWatchQuery(groupId, index) {
+  const draft = state.groupDrafts[groupId];
+  if (!draft || !Array.isArray(draft.watch_queries)) return;
+  if (index < 0 || index >= draft.watch_queries.length) return;
+  const next = draft.watch_queries.filter((_, i) => i !== index);
+  updateGroupDraft(groupId, "watch_queries", next);
+  renderGroupEditor();
+}
+
 function buildPushTargetEditor(group, draft) {
   const targets = Array.isArray(draft.push_targets)
     ? draft.push_targets.filter(Boolean)
@@ -703,11 +822,16 @@ function snapshotEditableGroup(group) {
     group_id: group.group_id,
     name: group.name,
     enabled: !!group.enabled,
+    group_type: group.group_type || "blogger",
     interval_check_enabled: !!group.interval_check_enabled,
     daily_check_times: [...(group.daily_check_times || [])],
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
     media_only_enabled: !!group.media_only_enabled,
     push_targets: [...(group.push_targets || [])],
+    watch_queries: (group.watch_queries || []).map((item) => ({
+      query: item.query || "",
+      type: item.type || "phrase",
+    })),
   };
 }
 
@@ -830,7 +954,10 @@ function renderOverview() {
   const stats = [
     ["调度器", scheduler.running ? "运行中" : "未运行"],
     ["后台检查", scheduler.schedule_enabled ? "已开启" : "已关闭"],
-    ["用户分组", `${formatNumber(counts.groups)} / 启用 ${formatNumber(counts.enabled_groups)}`],
+    [
+      "用户分组",
+      `${formatNumber(counts.groups)} / 启用 ${formatNumber(counts.enabled_groups)}`,
+    ],
     ["关注账号", formatNumber(counts.watch_users)],
     ["推送目标", formatNumber(counts.push_targets)],
     ["无效推送目标", formatNumber(counts.invalid_push_targets)],
@@ -864,7 +991,6 @@ function renderOverview() {
       ["原始关注项", formatNumber(counts.raw_watch_users)],
       ["重复关注项", formatNumber(counts.duplicate_watch_users)],
       ["无效关注项", formatNumber(counts.invalid_watch_users)],
-
     ]),
     buildPanel("功能开关", featureRows),
     buildPanel("配置摘要", configRows),
@@ -892,11 +1018,18 @@ function renderGroupList() {
     return;
   }
   const items = state.groups.map((group) => {
+    const typeLabel = group.group_type === "tag" ? "标签" : "博主";
+    const subCount =
+      group.group_type === "tag"
+        ? formatNumber(group.watch_query_count || 0)
+        : formatNumber(group.watch_user_count);
+    const subLabel = group.group_type === "tag" ? "查询" : "关注";
     const meta = el("div", { className: "group-list-meta" }, [
       el("span", { text: group.group_id }),
+      el("span", { text: typeLabel }),
       el("span", { text: group.enabled ? "启用" : "停用" }),
       el("span", {
-        text: `关注 ${formatNumber(group.watch_user_count)} · 目标 ${formatNumber(group.push_target_count)}`,
+        text: `${subLabel} ${subCount} · 目标 ${formatNumber(group.push_target_count)}`,
       }),
     ]);
     const alerts = el(
@@ -926,7 +1059,9 @@ function renderGroupList() {
 }
 
 function renderGroupEditor() {
-  const group = state.groups.find((item) => item.group_id === state.selectedGroupId);
+  const group = state.groups.find(
+    (item) => item.group_id === state.selectedGroupId,
+  );
   if (!group) {
     els.groupEditor.replaceChildren(emptyState("请选择一个用户分组"));
     return;
@@ -988,7 +1123,9 @@ function renderGroupEditor() {
           ? el(
               "div",
               { className: "group-list-alerts" },
-              (group.attention_items || []).map((item) => buildAttentionBadge(item)),
+              (group.attention_items || []).map((item) =>
+                buildAttentionBadge(item),
+              ),
             )
           : null,
       ]),
@@ -1001,6 +1138,10 @@ function renderGroupEditor() {
     el("div", { className: "editor-grid" }, [
       editorField("分组名称", textInput(group.group_id, "name", draft.name)),
       editorField("分组 ID", readonlyField(group.group_id)),
+      editorField(
+        "分组类型",
+        readonlyField(group.group_type === "tag" ? "标签分组" : "博主分组"),
+      ),
       editorField(
         "启用分组",
         toggleField(group.group_id, "enabled", draft.enabled),
@@ -1015,7 +1156,9 @@ function renderGroupEditor() {
       ),
       editorField(
         "检查间隔",
-        readonlyField(`继承全局 ${formatNumber(group.check_interval_minutes)} 分钟`),
+        readonlyField(
+          `继承全局 ${formatNumber(group.check_interval_minutes)} 分钟`,
+        ),
       ),
       editorField(
         "每日检查",
@@ -1053,8 +1196,12 @@ function renderGroupEditor() {
           })
         : null,
     ]),
-    el("section", { className: "editor-section" }, [
-      el("div", { className: "section-head" }, [el("h3", { text: "关注账号" })]),
+    group.group_type === "tag"
+      ? buildWatchQuerySection(group, draft)
+      : el("section", { className: "editor-section" }, [
+          el("div", { className: "section-head" }, [
+            el("h3", { text: "关注账号" }),
+          ]),
       el("div", { className: "input-with-actions" }, [
         editorField(
           "批量导入或删除",
@@ -1090,8 +1237,16 @@ function renderGroupEditor() {
       ]),
       el("div", { className: "details-grid" }, [
         buildWatchUserSection(group),
-        buildChipSection("无效关注账号", group.invalid_watch_users, "chip-list bad"),
-        buildChipSection("重复关注项", group.duplicate_watch_users, "chip-list warn"),
+            buildChipSection(
+              "无效关注账号",
+              group.invalid_watch_users,
+              "chip-list bad",
+            ),
+            buildChipSection(
+              "重复关注项",
+              group.duplicate_watch_users,
+              "chip-list warn",
+            ),
       ]),
     ]),
     el("section", { className: "editor-section" }, [
@@ -1101,16 +1256,27 @@ function renderGroupEditor() {
       ]),
       el("div", { className: "details-grid" }, [
         buildPushTargetEditor(group, draft),
-        buildChipSection("无效推送目标", group.invalid_push_targets, "chip-list bad"),
+        buildChipSection(
+          "无效推送目标",
+          group.invalid_push_targets,
+          "chip-list bad",
+        ),
         buildChipSection("分组别名", group.aliases),
       ]),
     ]),
     el("section", { className: "editor-section" }, [
-      el("div", { className: "section-head" }, [el("h3", { text: "运行摘要" })]),
+      el("div", { className: "section-head" }, [
+        el("h3", { text: "运行摘要" }),
+      ]),
       el("div", { className: "runtime-grid" }, [
-
-        groupRuntimeCard("无效推送目标", formatNumber(group.invalid_push_target_count)),
-        groupRuntimeCard("无效关注账号", formatNumber(group.invalid_watch_users?.length)),
+        groupRuntimeCard(
+          "无效推送目标",
+          formatNumber(group.invalid_push_target_count),
+        ),
+        groupRuntimeCard(
+          "无效关注账号",
+          formatNumber(group.invalid_watch_users?.length),
+        ),
       ]),
     ]),
   ]);
@@ -1558,11 +1724,32 @@ function createGroup() {
       autocomplete: "off",
     },
   });
+  const typeSelect = el(
+    "select",
+    {
+      attrs: { id: "createGroupType" },
+    },
+    [
+      el("option", {
+        attrs: { value: "blogger", selected: true },
+        text: "博主分组",
+      }),
+      el("option", { attrs: { value: "tag" }, text: "标签分组" }),
+    ],
+  );
   const form = el("div", { className: "confirm-form" }, [
+    el("label", { className: "field" }, [
+      el("span", { text: "分组类型" }),
+      typeSelect,
+    ]),
     el("label", { className: "field" }, [
       el("span", { text: "分组名称" }),
       nameInput,
     ]),
+    el("p", {
+      className: "helper-text",
+      text: "类型创建后不可修改。博主分组跟用户；标签分组跟搜索订阅（#标签 或短语）。",
+    }),
   ]);
   openConfirm({
     kicker: "新建分组",
@@ -1574,6 +1761,7 @@ function createGroup() {
       withAction(async () => {
         const result = await apiPost("web/groups/create", {
           name: nameInput.value.trim(),
+          group_type: typeSelect.value || "blogger",
         });
         state.selectedGroupId = result.group.group_id;
         return result;
@@ -1966,7 +2154,8 @@ function bindEvents() {
     }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
-    }),
+      },
+    ),
   );
   if (els.historyOrphanBtn) {
     els.historyOrphanBtn.addEventListener("click", () =>
@@ -1984,7 +2173,8 @@ function bindEvents() {
     }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
-    });
+      },
+    );
   });
   els.historyUsername.addEventListener("change", () =>
     withAction(() => {
@@ -1993,7 +2183,8 @@ function bindEvents() {
     }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
-    }),
+      },
+    ),
   );
   els.historyLimit.addEventListener("change", () =>
     withAction(() => {
@@ -2002,7 +2193,8 @@ function bindEvents() {
     }, "最近推送已刷新", {
       reload: false,
       rerender: renderHistory,
-    }),
+      },
+    ),
   );
   els.historyPrevBtn.addEventListener("click", () => {
     if (state.loading || state.actionBusy) return;
@@ -2056,6 +2248,17 @@ function bindEvents() {
     if (!target) return;
     if (state.loading || state.actionBusy) return;
     if (target.dataset.checkGroup) runGroupCheck(target.dataset.checkGroup);
+    if (target.dataset.addWatchQuery) {
+      addWatchQuery(target.dataset.addWatchQuery);
+      return;
+    }
+    if (target.dataset.deleteWatchQueryGroup != null) {
+      deleteWatchQuery(
+        target.dataset.deleteWatchQueryGroup,
+        Number(target.dataset.deleteWatchQueryIndex || -1),
+      );
+      return;
+    }
     if (target.dataset.saveGroup) saveGroupEdits(target.dataset.saveGroup);
     if (target.dataset.deleteGroup) confirmDeleteGroup(target.dataset.deleteGroup);
     if (target.dataset.importGroup) importSubscriptions(target.dataset.importGroup);
@@ -2082,7 +2285,11 @@ function bindEvents() {
     if (!(target instanceof HTMLInputElement)) return;
     if (!target.dataset.groupField || !target.dataset.groupId) return;
     if (target.dataset.fieldType === "checkbox") {
-      updateGroupDraft(target.dataset.groupId, target.dataset.groupField, target.checked);
+      updateGroupDraft(
+        target.dataset.groupId,
+        target.dataset.groupField,
+        target.checked,
+      );
       return;
     }
     if (target.dataset.groupField === "daily_check_times") {
@@ -2096,7 +2303,11 @@ function bindEvents() {
       );
       return;
     }
-    updateGroupDraft(target.dataset.groupId, target.dataset.groupField, target.value);
+    updateGroupDraft(
+      target.dataset.groupId,
+      target.dataset.groupField,
+      target.value,
+    );
   });
   els.groupEditor.addEventListener("change", (event) => {
     const target = event.target;
@@ -2106,7 +2317,11 @@ function bindEvents() {
       target.dataset.groupId &&
       target.dataset.fieldType === "checkbox"
     ) {
-      updateGroupDraft(target.dataset.groupId, target.dataset.groupField, target.checked);
+      updateGroupDraft(
+        target.dataset.groupId,
+        target.dataset.groupField,
+        target.checked,
+      );
       renderGroupEditor();
     }
   });

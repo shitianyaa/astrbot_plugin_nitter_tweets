@@ -185,6 +185,21 @@ def normalize_username(value: str) -> str:
         return ""
     return value
 
+def normalize_seen_account_key(value: str) -> str:
+    """Normalize seen/scan keys: Twitter username or tag search key ``q:...``."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value[:2].casefold() == "q:":
+        body = value[2:].strip()
+        if not body:
+            return ""
+        if len(body) > 200:
+            body = body[:200]
+        return "q:" + body.casefold()
+    return normalize_username(value)
+
+
 
 def safe_call(obj, method_name: str):
     method = getattr(obj, method_name, None)

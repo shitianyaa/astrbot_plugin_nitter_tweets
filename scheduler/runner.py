@@ -158,7 +158,15 @@ class PreparedBatchResult:
 
 class NitterTweetScheduler:
     def __init__(
-        self, owner, context, config, nitter, media, sender, translator
+        self,
+        owner,
+        context,
+        config,
+        nitter,
+        media,
+        sender,
+        translator,
+        html_backend=None,
     ):
         self.owner = owner
         self.context = context
@@ -167,6 +175,7 @@ class NitterTweetScheduler:
         self.media = media
         self.sender = sender
         self.translator = translator
+        self.html_backend = html_backend
         migrate_default_group_config(config)
         self.config_reader = SchedulerConfigReader(config, context)
         self.storage = StorageAdapter(owner, config, context)
@@ -194,7 +203,7 @@ class NitterTweetScheduler:
                 f"({reason}); enabled={self.schedule_enabled}, "
                 f"groups={len(groups)}, "
                 f"enabled_groups={sum(1 for group in groups if group.enabled)}, "
-                f"watch_users={sum(len(group.users) for group in groups)}, "
+                f"accounts={sum(len(group.account_keys) for group in groups)}, "
                 f"push_targets={sum(len(group.targets) for group in groups)}"
             )
         except RuntimeError:
@@ -254,8 +263,7 @@ class NitterTweetScheduler:
     def schedule_enabled(self) -> bool:
         config_enabled = bool(config_get(self.config, "schedule_enabled", False))
         return config_enabled and any(
-            group.enabled
-            for group in self._schedule_groups(log_invalid_targets=False)
+            group.enabled for group in self._schedule_groups(log_invalid_targets=False)
         )
 
     @property
@@ -283,9 +291,7 @@ class NitterTweetScheduler:
     def _log_delivery_warning_count(result: ScheduledCheckResult) -> None:
         if result.delivery_warnings:
             unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
-            logger.warning(
-                f"[NitterTweets] 发送状态提示：{unique_warning_count} 条"
-            )
+            logger.warning(f"[NitterTweets] 发送状态提示：{unique_warning_count} 条")
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -294,7 +300,9 @@ class NitterTweetScheduler:
         if enabled:
             self._log_verbose_info("[NitterTweets] 调度器已启用: schedule_enabled=true")
         else:
-            self._log_verbose_info("[NitterTweets] 调度器已闲置: schedule_enabled=false")
+            self._log_verbose_info(
+                "[NitterTweets] 调度器已闲置: schedule_enabled=false"
+            )
 
     async def _tick(self) -> None:
         now = dt.datetime.now(CN_TZ)
@@ -312,9 +320,7 @@ class NitterTweetScheduler:
                     group_name=group.group_id,
                 )
 
-    def _scheduled_reasons(
-        self, group: ScheduleGroup, now: dt.datetime
-    ) -> list[str]:
+    def _scheduled_reasons(self, group: ScheduleGroup, now: dt.datetime) -> list[str]:
         reasons: list[str] = []
         group_id = group.group_id
 
@@ -351,7 +357,6 @@ class NitterTweetScheduler:
                 }
 
         return reasons
-
 
     def _seed_schedule_slots(self, group: ScheduleGroup, now: dt.datetime) -> None:
         group_id = group.group_id
@@ -539,14 +544,16 @@ class NitterTweetScheduler:
         group: ScheduleGroup,
         target_override: list[str] | None = None,
     ) -> ScheduledCheckResult:
-        targets = list(target_override) if target_override is not None else group.targets
+        targets = (
+            list(target_override) if target_override is not None else group.targets
+        )
         targets = self._order_targets_for_push(targets)
         invalid_targets = [] if target_override is not None else group.invalid_targets
         return ScheduledCheckResult(
             reason=reason,
             group_id=group.group_id,
             group_name=group.name,
-            users=group.users,
+            users=list(group.account_keys),
             targets=targets,
             invalid_targets=invalid_targets,
         )
@@ -569,7 +576,9 @@ class NitterTweetScheduler:
         )
         immediate_batches_sent = 0
         if not users:
-            result.skipped_reason = "no_watch_users"
+            result.skipped_reason = (
+                "no_watch_queries" if group.is_tag_group else "no_watch_users"
+            )
             self._log_check_result(result)
             return result
         if not targets:
@@ -577,274 +586,287 @@ class NitterTweetScheduler:
             self._log_check_result(result)
             return result
 
-        seen_map = await self._get_seen_map(group.group_id)
-        scan_watermarks = await self._get_scan_watermarks(
-            group.group_id, seen_map
-        )
-        result.seen_users = len(seen_map)
-        fetch_limit = 20
-        result.fetch_limit = fetch_limit
-        target_interval = group.send_target_interval
-        user_interval = group.send_user_interval
-        group_label = self._push_group_label(group)
-        filter_plain_text_enabled = bool(group.filter_plain_text_enabled)
-        media_only_effective = self._media_only_effective(group)
-        if group.media_only_enabled and not media_only_effective:
-            reason_text = self._media_only_unavailable_reason(group)
-            logger.info(
-                "[NitterTweets] 分组仅媒体未生效，已回退完整内容: "
-                f"group={group.group_id}, reason={reason_text or 'unknown'}"
+        # S2=A: RSS host skip only for this blogger check; end only if we began.
+        run_host_skip_started = False
+        if not group.is_tag_group and hasattr(self.nitter, "begin_run_host_skip"):
+            self.nitter.begin_run_host_skip()
+            run_host_skip_started = True
+        try:
+            seen_map = await self._get_seen_map(group.group_id)
+            scan_watermarks = await self._get_scan_watermarks(group.group_id, seen_map)
+            result.seen_users = len(seen_map)
+            fetch_limit = 20
+            result.fetch_limit = fetch_limit
+            target_interval = group.send_target_interval
+            user_interval = group.send_user_interval
+            group_label = self._push_group_label(group)
+            filter_plain_text_enabled = bool(group.filter_plain_text_enabled)
+            media_only_effective = self._media_only_effective(group)
+            if group.media_only_enabled and not media_only_effective:
+                reason_text = self._media_only_unavailable_reason(group)
+                logger.info(
+                    "[NitterTweets] 分组仅媒体未生效，已回退完整内容: "
+                    f"group={group.group_id}, reason={reason_text or 'unknown'}"
+                )
+            skip_plain_text = filter_plain_text_enabled or media_only_effective
+            use_fetch_parallel = self._should_use_concurrent_fetch(group)
+            use_prepare_parallel = self._should_use_concurrent_prepare(group)
+            self._log_verbose_info(
+                "[NitterTweets] 定时检查开始: "
+                f"group={group.group_id}, reason={reason}, "
+                f"users={len(users)}, targets={len(targets)}, "
+                f"invalid_targets={len(result.invalid_targets)}, "
+                f"首屏扫描={fetch_limit}, qq_merge_threshold={merge_threshold}, "
+                f"skip_plain_text={skip_plain_text}, "
+                f"拉取并发={'开' if use_fetch_parallel else '关'}, "
+                f"拉取数={group.fetch_concurrency}, "
+                f"专用镜像={len(group.concurrent_fetch_instances)}, "
+                f"准备并发={'开' if use_prepare_parallel else '关'}, "
+                f"准备数={group.prepare_concurrency}"
             )
-        skip_plain_text = filter_plain_text_enabled or media_only_effective
-        use_fetch_parallel = self._should_use_concurrent_fetch(group)
-        use_prepare_parallel = self._should_use_concurrent_prepare(group)
-        self._log_verbose_info(
-            "[NitterTweets] 定时检查开始: "
-            f"group={group.group_id}, reason={reason}, "
-            f"users={len(users)}, targets={len(targets)}, "
-            f"invalid_targets={len(result.invalid_targets)}, "
-            f"首屏扫描={fetch_limit}, qq_merge_threshold={merge_threshold}, "
-            f"skip_plain_text={skip_plain_text}, "
-            f"拉取并发={'开' if use_fetch_parallel else '关'}, "
-            f"拉取数={group.fetch_concurrency}, "
-            f"专用镜像={len(group.concurrent_fetch_instances)}, "
-            f"准备并发={'开' if use_prepare_parallel else '关'}, "
-            f"准备数={group.prepare_concurrency}"
-        )
-        discovered_batches: list[PendingTweetBatch] = []
-        group_plain_text_filtered_total = 0
-        fetch_results = await self._fetch_group_users(
-            group, fetch_limit, skip_plain_text, scan_watermarks
-        )
-        watermark_candidates: dict[str, tuple[list[str], set[str]]] = {}
-        for fetch_result in fetch_results:
-            username = fetch_result.username
-            if fetch_result.error:
-                result.failed_users[username] = fetch_result.error.message
-                logger.warning(
-                    f"[NitterTweets] 定时抓取 @{username} 失败: "
-                    f"{fetch_result.error.message}"
-                )
-                continue
-
-            instance = fetch_result.instance
-            tweets = fetch_result.tweets
-            scanned_status_ids = list(
-                dict.fromkeys(
-                    str(item)
-                    for item in fetch_result.scanned_status_ids
-                    if str(item)
-                )
+            discovered_batches: list[PendingTweetBatch] = []
+            group_plain_text_filtered_total = 0
+            fetch_results = await self._fetch_group_users(
+                group, fetch_limit, skip_plain_text, scan_watermarks
             )
-            watermark = scan_watermarks.get(username)
-            if watermark and scanned_status_ids:
-                boundary_ids = set(watermark)
-                boundary_index = next(
-                    (
-                        index
-                        for index, status_id in enumerate(scanned_status_ids)
-                        if status_id in boundary_ids
-                    ),
-                    None,
-                )
-                if boundary_index is not None:
-                    scanned_status_ids = scanned_status_ids[: boundary_index + 1]
-                    allowed_status_ids = set(scanned_status_ids)
-                    tweets = [
-                        tweet
-                        for tweet in tweets
-                        if str(tweet.status_id or "") in allowed_status_ids
-                    ]
-            if not fetch_result.scan_complete:
-                result.failed_users[username] = "RSS 分页未完整扫描，已跳过本轮"
-                logger.warning(
-                    f"[NitterTweets] 定时抓取 @{username} 未完整扫描，跳过本轮"
-                )
-                continue
-            plain_text_filtered = fetch_result.plain_text_filtered
-            if skip_plain_text and plain_text_filtered > 0:
-                group_plain_text_filtered_total += plain_text_filtered
-                self._log_verbose_info(
-                    f"[NitterTweets] 定时检查 @{username}: "
-                    f"已过滤 {plain_text_filtered} 条纯文本推文（无作者上传媒体）"
-                )
+            watermark_candidates: dict[str, tuple[list[str], set[str]]] = {}
+            for fetch_result in fetch_results:
+                username = fetch_result.username
+                if fetch_result.error:
+                    result.failed_users[username] = fetch_result.error.message
+                    logger.warning(
+                        f"[NitterTweets] 定时抓取 @{username} 失败: "
+                        f"{fetch_result.error.message}"
+                    )
+                    continue
 
-            tweets = [tweet for tweet in tweets if tweet.status_id]
-            seen_ids = seen_map.get(username)
-
-            if username not in scan_watermarks:
-                seed_ids = scanned_status_ids or [
-                    tweet.status_id for tweet in tweets if tweet.status_id
-                ]
-                seen_map[username] = self.storage.initial_seen_ids(seed_ids)
-                await self._put_seen_map(group.group_id, seen_map)
-                await self._set_scan_watermark(
-                    group.group_id, username, fetch_result.anchor_status_ids
-                )
-                result.initialized_users[username] = len(seed_ids)
-                self._log_verbose_info(
-                    "[NitterTweets] 首次记录已初始化: "
-                    f"group={group.group_id}, username={username}, "
-                    f"seen={len(seed_ids)}"
-                )
-                continue
-
-            if not isinstance(seen_ids, list):
-                seen_ids = []
-            new_tweets, historical_unseen_ids = (
-                self._select_new_tweets_after_scan_watermark(
-                    tweets, seen_ids, watermark
-                )
-            )
-            if historical_unseen_ids:
-                seen_ids = self._merge_seen_ids(historical_unseen_ids, seen_ids)
-                seen_map[username] = seen_ids
-                await self._put_seen_map(group.group_id, seen_map)
-                self._log_verbose_info(
-                    "[NitterTweets] 定时检查忽略基准前历史推文: "
-                    f"group={group.group_id}, username={username}, "
-                    f"ignored={len(historical_unseen_ids)}"
-                )
-
-            if new_tweets:
-                selected_ids = {
-                    tweet.status_id for tweet in new_tweets if tweet.status_id
-                }
-                watermark_candidates[username] = (
-                    fetch_result.anchor_status_ids,
-                    selected_ids,
-                )
-                discovered_batches.append(
-                    PendingTweetBatch(
-                        username=username,
-                        instance=instance,
-                        tweets=new_tweets,
-                        fetched_ids=scanned_status_ids,
-                        seen_ids=seen_ids,
-                        media_only=media_only_effective,
-                        tweet_index=len(new_tweets),
-                        tweet_total=len(new_tweets),
+                instance = fetch_result.instance
+                tweets = fetch_result.tweets
+                scanned_status_ids = list(
+                    dict.fromkeys(
+                        str(item) for item in fetch_result.scanned_status_ids if str(item)
                     )
                 )
-            else:
-                result.no_new_users.append(username)
-                self._log_verbose_info(
-                    f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
-                    f"username={username}"
-                )
-                seen_map[username] = self._merge_seen_ids(
-                    scanned_status_ids, seen_ids
-                )
-                await self._put_seen_map(group.group_id, seen_map)
-                if fetch_result.anchor_status_ids:
+                watermark = scan_watermarks.get(username)
+                if watermark and scanned_status_ids:
+                    boundary_ids = set(watermark)
+                    boundary_index = next(
+                        (
+                            index
+                            for index, status_id in enumerate(scanned_status_ids)
+                            if status_id in boundary_ids
+                        ),
+                        None,
+                    )
+                    if boundary_index is not None:
+                        scanned_status_ids = scanned_status_ids[: boundary_index + 1]
+                        allowed_status_ids = set(scanned_status_ids)
+                        tweets = [
+                            tweet
+                            for tweet in tweets
+                            if str(tweet.status_id or "") in allowed_status_ids
+                        ]
+                if not fetch_result.scan_complete:
+                    result.failed_users[username] = "分页未完整扫描，已跳过本轮"
+                    logger.warning(
+                        f"[NitterTweets] 定时抓取 {username} 未完整扫描，跳过本轮"
+                    )
+                    continue
+                plain_text_filtered = fetch_result.plain_text_filtered
+                if skip_plain_text and plain_text_filtered > 0:
+                    group_plain_text_filtered_total += plain_text_filtered
+                    self._log_verbose_info(
+                        f"[NitterTweets] 定时检查 {username}: "
+                        f"已过滤 {plain_text_filtered} 条纯文本推文（无作者上传媒体）"
+                    )
+
+                tweets = [tweet for tweet in tweets if tweet.status_id]
+                seen_ids = seen_map.get(username)
+
+                if username not in scan_watermarks:
+                    seed_ids = scanned_status_ids or [
+                        tweet.status_id for tweet in tweets if tweet.status_id
+                    ]
+                    # Tag/search HTML is single-page: empty first result is often a
+                    # glitch. Sealing empty seen would flood the next full page.
+                    # Blogger RSS keeps legacy empty-init so the next real tweet pushes.
+                    if not seed_ids and group.is_tag_group:
+                        result.failed_users[username] = (
+                            "首次抓取无可用推文 ID，未初始化 seen（下轮重试）"
+                        )
+                        logger.warning(
+                            "[NitterTweets] 标签订阅首次抓取为空，跳过初始化: "
+                            f"group={group.group_id}, account={username}"
+                        )
+                        continue
+                    seen_map[username] = self.storage.initial_seen_ids(seed_ids)
+                    await self._put_seen_map(group.group_id, seen_map)
                     await self._set_scan_watermark(
                         group.group_id, username, fetch_result.anchor_status_ids
                     )
+                    result.initialized_users[username] = len(seed_ids)
+                    self._log_verbose_info(
+                        "[NitterTweets] 首次记录已初始化: "
+                        f"group={group.group_id}, username={username}, "
+                        f"seen={len(seed_ids)}"
+                    )
+                    continue
 
-        if skip_plain_text and group_plain_text_filtered_total > 0:
-            result.plain_text_filtered = group_plain_text_filtered_total
-            self._log_verbose_info(
-                "[NitterTweets] 定时检查已过滤纯文本推文: "
-                f"group={group.group_id}, "
-                f"filtered={group_plain_text_filtered_total}"
-            )
+                if not isinstance(seen_ids, list):
+                    seen_ids = []
+                new_tweets, historical_unseen_ids = (
+                    self._select_new_tweets_after_scan_watermark(
+                        tweets, seen_ids, watermark
+                    )
+                )
+                if historical_unseen_ids:
+                    seen_ids = self._merge_seen_ids(historical_unseen_ids, seen_ids)
+                    seen_map[username] = seen_ids
+                    await self._put_seen_map(group.group_id, seen_map)
+                    self._log_verbose_info(
+                        "[NitterTweets] 定时检查忽略基准前历史推文: "
+                        f"group={group.group_id}, username={username}, "
+                        f"ignored={len(historical_unseen_ids)}"
+                    )
 
-        fetch_failures = dict(result.failed_users)
-        check_batch_summary = self._format_push_batch_summary(
-            discovered_batches,
-            group_label,
-            action_text="本次检查发现",
-        )
-        check_batch_summary = self._append_fetch_failure_summary(
-            check_batch_summary,
-            fetch_failures,
-        )
-        immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
-        self._set_discovered_batch_progress(discovered_batches)
-        if self._should_use_concurrent_prepare(group):
-            pending_batches, immediate_batches_sent = (
-                await self._prepare_immediate_batches_concurrently(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
-            )
-        else:
-            pending_batches, immediate_batches_sent = (
-                await self._prepare_discovered_batches_serial(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
-            )
-
-        result.seen_users = len(seen_map)
-        if pending_batches:
-            try:
-                await self._send_prepared_batches(
-                    pending_batches,
-                    result,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    record_merge_placeholders=not bool(immediate_targets),
-                    merge_existing_stats=bool(immediate_targets),
-                    group_label=group_label,
-                    batch_summary=check_batch_summary,
-                    history_group_id=group.group_id,
-                    history_source="scheduled",
-                )
-                # Buffered/merge targets are not marked as seen during prepare.
-                # Write seen only after at least one target accepted the batch.
-                for batch in pending_batches:
-                    if not batch.delivered_targets:
-                        continue
-                    status_ids = [
-                        tweet.status_id for tweet in batch.tweets if tweet.status_id
-                    ]
-                    if status_ids:
-                        await self._store_incremental_seen_ids(
-                            group.group_id,
-                            batch.username,
-                            status_ids,
-                            seen_map,
+                if new_tweets:
+                    selected_ids = {
+                        tweet.status_id for tweet in new_tweets if tweet.status_id
+                    }
+                    watermark_candidates[username] = (
+                        fetch_result.anchor_status_ids,
+                        selected_ids,
+                    )
+                    discovered_batches.append(
+                        PendingTweetBatch(
+                            username=username,
+                            instance=instance,
+                            tweets=new_tweets,
+                            fetched_ids=scanned_status_ids,
+                            seen_ids=seen_ids,
+                            media_only=media_only_effective,
+                            tweet_index=len(new_tweets),
+                            tweet_total=len(new_tweets),
                         )
-            finally:
-                for batch in pending_batches:
-                    await self._cleanup_batch_media(batch)
+                    )
+                else:
+                    result.no_new_users.append(username)
+                    self._log_verbose_info(
+                        f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
+                        f"username={username}"
+                    )
+                    seen_map[username] = self._merge_seen_ids(scanned_status_ids, seen_ids)
+                    await self._put_seen_map(group.group_id, seen_map)
+                    if fetch_result.anchor_status_ids:
+                        await self._set_scan_watermark(
+                            group.group_id, username, fetch_result.anchor_status_ids
+                        )
 
-        for username, (anchor_status_ids, selected_ids) in (
-            watermark_candidates.items()
-        ):
-            current_seen = set(seen_map.get(username, []))
-            if selected_ids and not selected_ids.issubset(current_seen):
-                continue
-            await self._set_scan_watermark(
-                group.group_id, username, anchor_status_ids
+            if skip_plain_text and group_plain_text_filtered_total > 0:
+                result.plain_text_filtered = group_plain_text_filtered_total
+                self._log_verbose_info(
+                    "[NitterTweets] 定时检查已过滤纯文本推文: "
+                    f"group={group.group_id}, "
+                    f"filtered={group_plain_text_filtered_total}"
+                )
+
+            fetch_failures = dict(result.failed_users)
+            check_batch_summary = self._format_push_batch_summary(
+                discovered_batches,
+                group_label,
+                action_text="本次检查发现",
             )
+            check_batch_summary = self._append_fetch_failure_summary(
+                check_batch_summary,
+                fetch_failures,
+            )
+            immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
+            self._set_discovered_batch_progress(discovered_batches)
+            if self._should_use_concurrent_prepare(group):
+                (
+                    pending_batches,
+                    immediate_batches_sent,
+                ) = await self._prepare_immediate_batches_concurrently(
+                    group,
+                    discovered_batches,
+                    result,
+                    targets[0],
+                    seen_map,
+                    immediate_targets,
+                    buffered_targets,
+                    target_interval,
+                    user_interval,
+                    group_label,
+                    immediate_batch_summary_tracker,
+                    immediate_batches_sent,
+                )
+            else:
+                (
+                    pending_batches,
+                    immediate_batches_sent,
+                ) = await self._prepare_discovered_batches_serial(
+                    group,
+                    discovered_batches,
+                    result,
+                    targets[0],
+                    seen_map,
+                    immediate_targets,
+                    buffered_targets,
+                    target_interval,
+                    user_interval,
+                    group_label,
+                    immediate_batch_summary_tracker,
+                    immediate_batches_sent,
+                )
 
-        self._log_check_result(result)
-        if self._should_notify_no_updates(result, notify_no_updates, group):
-            await self._send_no_update_notice(result, target_interval)
-        return result
+            result.seen_users = len(seen_map)
+            if pending_batches:
+                try:
+                    await self._send_prepared_batches(
+                        pending_batches,
+                        result,
+                        buffered_targets,
+                        target_interval,
+                        user_interval,
+                        record_merge_placeholders=not bool(immediate_targets),
+                        merge_existing_stats=bool(immediate_targets),
+                        group_label=group_label,
+                        batch_summary=check_batch_summary,
+                        history_group_id=group.group_id,
+                        history_source="scheduled",
+                    )
+                    # Buffered/merge targets are not marked as seen during prepare.
+                    # Write seen only after at least one target accepted the batch.
+                    for batch in pending_batches:
+                        if not batch.delivered_targets:
+                            continue
+                        status_ids = [
+                            tweet.status_id for tweet in batch.tweets if tweet.status_id
+                        ]
+                        if status_ids:
+                            await self._store_incremental_seen_ids(
+                                group.group_id,
+                                batch.username,
+                                status_ids,
+                                seen_map,
+                            )
+                finally:
+                    for batch in pending_batches:
+                        await self._cleanup_batch_media(batch)
+
+            for username, (anchor_status_ids, selected_ids) in watermark_candidates.items():
+                current_seen = set(seen_map.get(username, []))
+                if selected_ids and not selected_ids.issubset(current_seen):
+                    continue
+                await self._set_scan_watermark(group.group_id, username, anchor_status_ids)
+
+            self._log_check_result(result)
+            if self._should_notify_no_updates(result, notify_no_updates, group):
+                await self._send_no_update_notice(result, target_interval)
+            return result
+        finally:
+            if run_host_skip_started and hasattr(self.nitter, "end_run_host_skip"):
+                self.nitter.end_run_host_skip()
 
     async def status_summary(self) -> str:
         groups = self._schedule_groups(log_invalid_targets=False)
@@ -856,11 +878,30 @@ class NitterTweetScheduler:
             return "Nitter 定时检查状态\n没有可用分组。"
 
         enabled_groups = [item for item in groups if item.enabled]
-        total_users = sum(len(item.users) for item in groups)
-        total_raw_users = sum(item.users_info.raw_count for item in groups)
-        total_duplicates = sum(len(item.users_info.duplicates) for item in groups)
+        total_users = sum(len(item.account_keys) for item in groups)
+        total_raw_users = sum(
+            (
+                item.queries_info.raw_count
+                if item.is_tag_group
+                else item.users_info.raw_count
+            )
+            for item in groups
+        )
+        total_duplicates = sum(
+            len(
+                item.queries_info.duplicates
+                if item.is_tag_group
+                else item.users_info.duplicates
+            )
+            for item in groups
+        )
         total_invalid_users = sum(
-            len(item.users_info.invalid_entries) for item in groups
+            len(
+                item.queries_info.invalid_entries
+                if item.is_tag_group
+                else item.users_info.invalid_entries
+            )
+            for item in groups
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
@@ -901,7 +942,10 @@ class NitterTweetScheduler:
         if len(groups) > (1 if default_group is not None else 0):
             lines.append("其他分组详情:")
             for item in groups:
-                if default_group is not None and item.group_id == default_group.group_id:
+                if (
+                    default_group is not None
+                    and item.group_id == default_group.group_id
+                ):
                     continue
                 self._append_group_status(
                     lines,
@@ -923,7 +967,10 @@ class NitterTweetScheduler:
         for group in groups:
             if not isinstance(group, dict):
                 continue
-            if normalize_group_id(group.get("group_id") or group.get("name") or "") == GLOBAL_GROUP_ID:
+            if (
+                normalize_group_id(group.get("group_id") or group.get("name") or "")
+                == GLOBAL_GROUP_ID
+            ):
                 group["watch_users"] = info.users
                 config_set(self.config, "tweet_groups", groups)
                 break
@@ -964,9 +1011,11 @@ class NitterTweetScheduler:
         skip_plain_text: bool,
         scan_watermarks: dict[str, list[str]],
     ) -> list[UserFetchResult]:
-        if not self._should_use_concurrent_fetch(group):
+        accounts = list(group.account_keys)
+        # Tag groups always serial to protect shared HTML instances.
+        if group.is_tag_group or not self._should_use_concurrent_fetch(group):
             results = []
-            for index, username in enumerate(group.users):
+            for index, username in enumerate(accounts):
                 results.append(
                     await self._fetch_group_user(
                         group,
@@ -995,8 +1044,7 @@ class NitterTweetScheduler:
                 )
 
         tasks = [
-            fetch_with_limit(index, username)
-            for index, username in enumerate(group.users)
+            fetch_with_limit(index, username) for index, username in enumerate(accounts)
         ]
         return list(await asyncio.gather(*tasks))
 
@@ -1011,6 +1059,14 @@ class NitterTweetScheduler:
         *,
         concurrent: bool,
     ) -> UserFetchResult:
+        if group.is_tag_group:
+            return await self._fetch_group_query(
+                group,
+                index,
+                username,
+                fetch_limit,
+                skip_plain_text=skip_plain_text,
+            )
         try:
             scheduler_method = (
                 "fetch_tweets_for_scheduler_from_instances"
@@ -1026,7 +1082,9 @@ class NitterTweetScheduler:
                         group.concurrent_fetch_instances,
                         start_index=index,
                         skip_plain_text=skip_plain_text,
-                        retry_attempts=3,
+                        retry_attempts=getattr(
+                            self.nitter, "retry_attempts", 2
+                        ),
                     )
                 else:
                     instance, scan_result = await fetch_for_scheduler(
@@ -1034,46 +1092,74 @@ class NitterTweetScheduler:
                         scan_watermark,
                         skip_plain_text=skip_plain_text,
                     )
-                raw_anchor_status_ids = getattr(
-                    scan_result, "anchor_status_ids", None
-                )
+                raw_anchor_status_ids = getattr(scan_result, "anchor_status_ids", None)
                 anchor_status_ids = (
                     list(scan_result.scanned_status_ids)[:20]
                     if raw_anchor_status_ids is None
                     else list(raw_anchor_status_ids)
                 )
+                tweets = list(scan_result.tweets)
+                if not tweets and self._user_html_fallback_enabled():
+                    html_result = await self._fetch_user_html_fallback(
+                        index,
+                        username,
+                        fetch_limit,
+                        skip_plain_text=skip_plain_text,
+                    )
+                    if html_result is not None:
+                        return html_result
                 return UserFetchResult(
                     index=index,
                     username=username,
                     instance=instance,
-                    tweets=list(scan_result.tweets),
+                    tweets=tweets,
                     scanned_status_ids=list(scan_result.scanned_status_ids),
                     anchor_status_ids=anchor_status_ids,
                     latest_status_id=str(scan_result.latest_status_id or ""),
                     scan_complete=bool(scan_result.complete),
-                    plain_text_filtered=int(
-                        scan_result.plain_text_filtered or 0
-                    ),
+                    plain_text_filtered=int(scan_result.plain_text_filtered or 0),
                 )
 
             if concurrent:
-                instance, tweets, plain_text_filtered = (
-                    await self.nitter.fetch_tweets_with_stats_from_instances(
-                        username,
-                        fetch_limit,
-                        group.concurrent_fetch_instances,
-                        start_index=index,
-                        skip_plain_text=skip_plain_text,
-                        retry_attempts=3,
-                    )
+                (
+                    instance,
+                    tweets,
+                    plain_text_filtered,
+                ) = await self.nitter.fetch_tweets_with_stats_from_instances(
+                    username,
+                    fetch_limit,
+                    group.concurrent_fetch_instances,
+                    start_index=index,
+                    skip_plain_text=skip_plain_text,
+                    retry_attempts=getattr(self.nitter, "retry_attempts", 2),
                 )
             else:
-                instance, tweets, plain_text_filtered = (
-                    await self.nitter.fetch_tweets_with_stats(
-                        username, fetch_limit, skip_plain_text=skip_plain_text
-                    )
+                (
+                    instance,
+                    tweets,
+                    plain_text_filtered,
+                ) = await self.nitter.fetch_tweets_with_stats(
+                    username, fetch_limit, skip_plain_text=skip_plain_text
                 )
+            if not tweets and self._user_html_fallback_enabled():
+                html_result = await self._fetch_user_html_fallback(
+                    index,
+                    username,
+                    fetch_limit,
+                    skip_plain_text=skip_plain_text,
+                )
+                if html_result is not None:
+                    return html_result
         except Exception as exc:
+            if self._user_html_fallback_enabled():
+                html_result = await self._fetch_user_html_fallback(
+                    index,
+                    username,
+                    fetch_limit,
+                    skip_plain_text=skip_plain_text,
+                )
+                if html_result is not None:
+                    return html_result
             return UserFetchResult(
                 index=index,
                 username=username,
@@ -1084,13 +1170,130 @@ class NitterTweetScheduler:
             username=username,
             instance=instance,
             tweets=tweets,
-            scanned_status_ids=[
-                tweet.status_id for tweet in tweets if tweet.status_id
-            ],
+            scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
             anchor_status_ids=[
                 tweet.status_id for tweet in tweets[:20] if tweet.status_id
             ],
             latest_status_id=(tweets[0].status_id if tweets else ""),
+            plain_text_filtered=plain_text_filtered,
+        )
+
+    def _user_html_fallback_enabled(self) -> bool:
+        if self.html_backend is None:
+            return False
+        try:
+            from ..config import config_get
+        except ImportError:  # pragma: no cover
+            from config import config_get
+
+        return bool(config_get(self.config, "user_html_fallback", True))
+
+    async def _fetch_user_html_fallback(
+        self,
+        index: int,
+        username: str,
+        fetch_limit: int,
+        *,
+        skip_plain_text: bool = False,
+    ) -> UserFetchResult | None:
+        if self.html_backend is None:
+            return None
+        try:
+            instance, tweets = await asyncio.to_thread(
+                self.html_backend.fetch_user, username, fetch_limit
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] HTML 用户页回退失败: @{username}, error={exc}"
+            )
+            return None
+        if not tweets:
+            return None
+        tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
+            list(tweets), skip_plain_text=skip_plain_text
+        )
+        return UserFetchResult(
+            index=index,
+            username=username,
+            instance=instance,
+            tweets=tweets,
+            scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
+            anchor_status_ids=[
+                tweet.status_id for tweet in tweets[:20] if tweet.status_id
+            ],
+            latest_status_id=(tweets[0].status_id if tweets else ""),
+            scan_complete=True,
+            plain_text_filtered=plain_text_filtered,
+        )
+
+    @staticmethod
+    def _filter_html_tweets_plain_text(
+        tweets: list[TweetItem],
+        *,
+        skip_plain_text: bool,
+    ) -> tuple[list[TweetItem], int]:
+        """HTML items already carry author media; drop pure-text when filtering."""
+        if not skip_plain_text or not tweets:
+            return tweets, 0
+        kept = [tweet for tweet in tweets if tweet.media]
+        return kept, len(tweets) - len(kept)
+
+    async def _fetch_group_query(
+        self,
+        group: ScheduleGroup,
+        index: int,
+        account_key: str,
+        fetch_limit: int,
+        *,
+        skip_plain_text: bool = False,
+    ) -> UserFetchResult:
+        query_item = next(
+            (item for item in group.queries if item.account_key == account_key),
+            None,
+        )
+        if query_item is None:
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(
+                    RuntimeError(f"missing watch query for {account_key}")
+                ),
+            )
+        if self.html_backend is None:
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(
+                    RuntimeError("html_backend unavailable")
+                ),
+            )
+        html_backend = self.html_backend
+        try:
+            instance, tweets = await asyncio.to_thread(
+                lambda: html_backend.search(
+                    query_item.query, fetch_limit, kind=query_item.type
+                )
+            )
+        except Exception as exc:
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(exc),
+            )
+        tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
+            list(tweets), skip_plain_text=skip_plain_text
+        )
+        return UserFetchResult(
+            index=index,
+            username=account_key,
+            instance=instance,
+            tweets=tweets,
+            scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
+            anchor_status_ids=[
+                tweet.status_id for tweet in tweets[:20] if tweet.status_id
+            ],
+            latest_status_id=(tweets[0].status_id if tweets else ""),
+            scan_complete=True,
             plain_text_filtered=plain_text_filtered,
         )
 
@@ -1174,9 +1377,7 @@ class NitterTweetScheduler:
                             current_batch, target_umo
                         )
                     except Exception as exc:
-                        await self._record_prepare_failure(
-                            result, current_batch, exc
-                        )
+                        await self._record_prepare_failure(result, current_batch, exc)
                         current_batch = None
                         continue
 
@@ -1196,22 +1397,23 @@ class NitterTweetScheduler:
                         group, prepared, seen_map
                     )
                     prepared_count += 1
-                    pending_batches, immediate_batches_sent = (
-                        await self._send_or_buffer_immediate_batch(
-                            current_batch,
-                            group,
-                            pending_batches,
-                            result,
-                            immediate_targets,
-                            buffered_targets,
-                            target_interval,
-                            user_interval,
-                            group_label,
-                            immediate_batch_summary_tracker,
-                            immediate_batches_sent,
-                            seen_map,
-                            batch_progress=(tweet_index, len(new_tweets)),
-                        )
+                    (
+                        pending_batches,
+                        immediate_batches_sent,
+                    ) = await self._send_or_buffer_immediate_batch(
+                        current_batch,
+                        group,
+                        pending_batches,
+                        result,
+                        immediate_targets,
+                        buffered_targets,
+                        target_interval,
+                        user_interval,
+                        group_label,
+                        immediate_batch_summary_tracker,
+                        immediate_batches_sent,
+                        seen_map,
+                        batch_progress=(tweet_index, len(new_tweets)),
                     )
                     current_batch = None
                 self._log_prepare_progress(username, prepared_count, len(new_tweets))
@@ -1258,7 +1460,6 @@ class NitterTweetScheduler:
             raise
         return results
 
-
     async def _prepare_immediate_batches_concurrently(
         self,
         group: ScheduleGroup,
@@ -1290,8 +1491,8 @@ class NitterTweetScheduler:
         prepared_count_by_user: dict[str, int] = {}
         total_by_user: dict[str, int] = {}
         for batch in discovered_batches:
-            total_by_user[batch.username] = (
-                total_by_user.get(batch.username, 0) + len(batch.tweets)
+            total_by_user[batch.username] = total_by_user.get(batch.username, 0) + len(
+                batch.tweets
             )
 
         async def consume(prepared: PreparedBatchResult) -> None:
@@ -1316,22 +1517,23 @@ class NitterTweetScheduler:
             prepared_count_by_user[batch.username] = (
                 prepared_count_by_user.get(batch.username, 0) + 1
             )
-            pending_batches, immediate_batches_sent = (
-                await self._send_or_buffer_immediate_batch(
-                    batch,
-                    group,
-                    pending_batches,
-                    result,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                    seen_map,
-                    batch_progress=(tweet_index, batch.tweet_total),
-                )
+            (
+                pending_batches,
+                immediate_batches_sent,
+            ) = await self._send_or_buffer_immediate_batch(
+                batch,
+                group,
+                pending_batches,
+                result,
+                immediate_targets,
+                buffered_targets,
+                target_interval,
+                user_interval,
+                group_label,
+                immediate_batch_summary_tracker,
+                immediate_batches_sent,
+                seen_map,
+                batch_progress=(tweet_index, batch.tweet_total),
             )
 
         try:
@@ -1342,9 +1544,7 @@ class NitterTweetScheduler:
                 on_result=consume,
             )
         except BaseException:
-            await self._cleanup_batch_media_many(
-                [*single_batches, *pending_batches]
-            )
+            await self._cleanup_batch_media_many([*single_batches, *pending_batches])
             raise
 
         for discovered_batch in discovered_batches:
@@ -1355,7 +1555,6 @@ class NitterTweetScheduler:
                 total_by_user.get(discovered_batch.username, 0),
             )
         return pending_batches, immediate_batches_sent
-
 
     async def _prepare_immediate_batch(
         self,
@@ -1377,9 +1576,7 @@ class NitterTweetScheduler:
             if callable(media_results_method):
                 reports = await media_results_method(batch.tweets)
                 report = reports[0] if reports else None
-                media_status = str(
-                    getattr(report, "status", MEDIA_STATUS_NO_CANDIDATE)
-                )
+                media_status = str(getattr(report, "status", MEDIA_STATUS_NO_CANDIDATE))
                 media_error = str(getattr(report, "error", "") or "")
             else:
                 await self.media.attach_media(batch.tweets)
@@ -1439,8 +1636,6 @@ class NitterTweetScheduler:
             "[NitterTweets] 定时推送准备失败: "
             f"username={username}, status={status_id}, error={error_message}"
         )
-
-
 
     async def _handle_immediate_prepare_success(
         self,
@@ -1557,9 +1752,7 @@ class NitterTweetScheduler:
             batch.media_cleaned = False
             raise
 
-    async def _cleanup_batch_media_many(
-        self, batches: list[PendingTweetBatch]
-    ) -> None:
+    async def _cleanup_batch_media_many(self, batches: list[PendingTweetBatch]) -> None:
         for batch in batches:
             await self._cleanup_batch_media(batch)
 
@@ -1868,9 +2061,6 @@ class NitterTweetScheduler:
             f"users={len(batches)}, qq_targets={success}/{attempts}"
         )
 
-
-
-
     async def _send_prepared_batches(
         self,
         batches: list[PendingTweetBatch],
@@ -1892,7 +2082,9 @@ class NitterTweetScheduler:
             merge_targets, ordinary_targets = [], targets
 
         if merge_targets:
-            result.push_mode = "mixed" if ordinary_targets or result.pushes else "merged"
+            result.push_mode = (
+                "mixed" if ordinary_targets or result.pushes else "merged"
+            )
             if ordinary_targets:
                 await self._send_per_user_updates(
                     batches,
@@ -1967,8 +2159,7 @@ class NitterTweetScheduler:
 
     def _media_only_effective(self, group: ScheduleGroup) -> bool:
         return bool(
-            group.media_only_enabled
-            and not self._media_only_unavailable_reason(group)
+            group.media_only_enabled and not self._media_only_unavailable_reason(group)
         )
 
     async def _handle_media_prepare_status(
@@ -2091,17 +2282,17 @@ class NitterTweetScheduler:
     ) -> str:
         if not failed_users:
             return summary
-        failed_items = [
-            f"@{user}: {error}"
-            for user, error in failed_users.items()
-        ]
-        failure_summary = (
-            "抓取失败："
-            + scheduler_format_limited_values(
-                failed_items,
-                limit=5,
-                separator="；",
-            )
+        failed_items = []
+        for user, error in failed_users.items():
+            label = str(user)
+            if label.startswith("q:"):
+                failed_items.append(f"{label}: {error}")
+            else:
+                failed_items.append(f"@{label}: {error}")
+        failure_summary = "抓取失败：" + scheduler_format_limited_values(
+            failed_items,
+            limit=5,
+            separator="；",
         )
         if summary.strip():
             return f"{summary.rstrip()}\n{failure_summary}"
@@ -2112,7 +2303,6 @@ class NitterTweetScheduler:
         if is_default_group(group.group_id):
             return DEFAULT_GROUP_NAME
         return str(group.name or group.group_id).strip() or group.group_id
-
 
     async def _store_incremental_seen_ids(
         self,
@@ -2133,30 +2323,43 @@ class NitterTweetScheduler:
     @staticmethod
     def _format_merge_threshold(threshold: int) -> str:
         return scheduler_format_merge_threshold(threshold)
+
     @staticmethod
     def _format_group_schedule(group: ScheduleGroup) -> str:
         return scheduler_format_group_schedule(group)
+
     def _append_group_status(
         self,
         lines: list[str],
         group: ScheduleGroup,
         seen_count: int | None = None,
     ) -> None:
+        type_label = "标签" if group.is_tag_group else "博主"
+        account_count = len(group.account_keys)
         lines.append(
             "- "
             f"{group.name} ({group.group_id}): "
             f"{'启用' if group.enabled else '关闭'}，"
-            f"账号 {len(group.users)}，目标 {len(group.targets)}，"
+            f"类型 {type_label}，"
+            f"订阅 {account_count}，目标 {len(group.targets)}，"
             f"{self._format_group_schedule(group)}"
         )
         if group.aliases:
             lines.append("  别名: " + self._format_limited_values(group.aliases))
-        lines.append(
-            "  关注账号: "
-            f"{len(group.users)} 个（配置 {group.users_info.raw_count} 项，"
-            f"重复 {len(group.users_info.duplicates)} 项，"
-            f"无效 {len(group.users_info.invalid_entries)} 项）"
-        )
+        if group.is_tag_group:
+            lines.append(
+                "  搜索订阅: "
+                f"{len(group.queries)} 个（配置 {group.queries_info.raw_count} 项，"
+                f"重复 {len(group.queries_info.duplicates)} 项，"
+                f"无效 {len(group.queries_info.invalid_entries)} 项）"
+            )
+        else:
+            lines.append(
+                "  关注账号: "
+                f"{len(group.users)} 个（配置 {group.users_info.raw_count} 项，"
+                f"重复 {len(group.users_info.duplicates)} 项，"
+                f"无效 {len(group.users_info.invalid_entries)} 项）"
+            )
         lines.append(
             f"  推送目标: {len(group.targets)} 个"
             f"（无效 {len(group.invalid_targets)} 个）"
@@ -2169,19 +2372,32 @@ class NitterTweetScheduler:
                 f"{hour:02d}:{minute:02d}" for hour, minute in daily_times
             )
             lines.append(f"  每日时间: {formatted_times}")
-        if group.users:
+        if group.is_tag_group and group.queries:
+            labels = [f"{item.query} ({item.type})" for item in group.queries]
+            lines.append("  订阅查询: " + self._format_limited_values(labels))
+            if group.queries_info.duplicates:
+                lines.append(
+                    "  重复查询: "
+                    + self._format_limited_values(group.queries_info.duplicates)
+                )
+            if group.queries_info.invalid_entries:
+                lines.append(
+                    "  无效查询: "
+                    + self._format_limited_values(group.queries_info.invalid_entries)
+                )
+        elif group.users:
             usernames = [f"@{username}" for username in group.users]
             lines.append("  订阅账号: " + self._format_limited_values(usernames))
-        if group.users_info.duplicates:
-            lines.append(
-                "  重复订阅: "
-                + self._format_limited_values(group.users_info.duplicates)
-            )
-        if group.users_info.invalid_entries:
-            lines.append(
-                "  无效订阅: "
-                + self._format_limited_values(group.users_info.invalid_entries)
-            )
+            if group.users_info.duplicates:
+                lines.append(
+                    "  重复订阅: "
+                    + self._format_limited_values(group.users_info.duplicates)
+                )
+            if group.users_info.invalid_entries:
+                lines.append(
+                    "  无效订阅: "
+                    + self._format_limited_values(group.users_info.invalid_entries)
+                )
         if group.targets:
             lines.append("  推送目标:")
             for umo in group.targets[:8]:
@@ -2200,12 +2416,15 @@ class NitterTweetScheduler:
     @staticmethod
     def _format_daily_times(times: list[tuple[int, int]]) -> str:
         return scheduler_format_daily_times(times)
+
     @staticmethod
     def _format_next_daily_time(times: list[tuple[int, int]]) -> str:
         return scheduler_format_next_daily_time(times)
+
     @staticmethod
     def _format_timestamp(timestamp: int) -> str:
         return scheduler_format_timestamp(timestamp)
+
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
     ) -> dict[str, list[str]]:
@@ -2314,9 +2533,7 @@ class NitterTweetScheduler:
     def _parse_daily_times(self) -> list[tuple[int, int]]:
         return self.config_reader.parse_daily_times()
 
-    def _schedule_groups(
-        self, log_invalid_targets: bool = True
-    ) -> list[ScheduleGroup]:
+    def _schedule_groups(self, log_invalid_targets: bool = True) -> list[ScheduleGroup]:
         return self.config_reader.schedule_groups(
             log_invalid_targets=log_invalid_targets
         )

@@ -17,15 +17,26 @@ from astrbot.api import logger
 try:
     from ..config import config_get
     from ..shared import (
-        TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
+        TweetItem,
+        clean_text,
+        clamp_float,
+        clamp_int,
+        load_instances,
+        normalize_external_links,
     )
 except ImportError:
     from config import config_get
     from shared import (
-        TweetItem, clean_text, clamp_float, load_instances, normalize_external_links,
+        TweetItem,
+        clean_text,
+        clamp_float,
+        clamp_int,
+        load_instances,
+        normalize_external_links,
     )
 
 from .network import compat_urlopen
+from .rss_run_skip import RssRunHostSkip
 
 
 class TransientFetchError(RuntimeError):
@@ -238,12 +249,81 @@ class NitterClient:
             config,
             "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
-        self.retry_attempts = 2
-        self.retry_delay_seconds = 5.0
+        self.retry_attempts = clamp_int(
+            config_get(config, "retry_attempts", 2), 1, 5
+        )
+        self.retry_delay_seconds = clamp_float(
+            config_get(config, "retry_delay_seconds", 5.0), 0.0, 60.0
+        )
         self.filter_reposts_enabled = bool(
             config_get(config, "filter_reposts_enabled", True)
         )
-        self.brief_log_enabled = bool(config_get(config, "brief_log_enabled", True))
+        self.brief_log_enabled = bool(
+            config_get(config, "brief_log_enabled", True)
+        )
+        # S2=A: set only for one check/command via begin_run_host_skip().
+        self._run_host_skip: RssRunHostSkip | None = None
+
+    def begin_run_host_skip(self) -> RssRunHostSkip:
+        """Start a per-run skip set (caller must end_run_host_skip).
+
+        Nested begin/end restores the previous set so overlapping manual and
+        scheduled checks do not permanently wipe each other.
+        """
+        previous = self._run_host_skip
+        token = RssRunHostSkip()
+        stack = getattr(self, "_run_host_skip_stack", None)
+        if stack is None:
+            stack = []
+            self._run_host_skip_stack = stack
+        stack.append(previous)
+        self._run_host_skip = token
+        return token
+
+    def end_run_host_skip(self) -> None:
+        stack = getattr(self, "_run_host_skip_stack", None)
+        if stack:
+            self._run_host_skip = stack.pop()
+        else:
+            self._run_host_skip = None
+
+    def _active_run_host_skip(self) -> RssRunHostSkip | None:
+        return self._run_host_skip
+
+    def _mark_run_host_skip(self, instance: str, error) -> None:
+        """Mark host skipped for rest of run on retryable/transient failures."""
+        skip = self._active_run_host_skip()
+        if skip is None:
+            return
+        if isinstance(error, EmptyFeedError):
+            return
+        text = str(error or "").lower()
+        if isinstance(error, TransientFetchError) or any(
+            token in text
+            for token in (
+                "http 408",
+                "http 429",
+                "http 500",
+                "http 502",
+                "http 503",
+                "http 504",
+                "http 520",
+                "http 522",
+                "http 523",
+                "http 524",
+                "timed out",
+                "timeout",
+                "temporarily",
+            )
+        ):
+            skip.mark(instance)
+
+    def _instances_for_run(self, instances: list[str]) -> list[str]:
+        skip = self._active_run_host_skip()
+        if skip is None or not skip:
+            return list(instances)
+        filtered = skip.filter_instances(instances)
+        return filtered if filtered else list(instances)
 
     async def fetch_tweets(
         self,
@@ -353,7 +433,8 @@ class NitterClient:
     ) -> tuple[str, SchedulerFetchResult]:
         errors: list[str] = []
         empty_instances: list[str] = []
-        for index, instance in enumerate(instances):
+        run_instances = self._instances_for_run(instances)
+        for index, instance in enumerate(run_instances):
             try:
                 result = await asyncio.to_thread(
                     self._fetch_for_scheduler_from_instance,
@@ -368,13 +449,14 @@ class NitterClient:
                 empty_instances.append(instance)
                 errors.append(f"{instance}: {exc}")
                 self._log_instance_fetch_failure(
-                    index, instance, username, exc, instances
+                    index, instance, username, exc, run_instances
                 )
                 continue
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
+                self._mark_run_host_skip(instance, exc)
                 self._log_instance_fetch_failure(
-                    index, instance, username, exc, instances
+                    index, instance, username, exc, run_instances
                 )
                 continue
             self._log_instance_fetch_success(index, instance, username, result)
@@ -382,7 +464,14 @@ class NitterClient:
         # If every configured instance returned a valid but empty RSS feed,
         # treat it as an initialized empty source. This lets a later first
         # tweet be delivered instead of being mistaken for historical data.
-        if empty_instances and len(empty_instances) == len(instances):
+        # Empty-init only when every *configured* instance returned empty feed.
+        # If this run skipped hosts (S2=A), do not treat partial empties as
+        # "all sources empty".
+        if (
+            empty_instances
+            and len(empty_instances) == len(instances)
+            and len(run_instances) == len(instances)
+        ):
             instance = empty_instances[0]
             result = SchedulerFetchResult(
                 tweets=[],
@@ -391,7 +480,9 @@ class NitterClient:
             )
             self._log_instance_fetch_success(0, instance, username, result)
             return instance, result
-        raise RuntimeError(self._format_fetch_errors(errors, total_count=len(instances)))
+        raise RuntimeError(
+            self._format_fetch_errors(errors, total_count=len(run_instances))
+        )
 
     async def _fetch_tweets_with_stats_from_instances(
         self,
@@ -412,7 +503,8 @@ class NitterClient:
         """
 
         errors: list[str] = []
-        for index, instance in enumerate(instances):
+        run_instances = self._instances_for_run(instances)
+        for index, instance in enumerate(run_instances):
             try:
                 result = await asyncio.to_thread(
                     self._fetch_from_instance,
@@ -425,8 +517,9 @@ class NitterClient:
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
+                self._mark_run_host_skip(instance, exc)
                 self._log_instance_fetch_failure(
-                    index, instance, username, exc, instances
+                    index, instance, username, exc, run_instances
                 )
                 continue
             if result.tweets or result.saw_items:
@@ -434,9 +527,11 @@ class NitterClient:
                 return instance, result.tweets, result.plain_text_filtered
             errors.append(f"{instance}: empty feed")
             self._log_instance_fetch_failure(
-                index, instance, username, "empty feed", instances
+                index, instance, username, "empty feed", run_instances
             )
-        raise RuntimeError(self._format_fetch_errors(errors, total_count=len(instances)))
+        raise RuntimeError(
+            self._format_fetch_errors(errors, total_count=len(run_instances))
+        )
 
     def _log_instance_fetch_failure(
         self,

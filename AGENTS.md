@@ -18,27 +18,29 @@
 这是 AstrBot 插件 `astrbot_plugin_nitter_tweets`。
 
 核心能力：
-- 通过 Nitter RSS 获取公开 X/Twitter 推文。
-- 支持手动 `/推文`、`/镜像测试`。
-- 支持按 `tweet_groups` 分组定时检查并即时推送。
+
+- 通过 Nitter RSS 获取公开 X/Twitter 推文；RSS 失败时可回退 HTML 用户页。
+- 支持手动 `/推文`、`/推文搜索`、`/镜像测试`。
+- 支持按 `tweet_groups` 分组定时检查并即时推送：`group_type=blogger` 跟用户，`group_type=tag` 跟搜索订阅。
 - 支持图片、视频/GIF、翻译。
 - 支持 QQ/OneBot 合并转发、Telegram、Lark/Feishu、weixin_oc 和默认平台发送。
-- 使用 SQLite 存储 seen 索引和 push history。
+- 使用 SQLite 存储 seen 索引和 push history（标签订阅账号键为 `q:...`）。
 
 ## 代码地图
 
 - `main.py`: AstrBot 插件入口、命令注册、服务编排。不要把复杂业务逻辑塞进这里。
 - `command_handlers/`: 命令实现。
-  - `manual.py`: `/推文`、`/镜像测试`。
+  - `manual.py`: `/推文`、`/推文搜索`、`/镜像测试`。
   - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen。
-  - `subscriptions.py`: 订阅导入、删除、导出、去重。
+  - `subscriptions.py`: 博主/标签订阅导入、删除、导出、去重。
 - `scheduler/`: 后台检查、seen 对比、推送编排。高风险模块。
-  - `runner.py`: `NitterTweetScheduler` 主状态机。
-  - `config.py`: 分组配置解析，生成 `ScheduleGroup`。
+  - `runner.py`: `NitterTweetScheduler` 主状态机（博主 RSS/HTML 回退与标签搜索分支）。
+  - `config.py`: 分组配置解析，生成 `ScheduleGroup`（含 `group_type`、`watch_queries`）。
   - `models.py`: 调度结果、批次模型。
   - `formatting.py`: 调度日志和消息格式。
 - `config/compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
 - `media_support/client.py`: Nitter RSS 抓取、分页、转发过滤、纯文本过滤。
+- `media_support/html_backend/`: HTML 用户页回退与搜索（门禁、限流、解析、实例池）。
 - `media_support/service.py`: xdown 解析、媒体候选归一化、下载、视频时长/分辨率限制。
 - `media_support/cache.py`: 普通缓存、发送后清理。
 - `media_support/extensions.py`: 媒体类型和扩展名分类。
@@ -76,6 +78,7 @@
 ## 配置和迁移
 
 新增配置项时必须同步：
+
 - `_conf_schema.json`
 - `config.compat.CONFIG_GROUP_BY_KEY`，如果是分组后的全局配置
 - `config.compat.MIGRATABLE_CONFIG_KEYS`，如果需要从旧扁平配置迁移
@@ -85,7 +88,8 @@
 - `tests/test_subscription_import.py`
 
 配置分层约定：
-- `basic`: Nitter、默认数量、冷却、平台基础项。
+
+- `basic`: Nitter、默认数量、冷却、平台基础项；HTML 回退/搜索实例与限流（`blogger_html_instances`、`search_instances` 等）。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: AI 翻译。
 - `schedule`: 后台检查总开关、全局检查频率。
@@ -96,17 +100,29 @@
 `tweet_groups` 是分组行为的主入口。`watch_users` 和 `push_targets` 顶层字段只是旧版兼容字段。
 
 分组字段规则：
+
 - `group_id` 是存储 ID，必须稳定。新建默认分组使用 `default`。
+- `group_type`: `blogger`（默认）或 `tag`。创建后勿改类型；博主组用 `watch_users`，标签组用 `watch_queries`，勿混用。
 - 已有 `group_id` 必须保留；旧 `global` 可作为显式存储 ID 保留，也作为默认分组旧别名兼容。
 - 旧配置缺失 `group_id` 时，安全英文数字分组名（如 `coser`）是旧运行时事实 ID，必须继承；普通显示名才生成 `group_N`。
-- seen 索引按 `group_id + username` 隔离。
-- 每个分组的 `watch_users`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_plain_text_enabled` 都是独立行为。
+- seen 索引按 `group_id + account_key` 隔离：博主为规范化用户名；标签为 `q:<casefold query>`（须用 `normalize_seen_account_key`，勿对 `q:` 键用 `normalize_username`）。
+- 每个分组的 `watch_users` / `watch_queries`、`push_targets`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_plain_text_enabled`、`media_only_enabled` 都是独立行为。
 
-## RSS 抓取和过滤
+## RSS / HTML 抓取和过滤
 
-`media_support/client.py` 是 RSS 行为入口。
+`media_support/client.py` 是 RSS 行为入口。`media_support/html_backend/` 是 HTML 用户页回退与搜索入口。
+
+三列表禁止混用：
+
+- `basic.instances`：仅博主 RSS。
+- `blogger_html_instances`：仅 `/{user}` HTML 回退。
+- `search_instances`：仅搜索 HTML（默认不要放 nitter.net）。
+
+搜索 query：前导 `#` → `type=tag`，否则 `phrase`；phrase 禁止自动加 `#`；运行时优先信存盘 `type`。
+标签组定时拉取走 HTML 搜索，强制串行；首次空结果不初始化 seen。
 
 必须保持：
+
 - `fetch_tweets(username, limit)` 默认不跳过纯文本，供手动 `/推文` 和 `/镜像测试` 使用。
 - `fetch_tweets_with_stats(..., skip_plain_text=True)` 供后台检查统计 filtered 数量。
 - 转发过滤比较 RSS item 主链接作者和订阅账号；作者不同视为转发。
@@ -114,6 +130,7 @@
 - 真正空 RSS feed 才能触发 empty feed。
 
 纯文本过滤规则：
+
 - 只在后台定时检查按分组开关启用。
 - 手动 `/推文`、`/镜像测试` 不受影响。
 - `/pic/media` 和 `<video>` 算作者上传媒体。
@@ -135,7 +152,9 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 `scheduler/` 是高风险目录。修改前先读对应测试。
 
 行为约束：
-- 首次启用账号只初始化 seen，不推送历史。
+
+- 首次启用账号/查询只初始化 seen，不推送历史。
+- 标签订阅账号键为 `q:...`；`run_check` 默认 `group_name` 是默认组，测标签组须显式传入分组名。
 - 后台检查先发现本轮所有新推文，再按目标类型发送。
 - 普通目标可以逐条即时发送；QQ/OneBot 目标会按阈值缓冲到后面合并发送。
 - 手动 `/推文检查` 只向当前会话即时发送。
@@ -144,6 +163,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 取消、异常、发送失败路径必须清理本轮普通缓存。
 
 新增调度字段或结果字段时同步：
+
 - `ScheduleGroup`
 - `ScheduledCheckResult`
 - `status_summary()`
@@ -155,6 +175,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 ## 媒体和缓存
 
 媒体流程：
+
 - RSS 只提供文本和链接。
 - `MediaService` 通过 xdown 解析媒体候选。
 - 发现视频/GIF 时，跳过同条推文里的图片候选，避免发送封面图。
@@ -162,12 +183,14 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 图片/视频下载失败不能阻止文本和原文链接发送。
 
 缓存规则：
+
 - 普通缓存位于 AstrBot 插件数据目录。
 - 普通媒体在本轮发送流程结束后删除。
 - 普通缓存发送后清理。
 - 清理逻辑要统计 removed、failed、images、videos、other、empty_dirs。
 
 修改媒体逻辑时优先补：
+
 - `tests/test_media_resolution.py`
 - `tests/test_media_cleanup.py`
 
@@ -176,6 +199,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 平台目标使用 `/sid` 返回的完整 UMO：`platform_id:MessageType:session_id`。
 
 发送规则：
+
 - OneBot/QQ 目标支持合并转发，阈值由 `merge_tweet_threshold` 控制。
 - OneBot 合并转发失败时会尝试去视频重试或纯文本降级。
 - OneBot 合并转发遇到不确定送达错误时，按可能已送达处理，避免重复推送。
@@ -185,16 +209,19 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - 不要只按 UMO 第一段判断平台类型；使用 `PlatformResolver`。
 
 修改平台发送时优先补：
+
 - 相关平台发送测试。
 - `tests/test_subscription_import.py` 中 Lark 标题和命令行为测试。
 
 ## AI 处理
 
 处理顺序：
+
 - 翻译
 - 媒体下载
 
 规则：
+
 - 翻译 provider 通过配置读取，不要硬编码。
 - AI 失败需要区分正常跳过和用户可见 warning。
 - 手动查询按单条推文准备后立即发送，避免一条慢推文阻塞全部结果。
@@ -204,6 +231,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 ## 文档同步
 
 用户可见行为变更必须同步：
+
 - `README.md`: 首页功能、命令、常用配置、行为要点。
 - `docs/advanced.md`: 平台差异、流程、完整配置、边界行为。
 - `_conf_schema.json`: WebUI 文案、默认值、hint。
@@ -211,6 +239,7 @@ python scripts/probe_nitter_fetch.py ss11_moon 20 --skip-plain-text --timeout 20
 - `metadata.yaml`: 版本或能力描述变化时同步。
 
 文档风格：
+
 - 直接写行为和用法，不写泛泛介绍。
 - 配置名、命令、文件名使用反引号。
 - 行为边界必须明确，例如“手动命令不受影响”。
@@ -226,12 +255,15 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 ```
 
 按变更类型选择：
+
 - RSS、分页、转发过滤、纯文本过滤：`python -m pytest -q tests/test_nitter_pagination.py`
+- HTML 搜索 kind / 标签配置：`python -m pytest -q tests/test_html_backend_query.py tests/test_watch_queries_config.py`
 - 调度、seen、发送顺序：`python -m pytest -q tests/`
 - 配置 schema、迁移、命令解析、订阅维护、AI：`python -m pytest -q tests/test_subscription_import.py`
 - 媒体解析、视频限制、下载重试：`python -m pytest -q tests/test_media_resolution.py`
 - 缓存清理：`python -m pytest -q tests/test_media_cleanup.py`
-- 调度 seen / QQ 合并 / Telegram flood：`python -m pytest -q tests/test_scheduler_delivery.py`
+- 博主调度 seen / QQ 合并 / Telegram flood：`python -m pytest -q tests/test_scheduler_delivery.py`
+- 标签调度 seen / 首次 init / 发送失败：`python -m pytest -q tests/test_scheduler_tag_delivery.py`
 - 存储适配和旧 KV 迁移：`python -m pytest -q tests/test_storage_adapter.py`
 - SQLite 线程安全：`python -m pytest -q tests/test_sqlite_threading.py`
 
@@ -258,6 +290,7 @@ python scripts/test_video_download.py
 ## Review 清单
 
 提交前检查：
+
 - 是否只改了任务相关文件。
 - 是否保留手动命令和后台调度的行为差异。
 - 是否没有提前写 seen 导致失败后漏推。
