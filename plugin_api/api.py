@@ -33,6 +33,7 @@ try:
     from ..delivery import PlatformResolver, parse_umo
     from ..shared import TweetItem, normalize_username
     from ..shared.group_ids import normalize_stable_group_id
+    from ..media_support.html_backend.query import normalize_query, query_kind
     from .groups import WebUIGroupEditor
 except ImportError:
     from config import (
@@ -58,6 +59,7 @@ except ImportError:
     )
     from shared import TweetItem, normalize_username
     from shared.group_ids import normalize_stable_group_id
+    from media_support.html_backend.query import normalize_query, query_kind
     from plugin_api.groups import WebUIGroupEditor
 
 
@@ -235,13 +237,15 @@ class NitterWebAPI:
                 config_get(self.config, "translate_enabled", False), False
             ),
         }
-        instances = list(getattr(getattr(self.plugin, "nitter", None), "instances", []))
+        instance_lists = self._configured_instance_lists()
+        instances = list(instance_lists["rss"])
         return self._ok(
             scheduler=scheduler_state,
             counts=counts,
             features=features,
-            config_summary=self._config_summary(instances, groups),
+            config_summary=self._config_summary(instances, groups, instance_lists),
             instances=instances,
+            instance_lists=instance_lists,
             attention_items=self._overview_attention_items(
                 counts, scheduler_state, instances, groups
             ),
@@ -687,40 +691,158 @@ class NitterWebAPI:
     async def probe_mirror(self, data: dict[str, Any]) -> dict[str, Any]:
         instance = self._data_text(data, "instance")
         if not self.plugin._looks_like_instance(instance):
-            return self._error("请填写完整 Nitter 镜像站地址，例如 https://nitter.net")
+            return self._error(
+                "请填写完整 Nitter 镜像站地址，例如 https://nitter.net"
+            )
 
-        username = normalize_username(self._data_text(data, "username") or "nasa")
-        if not username:
-            return self._error("关注账号格式无效")
+        mode = self._data_text(data, "mode") or "blogger_rss"
+        mode = mode.strip().lower().replace("-", "_")
+        if mode not in {"blogger_rss", "blogger_html", "search"}:
+            return self._error(
+                "mode 仅支持 blogger_rss / blogger_html / search"
+            )
 
         limit = self._parse_int(
             data.get("limit"),
             int(getattr(self.plugin, "default_limit", 5) or 5),
             minimum=1,
-            maximum=200,
+            maximum=50,
         )
+
         try:
-            used_instance, tweets = await self.plugin.nitter.fetch_tweets_from_instance(
-                instance,
-                username,
-                limit,
-            )
+            if mode == "blogger_rss":
+                username = normalize_username(
+                    self._data_text(data, "username")
+                    or self._data_text(data, "query")
+                    or "nasa"
+                )
+                if not username:
+                    return self._error("关注账号格式无效")
+                used_instance, tweets = (
+                    await self.plugin.nitter.fetch_tweets_from_instance(
+                        instance,
+                        username,
+                        limit,
+                    )
+                )
+                subject = username
+                kind = ""
+            elif mode == "blogger_html":
+                username = normalize_username(
+                    self._data_text(data, "username")
+                    or self._data_text(data, "query")
+                    or "nasa"
+                )
+                if not username:
+                    return self._error("关注账号格式无效")
+                html_backend = getattr(self.plugin, "html_backend", None)
+                if html_backend is None:
+                    return self._error("HTML 后端未初始化")
+                if not bool(getattr(getattr(html_backend, "config", None), "user_html_fallback", True)):
+                    return self._error("user_html_fallback 已关闭，无法测试博主 HTML")
+                used_instance, tweets = await asyncio.to_thread(
+                    html_backend.fetch_user,
+                    username,
+                    limit,
+                    instance=instance,
+                )
+                subject = username
+                kind = ""
+            else:
+                query = normalize_query(
+                    self._data_text(data, "query")
+                    or self._data_text(data, "username")
+                    or ""
+                )
+                if not query:
+                    return self._error("请填写搜索内容（#标签 或短语）")
+                if len(query) > 200:
+                    return self._error("搜索内容过长（最多 200 字符）")
+                html_backend = getattr(self.plugin, "html_backend", None)
+                if html_backend is None:
+                    return self._error("HTML 后端未初始化")
+                if not bool(getattr(getattr(html_backend, "config", None), "search_enabled", True)):
+                    return self._error("search_enabled 已关闭")
+                kind = query_kind(query)
+                used_instance, tweets = await asyncio.to_thread(
+                    html_backend.search,
+                    query,
+                    limit,
+                    kind=kind,
+                    instance=instance,
+                )
+                subject = query
+                username = query
         except Exception as exc:
             logger.warning(
                 "[NitterTweets] WebUI 镜像测试失败: "
-                f"instance={instance}, username={username}, error={exc}"
+                f"mode={mode}, instance={instance}, error={exc}"
             )
+            if mode == "search":
+                return self._error(
+                    f"通过 {instance} 搜索失败：实例不可达、被限流，或搜索门禁未通过。"
+                )
+            if mode == "blogger_html":
+                return self._error(
+                    f"通过 {instance} 获取 HTML 用户页失败：实例不可达、被限流，或门禁未通过。"
+                )
             return self._error(
-                f"通过 {instance} 获取 @{username} 推文失败：Nitter 镜像暂时不可用或该用户无公开 RSS。"
+                f"通过 {instance} 获取失败：Nitter 暂时不可用，或用户没有公开 RSS。"
             )
 
         return self._ok(
+            mode=mode,
             instance=used_instance,
-            username=username,
+            username=username if mode != "search" else "",
+            query=subject if mode == "search" else "",
+            kind=kind,
+            subject=subject,
             limit=limit,
             tweet_count=len(tweets),
             tweets=[self._serialize_probe_tweet(tweet) for tweet in tweets[:limit]],
         )
+
+    def _configured_instance_lists(self) -> dict[str, list[str]]:
+        """Three config lists for mirror probe UI (deduped, order preserved)."""
+        rss = list(getattr(getattr(self.plugin, "nitter", None), "instances", []) or [])
+        html_backend = getattr(self.plugin, "html_backend", None)
+        blogger_html: list[str] = []
+        search: list[str] = []
+        if html_backend is not None:
+            cfg = getattr(html_backend, "config", None)
+            if cfg is not None:
+                blogger_html = list(getattr(cfg, "blogger_html_instances", []) or [])
+                search = list(getattr(cfg, "search_instances", []) or [])
+        # Do not use load_instances() here: empty config must stay empty
+        # (load_instances falls back to DEFAULT_INSTANCES / nitter.net).
+        if not blogger_html:
+            blogger_html = list(
+                config_get(self.config, "blogger_html_instances", []) or []
+            )
+        if not search:
+            search = list(config_get(self.config, "search_instances", []) or [])
+        return {
+            "rss": self._dedupe_instances(rss),
+            "blogger_html": self._dedupe_instances(blogger_html),
+            "search": self._dedupe_instances(search),
+        }
+
+    @staticmethod
+    def _dedupe_instances(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in values:
+            item = str(raw or "").strip().rstrip("/")
+            if not item:
+                continue
+            if not item.startswith(("http://", "https://")):
+                item = f"https://{item}"
+            key = item.rstrip("/").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item.rstrip("/"))
+        return out
 
     @property
     def config(self):
@@ -811,11 +933,17 @@ class NitterWebAPI:
         return f"{action}完成"
 
     def _config_summary(
-        self, instances: list[str], groups: list[ScheduleGroup] | None = None
+        self,
+        instances: list[str],
+        groups: list[ScheduleGroup] | None = None,
+        instance_lists: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         effective_group = self._effective_config_group(groups or [])
+        lists = instance_lists or {}
         return {
             "nitter_instance_count": len(instances),
+            "blogger_html_instance_count": len(lists.get("blogger_html") or []),
+            "search_instance_count": len(lists.get("search") or []),
             "default_limit": self._default_limit(),
             "check_interval_minutes": self._group_value(
                 effective_group, "check_interval_minutes", 30

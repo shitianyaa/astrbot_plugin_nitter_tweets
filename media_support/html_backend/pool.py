@@ -120,10 +120,17 @@ class HtmlNitterPool:
         self.session.save_cookies(host)
         return resp.body
 
-    def fetch_user(self, username: str, limit: int) -> tuple[str, list[TweetItem]]:
+    def fetch_user(
+        self,
+        username: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
-        for base in self._hosts_ready():
+        hosts = self._hosts_for_probe(instance)
+        for base in hosts:
             try:
                 tweets = self._paginate_user(base, user, limit)
                 if tweets:
@@ -140,6 +147,7 @@ class HtmlNitterPool:
         limit: int,
         *,
         kind: str | None = None,
+        instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
         q = normalize_query(query)
         if not q:
@@ -148,7 +156,8 @@ class HtmlNitterPool:
         if resolved not in {"tag", "phrase"}:
             resolved = query_kind(q)
         errors: list[str] = []
-        for base in self._hosts_ready():
+        hosts = self._hosts_for_probe(instance)
+        for base in hosts:
             try:
                 tweets = self._paginate_search(base, q, limit, kind=resolved)
                 if tweets:
@@ -158,6 +167,15 @@ class HtmlNitterPool:
                 errors.append(f"{base}: {exc}")
                 self.log(f"search fail {base}: {exc}")
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
+
+    def _hosts_for_probe(self, instance: str | None) -> list[str]:
+        """Prefer a single normalized host when probing; else ready pool order."""
+        if not instance or not str(instance).strip():
+            return self._hosts_ready()
+        base = self._norm(str(instance).strip())
+        if not base:
+            return self._hosts_ready()
+        return [base]
 
     def _paginate_user(self, base: str, user: str, limit: int) -> list[TweetItem]:
         tweets: list[TweetItem] = []

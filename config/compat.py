@@ -30,7 +30,19 @@ MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
-TWEET_GROUP_TEMPLATE_KEY = "group"
+# Legacy single template name used by pre-tag-group configs.
+TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
+TWEET_GROUP_TEMPLATE_KEY_BLOGGER = "blogger"
+TWEET_GROUP_TEMPLATE_KEY_TAG = "tag"
+# Default template for pure blogger / unspecified groups (incl. old "用户分组").
+TWEET_GROUP_TEMPLATE_KEY = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+TWEET_GROUP_TEMPLATE_KEYS = frozenset(
+    {
+        TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
+        TWEET_GROUP_TEMPLATE_KEY_TAG,
+        TWEET_GROUP_TEMPLATE_KEY_LEGACY,
+    }
+)
 IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
 
 REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
@@ -656,8 +668,51 @@ def _clamp_int(value, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, number))
 
 
+def resolve_tweet_group_template_key(group: dict) -> str:
+    """Map stored group to AstrBot template_list key (blogger | tag)."""
+    raw_type = str(group.get("group_type") or "").strip().lower()
+    if raw_type == TWEET_GROUP_TEMPLATE_KEY_TAG:
+        return TWEET_GROUP_TEMPLATE_KEY_TAG
+
+    raw_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
+    if raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
+        return TWEET_GROUP_TEMPLATE_KEY_TAG
+    # Legacy template "group" and missing keys are pure blogger groups.
+    if raw_key in {
+        "",
+        TWEET_GROUP_TEMPLATE_KEY_LEGACY,
+        TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
+    }:
+        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    if raw_type == TWEET_GROUP_TEMPLATE_KEY_BLOGGER:
+        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    # Unknown keys: prefer blogger unless type says tag (handled above).
+    return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+
+
 def _ensure_tweet_group_template_key(group: dict) -> bool:
-    if group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) == TWEET_GROUP_TEMPLATE_KEY:
-        return False
-    group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
-    return True
+    """Align __template_key + group_type for dual templates (blogger/tag).
+
+    Migrates legacy ``__template_key=group`` (old 用户分组) to blogger.
+    """
+    changed = False
+    desired = resolve_tweet_group_template_key(group)
+    current_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
+    if current_key != desired:
+        group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = desired
+        changed = True
+
+    current_type = str(group.get("group_type") or "").strip().lower()
+    if current_type != desired:
+        group["group_type"] = desired
+        changed = True
+
+    # Drop opposite subscription list when present so schema forms stay clean.
+    if desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
+        if group.get("watch_users"):
+            group["watch_users"] = []
+            changed = True
+    elif group.get("watch_queries"):
+        group["watch_queries"] = []
+        changed = True
+    return changed

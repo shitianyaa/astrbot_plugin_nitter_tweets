@@ -5,7 +5,7 @@
 ```text
 main.py
   -> command_handlers/
-  -> media_support.NitterClient / MediaService
+  -> media_support.NitterClient / MediaService / html_backend
   -> delivery.TweetSender
   -> ai.TweetTranslator
   -> scheduler.NitterTweetScheduler
