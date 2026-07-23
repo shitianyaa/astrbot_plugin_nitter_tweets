@@ -831,6 +831,7 @@ function snapshotEditableGroup(group) {
     daily_check_times: [...(group.daily_check_times || [])],
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
     media_only_enabled: !!group.media_only_enabled,
+    omit_status_url: group.omit_status_url !== false,
     push_targets: [...(group.push_targets || [])],
     watch_queries: (group.watch_queries || []).map((item) => ({
       query: item.query || "",
@@ -1189,6 +1190,18 @@ function renderGroupEditor() {
           draft.media_only_enabled,
         ),
       ),
+      editorField(
+        "发送时去除推文链接",
+        toggleField(
+          group.group_id,
+          "omit_status_url",
+          draft.omit_status_url !== false,
+        ),
+      ),
+      el("p", {
+        className: "helper-text",
+        text: "默认开启：不发送推文 URL 明文，并去掉正文/译文中的 http(s) 链接。Telegram 仍可用摘要链到原文。仅媒体模式不调用翻译。",
+      }),
       el("p", {
         className: "helper-text",
         text: "受全局图片和视频/GIF附件开关控制。",

@@ -4,7 +4,11 @@
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-07-23
+### Added
+
+- 分组开关 `omit_status_url`（默认开启）：发送时去掉推文 URL 明文，并剥离正文/译文中的 http(s)；Telegram 使用摘要 Markdown 链到原文（`MessageChain.use_markdown`）。仅媒体模式仍不调用 AI 翻译。
+
+## [0.17.0]## [0.17.0] - 2026-07-23
 
 ### Added
 

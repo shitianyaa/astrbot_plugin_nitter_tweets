@@ -17,6 +17,15 @@ from .outcomes import SendOutcome
 
 
 class DefaultDeliveryAdapter(DeliveryAdapter):
+
+    @staticmethod
+    def _message_chain(components, *, link_style: str = "plain") -> MessageChain:
+        chain = MessageChain(components)
+        # Only enable markdown when caller asked for telegram_md; never override plain.
+        if link_style == "telegram_md" and hasattr(chain, "use_markdown"):
+            chain.use_markdown(True)
+        return chain
+
     async def send_event(
         self,
         event,
@@ -27,6 +36,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         if self._should_split_direct_media(sender, tweets):
@@ -39,11 +50,13 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
+                omit_status_url=omit_status_url,
+            link_style=link_style,
             )
 
         attempt = await sender._send_event_chain(
             event,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -52,6 +65,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     notices=notices,
                     header_text=header_text,
                     media_only=media_only,
+                    omit_status_url=omit_status_url,
+            link_style=link_style,
                 )
             ),
             "manual direct tweets",
@@ -64,7 +79,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         if sender._has_attached_videos(tweets):
             retry_attempt = await sender._send_event_chain(
                 event,
-                MessageChain(
+                self._message_chain(
                     sender.renderer.build_direct_components(
                         username,
                         instance,
@@ -74,6 +89,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         notices=notices,
                         header_text=header_text,
                         media_only=media_only,
+                        omit_status_url=omit_status_url,
+            link_style=link_style,
                     )
                 ),
                 "manual direct tweets without videos",
@@ -95,6 +112,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             header_text=header_text,
             tweet_start_index=tweet_start_index,
             media_only=media_only,
+            omit_status_url=omit_status_url,
+            link_style=link_style,
         )
 
     async def send_summary_to_umo(self, context, umo: str, summary: str) -> SendOutcome:
@@ -104,7 +123,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         attempt = await self.sender._send_context_message(
             context,
             umo,
-            MessageChain([Plain(text)]),
+            self._message_chain([Plain(text)]),
             "scheduled summary",
         )
         return SendOutcome(
@@ -125,6 +144,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         batch_summary: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
         if self._should_split_direct_media(sender, tweets):
@@ -139,12 +160,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 batch_summary=batch_summary,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
+                omit_status_url=omit_status_url,
+            link_style=link_style,
             )
 
         attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -154,6 +177,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     header_text=header_text,
                     batch_summary=batch_summary,
                     media_only=media_only,
+                    omit_status_url=omit_status_url,
+            link_style=link_style,
                 )
             ),
             "direct scheduled tweets",
@@ -171,7 +196,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             retry_attempt = await sender._send_context_message(
                 context,
                 umo,
-                MessageChain(
+                self._message_chain(
                     sender.renderer.build_direct_components(
                         username,
                         instance,
@@ -182,6 +207,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         header_text=header_text,
                         batch_summary=batch_summary,
                         media_only=media_only,
+                        omit_status_url=omit_status_url,
+            link_style=link_style,
                     )
                 ),
                 "direct scheduled tweets without videos",
@@ -207,7 +234,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         fallback = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 [
                     Plain(
                         sender.renderer.format_plain(
@@ -219,6 +246,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             header_text=header_text,
                             batch_summary=batch_summary,
                             media_only=media_only,
+                            omit_status_url=omit_status_url,
+            link_style=link_style,
                         )
                     )
                 ]
@@ -251,12 +280,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         batch_summary: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
         text_attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -268,6 +299,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     header_text=header_text,
                     batch_summary=batch_summary,
                     media_only=media_only,
+                    omit_status_url=omit_status_url,
+            link_style=link_style,
                 )
             ),
             "QQ direct scheduled tweet text before videos",
@@ -308,7 +341,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_attempt = await sender._send_context_message(
                 context,
                 umo,
-                MessageChain([video_component]),
+                self._message_chain([video_component]),
                 f"QQ direct scheduled tweet video {offset}/{len(video_components)}",
             )
             if video_attempt.success or video_attempt.uncertain:
@@ -372,6 +405,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         text_components = sender.renderer.build_direct_components(
@@ -384,6 +419,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             notices=notices,
             header_text=header_text,
             media_only=media_only,
+            omit_status_url=omit_status_url,
+            link_style=link_style,
         )
         text_attempt = await sender._send_event_chain(
             event,
@@ -404,6 +441,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
+                omit_status_url=omit_status_url,
+            link_style=link_style,
             )
 
         image_components = sender.renderer.build_direct_image_components(tweets)
@@ -429,7 +468,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         for offset, video_component in enumerate(video_components, start=1):
             video_attempt = await sender._send_event_chain(
                 event,
-                MessageChain([video_component]),
+                self._message_chain([video_component]),
                 f"manual QQ direct video {offset}/{len(video_components)}",
             )
             if video_attempt.success or video_attempt.uncertain:
@@ -464,7 +503,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain([component]),
+            self._message_chain([component]),
             label,
         )
         if attempt.success or attempt.uncertain or not attempt.retryable:
@@ -472,7 +511,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         return await sender._send_context_message(
             context,
             umo,
-            MessageChain([component]),
+            self._message_chain([component]),
             label,
         )
 
@@ -485,14 +524,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
     ):
         attempt = await sender._send_event_chain(
             event,
-            MessageChain([component]),
+            self._message_chain([component]),
             label,
         )
         if attempt.success or attempt.uncertain or not attempt.retryable:
             return attempt
         return await sender._send_event_chain(
             event,
-            MessageChain([component]),
+            self._message_chain([component]),
             label,
         )
 
@@ -520,11 +559,13 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         attempt = await sender._send_event_chain(
             event,
-            MessageChain(
+            self._message_chain(
                 [
                     Plain(
                         sender.renderer.format_plain(
@@ -535,6 +576,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             notices=notices,
                             header_text=header_text,
                             media_only=media_only,
+                            omit_status_url=omit_status_url,
+            link_style=link_style,
                         )
                     )
                 ]
