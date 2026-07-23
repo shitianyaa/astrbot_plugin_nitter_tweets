@@ -83,7 +83,7 @@
           <div class="title-block">
             <span class="kicker">PLUGIN CONSOLE</span>
             <h1 id="currentTabTitle">Nitter 推文控制台总览</h1>
-            <p id="currentTabDesc">聚合查看博主订阅分组、推送目标状态以及 Nitter 节点连通性。</p>
+            <p id="currentTabDesc">聚合查看推送分组（博主/标签）、目标状态以及 Nitter 镜像诊断。</p>
           </div>
           <div class="topbar-actions">
             <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换亮色/暗色">
@@ -110,9 +110,9 @@
 
         <section id="groupsView" class="view" aria-label="分组订阅">
           <div class="groups-layout">
-            <section id="groupSwitcher" class="panel group-switcher" aria-label="用户分组切换">
+            <section id="groupSwitcher" class="panel group-switcher" aria-label="分组切换">
               <div class="panel-head">
-                <h2>用户分组</h2>
+                <h2>推送分组</h2>
                 <button id="createGroupBtn" class="button primary small" type="button">
                   <span class="icon" data-icon="plus"></span>
                   新建分组
@@ -131,8 +131,8 @@
               <select id="historyGroupSelect"></select>
             </label>
             <label class="field compact">
-              <span>博主</span>
-              <input id="historyUsername" type="text" placeholder="NASA" />
+              <span>账号/查询</span>
+              <input id="historyUsername" type="text" placeholder="NASA 或 q:查询" />
             </label>
             <label class="field compact">
               <span>数量</span>
@@ -164,18 +164,29 @@
           <div class="split">
             <form id="mirrorForm" class="panel form-panel">
               <h2>镜像测试</h2>
+              <p class="helper-text">
+                不改配置、不写推送记录。按模式使用配置中的实例列表（已去重）；也可手填临时 URL。
+              </p>
               <div class="form-grid">
                 <label class="field">
-                  <span>用户名</span>
-                  <input id="mirrorUsername" type="text" value="nasa" />
+                  <span>测试模式</span>
+                  <select id="mirrorMode">
+                    <option value="blogger_rss" selected>博主 RSS</option>
+                    <option value="blogger_html">博主 HTML</option>
+                    <option value="search">搜索（标签/短语）</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span id="mirrorQueryLabel">用户名</span>
+                  <input id="mirrorUsername" type="text" value="nasa" placeholder="nasa 或 #标签 / 短语" />
                 </label>
                 <label class="field">
                   <span>数量</span>
-                  <input id="mirrorLimit" type="number" min="1" max="200" value="5" />
+                  <input id="mirrorLimit" type="number" min="1" max="50" value="5" />
                 </label>
                 <label class="field wide">
-                  <span>临时镜像 URL</span>
-                  <input id="mirrorInstance" type="url" placeholder="https://nitter.net" />
+                  <span>镜像 URL</span>
+                  <input id="mirrorInstance" type="url" placeholder="https://nitter.example" />
                 </label>
               </div>
               <button id="mirrorProbeBtn" class="button primary" type="submit">
@@ -184,7 +195,8 @@
               </button>
             </form>
             <div class="panel">
-              <h2>Nitter 实例</h2>
+              <h2 id="mirrorInstanceListTitle">配置实例（RSS）</h2>
+              <p id="mirrorInstanceListHint" class="helper-text">点击填入左侧 URL</p>
               <div id="instanceList" class="chip-list"></div>
             </div>
           </div>

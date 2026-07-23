@@ -99,9 +99,13 @@ class HtmlNitterService:
         )
 
     def fetch_user(
-        self, username: str, limit: int = 5
+        self,
+        username: str,
+        limit: int = 5,
+        *,
+        instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
-        return self.blogger_html.fetch_user(username, limit)
+        return self.blogger_html.fetch_user(username, limit, instance=instance)
 
     def search(
         self,
@@ -109,9 +113,12 @@ class HtmlNitterService:
         limit: int = 5,
         *,
         kind: str | None = None,
+        instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
         q = normalize_query(query)
         resolved = kind or query_kind(q)
-        return self.search_pool.search(q, limit, kind=resolved)
+        return self.search_pool.search(
+            q, limit, kind=resolved, instance=instance
+        )
