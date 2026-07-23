@@ -55,9 +55,12 @@ class WebUIGroupEditor:
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         group_type = self._group_type(data.get("group_type"))
+        template_key = (
+            "tag" if group_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+        )
         groups.append(
             {
-                TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
+                TWEET_GROUP_TEMPLATE_KEY_FIELD: template_key,
                 "name": group_name,
                 "group_id": group_id,
                 "enabled": False,
@@ -111,7 +114,9 @@ class WebUIGroupEditor:
                     "error": "分组类型创建后不可修改，请新建对应类型的分组",
                 }
 
-        raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
+        raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = (
+            "tag" if existing_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+        )
         raw_group["name"] = name
         raw_group["group_id"] = normalize_stable_group_id(group_id)
         raw_group["enabled"] = self._bool(

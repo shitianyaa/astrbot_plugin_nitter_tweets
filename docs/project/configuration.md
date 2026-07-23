@@ -2,7 +2,10 @@
 
 配置真源是 `_conf_schema.json`。读取、迁移规则在 `config/compat.py`，分组解析规则在 `scheduler/config.py`。
 
-## 分组
+## 
+
+AstrBot WebUI 为 ：添加时先选 **博主分组**（）或 **标签分组**（）。旧版单一模板 （用户分组）启动时迁移为 。
+分组
 
 - `basic`: Nitter 实例、默认数量、冷却、基础平台字段；HTML 回退与搜索相关键（见下「三列表」）。
 - `media`: 图片、视频、xdown、缓存。

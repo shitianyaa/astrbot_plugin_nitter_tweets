@@ -302,13 +302,13 @@
         "invisible": true
       },
       "tweet_groups": {
-        "description": "用户分组",
+        "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "每个分组有类型：blogger（关注账号）或 tag（搜索订阅）。共用推送目标、检查方式与过滤；仅媒体受全局媒体开关和单条媒体准备结果控制。group_id 在创建时自动生成。",
+        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。",
         "templates": {
-          "group": {
-            "name": "用户分组",
+          "blogger": {
+            "name": "博主分组",
             "display_item": "name",
             "hide_hint_in_list": true,
             "items": {
@@ -334,23 +334,125 @@
                 "description": "分组类型",
                 "type": "string",
                 "default": "blogger",
-                "options": [
-                  "blogger",
-                  "tag"
-                ],
-                "hint": "blogger=博主分组（watch_users）；tag=标签分组（watch_queries）。创建后请勿随意改类型。旧配置缺省视为 blogger。"
+                "invisible": true,
+                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
               },
               "watch_users": {
-                "description": "分组关注账号",
+                "description": "关注账号",
                 "type": "list",
                 "default": [],
                 "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
               },
-              "watch_queries": {
-                "description": "标签分组搜索订阅",
+              "push_targets": {
+                "description": "分组推送目标",
                 "type": "list",
                 "default": [],
-                "hint": "仅 group_type=tag 使用。每项建议为对象：query + type(tag|phrase)。也可写字符串：#标签 或 短语。禁止给短语自动加 #。"
+                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+              },
+              "interval_check_enabled": {
+                "description": "启用间隔检查",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+              },
+              "daily_check_times": {
+                "description": "每日检查时间列表",
+                "type": "list",
+                "default": [],
+                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+              },
+              "filter_plain_text_enabled": {
+                "description": "过滤纯文本推文",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+              },
+              "media_only_enabled": {
+                "description": "仅媒体",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的定时推送只发送作者和成功准备的图片/视频/GIF，不发送正文、翻译或链接。此开关受全局图片、视频/GIF发送开关和单条媒体数量上限控制；全局媒体不可用时自动回退为完整内容。手动 /推文、/镜像测试 和历史重推不受此分组开关影响。"
+              },
+              "aliases": {
+                "description": "分组别名",
+                "type": "list",
+                "default": [],
+                "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
+                "invisible": true
+              },
+              "check_on_startup": {
+                "description": "启动后立即检查",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "notify_no_updates": {
+                "description": "无新推文时发送检查结果提示",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "check_interval_minutes": {
+                "description": "间隔检查分钟数",
+                "type": "int",
+                "default": 30,
+                "invisible": true
+              },
+              "daily_check_enabled": {
+                "description": "启用每日定点检查",
+                "type": "bool",
+                "default": true,
+                "invisible": true
+              },
+              "send_target_interval": {
+                "description": "多目标发送间隔秒数",
+                "type": "float",
+                "default": 1.5,
+                "invisible": true
+              },
+              "send_user_interval": {
+                "description": "多账号发送间隔秒数",
+                "type": "float",
+                "default": 2.0,
+                "invisible": true
+              }
+            }
+          },
+          "tag": {
+            "name": "标签分组",
+            "display_item": "name",
+            "hide_hint_in_list": true,
+            "items": {
+              "name": {
+                "description": "分组名称",
+                "type": "string",
+                "default": "",
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
+              },
+              "group_id": {
+                "description": "内部稳定分组 ID",
+                "type": "string",
+                "default": "",
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录和历史记录断开。",
+                "invisible": true
+              },
+              "enabled": {
+                "description": "启用分组",
+                "type": "bool",
+                "default": true
+              },
+              "group_type": {
+                "description": "分组类型",
+                "type": "string",
+                "default": "tag",
+                "invisible": true,
+                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
+              },
+              "watch_queries": {
+                "description": "搜索订阅",
+                "type": "list",
+                "default": [],
+                "hint": "每项建议为对象：query + type(tag|phrase)。也可写字符串：#标签 或 短语。前导 # 为标签；短语禁止自动加 #。"
               },
               "push_targets": {
                 "description": "分组推送目标",

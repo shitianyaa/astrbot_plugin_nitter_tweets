@@ -6,6 +6,7 @@
 
 ### Added
 
+- AstrBot 配置 `tweet_groups` 拆成模板「博主分组 / 标签分组」；添加时先选类型。旧 `__template_key=group`（用户分组）启动迁移为 blogger。
 - 新增 HTML 后端：`blogger_html_instances` / `search_instances`、博主 RSS 失败后的 HTML 用户页回退，以及非管理员命令 `/推文搜索`（标签带 `#`，短语不自动加 `#`）。
 - 分组类型 `group_type`：`blogger`（`watch_users`）与 `tag`（`watch_queries`，`type=tag|phrase`）对位；标签分组定时搜索，seen 键为 `q:<casefold query>`；Dashboard 支持创建/编辑类型与查询列表。
 - 管理命令 `/标签导入`、`/标签删除` 维护标签分组查询；`/订阅导入` `/订阅删除` 拒绝标签组以免写错字段。
