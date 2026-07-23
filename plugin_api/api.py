@@ -13,6 +13,10 @@ try:
     from ..config import (
         config_get,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
+        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from ..config.subscriptions import (
         ensure_default_import_group,
@@ -34,6 +38,10 @@ except ImportError:
     from config import (
         config_get,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
+        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from config.subscriptions import (
         ensure_default_import_group,
@@ -225,9 +233,11 @@ class NitterWebAPI:
             ),
         }
         features = {
-            "images": bool(config_get(self.config, "send_image_attachments", True)),
-            "videos": bool(config_get(self.config, "send_video_attachments", False)),
-            "translation": bool(config_get(self.config, "translate_enabled", False)),
+            "images": resolve_send_image_attachments(self.config),
+            "videos": resolve_send_video_attachments(self.config),
+            "translation": parse_config_bool(
+                config_get(self.config, "translate_enabled", False), False
+            ),
         }
         instances = list(getattr(getattr(self.plugin, "nitter", None), "instances", []))
         return self._ok(
@@ -1043,8 +1053,21 @@ class NitterWebAPI:
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
+            "media_only_enabled": group.media_only_enabled,
+            "media_only_effective": self._media_only_effective(group),
+            # Global media availability only; independent of saved group toggle
+            # so the dashboard draft can warn before save.
+            "media_only_unavailable_reason": media_only_unavailable_reason(
+                self.config
+            ),
             "attention_items": self._group_attention_items(group),
         }
+
+    def _media_only_effective(self, group: ScheduleGroup) -> bool:
+        return bool(
+            group.media_only_enabled
+            and not media_only_unavailable_reason(self.config)
+        )
 
     @staticmethod
     def _group_attention_items(

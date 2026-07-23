@@ -169,8 +169,7 @@ class ManualCommandMixin:
                     instance,
                     [tweet],
                     notices=notices,
-                    header_text=f"@{username} 本次结果 {index}/{total}",
-                    tweet_start_index=index,
+                    tweet_start_index=1,
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, [tweet])

@@ -706,6 +706,7 @@ function snapshotEditableGroup(group) {
     interval_check_enabled: !!group.interval_check_enabled,
     daily_check_times: [...(group.daily_check_times || [])],
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
+    media_only_enabled: !!group.media_only_enabled,
     push_targets: [...(group.push_targets || [])],
   };
 }
@@ -1033,6 +1034,24 @@ function renderGroupEditor() {
           draft.filter_plain_text_enabled,
         ),
       ),
+      editorField(
+        "仅媒体",
+        toggleField(
+          group.group_id,
+          "media_only_enabled",
+          draft.media_only_enabled,
+        ),
+      ),
+      el("p", {
+        className: "helper-text",
+        text: "受全局图片和视频/GIF附件开关控制。",
+      }),
+      draft.media_only_enabled && group.media_only_unavailable_reason
+        ? el("p", {
+            className: "helper-text",
+            text: "当前全局媒体不可用，“仅媒体”暂不生效，将发送完整内容。",
+          })
+        : null,
     ]),
     el("section", { className: "editor-section" }, [
       el("div", { className: "section-head" }, [el("h3", { text: "关注账号" })]),
