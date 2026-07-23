@@ -21,77 +21,22 @@ except ImportError:
 
 LEGACY_CONFIG_MIGRATION_KEY = "_legacy_grouped_config_migrated"
 DEFAULT_GROUP_CONFIG_MIGRATION_KEY = "_default_group_config_migrated"
-# Keep the 0.16 cleanup pass independent from the older send-delete migration
-# so users who completed the old migration still receive the current cleanup.
-MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
-# Keep the old key available for existing configs and callers. It is no
-# longer used as the guard for the current cleanup pass.
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
-MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
+MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = (
+    "_max_video_duration_grouped_config_migrated"
+)
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
-# Legacy single template name used by pre-tag-group configs.
-TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
-TWEET_GROUP_TEMPLATE_KEY_BLOGGER = "blogger"
-TWEET_GROUP_TEMPLATE_KEY_TAG = "tag"
-# Default template for pure blogger / unspecified groups (incl. old "用户分组").
-TWEET_GROUP_TEMPLATE_KEY = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-TWEET_GROUP_TEMPLATE_KEYS = frozenset(
-    {
-        TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
-        TWEET_GROUP_TEMPLATE_KEY_TAG,
-        TWEET_GROUP_TEMPLATE_KEY_LEGACY,
-    }
-)
-IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
-
-REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
-REMOVED_FEATURE_CONFIG_KEYS = frozenset(
-    {
-        "comment_enabled",
-        "comment_provider_id",
-        "comment_probability",
-        "comment_max_chars",
-        "comment_prompt",
-        "vision_enabled",
-        "vision_provider_id",
-        "vision_probability",
-        "vision_prompt",
-        "vision_max_images",
-        "vision_max_total",
-        "deferred_publish_enabled",
-        "deferred_publish_times",
-        "deferred_publish_batch_limit",
-        "deferred_prefetch_media",
-        "deferred_media_retention_hours",
-        "deferred_media_download_interval_seconds",
-        "scheduled_fetch_limit",
-    }
-)
-REMOVED_FEATURE_CONFIG_NAMES = (
-    REMOVED_FEATURE_CONFIG_GROUPS | REMOVED_FEATURE_CONFIG_KEYS
-)
+TWEET_GROUP_TEMPLATE_KEY = "group"
 
 CONFIG_GROUP_BY_KEY = {
     "storage_backend": "basic",
     "instances": "basic",
     "default_limit": "basic",
     "request_timeout": "basic",
-    "retry_attempts": "basic",
-    "retry_delay_seconds": "basic",
     "cooldown_seconds": "basic",
     "user_agent": "basic",
     "filter_reposts_enabled": "basic",
-    "user_html_fallback": "basic",
-    "blogger_html_instances": "basic",
-    "search_enabled": "basic",
-    "search_instances": "basic",
-    "search_cooldown_seconds": "basic",
-    "search_default_limit": "basic",
-    "search_max_limit": "basic",
-    "html_min_interval": "basic",
-    "html_max_pages": "basic",
-    "html_request_timeout": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "video_resolution_preference": "media",
@@ -109,6 +54,17 @@ CONFIG_GROUP_BY_KEY = {
     "translate_prompt": "ai_translation",
     "translate_system_prompt": "ai_translation",
     "translate_prompt_template": "ai_translation",
+    "comment_enabled": "ai_comment",
+    "comment_provider_id": "ai_comment",
+    "comment_probability": "ai_comment",
+    "comment_max_chars": "ai_comment",
+    "comment_prompt": "ai_comment",
+    "vision_enabled": "ai_vision",
+    "vision_provider_id": "ai_vision",
+    "vision_probability": "ai_vision",
+    "vision_prompt": "ai_vision",
+    "vision_max_images": "ai_vision",
+    "vision_max_total": "ai_vision",
     "schedule_enabled": "schedule",
     "notify_no_updates": "schedule",
     "check_on_startup": "schedule",
@@ -116,6 +72,13 @@ CONFIG_GROUP_BY_KEY = {
     "check_interval_minutes": "schedule",
     "daily_check_enabled": "schedule",
     "daily_check_times": "schedule",
+    "scheduled_fetch_limit": "schedule",
+    "deferred_publish_enabled": "deferred",
+    "deferred_publish_times": "deferred",
+    "deferred_publish_batch_limit": "deferred",
+    "deferred_prefetch_media": "deferred",
+    "deferred_media_retention_hours": "deferred",
+    "deferred_media_download_interval_seconds": "deferred",
     "brief_log_enabled": "logging",
     "concurrent_fetch_enabled": "performance",
     "fetch_concurrency": "performance",
@@ -137,20 +100,8 @@ MIGRATABLE_CONFIG_KEYS = {
     "instances",
     "default_limit",
     "request_timeout",
-    "retry_attempts",
-    "retry_delay_seconds",
     "cooldown_seconds",
     "user_agent",
-    "user_html_fallback",
-    "blogger_html_instances",
-    "search_enabled",
-    "search_instances",
-    "search_cooldown_seconds",
-    "search_default_limit",
-    "search_max_limit",
-    "html_min_interval",
-    "html_max_pages",
-    "html_request_timeout",
     "send_image_attachments",
     "send_video_attachments",
     "video_resolution_preference",
@@ -165,6 +116,16 @@ MIGRATABLE_CONFIG_KEYS = {
     "translate_max_chars",
     "translate_chinese_ratio_threshold",
     "translate_prompt",
+    "comment_enabled",
+    "comment_provider_id",
+    "comment_probability",
+    "comment_max_chars",
+    "comment_prompt",
+    "vision_enabled",
+    "vision_provider_id",
+    "vision_probability",
+    "vision_prompt",
+    "vision_max_images",
     "schedule_enabled",
     "notify_no_updates",
     "check_on_startup",
@@ -172,6 +133,13 @@ MIGRATABLE_CONFIG_KEYS = {
     "check_interval_minutes",
     "daily_check_enabled",
     "daily_check_times",
+    "scheduled_fetch_limit",
+    "deferred_publish_enabled",
+    "deferred_publish_times",
+    "deferred_publish_batch_limit",
+    "deferred_prefetch_media",
+    "deferred_media_retention_hours",
+    "deferred_media_download_interval_seconds",
     "concurrent_fetch_enabled",
     "fetch_concurrency",
     "concurrent_fetch_instances",
@@ -191,6 +159,7 @@ DEFAULT_GROUP_MIGRATION_KEYS = {
     "interval_check_enabled",
     "daily_check_enabled",
     "daily_check_times",
+    "deferred_publish_enabled",
     "filter_plain_text_enabled",
 }
 
@@ -198,6 +167,7 @@ LIST_MERGE_KEYS = {
     "watch_users",
     "push_targets",
     "daily_check_times",
+    "deferred_publish_times",
     "aliases",
 }
 
@@ -211,100 +181,8 @@ def config_get(config, key: str, default=None):
     return _dict_get(config, key, default)
 
 
-def parse_config_bool(value, default: bool = False) -> bool:
-    """Parse bool values consistently across migrated and WebUI configs."""
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {
-            "1",
-            "true",
-            "yes",
-            "on",
-            "enable",
-            "enabled",
-            "是",
-            "开",
-            "开启",
-        }:
-            return True
-        if normalized in {
-            "0",
-            "false",
-            "no",
-            "off",
-            "disable",
-            "disabled",
-            "否",
-            "关",
-            "关闭",
-        }:
-            return False
-        return default
-    return bool(value)
-
-
-def resolve_send_image_attachments(config) -> bool:
-    """Resolve effective image-attachment delivery, including legacy fallbacks."""
-    image_setting = config_get(config, "send_image_attachments", None)
-    if image_setting is None:
-        return parse_config_bool(
-            config_get(config, "download_media", True), True
-        ) and parse_config_bool(config_get(config, "download_images", True), True)
-    return parse_config_bool(image_setting, True)
-
-
-def resolve_send_video_attachments(config) -> bool:
-    """Resolve effective video/GIF-attachment delivery."""
-    return parse_config_bool(config_get(config, "send_video_attachments", False), False)
-
-
-def media_only_unavailable_reason(
-    config,
-    *,
-    media_only_enabled: bool = True,
-) -> str:
-    """Return why media-only mode cannot take effect.
-
-    Default media_only_enabled=True reports global media availability only
-    (used by WebUI so drafts can warn before the group toggle is saved).
-    Pass media_only_enabled=False to short-circuit for a disabled group toggle
-    (scheduler path). A non-empty reason alone does not mean the group enabled
-    media-only; combine with the saved toggle / media_only_effective.
-    """
-    if not media_only_enabled:
-        return ""
-    image_enabled = resolve_send_image_attachments(config)
-    video_enabled = resolve_send_video_attachments(config)
-    if not (image_enabled or video_enabled):
-        return "global_media_disabled"
-    try:
-        max_media = int(config_get(config, "max_media_per_tweet", 4))
-    except (TypeError, ValueError):
-        max_media = 0
-    return "media_limit_zero" if max_media <= 0 else ""
-
-
-def sanitize_removed_feature_config(config) -> bool:
-    """Remove configuration left by deleted or retired features."""
-    return _sanitize_removed_feature_value(config)
-
-
-def sanitize_removed_feature_group(group: dict) -> bool:
-    """Remove deleted and ignored fields before a tweet group is persisted."""
-    changed = _sanitize_removed_feature_value(group)
-    if _sanitize_ignored_tweet_group_config(group):
-        changed = True
-    return changed
-
-
 def migrate_legacy_grouped_config(config) -> bool:
-    changed = sanitize_removed_feature_config(config)
-    if _migrate_max_video_duration_grouped_config(config):
-        changed = True
+    changed = _migrate_max_video_duration_grouped_config(config)
     if bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False)):
         save_config = getattr(config, "save_config", None)
         if changed and callable(save_config):
@@ -333,32 +211,6 @@ def migrate_legacy_grouped_config(config) -> bool:
     save_config = getattr(config, "save_config", None)
     if changed and callable(save_config):
         save_config()
-    return changed
-
-
-def _sanitize_removed_feature_value(value) -> bool:
-    changed = False
-    if isinstance(value, dict):
-        for key in list(value):
-            if key in REMOVED_FEATURE_CONFIG_NAMES:
-                del value[key]
-                changed = True
-                continue
-            if _sanitize_removed_feature_value(value[key]):
-                changed = True
-    elif isinstance(value, list):
-        for item in value:
-            if _sanitize_removed_feature_value(item):
-                changed = True
-    return changed
-
-
-def _sanitize_ignored_tweet_group_config(group: dict) -> bool:
-    changed = False
-    for key in IGNORED_TWEET_GROUP_CONFIG_KEYS:
-        if key in group:
-            del group[key]
-            changed = True
     return changed
 
 
@@ -616,8 +468,6 @@ def _ensure_tweet_group_template_keys(groups: list) -> bool:
     for group in groups:
         if not isinstance(group, dict):
             continue
-        if _sanitize_ignored_tweet_group_config(group):
-            changed = True
         if _ensure_tweet_group_template_key(group):
             changed = True
     return changed
@@ -668,51 +518,8 @@ def _clamp_int(value, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, number))
 
 
-def resolve_tweet_group_template_key(group: dict) -> str:
-    """Map stored group to AstrBot template_list key (blogger | tag)."""
-    raw_type = str(group.get("group_type") or "").strip().lower()
-    if raw_type == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        return TWEET_GROUP_TEMPLATE_KEY_TAG
-
-    raw_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
-    if raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        return TWEET_GROUP_TEMPLATE_KEY_TAG
-    # Legacy template "group" and missing keys are pure blogger groups.
-    if raw_key in {
-        "",
-        TWEET_GROUP_TEMPLATE_KEY_LEGACY,
-        TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
-    }:
-        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-    if raw_type == TWEET_GROUP_TEMPLATE_KEY_BLOGGER:
-        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-    # Unknown keys: prefer blogger unless type says tag (handled above).
-    return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-
-
 def _ensure_tweet_group_template_key(group: dict) -> bool:
-    """Align __template_key + group_type for dual templates (blogger/tag).
-
-    Migrates legacy ``__template_key=group`` (old 用户分组) to blogger.
-    """
-    changed = False
-    desired = resolve_tweet_group_template_key(group)
-    current_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
-    if current_key != desired:
-        group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = desired
-        changed = True
-
-    current_type = str(group.get("group_type") or "").strip().lower()
-    if current_type != desired:
-        group["group_type"] = desired
-        changed = True
-
-    # Drop opposite subscription list when present so schema forms stay clean.
-    if desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        if group.get("watch_users"):
-            group["watch_users"] = []
-            changed = True
-    elif group.get("watch_queries"):
-        group["watch_queries"] = []
-        changed = True
-    return changed
+    if group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) == TWEET_GROUP_TEMPLATE_KEY:
+        return False
+    group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
+    return True

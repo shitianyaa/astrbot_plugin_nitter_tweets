@@ -179,7 +179,7 @@ def lark_tweet_post_title(
     title = str(header_text or "").strip()
     if title:
         return _lark_post_title(title)
-    return _lark_post_title(f"@{username}")
+    return _lark_post_title(f"@{username} 最近 {tweet_count} 条推文")
 
 
 def _lark_post_append_text_line(content: list[list[dict]], line: str) -> None:

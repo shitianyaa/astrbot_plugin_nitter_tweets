@@ -26,10 +26,11 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
-        media_only: bool = False,
     ) -> bool:
         sender = self.sender
-        if self._should_split_direct_media(sender, tweets):
+        if (
+            self._should_split_direct_media(sender, tweets)
+        ):
             return await self._send_split_direct_videos_event(
                 event,
                 username,
@@ -38,7 +39,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
-                media_only=media_only,
             )
 
         attempt = await sender._send_event_chain(
@@ -51,7 +51,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     start_index=tweet_start_index,
                     notices=notices,
                     header_text=header_text,
-                    media_only=media_only,
                 )
             ),
             "manual direct tweets",
@@ -73,7 +72,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         exclude_videos=True,
                         notices=notices,
                         header_text=header_text,
-                        media_only=media_only,
                     )
                 ),
                 "manual direct tweets without videos",
@@ -94,7 +92,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             notices=notices,
             header_text=header_text,
             tweet_start_index=tweet_start_index,
-            media_only=media_only,
         )
 
     async def send_summary_to_umo(self, context, umo: str, summary: str) -> SendOutcome:
@@ -124,10 +121,11 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
-        media_only: bool = False,
     ) -> SendOutcome:
         sender = self.sender
-        if self._should_split_direct_media(sender, tweets):
+        if (
+            self._should_split_direct_media(sender, tweets)
+        ):
             return await self._send_split_direct_videos_to_umo(
                 context,
                 umo,
@@ -138,7 +136,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 header_text=header_text,
                 batch_summary=batch_summary,
                 tweet_start_index=tweet_start_index,
-                media_only=media_only,
             )
 
         attempt = await sender._send_context_message(
@@ -153,7 +150,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     group_label=group_label,
                     header_text=header_text,
                     batch_summary=batch_summary,
-                    media_only=media_only,
                 )
             ),
             "direct scheduled tweets",
@@ -181,7 +177,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         group_label=group_label,
                         header_text=header_text,
                         batch_summary=batch_summary,
-                        media_only=media_only,
                     )
                 ),
                 "direct scheduled tweets without videos",
@@ -218,7 +213,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             group_label=group_label,
                             header_text=header_text,
                             batch_summary=batch_summary,
-                            media_only=media_only,
                         )
                     )
                 ]
@@ -250,7 +244,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
-        media_only: bool = False,
     ) -> SendOutcome:
         sender = self.sender
         text_attempt = await sender._send_context_message(
@@ -267,7 +260,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     group_label=group_label,
                     header_text=header_text,
                     batch_summary=batch_summary,
-                    media_only=media_only,
                 )
             ),
             "QQ direct scheduled tweet text before videos",
@@ -295,7 +287,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 continue
             image_error = image_attempt.error
             logger.warning(
-                "[NitterTweets] QQ 直发图片附件失败，主体文本已发送: "
+                "[NitterTweets] QQ 直发图片附件失败，正文已发送: "
                 f"target={umo}, image={offset}/{len(image_components)}, "
                 f"error={image_error}"
             )
@@ -317,16 +309,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_error = video_attempt.error
             break
         else:
-            delivery_error = video_error or image_error
-            return SendOutcome(
-                success=True,
-                error=delivery_error,
-                warning=video_warning or image_warning,
-                delivery_status="partial_failed" if delivery_error else "success",
-                delivery_error=delivery_error,
-            )
-
-        if media_only:
             delivery_error = video_error or image_error
             return SendOutcome(
                 success=True,
@@ -371,7 +353,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
-        media_only: bool = False,
     ) -> bool:
         sender = self.sender
         text_components = sender.renderer.build_direct_components(
@@ -383,7 +364,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             include_images=False,
             notices=notices,
             header_text=header_text,
-            media_only=media_only,
         )
         text_attempt = await sender._send_event_chain(
             event,
@@ -403,7 +383,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
-                media_only=media_only,
             )
 
         image_components = sender.renderer.build_direct_image_components(tweets)
@@ -438,9 +417,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 return False
             break
         else:
-            return True
-
-        if media_only:
             return True
 
         notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
@@ -519,7 +495,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
-        media_only: bool = False,
     ) -> bool:
         sender = self.sender
         attempt = await sender._send_event_chain(
@@ -534,7 +509,6 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             start_index=tweet_start_index,
                             notices=notices,
                             header_text=header_text,
-                            media_only=media_only,
                         )
                     )
                 ]

@@ -7,7 +7,7 @@ main.py
   -> command_handlers/
   -> media_support.NitterClient / MediaService
   -> delivery.TweetSender
-  -> ai.TweetTranslator
+  -> ai.TweetTranslator / TweetEnricher
   -> scheduler.NitterTweetScheduler
   -> plugin_api.NitterWebAPI
 
@@ -36,20 +36,20 @@ NitterTweetScheduler
 `command_handlers/` 只负责命令参数、权限、用户提示和调用服务。
 
 - `manual.py`: 手动查询和镜像测试。
-- `maintenance.py`: 状态、检查、缓存、seen。
+- `maintenance.py`: 状态、检查、缓存、seen、队列、发布。
 - `subscriptions.py`: 订阅导入、删除、导出、去重。
 
 命令必须调用 `event.stop_event()`。管理员命令必须加 AstrBot admin 权限装饰器。
 
 ## RSS 链路
 
-1. 手动路径调用 `NitterClient.fetch_tweets()` / `fetch_tweets_with_stats()`；后台路径调用 watermark-aware scheduler API。
+1. `NitterClient.fetch_tweets()` 或 `fetch_tweets_with_stats()`
 2. 按实例顺序请求 `/<username>/rss`
 3. 处理 HTTP/SSL/timeout 重试
 4. 解析 RSS item
 5. 过滤转发
 6. 可选过滤纯文本
-7. 手动路径按请求数量停止；后台路径扫描首屏约 20 条，并在首屏未命中旧基准组时按 `Min-Id` 翻页到任一基准
+7. 根据 cursor 翻页
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
@@ -57,13 +57,13 @@ NitterTweetScheduler
 
 1. `scheduler.runner.NitterTweetScheduler._tick()` 找到到期分组。
 2. `run_check()` 加锁，避免并发检查。
-3. 读取该分组 seen map 和独立扫描基准组。
-4. 按账号完整扫描 RSS 首屏；未命中基准组中的旧 ID 时继续分页。
-5. 首次账号初始化 seen 和最近最多 20 个扫描基准 ID，不推送历史；空 feed 或全过滤结果也会记录初始化状态。
-6. 非首次账号按命中的基准 ID 确定时间边界，再用 seen 排除已成功送达的推文。
-7. 按推文 ID 与 seen 做差集，所有新推文都在本轮准备并发送。
-8. 发送成功后更新 seen；扫描完整且找到旧基准后替换当前扫描基准组。
-9. 分页、准备或发送失败时不跨过未送达推文，并清理普通缓存。
+3. 读取该分组 seen map。
+4. 按账号抓取 RSS。
+5. 首次账号初始化 seen，不推送历史。
+6. 非首次账号按 seen 找新推文。
+7. 立即模式准备并发送；暂存模式写入 pending queue。
+8. 发送成功后更新 seen 或标记 pending。
+9. 清理普通缓存，保留需要重试的暂存缓存。
 
 ## 发送链路
 
@@ -86,20 +86,18 @@ NitterTweetScheduler
 2. xdown 解析候选
 3. 视频/GIF 优先，跳过同条推文里的图片候选
 4. 分辨率、时长、大小限制
-5. 下载到普通缓存
+5. 下载到普通缓存或移动到暂存缓存
 6. 普通媒体发送后清理
 
-定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。`transient_failure` 与 `no_candidate` 不写 seen 且不推进扫描基准，下轮重试；`policy_skipped` 允许基准推进。手动命令和历史重推始终使用完整内容。
-
-升级到发送后删除策略时会自动执行一次普通缓存清理。
+升级到发送后删除策略时会自动执行一次普通缓存清理。暂存缓存位于 `cache/staged/<group_id>/<status_id>/`，不能被普通缓存清理误删。
 
 ## 存储链路
 
 - SQLite 是运行期存储。
 - 旧 KV seen 只用于迁移。
 - seen 按 `group_id + username` 隔离。
-- scan watermark 基准组按 `group_id + username` 独立存储，保存最近最多 20 个 RSS ID，负责分页边界和首次初始化状态；它不等同于 seen 最大 ID。
-- push history 记录成功/部分失败的推送快照，供 WebUI 历史查看和重推。
+- pending queue 记录 tweet、media、delivered targets、失败状态。
+- 发布成功后清理 sent rows。
 
 不要把运行时 SQLite、缓存、`data/` 提交到 Git。
 
@@ -109,8 +107,8 @@ NitterTweetScheduler
 - `plugin_api/`: AstrBot Plugin Pages 后端 API 和 WebUI 分组编辑。
 - `delivery/`: `TweetSender`、平台识别和平台适配器。
 - `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
-- `storage/`: SQLite、push history、旧 KV seen 迁移。
-- `ai/`: 翻译。
+- `storage/`: SQLite、pending queue、push history、旧 KV seen 迁移。
+- `ai/`: 翻译、AI 识图、AI 评论。
 - `rendering/`: 推文文本、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。

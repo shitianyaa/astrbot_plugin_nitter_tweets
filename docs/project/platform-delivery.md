@@ -69,10 +69,9 @@ sender._should_use_merge_for_count(tweet_count)
 - 合并中有视频时优先 raw OneBot 节点。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
-- `media_only_enabled` 有效时每个推文节点只保留作者和附件；附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
 
 测试入口：
-- `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
+- `tests/test_deferred_scheduler.py` 中 `qq`、`onebot`、`merged`、`video`、`custom_platform` 相关测试。
 
 ## Lark/Feishu
 
@@ -81,11 +80,11 @@ sender._should_use_merge_for_count(tweet_count)
 - post 可同框发送正文和本地图片。
 - post 失败时降级为文本和普通媒体附件。
 - 视频走普通媒体发送或按默认降级。
-- 仅媒体模式的 post 标题只保留作者，图片随 post 发送，视频继续走独立媒体路径。
 - 客户端解析在 `delivery/lark_support.py`，不要在业务层直接猜 client 字段。
 
 测试入口：
 - `tests/test_subscription_import.py::test_lark_title_uses_manual_header_override`
+- `tests/test_deferred_scheduler.py` 中 Lark 或 default direct 相关发送测试。
 
 ## Telegram
 
@@ -96,8 +95,8 @@ sender._should_use_merge_for_count(tweet_count)
 - retry 失败返回失败结果，避免重复发送不可控。
 
 测试入口：
-- `tests/test_scheduler_delivery.py::test_telegram_flood_control_waits_and_retries_same_message`
-- `tests/test_scheduler_delivery.py::test_telegram_flood_control_retry_failure_skips_fallback`
+- `tests/test_deferred_scheduler.py::test_telegram_flood_control_waits_and_retries_same_message`
+- `tests/test_deferred_scheduler.py::test_telegram_flood_control_retry_failure_skips_fallback`
 
 ## weixin_oc 和其他平台
 
@@ -106,7 +105,6 @@ sender._should_use_merge_for_count(tweet_count)
 - 不使用 OneBot 合并转发。
 - 媒体是否成功取决于 AstrBot 平台适配器能力。
 - 发送失败时回退到纯文本内容。
-- 仅媒体模式的纯文本回退只允许作者标记，不允许正文、翻译或原帖链接。
 
 ## 渲染边界
 

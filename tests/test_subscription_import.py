@@ -150,12 +150,10 @@ if "astrbot.api.all" not in sys.modules:
 
 
 from main import NitterTweetsPlugin
-from ai.enrichment import TweetTranslator
 from config import (
     DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     DEFAULT_MAX_VIDEO_DURATION_MINUTES,
     LEGACY_CONFIG_MIGRATION_KEY,
-    MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
     MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
     TWEET_GROUP_TEMPLATE_KEY,
     TWEET_GROUP_TEMPLATE_KEY_FIELD,
@@ -163,10 +161,18 @@ from config import (
     config_set,
     migrate_default_group_config,
     migrate_legacy_grouped_config,
-    sanitize_removed_feature_config,
 )
-from scheduler import ScheduledCheckResult, SchedulerConfigReader
-from shared import TweetItem
+from ai import (
+    TranslationReport,
+    TranslationTweetResult,
+    TweetTranslator,
+    TweetEnricher,
+    format_ai_tweet_summary,
+)
+from delivery.lark_support import lark_tweet_post_title
+from scheduler import SchedulerConfigReader
+from rendering import TweetMessageRenderer
+from shared import TweetItem, TweetMedia
 
 
 class _Config(dict):
@@ -207,6 +213,7 @@ class _Scheduler:
         self.storage = _Storage()
         self.started = []
         self.run_check_calls = []
+        self.check_pending_brief_calls = []
 
     def watch_users_info(self):
         return self.config_reader.watch_users_info()
@@ -217,6 +224,11 @@ class _Scheduler:
     async def run_check(self, **kwargs):
         self.run_check_calls.append(kwargs)
         return _CheckResult()
+
+    async def check_pending_brief(self, group):
+        self.check_pending_brief_calls.append(group.group_id)
+        return "当前分组暂存: 已关闭"
+
 
 class _Event:
     def __init__(
@@ -285,12 +297,46 @@ class _ManualMedia:
 
 class _StartupCleanupMedia:
     def __init__(self, *, failed=0):
-        self.clear_cache_calls = 0
+        self.clear_non_staged_cache_calls = 0
         self.failed = failed
 
-    def clear_cache(self):
-        self.clear_cache_calls += 1
+    def clear_non_staged_cache(self):
+        self.clear_non_staged_cache_calls += 1
         return types.SimpleNamespace(removed=2, failed=self.failed, skipped_dirs=1)
+
+
+class _ManualEnricher:
+    def __init__(self, events):
+        self.events = events
+
+    async def attach_enrichments(self, tweets, umo=None):
+        self.events.append("enrich:" + ",".join(tweet.status_id for tweet in tweets))
+        return types.SimpleNamespace(visible_notices=lambda: [])
+
+
+class _LLMContext:
+    def __init__(self):
+        self.calls = []
+
+    async def llm_generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return types.SimpleNamespace(completion_text="这是一句评论")
+
+
+class _QueuedLLMContext:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    async def llm_generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.outcomes:
+            outcome = self.outcomes.pop(0)
+        else:
+            outcome = "ok"
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return types.SimpleNamespace(completion_text=str(outcome))
 
 
 class _ManualRenderer:
@@ -348,6 +394,7 @@ def _manual_plugin(config):
     plugin.nitter = _ManualNitter()
     plugin.translator = None
     plugin.media = None
+    plugin.enricher = None
     plugin.sender = None
     plugin._cooldowns = {}
     plugin.cooldown_seconds = 0
@@ -370,6 +417,8 @@ class CommandMetadataTest(unittest.TestCase):
             "cmd_tweets_check",
             "cmd_tweets_clear_cache",
             "cmd_tweets_clear_seen",
+            "cmd_tweets_queue",
+            "cmd_tweets_publish",
             "cmd_tweets_list",
             "cmd_tweets_export_subscriptions",
             "cmd_tweets_delete_subscriptions",
@@ -385,12 +434,7 @@ class CommandMetadataTest(unittest.TestCase):
 
 
 class ConfigCompatTest(unittest.TestCase):
-    def test_translation_switch_parses_string_false(self):
-        translator = TweetTranslator(object(), {"translate_enabled": "false"})
-
-        self.assertFalse(translator.enabled)
-
-    def test_explicit_plugin_versions_are_0_16_0(self):
+    def test_explicit_plugin_versions_are_0_15_0(self):
         root = Path(__file__).resolve().parents[1]
         metadata_text = (root / "metadata.yaml").read_text(encoding="utf-8")
         main_text = (root / "main.py").read_text(encoding="utf-8")
@@ -424,7 +468,7 @@ class ConfigCompatTest(unittest.TestCase):
                 readme_version.group(1),
                 changelog_version.group(1),
             ],
-            ["0.16.0"] * 4,
+            ["0.15.0"] * 4,
         )
 
     def test_conf_schema_is_grouped(self):
@@ -432,12 +476,15 @@ class ConfigCompatTest(unittest.TestCase):
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            list(schema)[:7],
+            list(schema)[:10],
             [
                 "basic",
                 "media",
                 "ai_translation",
+                "ai_comment",
+                "ai_vision",
                 "schedule",
+                "deferred",
                 "push",
                 "logging",
                 "performance",
@@ -447,7 +494,6 @@ class ConfigCompatTest(unittest.TestCase):
         for key in [
             LEGACY_CONFIG_MIGRATION_KEY,
             DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
-            MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
             MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
             "_max_video_duration_grouped_config_migrated",
         ]:
@@ -456,6 +502,8 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertTrue(schema["watch_users"]["invisible"])
         self.assertEqual(schema["tweet_groups"]["type"], "list")
         self.assertIn("watch_users", schema["push"]["items"])
+        self.assertIn("vision_prompt", schema["ai_vision"]["items"])
+        self.assertIn("deferred_publish_times", schema["deferred"]["items"])
         self.assertIn("brief_log_enabled", schema["logging"]["items"])
         self.assertIn("filter_reposts_enabled", schema["basic"]["items"])
         self.assertNotIn("media_cache_retention_days", schema["media"]["items"])
@@ -475,22 +523,13 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(performance_items["concurrent_fetch_instances"]["default"], [])
         self.assertFalse(performance_items["concurrent_prepare_enabled"]["default"])
         self.assertEqual(performance_items["prepare_concurrency"]["default"], 2)
-        templates = schema["push"]["items"]["tweet_groups"]["templates"]
-        self.assertIn("blogger", templates)
-        self.assertIn("tag", templates)
-        self.assertNotIn("group", templates)
-        blogger_items = templates["blogger"]["items"]
-        tag_items = templates["tag"]["items"]
-        self.assertIn("filter_plain_text_enabled", blogger_items)
-        self.assertIn("watch_users", blogger_items)
-        self.assertNotIn("watch_queries", blogger_items)
-        self.assertIn("watch_queries", tag_items)
-        self.assertNotIn("watch_users", tag_items)
-        self.assertIn("group_id", blogger_items)
-        self.assertTrue(blogger_items["group_id"]["invisible"])
-        self.assertNotIn("scheduled_fetch_limit", blogger_items)
-        self.assertEqual(blogger_items["group_type"]["default"], "blogger")
-        self.assertEqual(tag_items["group_type"]["default"], "tag")
+        self.assertIn(
+            "filter_plain_text_enabled",
+            schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"],
+        )
+        group_items = schema["push"]["items"]["tweet_groups"]["templates"]["group"]["items"]
+        self.assertIn("group_id", group_items)
+        self.assertTrue(group_items["group_id"]["invisible"])
 
     def test_max_video_duration_schema_defaults_match_runtime_default(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
@@ -606,48 +645,6 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(
             config["push"]["push_targets"], ["telegram:FriendMessage:1"]
         )
-
-    def test_removed_feature_config_is_cleaned_after_legacy_migration_completed(self):
-        config = _Config(
-            {
-                LEGACY_CONFIG_MIGRATION_KEY: True,
-                "ai_comment": {"comment_enabled": True},
-                "ai_vision": {"vision_enabled": True},
-                "deferred": {"deferred_publish_enabled": True},
-                "comment_enabled": True,
-                "vision_max_total": 6,
-                "deferred_publish_times": ["08:00"],
-                "ai_translation": {"translate_enabled": True},
-                "push": {
-                    "tweet_groups": [
-                        {
-                            "name": "科技",
-                            "group_id": "tech",
-                            "watch_users": ["OpenAI"],
-                            "deferred_publish_enabled": True,
-                        }
-                    ]
-                },
-            }
-        )
-
-        changed = migrate_legacy_grouped_config(config)
-        config.saved = False
-        second_changed = sanitize_removed_feature_config(config)
-
-        self.assertTrue(changed)
-        self.assertFalse(second_changed)
-        self.assertFalse(config.saved)
-        self.assertNotIn("ai_comment", config)
-        self.assertNotIn("ai_vision", config)
-        self.assertNotIn("deferred", config)
-        self.assertNotIn("comment_enabled", config)
-        self.assertNotIn("vision_max_total", config)
-        self.assertNotIn("deferred_publish_times", config)
-        self.assertTrue(config["ai_translation"]["translate_enabled"])
-        group = config["push"]["tweet_groups"][0]
-        self.assertNotIn("deferred_publish_enabled", group)
-        self.assertEqual(group["watch_users"], ["OpenAI"])
 
     def test_legacy_group_migration_repairs_late_video_duration_field_once(self):
         config = _Config(
@@ -846,32 +843,6 @@ class ConfigCompatTest(unittest.TestCase):
             TWEET_GROUP_TEMPLATE_KEY,
         )
 
-    def test_default_group_migration_removes_ignored_group_fetch_limit(self):
-        config = _Config(
-            {
-                "_default_group_config_migrated": True,
-                "schedule": {"scheduled_fetch_limit": 7},
-                "push": {
-                    "tweet_groups": [
-                        {
-                            "__template_key": "group",
-                            "name": "Tech",
-                            "group_id": "tech",
-                            "watch_users": ["OpenAI"],
-                            "scheduled_fetch_limit": 19,
-                        }
-                    ]
-                },
-            }
-        )
-
-        changed = migrate_default_group_config(config)
-
-        self.assertTrue(changed)
-        self.assertTrue(config.saved)
-        self.assertNotIn("scheduled_fetch_limit", _group_config(config, "tech"))
-        self.assertIsNone(config_get(config, "scheduled_fetch_limit"))
-
     def test_default_group_migration_assigns_missing_custom_group_ids(self):
         config = _Config(
             {
@@ -949,29 +920,14 @@ class ConfigCompatTest(unittest.TestCase):
         plugin.media = media
 
         NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
-        self.assertEqual(media.clear_cache_calls, 1)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
         self.assertTrue(config.saved)
         self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
 
         config.saved = False
         NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
-        self.assertEqual(media.clear_cache_calls, 1)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
         self.assertFalse(config.saved)
-
-    def test_startup_media_cache_cleanup_does_not_reuse_legacy_marker(self):
-        # A truthy marker from the previous release must not skip the current
-        # cleanup pass.
-        config = _Config({"_media_cache_send_delete_migrated": True})
-        media = _StartupCleanupMedia()
-        plugin = object.__new__(NitterTweetsPlugin)
-        plugin.config = config
-        plugin.media = media
-
-        NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
-
-        self.assertEqual(media.clear_cache_calls, 1)
-        self.assertTrue(config[MEDIA_CACHE_CLEANUP_MIGRATION_KEY])
-        self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
 
     def test_startup_media_cache_upgrade_cleanup_retries_after_failures(self):
         config = _Config({})
@@ -981,13 +937,13 @@ class ConfigCompatTest(unittest.TestCase):
         plugin.media = media
 
         NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
-        self.assertEqual(media.clear_cache_calls, 1)
+        self.assertEqual(media.clear_non_staged_cache_calls, 1)
         self.assertFalse(config.saved)
         self.assertNotIn(MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY, config)
 
         media.failed = 0
         NitterTweetsPlugin._cleanup_legacy_media_cache_once(plugin)
-        self.assertEqual(media.clear_cache_calls, 2)
+        self.assertEqual(media.clear_non_staged_cache_calls, 2)
         self.assertTrue(config.saved)
         self.assertTrue(config[MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY])
 
@@ -1026,7 +982,6 @@ class ConfigCompatTest(unittest.TestCase):
         self.assertEqual(default_group["watch_users"], ["NASA", "ESA", "OpenAI"])
         self.assertEqual(default_group["push_targets"], ["telegram:FriendMessage:1"])
         self.assertEqual(config_get(config, "scheduled_fetch_limit"), 3)
-        self.assertNotIn("scheduled_fetch_limit", default_group)
         self.assertIn("global", default_group["aliases"])
         self.assertEqual(
             [group["group_id"] for group in config_get(config, "tweet_groups")],
@@ -1117,12 +1072,18 @@ with TemporaryDirectory() as temp_dir:
                         "watch_users": ["OpenAI"],
                         "push_targets": ["telegram:FriendMessage:2"],
                         "daily_check_times": ["08:30"],
-                        
+                        "deferred_publish_enabled": True,
                         "scheduled_fetch_limit": 19,
                         "send_target_interval": 9,
+                        "deferred_publish_times": ["23:59"],
                         "filter_plain_text_enabled": True,
                     }
                 ],
+            },
+            "deferred": {
+                "deferred_publish_enabled": True,
+                "deferred_publish_times": ["20:00"],
+                "deferred_publish_batch_limit": 7,
             },
         }
         reader = SchedulerConfigReader(config, context=None)
@@ -1132,21 +1093,23 @@ with TemporaryDirectory() as temp_dir:
         self.assertTrue(global_group.enabled)
         self.assertEqual(global_group.users, ["NASA"])
         self.assertEqual(global_group.targets, ["telegram:FriendMessage:1"])
-        self.assertEqual(global_group.scheduled_fetch_limit, 20)
+        self.assertEqual(global_group.scheduled_fetch_limit, 7)
         self.assertEqual(global_group.check_interval_minutes, 11)
         self.assertTrue(global_group.check_on_startup)
         self.assertTrue(global_group.notify_no_updates)
         self.assertEqual(global_group.daily_check_times, [])
+        self.assertTrue(global_group.deferred_publish_enabled)
+        self.assertEqual(global_group.deferred_publish_times, [(20, 0)])
+        self.assertEqual(global_group.deferred_publish_batch_limit, 7)
         self.assertEqual(tech_group.group_id, "tech")
         self.assertEqual(tech_group.users, ["OpenAI"])
         self.assertEqual(tech_group.targets, ["telegram:FriendMessage:2"])
         self.assertEqual(tech_group.daily_check_times, [(8, 30)])
-        self.assertEqual(tech_group.scheduled_fetch_limit, 20)
-        self.assertNotIn(
-            "scheduled_fetch_limit", _group_config(config, "tech")
-        )
+        self.assertEqual(tech_group.scheduled_fetch_limit, 7)
         self.assertEqual(tech_group.send_target_interval, 0.25)
         self.assertEqual(tech_group.send_user_interval, 0.5)
+        self.assertEqual(tech_group.deferred_publish_times, [(20, 0)])
+        self.assertTrue(tech_group.deferred_publish_enabled)
         self.assertTrue(tech_group.filter_plain_text_enabled)
         self.assertFalse(global_group.concurrent_fetch_enabled)
         self.assertEqual(global_group.fetch_concurrency, 3)
@@ -1237,6 +1200,28 @@ with TemporaryDirectory() as temp_dir:
         self.assertTrue(group.concurrent_prepare_enabled)
         self.assertEqual(group.prepare_concurrency, 1)
 
+    def test_scheduler_reader_keeps_deferred_switch_per_group(self):
+        config = {
+            "deferred_publish_enabled": True,
+            "watch_users": ["NASA"],
+            "push_targets": ["telegram:FriendMessage:1"],
+            "tweet_groups": [
+                {
+                    "name": "Tech",
+                    "group_id": "tech",
+                    "watch_users": ["OpenAI"],
+                    "push_targets": ["telegram:FriendMessage:2"],
+                }
+            ],
+        }
+        reader = SchedulerConfigReader(config, context=None)
+
+        default_group, tech_group = reader.schedule_groups(log_invalid_targets=False)
+
+        self.assertTrue(default_group.deferred_publish_enabled)
+        self.assertFalse(tech_group.deferred_publish_enabled)
+        self.assertFalse(default_group.filter_plain_text_enabled)
+        self.assertFalse(tech_group.filter_plain_text_enabled)
 
     def test_scheduler_reader_keeps_plain_text_switch_per_group(self):
         config = {
@@ -1260,16 +1245,304 @@ with TemporaryDirectory() as temp_dir:
         self.assertFalse(tech_group.filter_plain_text_enabled)
 
 
+class TweetEnricherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_enricher_summary_reports_off(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(context, _Config({}))
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/300",
+            published="",
+        )
 
-class SchedulerModelFormattingTest(unittest.TestCase):
-    def test_failure_label_formats_all_users_as_accounts(self):
-        result = ScheduledCheckResult(reason="test")
-        result.failed_users["NASA"] = "failed"
-        result.failed_users["@OpenAI"] = "failed"
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+        summary = format_ai_tweet_summary("NASA", tweet, None, report)
 
-        lines = result.format_brief_log_lines()
-        self.assertIn("@NASA: failed", lines[1])
-        self.assertIn("@OpenAI: failed", lines[1])
+        self.assertIn("translation=off", summary)
+        self.assertIn("vision=off", summary)
+        self.assertIn("comment=off", summary)
+
+    def test_summary_matches_single_fallback_id_with_global_progress(self):
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA",
+            published="",
+        )
+        translation_report = TranslationReport(
+            tweet_results=[
+                TranslationTweetResult(
+                    status_id="index-1",
+                    status="done",
+                    chars=6,
+                )
+            ]
+        )
+
+        summary = format_ai_tweet_summary(
+            "NASA",
+            tweet,
+            translation_report,
+            None,
+            index=2,
+            total=5,
+        )
+
+        self.assertIn("status=index-2", summary)
+        self.assertIn("progress=2/5", summary)
+        self.assertIn("translation=done(chars=6)", summary)
+        self.assertNotIn("translation=unknown", summary)
+
+    def test_lark_title_uses_manual_header_override(self):
+        title = lark_tweet_post_title("NASA", 1, "@NASA 本次结果 2/30")
+
+        self.assertEqual(title, "@NASA 本次结果 2/30")
+
+    async def test_comment_skips_without_translation_or_vision_result(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/301",
+            published="",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 0)
+        self.assertEqual(context.calls, [])
+        self.assertEqual(tweet.ai_comment, "")
+
+    async def test_comment_runs_with_translation_result(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/302",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        self.assertEqual(len(context.calls), 1)
+        self.assertEqual(tweet.ai_comment, "这是一句评论")
+
+    async def test_comment_prompt_without_placeholders_appends_context(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                    "comment_prompt": "请用活泼但克制的语气点评一句。",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/303",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        prompt = context.calls[0]["prompt"]
+        self.assertIn("请用活泼但克制的语气点评一句。", prompt)
+        self.assertIn("推文：plain text tweet", prompt)
+        self.assertIn("中文翻译：一条中文翻译", prompt)
+        self.assertIn("链接：https://x.com/NASA/status/303", prompt)
+
+    async def test_comment_prompt_with_only_link_appends_content_context(self):
+        context = _LLMContext()
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                    "comment_prompt": "请结合原帖链接点评一句：{link}",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="another plain tweet",
+            link="https://x.com/NASA/status/304",
+            published="",
+            translation="另一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        prompt = context.calls[0]["prompt"]
+        self.assertIn("请结合原帖链接点评一句：https://x.com/NASA/status/304", prompt)
+        self.assertIn("推文：another plain tweet", prompt)
+        self.assertIn("中文翻译：另一条中文翻译", prompt)
+
+    async def test_translation_retries_until_success_without_warning(self):
+        context = _QueuedLLMContext([
+            TimeoutError("slow"),
+            RuntimeError("busy"),
+            "中文翻译",
+        ])
+        translator = TweetTranslator(
+            context,
+            _Config(
+                {
+                    "translate_enabled": True,
+                    "translation_provider_id": "translate-provider",
+                    "translate_min_chars": 0,
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/303",
+            published="",
+        )
+
+        report = await translator.attach_translations([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.translated, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.translation, "中文翻译")
+        self.assertEqual(tweet.ai_warnings, [])
+
+    async def test_translation_failure_after_retries_adds_visible_warning(self):
+        context = _QueuedLLMContext([
+            TimeoutError("slow"),
+            TimeoutError("slow"),
+            TimeoutError("slow"),
+        ])
+        translator = TweetTranslator(
+            context,
+            _Config(
+                {
+                    "translate_enabled": True,
+                    "translation_provider_id": "translate-provider",
+                    "translate_min_chars": 0,
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/304",
+            published="",
+        )
+
+        report = await translator.attach_translations([tweet], "telegram:FriendMessage:1")
+        rendered = TweetMessageRenderer.format_tweet(1, "NASA", tweet)
+
+        self.assertEqual(report.failed, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.translation, "")
+        self.assertIn("AI 翻译调用失败", rendered)
+
+    async def test_comment_retries_until_success(self):
+        context = _QueuedLLMContext([RuntimeError("busy"), "补充评论"])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/305",
+            published="",
+            translation="一条中文翻译",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 1)
+        self.assertEqual(len(context.calls), 2)
+        self.assertEqual(tweet.ai_comment, "补充评论")
+        self.assertEqual(tweet.ai_warnings, [])
+
+    async def test_vision_failure_after_retries_adds_visible_warning(self):
+        context = _QueuedLLMContext([
+            RuntimeError("vision failed"),
+            RuntimeError("vision failed"),
+            RuntimeError("vision failed"),
+        ])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "vision_enabled": True,
+                    "vision_probability": 1.0,
+                    "vision_provider_id": "vision-provider",
+                }
+            ),
+        )
+        image_path = Path(__file__)
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/306",
+            published="",
+            media=[TweetMedia("image", "https://example.test/image.jpg", image_path)],
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+        rendered = TweetMessageRenderer.format_tweet(1, "NASA", tweet)
+
+        self.assertEqual(report.vision_failed, 1)
+        self.assertEqual(len(context.calls), 3)
+        self.assertEqual(tweet.image_caption, "")
+        self.assertIn("AI 识图调用失败", rendered)
+
+    async def test_normal_ai_skips_do_not_add_warning(self):
+        context = _QueuedLLMContext([])
+        enricher = TweetEnricher(
+            context,
+            _Config(
+                {
+                    "comment_enabled": True,
+                    "comment_probability": 1.0,
+                    "comment_provider_id": "comment-provider",
+                }
+            ),
+        )
+        tweet = TweetItem(
+            text="plain text tweet",
+            link="https://x.com/NASA/status/307",
+            published="",
+        )
+
+        report = await enricher.attach_enrichments([tweet], "telegram:FriendMessage:1")
+
+        self.assertEqual(report.commented, 0)
+        self.assertEqual(context.calls, [])
+        self.assertEqual(tweet.ai_warnings, [])
 
 
 class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
@@ -1300,11 +1573,12 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.nitter.calls, [])
         self.assertIn("数量需要大于 0", event.messages[-1])
 
-    async def test_manual_tweets_send_each_tweet_after_translation_and_media_prepare(self):
+    async def test_manual_tweets_send_each_tweet_after_ai_prepare(self):
         events = []
         plugin = _manual_plugin(_Config({"default_limit": 5}))
         plugin.translator = _ManualTranslator(events)
         plugin.media = _ManualMedia(events)
+        plugin.enricher = _ManualEnricher(events)
         plugin.sender = _ManualSender(events)
         event = _Event()
         tweets = [
@@ -1329,15 +1603,17 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
             [
                 "translate:101",
                 "media:101",
-                "send:NASA:101:",
+                "enrich:101",
+                "send:NASA:101:@NASA 本次结果 1/2",
                 "cleanup:101",
                 "translate:102",
                 "media:102",
-                "send:NASA:102:",
+                "enrich:102",
+                "send:NASA:102:@NASA 本次结果 2/2",
                 "cleanup:102",
             ],
         )
-        self.assertEqual(plugin.sender.start_indexes, [1, 1])
+        self.assertEqual(plugin.sender.start_indexes, [1, 2])
 
     async def test_mirror_probe_uses_default_limit_without_quantity(self):
         plugin = _manual_plugin(_Config({"default_limit": 5, "max_limit": 1}))
@@ -1412,10 +1688,12 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
                 "notify_no_updates": False,
                 "group_name": "tech",
                 "target_override": ["telegram:FriendMessage:1"],
-                            },
+                "force_immediate": True,
+            },
         )
+        self.assertEqual(plugin.scheduler.check_pending_brief_calls, ["tech"])
         self.assertIn("Tech (tech)", event.messages[0])
-        self.assertEqual(event.messages[-1], "检查结果")
+        self.assertEqual(event.messages[-1], "检查结果\n\n当前分组暂存: 已关闭")
 
     async def test_check_without_group_uses_default_when_current_target_listed(self):
         config = _Config(
@@ -1447,7 +1725,8 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
                 "notify_no_updates": False,
                 "group_name": "default",
                 "target_override": ["telegram:FriendMessage:global"],
-                            },
+                "force_immediate": True,
+            },
         )
         self.assertIn("默认分组 (default)", event.messages[0])
 
@@ -1625,15 +1904,6 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
                         "group_id": "news",
                         "watch_users": ["BBCWorld"],
                     },
-                    {
-                        "name": "标签示例",
-                        "group_id": "tags1",
-                        "group_type": "tag",
-                        "watch_queries": [
-                            {"query": "#圣娅", "type": "tag"},
-                            {"query": "python programming", "type": "phrase"},
-                        ],
-                    },
                 ],
             }
         )
@@ -1648,62 +1918,15 @@ class SubscriptionImportTest(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "Nitter 订阅导出",
-                    "分组数: 4 个",
-                    "博主订阅: 4 个",
-                    "搜索订阅: 2 个",
-                    "订阅列表:",
-                    "默认分组 (default, 博主, 1 个): NASA",
-                    "科技 (tech, 博主, 2 个): OpenAI,SpaceX",
-                    "新闻 (news, 博主, 1 个): BBCWorld",
-                    "标签示例 (tags1, 标签, 2 个): #圣娅,python programming",
-                    "提示: 博主组 /订阅导入 用户列表 分组名 ；标签组 /标签导入 查询列表 分组名",
+                    "分组数: 3 个",
+                    "订阅账号: 4 个",
+                    "分组账号:",
+                    "默认分组 (default, 1 个): NASA",
+                    "科技 (tech, 2 个): OpenAI,SpaceX",
+                    "新闻 (news, 1 个): BBCWorld",
                 ]
             ),
         )
-
-    async def test_export_subscriptions_filters_by_group_name(self):
-        config = _Config(
-            {
-                "tweet_groups": [
-                    {
-                        "name": "科技",
-                        "group_id": "tech",
-                        "watch_users": ["OpenAI"],
-                    },
-                    {
-                        "name": "标签示例",
-                        "group_id": "tags1",
-                        "group_type": "tag",
-                        "watch_queries": [{"query": "#a", "type": "tag"}],
-                    },
-                ],
-            }
-        )
-        plugin = _plugin(config)
-        event = _Event()
-
-        await plugin.cmd_tweets_export_subscriptions(event, "标签示例")
-
-        self.assertEqual(
-            event.messages[-1],
-            "\n".join(
-                [
-                    "Nitter 订阅导出",
-                    "分组数: 1 个",
-                    "博主订阅: 0 个",
-                    "搜索订阅: 1 个",
-                    "订阅列表:",
-                    "标签示例 (tags1, 标签, 1 个): #a",
-                    "提示: 博主组 /订阅导入 用户列表 分组名 ；标签组 /标签导入 查询列表 分组名",
-                ]
-            ),
-        )
-
-    async def test_export_subscriptions_unknown_group(self):
-        plugin = _plugin(_Config({"tweet_groups": []}))
-        event = _Event()
-        await plugin.cmd_tweets_export_subscriptions(event, "不存在")
-        self.assertIn("未找到分组", event.messages[-1])
 
     async def test_delete_subscriptions_without_group_removes_default_watch_users(self):
         config = _Config(

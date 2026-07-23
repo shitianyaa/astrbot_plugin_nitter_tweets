@@ -115,51 +115,6 @@ def set_import_group_users(
     raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
 
 
-def set_import_group_queries(
-    config,
-    config_reader,
-    group: "ScheduleGroup | None",
-    queries: list[dict[str, str]],
-) -> None:
-    """Persist watch_queries for a tag group. Each item: {query, type}."""
-    if group is None:
-        raise RuntimeError("标签订阅必须指定标签分组")
-
-    raw_groups = config_get(config, "tweet_groups", []) or []
-    if isinstance(raw_groups, dict):
-        group_items = [raw_groups]
-    elif isinstance(raw_groups, list):
-        group_items = raw_groups
-    else:
-        group_items = []
-
-    target_group_id = normalize_group_id(group.group_id)
-    for index, raw_group in enumerate(group_items, 1):
-        parsed = config_reader.parse_schedule_group(
-            raw_group,
-            index,
-            log_invalid_targets=False,
-        )
-        if parsed is None:
-            continue
-        if normalize_group_id(parsed.group_id) != target_group_id:
-            continue
-        raw_group["group_type"] = "tag"
-        raw_group["watch_queries"] = [
-            {
-                "query": str(item.get("query") or "").strip(),
-                "type": str(item.get("type") or "phrase").strip(),
-            }
-            for item in queries
-            if str(item.get("query") or "").strip()
-        ]
-        raw_group["watch_users"] = []
-        config_set(config, "tweet_groups", raw_groups)
-        return
-
-    raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
-
-
 async def sync_import_config_groups(scheduler: Any) -> str:
     try:
         schedule_groups = scheduler.config_reader.schedule_groups(

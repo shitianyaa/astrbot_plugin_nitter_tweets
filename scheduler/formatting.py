@@ -42,6 +42,13 @@ def format_group_schedule(group: Any) -> str:
             parts.append("每日定点未配置时间")
     return " / ".join(parts) if parts else "未配置定时规则"
 
+def format_pending_user_counts(user_counts: list[tuple[str, int]]) -> str:
+    values = [
+        f"@{username} {count} 条"
+        for username, count in user_counts
+    ]
+    return _format_limited_values(values, separator="; ")
+
 def format_daily_times(times: list[tuple[int, int]]) -> str:
     if not times:
         return "未配置"

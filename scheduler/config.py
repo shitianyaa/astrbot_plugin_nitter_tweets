@@ -51,31 +51,10 @@ class WatchUsersInfo:
 
 
 @dataclass(slots=True)
-class WatchQueryItem:
-    query: str
-    type: str  # tag | phrase
-    account_key: str  # q:<casefold query> for seen isolation
-
-
-@dataclass(slots=True)
-class WatchQueriesInfo:
-    raw_count: int
-    queries: list[WatchQueryItem] = field(default_factory=list)
-    duplicates: list[str] = field(default_factory=list)
-    invalid_entries: list[str] = field(default_factory=list)
-    changed: bool = False
-
-
-GROUP_TYPE_BLOGGER = "blogger"
-GROUP_TYPE_TAG = "tag"
-
-
-@dataclass(slots=True)
 class ScheduleGroup:
     group_id: str
     name: str
     enabled: bool
-    group_type: str
     check_on_startup: bool
     interval_check_enabled: bool
     check_interval_minutes: int
@@ -85,40 +64,25 @@ class ScheduleGroup:
     send_target_interval: float
     send_user_interval: float
     notify_no_updates: bool
+    deferred_publish_enabled: bool
+    deferred_publish_times: list[tuple[int, int]]
+    deferred_publish_batch_limit: int
+    deferred_prefetch_media: bool
+    deferred_media_retention_hours: float
+    deferred_media_download_interval_seconds: float
     concurrent_fetch_enabled: bool
     fetch_concurrency: int
     concurrent_fetch_instances: list[str]
     concurrent_prepare_enabled: bool
     prepare_concurrency: int
     filter_plain_text_enabled: bool
-    media_only_enabled: bool
     users_info: WatchUsersInfo
-    queries_info: WatchQueriesInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
 
     @property
-    def is_tag_group(self) -> bool:
-        return self.group_type == GROUP_TYPE_TAG
-
-    @property
-    def is_blogger_group(self) -> bool:
-        return not self.is_tag_group
-
-    @property
     def users(self) -> list[str]:
         return self.users_info.users
-
-    @property
-    def queries(self) -> list[WatchQueryItem]:
-        return self.queries_info.queries
-
-    @property
-    def account_keys(self) -> list[str]:
-        """Seen/account iteration keys for this group."""
-        if self.is_tag_group:
-            return [item.account_key for item in self.queries]
-        return list(self.users)
 
     @property
     def targets(self) -> list[str]:
@@ -140,25 +104,28 @@ class SchedulerConfigReader:
             group_id=DEFAULT_GROUP_ID,
             name=DEFAULT_GROUP_NAME,
             enabled=False,
-            group_type=GROUP_TYPE_BLOGGER,
             check_on_startup=False,
             interval_check_enabled=True,
             check_interval_minutes=30,
             daily_check_enabled=False,
             daily_check_times=[],
-            scheduled_fetch_limit=20,
+            scheduled_fetch_limit=5,
             send_target_interval=1.5,
             send_user_interval=2.0,
             notify_no_updates=False,
+            deferred_publish_enabled=False,
+            deferred_publish_times=[],
+            deferred_publish_batch_limit=50,
+            deferred_prefetch_media=True,
+            deferred_media_retention_hours=72.0,
+            deferred_media_download_interval_seconds=0.5,
             concurrent_fetch_enabled=False,
             fetch_concurrency=3,
             concurrent_fetch_instances=[],
             concurrent_prepare_enabled=False,
             prepare_concurrency=2,
             filter_plain_text_enabled=False,
-            media_only_enabled=False,
             users_info=self.parse_watch_users([]),
-            queries_info=self.parse_watch_queries([]),
             target_info=self.parse_push_targets(
                 [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
             ),
@@ -198,70 +165,7 @@ class SchedulerConfigReader:
 
             seen_group_ids.add(normalized_group_id)
             groups.append(group)
-
-        if any(
-            group.is_tag_group and group.queries_info.changed for group in groups
-        ):
-            self._heal_watch_queries_config(groups)
         return groups
-
-    def _heal_watch_queries_config(self, groups: list[ScheduleGroup]) -> None:
-        """Persist normalized watch_queries when type/query was auto-fixed."""
-        try:
-            from ..config.compat import config_set
-        except ImportError:  # pragma: no cover
-            from config.compat import config_set
-
-        raw_groups = config_get(self.config, "tweet_groups", []) or []
-        if not isinstance(raw_groups, list):
-            return
-
-        by_id = {
-            g.group_id: g for g in groups if g.is_tag_group and g.queries_info.changed
-        }
-        if not by_id:
-            return
-
-        try:
-            from ..shared.group_ids import normalize_stable_group_id
-        except ImportError:  # pragma: no cover
-            from shared.group_ids import normalize_stable_group_id
-
-        changed_any = False
-        for raw in raw_groups:
-            if not isinstance(raw, dict):
-                continue
-            raw_gid = str(raw.get("group_id") or "").strip()
-            # Match parse_schedule_group: stable id keeps explicit global, etc.
-            gid = normalize_stable_group_id(raw_gid) if raw_gid else ""
-            if not gid:
-                name = str(raw.get("name") or "").strip()
-                gid = normalize_stable_group_id(name) if name else ""
-            group = by_id.get(gid)
-            if group is None:
-                continue
-            healed = [
-                {"query": item.query, "type": item.type}
-                for item in group.queries_info.queries
-            ]
-            if raw.get("watch_queries") != healed:
-                raw["watch_queries"] = healed
-                changed_any = True
-
-        if not changed_any:
-            return
-        config_set(self.config, "tweet_groups", raw_groups)
-        save_config = getattr(self.config, "save_config", None)
-        if callable(save_config):
-            try:
-                save_config()
-                logger.info(
-                    "[NitterTweets] 已回写规范化后的标签订阅 watch_queries"
-                )
-            except Exception as exc:  # pragma: no cover
-                logger.warning(
-                    f"[NitterTweets] 回写 watch_queries 失败: {exc}"
-                )
 
     def parse_schedule_group(
         self,
@@ -270,7 +174,10 @@ class SchedulerConfigReader:
         log_invalid_targets: bool = True,
     ) -> ScheduleGroup | None:
         if not isinstance(raw_group, dict):
-            logger.warning(f"[NitterTweets] 已忽略无效 tweet_groups 项: {raw_group!r}")
+            logger.warning(
+                "[NitterTweets] 已忽略无效 tweet_groups 项: "
+                f"{raw_group!r}"
+            )
             return None
 
         name = str(raw_group.get("name") or "").strip()
@@ -312,24 +219,17 @@ class SchedulerConfigReader:
         interval_check_default = self.default_group_legacy_config(
             group_id, "interval_check_enabled", True
         )
+        deferred_publish_default = self.default_group_legacy_config(
+            group_id, "deferred_publish_enabled", False
+        )
         filter_plain_text_default = self.default_group_legacy_config(
             group_id, "filter_plain_text_enabled", False
         )
-
-        group_type = self.parse_group_type(raw_group.get("group_type"))
-        users_info = self.parse_watch_users(raw_group.get("watch_users", []))
-        queries_info = self.parse_watch_queries(raw_group.get("watch_queries", []))
-        # Tag groups only follow queries; blogger groups only follow users.
-        if group_type == GROUP_TYPE_TAG:
-            users_info = WatchUsersInfo(raw_count=0)
-        else:
-            queries_info = WatchQueriesInfo(raw_count=0)
 
         return ScheduleGroup(
             group_id=group_id,
             name=name,
             enabled=self.parse_bool(raw_group.get("enabled", True), True),
-            group_type=group_type,
             check_on_startup=self.parse_bool(
                 config_get(self.config, "check_on_startup", False), False
             ),
@@ -341,7 +241,9 @@ class SchedulerConfigReader:
             ),
             daily_check_enabled=daily_check_enabled,
             daily_check_times=daily_check_times,
-            scheduled_fetch_limit=20,
+            scheduled_fetch_limit=clamp_int(
+                config_get(self.config, "scheduled_fetch_limit", 5), 1, 20
+            ),
             send_target_interval=clamp_float(
                 config_get(self.config, "send_target_interval", 1.5), 0.0, 60.0
             ),
@@ -350,6 +252,34 @@ class SchedulerConfigReader:
             ),
             notify_no_updates=self.parse_bool(
                 config_get(self.config, "notify_no_updates", False), False
+            ),
+            deferred_publish_enabled=self.parse_bool(
+                raw_group.get("deferred_publish_enabled", deferred_publish_default),
+                False,
+            ),
+            deferred_publish_times=self.parse_daily_times(
+                config_get(self.config, "deferred_publish_times", [])
+            ),
+            deferred_publish_batch_limit=clamp_int(
+                config_get(self.config, "deferred_publish_batch_limit", 50),
+                1,
+                500,
+            ),
+            deferred_prefetch_media=self.parse_bool(
+                config_get(self.config, "deferred_prefetch_media", True),
+                True,
+            ),
+            deferred_media_retention_hours=clamp_float(
+                config_get(self.config, "deferred_media_retention_hours", 72.0),
+                1.0,
+                8760.0,
+            ),
+            deferred_media_download_interval_seconds=clamp_float(
+                config_get(
+                    self.config, "deferred_media_download_interval_seconds", 0.5
+                ),
+                0.0,
+                60.0,
             ),
             concurrent_fetch_enabled=self.parse_bool(
                 config_get(self.config, "concurrent_fetch_enabled", False),
@@ -369,15 +299,12 @@ class SchedulerConfigReader:
                 config_get(self.config, "prepare_concurrency", 2), 1, 8
             ),
             filter_plain_text_enabled=self.parse_bool(
-                raw_group.get("filter_plain_text_enabled", filter_plain_text_default),
+                raw_group.get(
+                    "filter_plain_text_enabled", filter_plain_text_default
+                ),
                 False,
             ),
-            media_only_enabled=self.parse_bool(
-                raw_group.get("media_only_enabled", False),
-                False,
-            ),
-            users_info=users_info,
-            queries_info=queries_info,
+            users_info=self.parse_watch_users(raw_group.get("watch_users", [])),
             target_info=self.parse_push_targets(
                 raw_group.get("push_targets", []),
                 log_invalid=log_invalid_targets,
@@ -445,83 +372,6 @@ class SchedulerConfigReader:
             changed=raw_entries != users,
         )
 
-    @staticmethod
-    def parse_group_type(raw_type) -> str:
-        text = str(raw_type or "").strip().lower()
-        if text in {GROUP_TYPE_TAG, "search", "query", "keyword"}:
-            return GROUP_TYPE_TAG
-        return GROUP_TYPE_BLOGGER
-
-    def parse_watch_queries(self, raw_queries) -> WatchQueriesInfo:
-        try:
-            from ..media_support.html_backend import (
-                normalize_watch_query,
-                seen_account_key_for_query,
-            )
-        except ImportError:  # pragma: no cover
-            from media_support.html_backend import (
-                normalize_watch_query,
-                seen_account_key_for_query,
-            )
-
-        if isinstance(raw_queries, str):
-            raw_queries = re.split(r"[\n]+", raw_queries)
-        elif not isinstance(raw_queries, list):
-            raw_queries = [raw_queries] if raw_queries else []
-
-        raw_count = 0
-        queries: list[WatchQueryItem] = []
-        seen_keys: set[str] = set()
-        duplicates: list[str] = []
-        invalid_entries: list[str] = []
-        changed = False
-
-        for raw in raw_queries:
-            if raw is None:
-                continue
-            if isinstance(raw, dict):
-                query_raw = str(raw.get("query") or raw.get("q") or "").strip()
-                type_hint = str(raw.get("type") or raw.get("kind") or "").strip()
-                display = query_raw or str(raw)
-            else:
-                query_raw = str(raw).strip()
-                type_hint = ""
-                display = query_raw
-            if not query_raw and not display:
-                continue
-            raw_count += 1
-            if not query_raw:
-                invalid_entries.append(display)
-                continue
-            query, kind = normalize_watch_query(query_raw, type_hint or None)
-            if not query:
-                invalid_entries.append(display)
-                continue
-            if isinstance(raw, dict):
-                if str(raw.get("type") or "").strip().lower() != kind:
-                    changed = True
-                if str(raw.get("query") or "").strip() != query:
-                    changed = True
-            else:
-                # Bare strings always need {query, type} on disk.
-                changed = True
-            account_key = seen_account_key_for_query(query)
-            if account_key in seen_keys:
-                duplicates.append(display)
-                continue
-            seen_keys.add(account_key)
-            queries.append(
-                WatchQueryItem(query=query, type=kind, account_key=account_key)
-            )
-
-        return WatchQueriesInfo(
-            raw_count=raw_count,
-            queries=queries,
-            duplicates=duplicates,
-            invalid_entries=invalid_entries,
-            changed=changed,
-        )
-
     def push_targets(self) -> list[str]:
         return self.parse_push_targets().targets
 
@@ -559,7 +409,8 @@ class SchedulerConfigReader:
                 result.invalid_targets.append(raw)
                 if log_invalid:
                     logger.warning(
-                        f"[NitterTweets] 无效推送目标: group={group_id}, target={raw!r}"
+                        "[NitterTweets] 无效推送目标: "
+                        f"group={group_id}, target={raw!r}"
                     )
                 continue
             if umo not in seen:
@@ -742,29 +593,9 @@ class SchedulerConfigReader:
             return default
         if isinstance(value, str):
             normalized = value.strip().lower()
-            if normalized in {
-                "1",
-                "true",
-                "yes",
-                "on",
-                "enable",
-                "enabled",
-                "是",
-                "开",
-                "开启",
-            }:
+            if normalized in {"1", "true", "yes", "on", "enable", "enabled", "是", "开", "开启"}:
                 return True
-            if normalized in {
-                "0",
-                "false",
-                "no",
-                "off",
-                "disable",
-                "disabled",
-                "否",
-                "关",
-                "关闭",
-            }:
+            if normalized in {"0", "false", "no", "off", "disable", "disabled", "否", "关", "关闭"}:
                 return False
             return default
         return bool(value)
