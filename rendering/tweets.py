@@ -533,6 +533,7 @@ class TweetMessageRenderer:
             omit_status_url=omit_status_url,
             link_style=link_style,
         )
+        status_url = (tweet.x_url or tweet.link or "").strip()
         components = [Plain(text)]
         video_notice_added = False
         for media in tweet.media:
@@ -542,7 +543,10 @@ class TweetMessageRenderer:
                 if not video_notice_added:
                     components.append(
                         Plain(
-                            "视频/GIF 附件未作为消息发送。"
+                            TweetMessageRenderer.video_not_sent_notice(
+                                omit_status_url=omit_status_url,
+                                status_url=status_url,
+                            )
                         )
                     )
                     video_notice_added = True
@@ -788,8 +792,11 @@ class TweetMessageRenderer:
                 if not video_notice_added:
                     content.append(
                         self.raw_text(
-                            "视频/GIF 附件未作为消息发送。"
+                        TweetMessageRenderer.video_not_sent_notice(
+                            omit_status_url=omit_status_url,
+                            status_url=(tweet.x_url or tweet.link or "").strip(),
                         )
+                    )
                     )
                     video_notice_added = True
                 continue
@@ -966,8 +973,23 @@ class TweetMessageRenderer:
             blocks.append("原文链接：\n" + status_url)
 
         if tweet.media_warnings:
-            warns = "\n".join(f"- {w}" for w in tweet.media_warnings)
-            blocks.append("媒体提示：\n" + warns)
+            processed_warns = []
+            status_for_warn = "" if omit_status_url else (status_url or "").strip()
+            for w in tweet.media_warnings:
+                msg = str(w or "").strip()
+                if (
+                    status_for_warn
+                    and msg
+                    and "视频/GIF" in msg
+                    and status_for_warn not in msg
+                    and "http" not in msg
+                ):
+                    msg = f"{msg} 原文链接：{status_for_warn}"
+                if msg:
+                    processed_warns.append(msg)
+            if processed_warns:
+                warns = "\n".join(f"- {w}" for w in processed_warns)
+                blocks.append("媒体提示：\n" + warns)
 
         media_summary = TweetMessageRenderer.format_media_summary(tweet)
         if media_summary:
@@ -995,12 +1017,24 @@ class TweetMessageRenderer:
             text = text[: max(1, max_chars - 1)].rstrip() + "…"
         return text or f"@{username}"
 
+
+    @staticmethod
+    def video_not_sent_notice(
+        *,
+        omit_status_url: bool = True,
+        status_url: str = "",
+    ) -> str:
+        base = "视频/GIF 附件未作为消息发送。"
+        url = (status_url or "").strip()
+        if omit_status_url or not url:
+            return base
+        return f"{base} 原文链接：{url}"
+
     @staticmethod
     def telegram_markdown_link(label: str, url: str) -> str:
         safe_label = str(label or "")
-        for ch in ("\\", "`", "*", "_", "["):
+        for ch in ("\\", "`", "*", "_", "[", "]", "(", ")"):
             safe_label = safe_label.replace(ch, "\\" + ch)
-        safe_label = safe_label.replace("]", "\\]")
         safe_url = str(url or "").strip()
         if safe_url and not safe_url.startswith(("http://", "https://")):
             safe_url = "https://" + safe_url.lstrip("/")

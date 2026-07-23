@@ -21,14 +21,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
     @staticmethod
     def _message_chain(components, *, link_style: str = "plain") -> MessageChain:
         chain = MessageChain(components)
-        style = link_style
-        if style == "plain":
-            for component in components or []:
-                text = getattr(component, "text", None)
-                if text and "](http" in text:
-                    style = "telegram_md"
-                    break
-        if style == "telegram_md" and hasattr(chain, "use_markdown"):
+        # Only enable markdown when caller asked for telegram_md; never override plain.
+        if link_style == "telegram_md" and hasattr(chain, "use_markdown"):
             chain.use_markdown(True)
         return chain
 
