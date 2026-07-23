@@ -42,7 +42,6 @@ try:
         MEDIA_STATUS_NO_CANDIDATE,
         MEDIA_STATUS_POLICY_SKIPPED,
         MEDIA_STATUS_READY,
-        MEDIA_STATUS_TRANSIENT_FAILURE,
     )
     from .formatting import (
         _format_limited_values as scheduler_format_limited_values,
@@ -89,7 +88,6 @@ except ImportError:
         MEDIA_STATUS_NO_CANDIDATE,
         MEDIA_STATUS_POLICY_SKIPPED,
         MEDIA_STATUS_READY,
-        MEDIA_STATUS_TRANSIENT_FAILURE,
     )
     from scheduler.formatting import (
         _format_limited_values as scheduler_format_limited_values,
