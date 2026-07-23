@@ -745,6 +745,7 @@ class NitterTweetScheduler:
                             fetched_ids=scanned_status_ids,
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
+                            omit_status_url=bool(getattr(group, 'omit_status_url', True)),
                             tweet_index=len(new_tweets),
                             tweet_total=len(new_tweets),
                         )
@@ -1612,6 +1613,7 @@ class NitterTweetScheduler:
             tweet_index=tweet_index,
             tweet_total=len(discovered_batch.tweets),
             media_only=discovered_batch.media_only,
+            omit_status_url=bool(getattr(discovered_batch, 'omit_status_url', True)),
         )
 
     async def _record_prepare_failure(
@@ -1812,6 +1814,8 @@ class NitterTweetScheduler:
                         batch_progress,
                     )
                     send_kwargs = {
+                        # omit_status_url/link_style filled below
+
                         "group_label": group_label,
                         "header_text": header_text,
                         "batch_summary": "",
@@ -1819,6 +1823,7 @@ class NitterTweetScheduler:
                     }
                     if batch.media_only:
                         send_kwargs["media_only"] = True
+                    send_kwargs["omit_status_url"] = bool(getattr(batch, "omit_status_url", True))
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -2002,17 +2007,21 @@ class NitterTweetScheduler:
                 continue
             attempts += 1
             try:
+                merge_kwargs = {
+                    "omit_status_url": all(
+                        bool(getattr(batch, "omit_status_url", True))
+                        for batch in target_batches
+                    ),
+                }
+                if any(batch.media_only for batch in target_batches):
+                    merge_kwargs["media_only"] = True
                 outcome = await self.sender.send_merged_to_umo(
                     self.context,
                     umo,
                     self._tweet_batches(target_batches),
                     group_label=group_label,
                     batch_summary=batch_summary,
-                    **(
-                        {"media_only": True}
-                        if any(batch.media_only for batch in target_batches)
-                        else {}
-                    ),
+                    **merge_kwargs,
                 )
                 if outcome.success:
                     for batch in target_batches:

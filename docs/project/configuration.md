@@ -1,5 +1,7 @@
 # 配置说明
 
+（默认 true，去推文链接）与 # 配置说明
+
 配置真源是 `_conf_schema.json`。读取、迁移规则在 `config/compat.py`，分组解析规则在 `scheduler/config.py`。
 
 ## 分组
@@ -41,7 +43,9 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文（博主 RSS 与标签/HTML 路径均适用）。
+- `omit_status_url`: 发送时去除推文链接（默认 true）。Telegram 摘要 Markdown 链到原文。仅媒体不翻译。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
+- : 发送时去除推文链接（默认 true）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；Telegram 用正文摘要 Markdown 链接到推文。仅媒体模式不调用翻译。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 

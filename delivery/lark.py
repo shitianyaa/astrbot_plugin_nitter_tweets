@@ -51,6 +51,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         header_text: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -61,6 +63,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             notices=notices,
             header_text=header_text,
             media_only=media_only,
+            omit_status_url=omit_status_url,
+            link_style=link_style,
         )
         client = lark_client_from_event(event, sender._platform_inst_from_context)
         if client is None:
@@ -74,6 +78,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
+                omit_status_url=omit_status_url,
+            link_style=link_style,
             )
 
         text = plain_text_from_components(components)
@@ -196,6 +202,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         batch_summary: str = "",
         tweet_start_index: int = 1,
         media_only: bool = False,
+        omit_status_url: bool = True,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -207,6 +215,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             header_text=header_text,
             batch_summary=batch_summary,
             media_only=media_only,
+            omit_status_url=omit_status_url,
+            link_style=link_style,
         )
         text = plain_text_from_components(components)
         post_title = (

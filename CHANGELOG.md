@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- 分组开关 `omit_status_url`（默认开启）：发送去推文 URL 明文；Telegram 摘要 Markdown 链到原文。仅媒体不翻译。
+
+### Added
+
+- 分组开关 （默认开启）：发送时去掉推文 URL 明文，并剥离正文/译文中的 http(s) 链接；Telegram 使用  展示原文入口。仅媒体模式仍不调用 AI 翻译。
+
 ## [0.17.0] - 2026-07-23
 
 ### Added

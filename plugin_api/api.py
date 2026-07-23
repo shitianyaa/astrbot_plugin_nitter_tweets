@@ -1196,6 +1196,7 @@ class NitterWebAPI:
             "daily_check_times": self._format_times(group.daily_check_times),
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
             "media_only_enabled": group.media_only_enabled,
+            "omit_status_url": bool(getattr(group, "omit_status_url", True)),
             "media_only_effective": self._media_only_effective(group),
             # Global media availability only; independent of saved group toggle
             # so the dashboard draft can warn before save.

@@ -72,6 +72,7 @@ class WebUIGroupEditor:
                 "daily_check_times": [],
                 "filter_plain_text_enabled": False,
                 "media_only_enabled": False,
+                "omit_status_url": True,
             }
         )
         save_error = self._save_groups(previous_groups, groups)
@@ -142,6 +143,13 @@ class WebUIGroupEditor:
                 "media_only_enabled",
                 raw_group.get("media_only_enabled", False),
             )
+        )
+        raw_group["omit_status_url"] = self._bool(
+            data.get(
+                "omit_status_url",
+                raw_group.get("omit_status_url", True),
+            ),
+            True,
         )
         if existing_type == "tag":
             try:
