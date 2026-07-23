@@ -197,6 +197,51 @@ def parse_config_bool(value, default: bool = False) -> bool:
     return bool(value)
 
 
+def resolve_send_image_attachments(config) -> bool:
+    """Resolve effective image-attachment delivery, including legacy fallbacks."""
+    image_setting = config_get(config, "send_image_attachments", None)
+    if image_setting is None:
+        return parse_config_bool(
+            config_get(config, "download_media", True), True
+        ) and parse_config_bool(
+            config_get(config, "download_images", True), True
+        )
+    return parse_config_bool(image_setting, True)
+
+
+def resolve_send_video_attachments(config) -> bool:
+    """Resolve effective video/GIF-attachment delivery."""
+    return parse_config_bool(
+        config_get(config, "send_video_attachments", False), False
+    )
+
+
+def media_only_unavailable_reason(
+    config,
+    *,
+    media_only_enabled: bool = True,
+) -> str:
+    """Return why media-only mode cannot take effect.
+
+    Default media_only_enabled=True reports global media availability only
+    (used by WebUI so drafts can warn before the group toggle is saved).
+    Pass media_only_enabled=False to short-circuit for a disabled group toggle
+    (scheduler path). A non-empty reason alone does not mean the group enabled
+    media-only; combine with the saved toggle / media_only_effective.
+    """
+    if not media_only_enabled:
+        return ""
+    image_enabled = resolve_send_image_attachments(config)
+    video_enabled = resolve_send_video_attachments(config)
+    if not (image_enabled or video_enabled):
+        return "global_media_disabled"
+    try:
+        max_media = int(config_get(config, "max_media_per_tweet", 4))
+    except (TypeError, ValueError):
+        max_media = 0
+    return "media_limit_zero" if max_media <= 0 else ""
+
+
 def sanitize_removed_feature_config(config) -> bool:
     """Remove configuration left by deleted or retired features."""
     return _sanitize_removed_feature_value(config)

@@ -27,9 +27,9 @@ except ImportError:
 
 try:
     from ..config import (
-        config_get,
         configured_merge_tweet_threshold,
-        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from .lark_support import is_lark_platform
     from ..shared import (
@@ -42,7 +42,11 @@ try:
     from .platforms import PlatformDeliveryRegistry, PlatformResolver, normalize_platform
     from ..rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config import config_get, configured_merge_tweet_threshold, parse_config_bool
+    from config import (
+        configured_merge_tweet_threshold,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
+    )
     from delivery.lark_support import is_lark_platform
     from shared import (
         TweetItem,
@@ -77,17 +81,8 @@ class TweetSender:
 
     def __init__(self, config=None):
         config = config or {}
-        image_config = config_get(config, "send_image_attachments", None)
-        if image_config is None:
-            image_config = parse_config_bool(
-                config_get(config, "download_media", True), True
-            ) and parse_config_bool(
-                config_get(config, "download_images", True), True
-            )
-        self.send_image_attachments = parse_config_bool(image_config, True)
-        self.send_video_attachments = parse_config_bool(
-            config_get(config, "send_video_attachments", False), False
-        )
+        self.send_image_attachments = resolve_send_image_attachments(config)
+        self.send_video_attachments = resolve_send_video_attachments(config)
         self.merge_tweet_threshold = configured_merge_tweet_threshold(config)
         self.renderer = TweetMessageRenderer(
             send_image_attachments=self.send_image_attachments,

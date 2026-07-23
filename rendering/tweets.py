@@ -756,6 +756,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
     ) -> str:
+        # format_header already embeds notices when media_only is false.
         blocks = []
         header = self.format_header(
             username,
@@ -769,9 +770,6 @@ class TweetMessageRenderer:
         )
         if header:
             blocks.append(header)
-        notice_text = "" if media_only else self.format_notices(notices)
-        if notice_text and notice_text not in blocks:
-            blocks.append(notice_text)
         blocks.extend(
             (
                 f"@{username}"

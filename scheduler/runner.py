@@ -25,6 +25,7 @@ try:
         config_get,
         config_set,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
         migrate_default_group_config,
     )
     from ..ai import (
@@ -36,6 +37,12 @@ try:
         GLOBAL_GROUP_ID,
         is_default_group,
         normalize_group_id,
+    )
+    from ..shared.media_status import (
+        MEDIA_STATUS_NO_CANDIDATE,
+        MEDIA_STATUS_POLICY_SKIPPED,
+        MEDIA_STATUS_READY,
+        MEDIA_STATUS_TRANSIENT_FAILURE,
     )
     from .formatting import (
         _format_limited_values as scheduler_format_limited_values,
@@ -65,6 +72,7 @@ except ImportError:
         config_get,
         config_set,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
         migrate_default_group_config,
     )
     from ai import (
@@ -76,6 +84,12 @@ except ImportError:
         GLOBAL_GROUP_ID,
         is_default_group,
         normalize_group_id,
+    )
+    from shared.media_status import (
+        MEDIA_STATUS_NO_CANDIDATE,
+        MEDIA_STATUS_POLICY_SKIPPED,
+        MEDIA_STATUS_READY,
+        MEDIA_STATUS_TRANSIENT_FAILURE,
     )
     from scheduler.formatting import (
         _format_limited_values as scheduler_format_limited_values,
@@ -109,10 +123,6 @@ except ZoneInfoNotFoundError:
 
 
 POLL_SECONDS = 30
-MEDIA_STATUS_READY = "ready"
-MEDIA_STATUS_TRANSIENT_FAILURE = "transient_failure"
-MEDIA_STATUS_POLICY_SKIPPED = "policy_skipped"
-MEDIA_STATUS_NO_CANDIDATE = "no_candidate"
 
 
 @dataclass(slots=True)
@@ -2006,29 +2016,10 @@ class NitterTweetScheduler:
         )
 
     def _media_only_unavailable_reason(self, group: ScheduleGroup) -> str:
-        if not group.media_only_enabled:
-            return ""
-        image_setting = config_get(self.config, "send_image_attachments", None)
-        if image_setting is None:
-            image_enabled = SchedulerConfigReader.parse_bool(
-                config_get(self.config, "download_media", True), True
-            ) and SchedulerConfigReader.parse_bool(
-                config_get(self.config, "download_images", True), True
-            )
-        else:
-            image_enabled = SchedulerConfigReader.parse_bool(image_setting, True)
-        video_enabled = SchedulerConfigReader.parse_bool(
-            config_get(self.config, "send_video_attachments", False), False
+        return media_only_unavailable_reason(
+            self.config,
+            media_only_enabled=group.media_only_enabled,
         )
-        if not (image_enabled or video_enabled):
-            return "global_media_disabled"
-        try:
-            max_media = int(config_get(self.config, "max_media_per_tweet", 4))
-        except (TypeError, ValueError):
-            max_media = 0
-        if max_media <= 0:
-            return "media_limit_zero"
-        return ""
 
     @staticmethod
     def _should_merge_batches(batches: list[PendingTweetBatch], threshold: int) -> bool:

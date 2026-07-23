@@ -16,17 +16,37 @@ try:
     from ..config import (
         DEFAULT_MAX_VIDEO_DURATION_MINUTES,
         config_get,
-        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from ..shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
     )
+    from ..shared.media_status import (
+        MEDIA_SIZE_LIMIT_ERROR,
+        MEDIA_STATUS_NO_CANDIDATE,
+        MEDIA_STATUS_POLICY_SKIPPED,
+        MEDIA_STATUS_READY,
+        MEDIA_STATUS_TRANSIENT_FAILURE,
+    )
 except ImportError:
-    from config import DEFAULT_MAX_VIDEO_DURATION_MINUTES, config_get, parse_config_bool
+    from config import (
+        DEFAULT_MAX_VIDEO_DURATION_MINUTES,
+        config_get,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
+    )
     from shared import (
         TweetItem, TweetMedia, clamp_float, clamp_int,
         generate_file_name,
+    )
+    from shared.media_status import (
+        MEDIA_SIZE_LIMIT_ERROR,
+        MEDIA_STATUS_NO_CANDIDATE,
+        MEDIA_STATUS_POLICY_SKIPPED,
+        MEDIA_STATUS_READY,
+        MEDIA_STATUS_TRANSIENT_FAILURE,
     )
 
 from .cache import MediaCacheMixin
@@ -42,11 +62,6 @@ from .xdown import XdownMediaCandidate, XdownMediaParser
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
-MEDIA_SIZE_LIMIT_ERROR = "media exceeds size limit"
-MEDIA_STATUS_READY = "ready"
-MEDIA_STATUS_TRANSIENT_FAILURE = "transient_failure"
-MEDIA_STATUS_POLICY_SKIPPED = "policy_skipped"
-MEDIA_STATUS_NO_CANDIDATE = "no_candidate"
 
 
 @dataclass(slots=True)
@@ -80,17 +95,8 @@ def _plugin_data_dir() -> Path:
 
 class MediaService(MediaCacheMixin):
     def __init__(self, config):
-        image_config = config_get(config, "send_image_attachments", None)
-        if image_config is None:
-            image_config = parse_config_bool(
-                config_get(config, "download_media", True), True
-            ) and parse_config_bool(
-                config_get(config, "download_images", True), True
-            )
-        self.send_image_attachments = parse_config_bool(image_config, True)
-        self.send_video_attachments = parse_config_bool(
-            config_get(config, "send_video_attachments", False), False
-        )
+        self.send_image_attachments = resolve_send_image_attachments(config)
+        self.send_video_attachments = resolve_send_video_attachments(config)
         self.max_per_tweet = clamp_int(
             config_get(config, "max_media_per_tweet", 4), 0, 12
         )
