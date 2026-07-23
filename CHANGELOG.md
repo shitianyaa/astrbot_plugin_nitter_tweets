@@ -4,7 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 HTML 后端：`blogger_html_instances` / `search_instances`、博主 RSS 失败后的 HTML 用户页回退，以及非管理员命令 `/推文搜索`（标签带 `#`，短语不自动加 `#`）。
+- 分组类型 `group_type`：`blogger`（`watch_users`）与 `tag`（`watch_queries`，`type=tag|phrase`）对位；标签分组定时搜索，seen 键为 `q:<casefold query>`；Dashboard 支持创建/编辑类型与查询列表。
+- 管理命令 `/标签导入`、`/标签删除` 维护标签分组查询；`/订阅导入` `/订阅删除` 拒绝标签组以免写错字段。
+- `/订阅导出 [分组]` 同时导出博主 `watch_users` 与标签 `watch_queries`，可按分组名过滤。
+- 调度：首次抓取空结果不初始化 seen；HTML 路径支持按作者媒体过滤纯文本；状态汇总改用 `account_keys`。
+
 ### Fixed
+
+- 第二刀：RSS 本轮检查/命令内跳过已失败镜像（不写盘）；`retry_attempts` / `retry_delay_seconds` 进 basic 配置（默认 2 / 5s）；HTML RateLimiter 线程锁；标签 watch_queries 规范化后回写配置。
+- 修复标签分组 seen/watermark 无法落库：账号键 `q:...` 不再被用户名规范化丢弃（`normalize_seen_account_key`）。
 
 - 修复后台检查只截取少量 RSS 结果导致更新较多时漏推的问题：固定扫描首屏约 20 条，首屏未出现上次基准时按 `Min-Id` 翻页到该基准，并在本轮发送全部未 seen 推文；移除不再生效的 `scheduled_fetch_limit` 配置。
 

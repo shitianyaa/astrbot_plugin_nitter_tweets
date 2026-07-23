@@ -103,7 +103,6 @@ class NitterWebAPI:
     async def handle_groups(self):
         return await self._json_response(self.build_groups)
 
-
     async def handle_history(self):
         async def action():
             group_id = str(request.args.get("group_id", "") or "").strip()
@@ -170,7 +169,6 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
-
     async def handle_cache_clear(self):
         return await self._json_response(self.clear_cache)
 
@@ -222,9 +220,7 @@ class NitterWebAPI:
             "duplicate_watch_users": total_duplicates,
             "invalid_watch_users": total_invalid_users,
             "push_targets": sum(len(group.targets) for group in groups),
-            "invalid_push_targets": sum(
-                len(group.invalid_targets) for group in groups
-            ),
+            "invalid_push_targets": sum(len(group.invalid_targets) for group in groups),
         }
         scheduler_state = {
             "running": bool(getattr(self.scheduler, "is_running", False)),
@@ -255,10 +251,7 @@ class NitterWebAPI:
     async def build_groups(self) -> dict[str, Any]:
         groups = self._schedule_groups()
         return self._ok(
-            groups=[
-                self._serialize_group(group)
-                for group in groups
-            ],
+            groups=[self._serialize_group(group) for group in groups],
             terminology=self._terminology(),
         )
 
@@ -419,7 +412,6 @@ class NitterWebAPI:
             return "non_onebot"
         return "default"
 
-
     async def build_history(
         self,
         group_id: str = "",
@@ -446,7 +438,9 @@ class NitterWebAPI:
         )
         group_names = {group.group_id: group.name for group in self._schedule_groups()}
         groups_by_id = {group.group_id: group for group in self._schedule_groups()}
-        grouped_records = self._group_history_records(records, group_names, groups_by_id)
+        grouped_records = self._group_history_records(
+            records, group_names, groups_by_id
+        )
         has_next = len(grouped_records) > limit
         visible_records = grouped_records[:limit]
         return self._ok(
@@ -467,10 +461,7 @@ class NitterWebAPI:
 
     async def build_history_orphans(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        configured_ids = {
-            normalize_stable_group_id(group.group_id)
-            for group in groups
-        }
+        configured_ids = {normalize_stable_group_id(group.group_id) for group in groups}
         summaries = await self.storage.get_push_history_group_summaries()
         orphans = [
             self._serialize_history_group_summary(summary)
@@ -537,7 +528,6 @@ class NitterWebAPI:
             result=self._serialize_check_result(result),
         )
 
-
     async def clear_cache(self) -> dict[str, Any]:
         result = await asyncio.to_thread(self.plugin.media.clear_cache)
         return self._ok(result=self._serialize_cache_result(result))
@@ -555,15 +545,15 @@ class NitterWebAPI:
             if error:
                 return self._error(error)
 
-        deleted = await self.storage.clear_seen_records(group.group_id if group else None)
+        deleted = await self.storage.clear_seen_records(
+            group.group_id if group else None
+        )
         legacy_deleted = await self.storage.delete_legacy_seen_kv()
         return self._ok(
             scope=self._group_label(group) if group else "全部分组",
             deleted=deleted,
             legacy_deleted=bool(legacy_deleted),
-            warning=(
-                "推送记录已清理；关注账号、推送目标和媒体文件不会被删除。"
-            ),
+            warning=("推送记录已清理；关注账号、推送目标和媒体文件不会被删除。"),
         )
 
     async def import_subscriptions(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -620,7 +610,7 @@ class NitterWebAPI:
                 "saved": bool(added),
                 "save_error": save_error,
                 "sync_error": sync_error,
-            }
+            },
         )
 
     async def delete_subscriptions(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -660,12 +650,8 @@ class NitterWebAPI:
             for user in requested
             if user.lower() in existing_by_key
         ]
-        missing = [
-            user for user in requested if user.lower() not in existing_by_key
-        ]
-        remaining = [
-            user for user in existing_users if user.lower() not in delete_keys
-        ]
+        missing = [user for user in requested if user.lower() not in existing_by_key]
+        remaining = [user for user in existing_users if user.lower() not in delete_keys]
 
         if removed:
             set_import_group_users(
@@ -695,7 +681,7 @@ class NitterWebAPI:
                 "saved": bool(removed),
                 "save_error": save_error,
                 "sync_error": sync_error,
-            }
+            },
         )
 
     async def probe_mirror(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -762,7 +748,6 @@ class NitterWebAPI:
             logger.warning(f"[NitterTweets] WebUI 分组同步失败: {error}")
             return error
         return ""
-
 
     def _select_groups(
         self, groups: list[ScheduleGroup], group_id: str
@@ -977,7 +962,16 @@ class NitterWebAPI:
             return []
 
         items: list[dict[str, str]] = []
-        no_watch_users = [group for group in enabled_groups if not group.users]
+        no_watch_users = [
+            group
+            for group in enabled_groups
+            if group.is_blogger_group and not group.users
+        ]
+        no_watch_queries = [
+            group
+            for group in enabled_groups
+            if group.is_tag_group and not group.queries
+        ]
         no_push_targets = [group for group in enabled_groups if not group.targets]
         no_check_triggers = [
             group
@@ -990,10 +984,22 @@ class NitterWebAPI:
                 {
                     "key": "groups_without_watch_users",
                     "level": "warning",
-                    "title": "启用分组没有关注账号",
+                    "title": "启用博主分组没有关注账号",
                     "detail": (
                         "这些分组不会检查任何账号："
                         + NitterWebAPI._format_group_names(no_watch_users)
+                    ),
+                }
+            )
+        if no_watch_queries:
+            items.append(
+                {
+                    "key": "groups_without_watch_queries",
+                    "level": "warning",
+                    "title": "启用标签分组没有搜索订阅",
+                    "detail": (
+                        "这些分组不会检查任何查询："
+                        + NitterWebAPI._format_group_names(no_watch_queries)
                     ),
                 }
             )
@@ -1038,12 +1044,20 @@ class NitterWebAPI:
             "group_id": group.group_id,
             "name": group.name,
             "enabled": group.enabled,
+            "group_type": group.group_type,
             "aliases": list(group.aliases),
             "watch_users": list(group.users),
             "watch_user_count": len(group.users),
             "raw_watch_user_count": group.users_info.raw_count,
             "duplicate_watch_users": list(group.users_info.duplicates),
             "invalid_watch_users": list(group.users_info.invalid_entries),
+            "watch_queries": [
+                {"query": item.query, "type": item.type} for item in group.queries
+            ],
+            "watch_query_count": len(group.queries),
+            "raw_watch_query_count": group.queries_info.raw_count,
+            "duplicate_watch_queries": list(group.queries_info.duplicates),
+            "invalid_watch_queries": list(group.queries_info.invalid_entries),
             "push_targets": list(group.targets),
             "push_target_count": len(group.targets),
             "invalid_push_targets": list(group.invalid_targets),
@@ -1057,16 +1071,13 @@ class NitterWebAPI:
             "media_only_effective": self._media_only_effective(group),
             # Global media availability only; independent of saved group toggle
             # so the dashboard draft can warn before save.
-            "media_only_unavailable_reason": media_only_unavailable_reason(
-                self.config
-            ),
+            "media_only_unavailable_reason": media_only_unavailable_reason(self.config),
             "attention_items": self._group_attention_items(group),
         }
 
     def _media_only_effective(self, group: ScheduleGroup) -> bool:
         return bool(
-            group.media_only_enabled
-            and not media_only_unavailable_reason(self.config)
+            group.media_only_enabled and not media_only_unavailable_reason(self.config)
         )
 
     @staticmethod
@@ -1083,7 +1094,17 @@ class NitterWebAPI:
                     "detail": "停用分组不会参与后台检查。",
                 }
             )
-        if not group.users:
+        if group.is_tag_group:
+            if not group.queries:
+                items.append(
+                    {
+                        "key": "no_watch_queries",
+                        "level": "warning",
+                        "title": "无搜索订阅",
+                        "detail": "该标签分组没有可检查的搜索订阅。",
+                    }
+                )
+        elif not group.users:
             items.append(
                 {
                     "key": "no_watch_users",
@@ -1224,9 +1245,7 @@ class NitterWebAPI:
             "group_name": getattr(result, "group_name", ""),
             "skipped_reason": getattr(result, "skipped_reason", ""),
             "new_tweet_count": getattr(result, "new_tweet_count", 0),
-            "pushed_target_successes": getattr(
-                result, "pushed_target_successes", 0
-            ),
+            "pushed_target_successes": getattr(result, "pushed_target_successes", 0),
             "pushed_target_attempts": getattr(result, "pushed_target_attempts", 0),
         }
 
@@ -1245,9 +1264,7 @@ class NitterWebAPI:
             "removed_other": int(
                 getattr(result, "removed_other", getattr(result, "other", 0)) or 0
             ),
-            "removed_empty_dirs": int(
-                getattr(result, "removed_empty_dirs", 0) or 0
-            ),
+            "removed_empty_dirs": int(getattr(result, "removed_empty_dirs", 0) or 0),
         }
 
     @staticmethod
