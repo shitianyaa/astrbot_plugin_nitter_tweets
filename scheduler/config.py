@@ -93,6 +93,7 @@ class ScheduleGroup:
     filter_plain_text_enabled: bool
     media_only_enabled: bool
     omit_status_url: bool
+    hide_original_when_translated: bool
     users_info: WatchUsersInfo
     queries_info: WatchQueriesInfo
     target_info: PushTargetParseResult
@@ -159,6 +160,7 @@ class SchedulerConfigReader:
             filter_plain_text_enabled=False,
             media_only_enabled=False,
             omit_status_url=True,
+            hide_original_when_translated=False,
             users_info=self.parse_watch_users([]),
             queries_info=self.parse_watch_queries([]),
             target_info=self.parse_push_targets(
@@ -381,6 +383,10 @@ class SchedulerConfigReader:
             omit_status_url=self.parse_bool(
                 raw_group.get("omit_status_url", True),
                 True,
+            ),
+            hide_original_when_translated=self.parse_bool(
+                raw_group.get("hide_original_when_translated", False),
+                False,
             ),
             users_info=users_info,
             queries_info=queries_info,

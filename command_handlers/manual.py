@@ -10,9 +10,19 @@ from astrbot.core.star.filter.command import GreedyStr
 
 try:
     from ..ai import format_ai_tweet_summary
+    from ..media_support.search_session_buffer import (
+        MAX_FETCH_CAP,
+        MAX_PAGES_PER_FILL,
+        SearchSessionStore,
+    )
     from ..shared import normalize_username, safe_call
 except ImportError:
     from ai import format_ai_tweet_summary
+    from media_support.search_session_buffer import (
+        MAX_FETCH_CAP,
+        MAX_PAGES_PER_FILL,
+        SearchSessionStore,
+    )
     from shared import normalize_username, safe_call
 
 
@@ -112,22 +122,87 @@ class ManualCommandMixin:
             await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
             return
 
-        self._mark_cooldown(event, scope="search")
-        await event.send(event.plain_result(f"正在搜索「{query}」，最多 {limit} 条..."))
-        try:
-            instance, tweets = await asyncio.to_thread(
-                html_backend.search, query, limit
+        session_id = self._search_session_id(event)
+        store = self._get_search_session_store()
+        query_key = self._search_query_key(query)
+        buf = store.get_or_create(session_id, query_key)
+
+        # Pure buffer hit: no network — skip cooldown burn for short fun use.
+        if len(buf) >= limit:
+            tweets = buf.take(limit)
+            instance = buf.instance or "buffer"
+            await event.send(
+                event.plain_result(
+                    f"从本会话缓存发送「{query}」{len(tweets)} 条"
+                    f"（缓存剩余 {len(buf)}）。"
+                )
             )
+            await self._send_tweets_response(event, query, instance, tweets)
+            return
+
+        self._mark_cooldown(event, scope="search")
+        need = limit - len(buf)
+        had_known = bool(getattr(buf, "known_ids", None))
+        await event.send(
+            event.plain_result(
+                f"正在搜索「{query}」，需要 {limit} 条"
+                + (f"（缓存已有 {len(buf)}，再取 {need}）" if len(buf) else "")
+                + "..."
+            )
+        )
+        # When session already consumed first page ids, pull a wider window so
+        # later pages can still contribute (pool restarts cursor each call).
+        pages = MAX_PAGES_PER_FILL
+        if had_known and len(buf) == 0:
+            pages = max(pages, 5)
+        fetch_limit = min(
+            MAX_FETCH_CAP * 2 if had_known else MAX_FETCH_CAP,
+            max(limit * pages, limit + need, 15 if had_known else limit),
+        )
+        try:
+            instance, fetched = await asyncio.to_thread(
+                html_backend.search,
+                query,
+                fetch_limit,
+                max_pages=pages,
+            )
+        except TypeError:
+            try:
+                instance, fetched = await asyncio.to_thread(
+                    html_backend.search, query, fetch_limit
+                )
+            except Exception as exc:
+                logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
+                await event.send(event.plain_result(f"搜索失败：{exc}"))
+                return
         except Exception as exc:
             logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
             await event.send(event.plain_result(f"搜索失败：{exc}"))
             return
+
+        added = buf.add_tweets(list(fetched or []), instance=instance or "")
+        logger.info(
+            f"[NitterTweets] search buffer session={session_id!r} query={query!r} "
+            f"fetched={len(fetched or [])} added={added} pool={len(buf)}"
+        )
+
+        tweets = buf.take(limit)
         if not tweets:
-            await event.send(
-                event.plain_result(f"没有找到与「{query}」相关的公开推文。")
-            )
+            if had_known or (fetched and added == 0):
+                await event.send(
+                    event.plain_result(
+                        f"「{query}」在本会话近期已展示过相近结果，"
+                        f"暂无更多未见推文。可换关键词，或约 10 分钟后再试。"
+                    )
+                )
+            else:
+                await event.send(
+                    event.plain_result(f"没有找到与「{query}」相关的公开推文。")
+                )
             return
-        await self._send_tweets_response(event, query, instance, tweets)
+        await self._send_tweets_response(
+            event, query, buf.instance or instance or "", tweets
+        )
 
     async def _fetch_user_with_html_fallback(
         self, username: str, limit: int, rss_error=None
@@ -519,6 +594,37 @@ class ManualCommandMixin:
         if not value.startswith(("http://", "https://")):
             return False
         return "." in value or "localhost" in value
+
+
+    def _search_session_id(self, event: AstrMessageEvent) -> str:
+        """Session id for search buffer: prefer UMO, else group/private + sender."""
+        umo = str(getattr(event, 'unified_msg_origin', '') or '').strip()
+        if umo:
+            return umo
+        sender = safe_call(event, 'get_sender_id') or 'unknown'
+        group = safe_call(event, 'get_group_id') or 'private'
+        return f'{group}:{sender}'
+
+    def _search_query_key(self, query: str) -> str:
+        q = str(query or '').strip()
+        try:
+            from ..media_support.html_backend.query import normalize_query
+        except ImportError:  # pragma: no cover
+            try:
+                from media_support.html_backend.query import normalize_query
+            except ImportError:
+                return q.casefold()
+        try:
+            return normalize_query(q).casefold()
+        except Exception:
+            return q.casefold()
+
+    def _get_search_session_store(self):
+        store = getattr(self, '_search_session_store', None)
+        if store is None:
+            store = SearchSessionStore()
+            self._search_session_store = store
+        return store
 
     def _cooldown_key(self, event: AstrMessageEvent, scope: str = "tweet") -> str:
         sender = safe_call(event, "get_sender_id") or "unknown"

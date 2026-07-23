@@ -55,6 +55,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         return self.build_nodes_for_uin(
@@ -85,6 +86,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         nodes = Nodes([])
@@ -118,6 +120,7 @@ class TweetMessageRenderer:
                         include_images=False,
                         media_only=media_only,
                     omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
                     ),
                 )
@@ -135,6 +138,9 @@ class TweetMessageRenderer:
                                 media,
                                 source=instance,
                                 media_only=media_only,
+                                omit_status_url=omit_status_url,
+                                hide_original_when_translated=hide_original_when_translated,
+                                link_style=link_style,
                             ),
                         )
                     )
@@ -152,6 +158,9 @@ class TweetMessageRenderer:
                                     media,
                                     source=instance,
                                     media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             )
                         )
@@ -167,6 +176,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         nodes = Nodes([])
@@ -191,6 +201,7 @@ class TweetMessageRenderer:
                             include_images=False,
                             media_only=media_only,
                     omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
                         ),
                     )
@@ -208,6 +219,9 @@ class TweetMessageRenderer:
                                     media,
                                     source=instance,
                                     media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             )
                         )
@@ -225,6 +239,9 @@ class TweetMessageRenderer:
                                         media,
                                         source=instance,
                                         media_only=media_only,
+                                        omit_status_url=omit_status_url,
+                                        hide_original_when_translated=hide_original_when_translated,
+                                        link_style=link_style,
                                     ),
                                 )
                             )
@@ -241,6 +258,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
         items = []
@@ -267,6 +285,7 @@ class TweetMessageRenderer:
                     include_images=False,
                     media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
                 )
                 items.append(
@@ -338,6 +357,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         components = []
@@ -364,6 +384,7 @@ class TweetMessageRenderer:
                 include_images=include_images,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             self._prepend_component_separator(tweet_components, bool(components))
@@ -379,6 +400,7 @@ class TweetMessageRenderer:
         include_videos: bool = True,
         include_images: bool = True,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         """Render only the author marker and successfully prepared media."""
@@ -386,10 +408,9 @@ class TweetMessageRenderer:
         author = f"@{author_name}" if author_name else "@unknown"
         status_url = (tweet.x_url or tweet.link or "").strip()
         if link_style == "telegram_md" and status_url:
-            preview = TweetMessageRenderer.telegram_link_preview(
-                tweet, author_name, max_chars=40
+            author = TweetMessageRenderer.telegram_markdown_link(
+                author, status_url
             )
-            author = TweetMessageRenderer.telegram_markdown_link(preview, status_url)
         components = [Plain(author)]
         for media in tweet.media:
             if not media.path:
@@ -414,6 +435,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         components = []
@@ -432,6 +454,7 @@ class TweetMessageRenderer:
                     include_images=True,
                     media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
                 )
                 self._prepend_component_separator(tweet_components, bool(components))
@@ -450,6 +473,7 @@ class TweetMessageRenderer:
         include_images: bool = True,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         components = self.build_components(
@@ -462,6 +486,7 @@ class TweetMessageRenderer:
             include_images=include_images,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         return components
@@ -501,7 +526,7 @@ class TweetMessageRenderer:
             if original_link in seen_links:
                 continue
             seen_links.add(original_link)
-            lines.append(f"视频/GIF 附件未作为消息发送，请打开原文查看：{original_link}")
+            lines.append("视频/GIF 发送已关闭，已跳过下载")
         if not lines:
             return []
         return [Plain("\n".join(lines))]
@@ -513,6 +538,7 @@ class TweetMessageRenderer:
         include_images: bool = True,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         if media_only:
@@ -523,6 +549,7 @@ class TweetMessageRenderer:
                 include_videos=include_videos,
                 include_images=include_images,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -532,6 +559,7 @@ class TweetMessageRenderer:
             tweet,
             source,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         status_url = (tweet.x_url or tweet.link or "").strip()
@@ -555,10 +583,7 @@ class TweetMessageRenderer:
             if media.is_video and not self.send_video_attachments:
                 if not video_notice_added:
                     components.append(
-                        Plain(
-                            "视频/GIF 附件发送功能仍在优化，当前按配置不发送，"
-                            f"请打开原文查看：{tweet.x_url}"
-                        )
+                        Plain("视频/GIF 发送已关闭，已跳过下载")
                     )
                     video_notice_added = True
                 continue
@@ -579,6 +604,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         if media_only:
@@ -601,6 +627,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
         if media_only:
@@ -626,6 +653,7 @@ class TweetMessageRenderer:
         header_text: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
         uin = str(node_uin(event))
@@ -658,6 +686,7 @@ class TweetMessageRenderer:
                 include_images=False,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             items.append({"name": f"@{username}", "uin": uin, "content": content})
@@ -727,6 +756,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
         if media_only:
@@ -749,6 +779,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
         if media_only:
@@ -773,14 +804,15 @@ class TweetMessageRenderer:
         include_images: bool = True,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
         if media_only:
-            content = [self.raw_text(f"@{username}")]
+            content = [self.raw_text(f"@{TweetMessageRenderer.display_username(username, tweet)}")]
         else:
             content = [
                 self.raw_text(
-                    self.format_tweet_with_source(index, username, tweet, instance, omit_status_url=omit_status_url, link_style=link_style)
+                    self.format_tweet_with_source(index, username, tweet, instance, omit_status_url=omit_status_url, hide_original_when_translated=hide_original_when_translated, link_style=link_style)
                 )
             ]
         video_notice_added = False
@@ -824,6 +856,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
         # format_header already embeds notices when media_only is false.
@@ -850,6 +883,7 @@ class TweetMessageRenderer:
                     tweet,
                     instance,
                     omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
                 )
             )
@@ -865,6 +899,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
         blocks = [self.format_merged_header(batches, group_label, batch_summary)]
@@ -881,6 +916,7 @@ class TweetMessageRenderer:
                         tweet,
                         instance,
                         omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
                         link_style=link_style,
                     )
                     )
@@ -951,43 +987,55 @@ class TweetMessageRenderer:
         source: str = "",
         *,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
         link_preview_max_chars: int = 40,
     ) -> str:
         status_url = (tweet.x_url or tweet.link or "").strip()
         author = TweetMessageRenderer.display_username(username, tweet)
-        author_line = f"@{author}" if author else "@unknown"
-        if link_style == "telegram_md" and status_url:
-            preview = TweetMessageRenderer.telegram_link_preview(
-                tweet, author, max_chars=link_preview_max_chars
-            )
-            author_line = TweetMessageRenderer.telegram_markdown_link(
-                preview, status_url
-            )
-        blocks = [author_line]
-        if tweet.published:
-            blocks[0] = blocks[0] + "\n时间：" + str(tweet.published)
+        author_label = f"@{author}" if author else "@unknown"
 
-        original_text = normalize_external_links(tweet.text).strip()
-        if omit_status_url:
-            original_text = strip_external_links(original_text)
-        if original_text:
-            blocks.append("原文：\n" + original_text)
+        # Telegram: [@author](status_url) only — body lives in 原文/翻译 blocks.
+        if link_style == "telegram_md" and status_url:
+            author_line = TweetMessageRenderer.telegram_markdown_link(
+                author_label, status_url
+            )
+        else:
+            author_line = author_label
+
+        blocks: list[str] = [author_line]
+        if tweet.published:
+            blocks.append("时间：" + str(tweet.published))
 
         translation = (tweet.translation or "").strip()
         if translation:
-            if omit_status_url:
-                translation = strip_external_links(translation)
-            else:
-                translation = normalize_external_links(translation).strip()
+            translation = strip_external_links(
+                normalize_external_links(translation).strip()
+            )
+
+        original_text = normalize_external_links(tweet.text).strip()
+        # Always strip inline http(s) from bodies to cut link spam / risk.
+        original_text = strip_external_links(original_text)
+
+        show_original = bool(original_text)
+        if hide_original_when_translated and translation and show_original:
+            show_original = False
+
+        # Translation first when both are shown (CN-reader friendly).
         if translation:
             blocks.append("翻译：\n" + translation)
+        if show_original:
+            blocks.append("原文：\n" + original_text)
+        elif not translation and not show_original:
+            blocks.append("（无正文）")
 
         if tweet.ai_warnings:
             warns = "\n".join(f"- {w}" for w in tweet.ai_warnings if w)
-            blocks.append("AI提示：\n" + warns)
+            if warns:
+                blocks.append("AI提示：\n" + warns)
 
-        if not omit_status_url and status_url:
+        # Footer status URL only for non-TG when omit is off (TG has header link).
+        if not omit_status_url and status_url and link_style != "telegram_md":
             blocks.append("原文链接：\n" + status_url)
 
         if tweet.media_warnings:
@@ -1020,7 +1068,6 @@ class TweetMessageRenderer:
 
         return "\n\n".join(blocks)
 
-    @staticmethod
     def telegram_link_preview(
         tweet: TweetItem,
         username: str,
@@ -1042,7 +1089,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         status_url: str = "",
     ) -> str:
-        base = "视频/GIF 附件未作为消息发送。"
+        base = "视频/GIF 发送已关闭，已跳过下载。"
         url = (status_url or "").strip()
         if omit_status_url or not url:
             return base
@@ -1066,6 +1113,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
         if media_only:
@@ -1076,6 +1124,7 @@ class TweetMessageRenderer:
             tweet,
             source=source,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         if text:
@@ -1090,6 +1139,7 @@ class TweetMessageRenderer:
         source: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
         if media_only:
@@ -1120,6 +1170,7 @@ class TweetMessageRenderer:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
         summary = batch_summary.strip()
