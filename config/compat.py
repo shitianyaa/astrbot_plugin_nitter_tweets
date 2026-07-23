@@ -177,6 +177,26 @@ def config_get(config, key: str, default=None):
     return _dict_get(config, key, default)
 
 
+def parse_config_bool(value, default: bool = False) -> bool:
+    """Parse bool values consistently across migrated and WebUI configs."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {
+            "1", "true", "yes", "on", "enable", "enabled", "是", "开", "开启"
+        }:
+            return True
+        if normalized in {
+            "0", "false", "no", "off", "disable", "disabled", "否", "关", "关闭"
+        }:
+            return False
+        return default
+    return bool(value)
+
+
 def sanitize_removed_feature_config(config) -> bool:
     """Remove configuration left by deleted or retired features."""
     return _sanitize_removed_feature_value(config)

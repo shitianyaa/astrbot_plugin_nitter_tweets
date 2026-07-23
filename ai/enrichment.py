@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
+    from ..config import config_get, parse_config_bool
     from ..shared import TweetItem, clamp_float, clamp_int, strip_external_links
 except ImportError:
-    from config import config_get
+    from config import config_get, parse_config_bool
     from shared import TweetItem, clamp_float, clamp_int, strip_external_links
 
 
@@ -155,7 +155,9 @@ def _find_report_item(report, status_id: str):
 class TweetTranslator:
     def __init__(self, context, config):
         self.context = context
-        self.enabled = bool(config_get(config, "translate_enabled", False))
+        self.enabled = parse_config_bool(
+            config_get(config, "translate_enabled", False), False
+        )
         self.provider_id = str(
             config_get(config, "translation_provider_id", "") or ""
         ).strip()

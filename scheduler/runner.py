@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
 import inspect
 from collections.abc import Awaitable, Callable
@@ -108,6 +109,10 @@ except ZoneInfoNotFoundError:
 
 
 POLL_SECONDS = 30
+MEDIA_STATUS_READY = "ready"
+MEDIA_STATUS_TRANSIENT_FAILURE = "transient_failure"
+MEDIA_STATUS_POLICY_SKIPPED = "policy_skipped"
+MEDIA_STATUS_NO_CANDIDATE = "no_candidate"
 
 
 @dataclass(slots=True)
@@ -139,6 +144,8 @@ class PreparedBatchResult:
     batch: PendingTweetBatch
     translation_report: TranslationReport | None = None
     error: SchedulerTaskError | None = None
+    media_status: str = "ready"
+    media_error: str = ""
 
 
 class NitterTweetScheduler:
@@ -429,10 +436,20 @@ class NitterTweetScheduler:
                 "error": "请选择要重新推送的推送目标",
             }
 
+        replay_tweet = copy.deepcopy(record.tweet)
+        translator_enabled = bool(getattr(self.translator, "enabled", False))
+        if not translator_enabled:
+            replay_tweet.translation = ""
+            replay_tweet.ai_warnings = [
+                warning
+                for warning in replay_tweet.ai_warnings
+                if "翻译" not in str(warning)
+            ]
+
         batch = PendingTweetBatch(
             username=record.username,
             instance=record.instance,
-            tweets=[record.tweet],
+            tweets=[replay_tweet],
             fetched_ids=[record.status_id] if record.status_id else [],
             seen_ids=[],
             account_index=1,
@@ -441,6 +458,10 @@ class NitterTweetScheduler:
             tweet_total=1,
         )
         try:
+            if translator_enabled:
+                await self.translator.attach_translations(
+                    batch.tweets, targets[0] if targets else None
+                )
             await self.media.attach_media(batch.tweets)
         except Exception as exc:
             logger.warning(
@@ -462,9 +483,8 @@ class NitterTweetScheduler:
                         target,
                         record.username,
                         record.instance,
-                        [record.tweet],
+                        batch.tweets,
                         group_label=group_label,
-                        header_text=f"@{record.username} 重新推送",
                         batch_summary="",
                         tweet_start_index=1,
                     )
@@ -559,7 +579,15 @@ class NitterTweetScheduler:
         target_interval = group.send_target_interval
         user_interval = group.send_user_interval
         group_label = self._push_group_label(group)
-        skip_plain_text = bool(group.filter_plain_text_enabled)
+        filter_plain_text_enabled = bool(group.filter_plain_text_enabled)
+        media_only_effective = self._media_only_effective(group)
+        if group.media_only_enabled and not media_only_effective:
+            reason_text = self._media_only_unavailable_reason(group)
+            logger.info(
+                "[NitterTweets] 分组仅媒体未生效，已回退完整内容: "
+                f"group={group.group_id}, reason={reason_text or 'unknown'}"
+            )
+        skip_plain_text = filter_plain_text_enabled or media_only_effective
         use_fetch_parallel = self._should_use_concurrent_fetch(group)
         use_prepare_parallel = self._should_use_concurrent_prepare(group)
         self._log_verbose_info(
@@ -671,7 +699,6 @@ class NitterTweetScheduler:
                 )
 
             if new_tweets:
-                new_tweets.reverse()
                 selected_ids = {
                     tweet.status_id for tweet in new_tweets if tweet.status_id
                 }
@@ -686,6 +713,7 @@ class NitterTweetScheduler:
                         tweets=new_tweets,
                         fetched_ids=scanned_status_ids,
                         seen_ids=seen_ids,
+                        media_only=media_only_effective,
                         tweet_index=len(new_tweets),
                         tweet_total=len(new_tweets),
                     )
@@ -1144,6 +1172,18 @@ class NitterTweetScheduler:
                         current_batch = None
                         continue
 
+                    if prepared.media_status != MEDIA_STATUS_READY:
+                        await self._handle_media_prepare_status(
+                            result,
+                            current_batch,
+                            prepared.media_status,
+                            prepared.media_error,
+                            seen_map,
+                            group.group_id,
+                        )
+                        current_batch = None
+                        continue
+
                     await self._handle_immediate_prepare_success(
                         group, prepared, seen_map
                     )
@@ -1180,6 +1220,7 @@ class NitterTweetScheduler:
         batches: list[PendingTweetBatch],
         concurrency: int,
         prepare_one: Callable[[PendingTweetBatch], Awaitable[PreparedBatchResult]],
+        on_result: Callable[[PreparedBatchResult], Awaitable[None]] | None = None,
     ) -> list[PreparedBatchResult]:
         semaphore = asyncio.Semaphore(concurrency)
 
@@ -1193,7 +1234,21 @@ class NitterTweetScheduler:
                         error=SchedulerTaskError.from_exception(exc),
                     )
 
-        return list(await asyncio.gather(*[prepare(batch) for batch in batches]))
+        tasks = [asyncio.create_task(prepare(batch)) for batch in batches]
+        results: list[PreparedBatchResult] = []
+        try:
+            for task in asyncio.as_completed(tasks):
+                prepared = await task
+                results.append(prepared)
+                if on_result is not None:
+                    await on_result(prepared)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        return results
 
 
     async def _prepare_immediate_batches_concurrently(
@@ -1223,15 +1278,6 @@ class NitterTweetScheduler:
                     )
                 )
 
-        try:
-            prepared_results = await self._prepare_batches_concurrently(
-                single_batches,
-                group.prepare_concurrency,
-                lambda batch: self._prepare_immediate_batch(batch, target_umo),
-            )
-        except BaseException:
-            await self._cleanup_batch_media_many(single_batches)
-            raise
         pending_batches: list[PendingTweetBatch] = []
         prepared_count_by_user: dict[str, int] = {}
         total_by_user: dict[str, int] = {}
@@ -1239,40 +1285,54 @@ class NitterTweetScheduler:
             total_by_user[batch.username] = (
                 total_by_user.get(batch.username, 0) + len(batch.tweets)
             )
-        try:
-            for prepared in prepared_results:
-                batch = prepared.batch
-                tweet = batch.tweets[0]
-                tweet_index = batch.tweet_index
-                if prepared.error:
-                    await self._record_prepare_failure(
-                        result, batch, prepared.error
-                    )
-                    continue
 
-                await self._handle_immediate_prepare_success(
-                    group, prepared, seen_map
+        async def consume(prepared: PreparedBatchResult) -> None:
+            nonlocal pending_batches, immediate_batches_sent
+            batch = prepared.batch
+            tweet_index = batch.tweet_index
+            if prepared.error:
+                await self._record_prepare_failure(result, batch, prepared.error)
+                return
+            if prepared.media_status != MEDIA_STATUS_READY:
+                await self._handle_media_prepare_status(
+                    result,
+                    batch,
+                    prepared.media_status,
+                    prepared.media_error,
+                    seen_map,
+                    group.group_id,
                 )
-                prepared_count_by_user[batch.username] = (
-                    prepared_count_by_user.get(batch.username, 0) + 1
+                return
+
+            await self._handle_immediate_prepare_success(group, prepared, seen_map)
+            prepared_count_by_user[batch.username] = (
+                prepared_count_by_user.get(batch.username, 0) + 1
+            )
+            pending_batches, immediate_batches_sent = (
+                await self._send_or_buffer_immediate_batch(
+                    batch,
+                    group,
+                    pending_batches,
+                    result,
+                    immediate_targets,
+                    buffered_targets,
+                    target_interval,
+                    user_interval,
+                    group_label,
+                    immediate_batch_summary_tracker,
+                    immediate_batches_sent,
+                    seen_map,
+                    batch_progress=(tweet_index, batch.tweet_total),
                 )
-                pending_batches, immediate_batches_sent = (
-                    await self._send_or_buffer_immediate_batch(
-                        batch,
-                        group,
-                        pending_batches,
-                        result,
-                        immediate_targets,
-                        buffered_targets,
-                        target_interval,
-                        user_interval,
-                        group_label,
-                        immediate_batch_summary_tracker,
-                        immediate_batches_sent,
-                        seen_map,
-                        batch_progress=(tweet_index, batch.tweet_total),
-                    )
-                )
+            )
+
+        try:
+            await self._prepare_batches_concurrently(
+                single_batches,
+                group.prepare_concurrency,
+                lambda batch: self._prepare_immediate_batch(batch, target_umo),
+                on_result=consume,
+            )
         except BaseException:
             await self._cleanup_batch_media_many(
                 [*single_batches, *pending_batches]
@@ -1294,13 +1354,39 @@ class NitterTweetScheduler:
         batch: PendingTweetBatch,
         target_umo: str,
     ) -> PreparedBatchResult:
-        translation_report = await self.translator.attach_translations(
-            batch.tweets, target_umo
-        )
-        await self.media.attach_media(batch.tweets)
+        translation_report = None
+        if not batch.media_only:
+            translation_report = await self.translator.attach_translations(
+                batch.tweets, target_umo
+            )
+
+        media_status = MEDIA_STATUS_READY
+        media_error = ""
+        if batch.media_only:
+            media_results_method = getattr(
+                self.media, "attach_media_with_results", None
+            )
+            if callable(media_results_method):
+                reports = await media_results_method(batch.tweets)
+                report = reports[0] if reports else None
+                media_status = str(
+                    getattr(report, "status", MEDIA_STATUS_NO_CANDIDATE)
+                )
+                media_error = str(getattr(report, "error", "") or "")
+            else:
+                await self.media.attach_media(batch.tweets)
+                media_status = (
+                    MEDIA_STATUS_READY
+                    if self._has_prepared_media(batch.tweets)
+                    else MEDIA_STATUS_NO_CANDIDATE
+                )
+        else:
+            await self.media.attach_media(batch.tweets)
         return PreparedBatchResult(
             batch=batch,
             translation_report=translation_report,
+            media_status=media_status,
+            media_error=media_error,
         )
 
     @staticmethod
@@ -1320,6 +1406,7 @@ class NitterTweetScheduler:
             account_total=discovered_batch.account_total,
             tweet_index=tweet_index,
             tweet_total=len(discovered_batch.tweets),
+            media_only=discovered_batch.media_only,
         )
 
     async def _record_prepare_failure(
@@ -1354,6 +1441,8 @@ class NitterTweetScheduler:
         seen_map: dict[str, list[str]],
     ) -> None:
         batch = prepared.batch
+        if batch.media_only:
+            return
         self._log_ai_process_results(
             batch.username,
             batch.tweets,
@@ -1506,30 +1595,36 @@ class NitterTweetScheduler:
                             umo,
                             target_batch_summary,
                         )
-                        if summary_outcome.success:
-                            if batch_summary_tracker is not None:
-                                batch_summary_tracker.mark_delivered(umo)
-                        else:
+                        if not summary_outcome.success:
                             logger.warning(
                                 "[NitterTweets] 定时推送概括发送失败: "
                                 f"target={umo}, error={summary_outcome.error}"
                             )
                         if summary_outcome.warning:
                             result.delivery_warnings.append(summary_outcome.warning)
+                        if batch_summary_tracker is not None:
+                            # A target receives at most one standalone summary;
+                            # a failed attempt must not be repeated before each tweet.
+                            batch_summary_tracker.mark_delivered(umo)
                     tweet_start_index = self._scheduled_tweet_start_index(
                         batch,
                         batch_progress,
                     )
+                    send_kwargs = {
+                        "group_label": group_label,
+                        "header_text": header_text,
+                        "batch_summary": "",
+                        "tweet_start_index": tweet_start_index,
+                    }
+                    if batch.media_only:
+                        send_kwargs["media_only"] = True
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
                         batch.username,
                         batch.instance,
                         batch.tweets,
-                        group_label=group_label,
-                        header_text=header_text,
-                        batch_summary="",
-                        tweet_start_index=tweet_start_index,
+                        **send_kwargs,
                     )
                     if outcome.success:
                         await self._mark_batch_target_delivered(
@@ -1582,21 +1677,8 @@ class NitterTweetScheduler:
     def _scheduled_update_header(
         batch: PendingTweetBatch, batch_progress: tuple[int, int] | None = None
     ) -> str:
-        if batch_progress:
-            tweet_index, tweet_total = batch_progress
-        else:
-            tweet_index = batch.tweet_index
-            tweet_total = batch.tweet_total
-        if tweet_total <= 0:
-            tweet_total = max(len(batch.tweets), 1)
-        if tweet_index <= 0:
-            tweet_index = min(len(batch.tweets), tweet_total) or 1
-
-        lines = [f"@{batch.username} 新推文"]
-        if batch.account_index > 0 and batch.account_total > 0:
-            lines.append(f"所有账号：{batch.account_index}/{batch.account_total}")
-        lines.append(f"该账号推文：{tweet_index}/{tweet_total}")
-        return "\n".join(lines)
+        del batch, batch_progress
+        return ""
 
     @staticmethod
     def _scheduled_tweet_start_index(
@@ -1725,6 +1807,11 @@ class NitterTweetScheduler:
                     self._tweet_batches(target_batches),
                     group_label=group_label,
                     batch_summary=batch_summary,
+                    **(
+                        {"media_only": True}
+                        if any(batch.media_only for batch in target_batches)
+                        else {}
+                    ),
                 )
                 if outcome.success:
                     for batch in target_batches:
@@ -1869,6 +1956,79 @@ class NitterTweetScheduler:
 
     def _merge_tweet_threshold(self) -> int:
         return configured_merge_tweet_threshold(self.config)
+
+    def _media_only_effective(self, group: ScheduleGroup) -> bool:
+        return bool(
+            group.media_only_enabled
+            and not self._media_only_unavailable_reason(group)
+        )
+
+    async def _handle_media_prepare_status(
+        self,
+        result: ScheduledCheckResult,
+        batch: PendingTweetBatch,
+        status: str,
+        error: str,
+        seen_map: dict[str, list[str]],
+        group_id: str,
+    ) -> None:
+        batch.media_status = status
+        await self._cleanup_batch_media(batch)
+        status_id = str(batch.tweets[0].status_id or "") if batch.tweets else ""
+        if status == MEDIA_STATUS_POLICY_SKIPPED:
+            result.media_only_skipped += 1
+            if status_id:
+                await self._store_incremental_seen_ids(
+                    group_id,
+                    batch.username,
+                    [status_id],
+                    seen_map,
+                )
+            self._log_verbose_info(
+                "[NitterTweets] 仅媒体推文按全局媒体策略跳过: "
+                f"username={batch.username}, status={status_id}"
+            )
+            return
+
+        result.media_only_retrying += 1
+        logger.warning(
+            "[NitterTweets] 仅媒体推文暂未准备好，下轮重试: "
+            f"username={batch.username}, status={status_id}, "
+            f"status={status}, error={error or 'no media'}"
+        )
+
+    @staticmethod
+    def _has_prepared_media(tweets: list[TweetItem]) -> bool:
+        return any(
+            media.path and (media.is_image or media.is_video)
+            for tweet in tweets
+            for media in getattr(tweet, "media", [])
+        )
+
+    def _media_only_unavailable_reason(self, group: ScheduleGroup) -> str:
+        if not group.media_only_enabled:
+            return ""
+        image_setting = config_get(self.config, "send_image_attachments", None)
+        if image_setting is None:
+            image_enabled = SchedulerConfigReader.parse_bool(
+                config_get(self.config, "download_media", True), True
+            ) and SchedulerConfigReader.parse_bool(
+                config_get(self.config, "download_images", True), True
+            )
+        else:
+            image_enabled = SchedulerConfigReader.parse_bool(image_setting, True)
+        video_enabled = SchedulerConfigReader.parse_bool(
+            config_get(self.config, "send_video_attachments", False), False
+        )
+        if not (image_enabled or video_enabled):
+            return "global_media_disabled"
+        try:
+            max_media = int(config_get(self.config, "max_media_per_tweet", 4))
+        except (TypeError, ValueError):
+            max_media = 0
+        if max_media <= 0:
+            return "media_limit_zero"
+        return ""
 
     @staticmethod
     def _should_merge_batches(batches: list[PendingTweetBatch], threshold: int) -> bool:

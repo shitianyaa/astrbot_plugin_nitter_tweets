@@ -65,6 +65,7 @@ class WebUIGroupEditor:
                 "interval_check_enabled": True,
                 "daily_check_times": [],
                 "filter_plain_text_enabled": False,
+                "media_only_enabled": False,
             }
         )
         save_error = self._save_groups(previous_groups, groups)
@@ -116,6 +117,12 @@ class WebUIGroupEditor:
             data.get(
                 "filter_plain_text_enabled",
                 raw_group.get("filter_plain_text_enabled", False),
+            )
+        )
+        raw_group["media_only_enabled"] = self._bool(
+            data.get(
+                "media_only_enabled",
+                raw_group.get("media_only_enabled", False),
             )
         )
         groups[index] = raw_group

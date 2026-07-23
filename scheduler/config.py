@@ -70,6 +70,7 @@ class ScheduleGroup:
     concurrent_prepare_enabled: bool
     prepare_concurrency: int
     filter_plain_text_enabled: bool
+    media_only_enabled: bool
     users_info: WatchUsersInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
@@ -113,6 +114,7 @@ class SchedulerConfigReader:
             concurrent_prepare_enabled=False,
             prepare_concurrency=2,
             filter_plain_text_enabled=False,
+            media_only_enabled=False,
             users_info=self.parse_watch_users([]),
             target_info=self.parse_push_targets(
                 [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
@@ -257,6 +259,10 @@ class SchedulerConfigReader:
                 raw_group.get(
                     "filter_plain_text_enabled", filter_plain_text_default
                 ),
+                False,
+            ),
+            media_only_enabled=self.parse_bool(
+                raw_group.get("media_only_enabled", False),
                 False,
             ),
             users_info=self.parse_watch_users(raw_group.get("watch_users", [])),

@@ -31,6 +31,8 @@ class PendingTweetBatch:
     account_total: int = 0
     tweet_index: int = 0
     tweet_total: int = 0
+    media_only: bool = False
+    media_status: str = "ready"
     media_cleaned: bool = field(default=False, repr=False, compare=False)
 
 
@@ -73,6 +75,8 @@ class ScheduledCheckResult:
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
     plain_text_filtered: int = 0
+    media_only_skipped: int = 0
+    media_only_retrying: int = 0
 
     @property
     def new_tweet_count(self) -> int:
@@ -136,6 +140,12 @@ class ScheduledCheckResult:
             f", filtered={self.plain_text_filtered}"
             if self.plain_text_filtered else ""
         )
+        media_part = (
+            f", media_skipped={self.media_only_skipped}, "
+            f"media_retrying={self.media_only_retrying}"
+            if self.media_only_skipped or self.media_only_retrying
+            else ""
+        )
         return (
             "[NitterTweets] 定时检查完成: "
             f"group={self.group_id}, reason={self.reason}, "
@@ -146,7 +156,8 @@ class ScheduledCheckResult:
             f"push_mode={self.push_mode}, "
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
-            f"invalid_targets={len(self.invalid_targets)}{warning_part}{filtered_part}"
+            f"invalid_targets={len(self.invalid_targets)}{warning_part}"
+            f"{filtered_part}{media_part}"
         )
 
     def format_brief_log_lines(self) -> list[str]:
@@ -168,6 +179,11 @@ class ScheduledCheckResult:
         ]
         if self.plain_text_filtered:
             lines[0] += f", filtered={self.plain_text_filtered}"
+        if self.media_only_skipped or self.media_only_retrying:
+            lines[0] += (
+                f", media_skipped={self.media_only_skipped},"
+                f" media_retrying={self.media_only_retrying}"
+            )
         if self.failed_users:
             failed_items = [
                 f"{self._failure_label(user)}: {error}"

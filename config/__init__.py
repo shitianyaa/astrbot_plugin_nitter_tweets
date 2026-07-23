@@ -18,6 +18,7 @@ from .compat import (
     ensure_tweet_group_template_keys,
     migrate_default_group_config,
     migrate_legacy_grouped_config,
+    parse_config_bool,
     sanitize_removed_feature_config,
     sanitize_removed_feature_group,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "ensure_tweet_group_template_keys",
     "migrate_default_group_config",
     "migrate_legacy_grouped_config",
+    "parse_config_bool",
     "sanitize_removed_feature_config",
     "sanitize_removed_feature_group",
 ]

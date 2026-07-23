@@ -89,6 +89,8 @@ NitterTweetScheduler
 5. 下载到普通缓存
 6. 普通媒体发送后清理
 
+定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。临时失败不写 seen 且不推进扫描基准；明确策略跳过允许基准推进。手动命令和历史重推始终使用完整内容。
+
 升级到发送后删除策略时会自动执行一次普通缓存清理。
 
 ## 存储链路

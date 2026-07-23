@@ -13,6 +13,7 @@ try:
     from ..config import (
         config_get,
         configured_merge_tweet_threshold,
+        parse_config_bool,
     )
     from ..config.subscriptions import (
         ensure_default_import_group,
@@ -34,6 +35,7 @@ except ImportError:
     from config import (
         config_get,
         configured_merge_tweet_threshold,
+        parse_config_bool,
     )
     from config.subscriptions import (
         ensure_default_import_group,
@@ -225,9 +227,15 @@ class NitterWebAPI:
             ),
         }
         features = {
-            "images": bool(config_get(self.config, "send_image_attachments", True)),
-            "videos": bool(config_get(self.config, "send_video_attachments", False)),
-            "translation": bool(config_get(self.config, "translate_enabled", False)),
+            "images": parse_config_bool(
+                config_get(self.config, "send_image_attachments", True), True
+            ),
+            "videos": parse_config_bool(
+                config_get(self.config, "send_video_attachments", False), False
+            ),
+            "translation": parse_config_bool(
+                config_get(self.config, "translate_enabled", False), False
+            ),
         }
         instances = list(getattr(getattr(self.plugin, "nitter", None), "instances", []))
         return self._ok(
@@ -1043,8 +1051,42 @@ class NitterWebAPI:
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
+            "media_only_enabled": group.media_only_enabled,
+            "media_only_effective": self._media_only_effective(group),
+            "media_only_unavailable_reason": self._media_only_unavailable_reason(
+                group
+            ),
             "attention_items": self._group_attention_items(group),
         }
+
+    def _media_only_effective(self, group: ScheduleGroup) -> bool:
+        return bool(
+            group.media_only_enabled
+            and not self._media_only_unavailable_reason(group)
+        )
+
+    def _media_only_unavailable_reason(self, group: ScheduleGroup) -> str:
+        if not group.media_only_enabled:
+            return ""
+        image_setting = config_get(self.config, "send_image_attachments", None)
+        if image_setting is None:
+            image_enabled = parse_config_bool(
+                config_get(self.config, "download_media", True), True
+            ) and parse_config_bool(
+                config_get(self.config, "download_images", True), True
+            )
+        else:
+            image_enabled = parse_config_bool(image_setting, True)
+        video_enabled = parse_config_bool(
+            config_get(self.config, "send_video_attachments", False), False
+        )
+        if not (image_enabled or video_enabled):
+            return "global_media_disabled"
+        try:
+            max_media = int(config_get(self.config, "max_media_per_tweet", 4))
+        except (TypeError, ValueError):
+            max_media = 0
+        return "media_limit_zero" if max_media <= 0 else ""
 
     @staticmethod
     def _group_attention_items(

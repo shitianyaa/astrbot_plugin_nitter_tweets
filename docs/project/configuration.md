@@ -25,6 +25,7 @@
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文。
+- `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 
