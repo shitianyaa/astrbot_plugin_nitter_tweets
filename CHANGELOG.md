@@ -4,7 +4,41 @@
 
 ## [Unreleased]
 
-暂无。
+### Added
+
+- AstrBot 配置 `tweet_groups` 拆成模板「博主分组 / 标签分组」；添加时先选类型。旧 `__template_key=group`（用户分组）启动迁移为 blogger。
+- 新增 HTML 后端：`blogger_html_instances` / `search_instances`、博主 RSS 失败后的 HTML 用户页回退，以及非管理员命令 `/推文搜索`（标签带 `#`，短语不自动加 `#`）。
+- 分组类型 `group_type`：`blogger`（`watch_users`）与 `tag`（`watch_queries`，`type=tag|phrase`）对位；标签分组定时搜索，seen 键为 `q:<casefold query>`；Dashboard 支持创建/编辑类型与查询列表。
+- 管理命令 `/标签导入`、`/标签删除` 维护标签分组查询；`/订阅导入` `/订阅删除` 拒绝标签组以免写错字段。
+- `/订阅导出 [分组]` 同时导出博主 `watch_users` 与标签 `watch_queries`，可按分组名过滤。
+- 调度：首次抓取空结果不初始化 seen；HTML 路径支持按作者媒体过滤纯文本；状态汇总改用 `account_keys`。
+
+### Fixed
+
+- 第二刀：RSS 本轮检查/命令内跳过已失败镜像（不写盘）；`retry_attempts` / `retry_delay_seconds` 进 basic 配置（默认 2 / 5s）；HTML RateLimiter 线程锁；标签 watch_queries 规范化后回写配置。
+- 修复标签分组 seen/watermark 无法落库：账号键 `q:...` 不再被用户名规范化丢弃（`normalize_seen_account_key`）。
+
+- 修复后台检查只截取少量 RSS 结果导致更新较多时漏推的问题：固定扫描首屏约 20 条，首屏未出现上次基准时按 `Min-Id` 翻页到该基准，并在本轮发送全部未 seen 推文；移除不再生效的 `scheduled_fetch_limit` 配置。
+
+### Changed
+
+- 后台推送按 RSS 返回顺序发送；并发准备按完成顺序发送；聊天消息移除推文序号和账号进度，并在每个目标本轮第一条消息显示博主数、推文数和分组概括。
+- 分组新增 `media_only_enabled`（WebUI 名称“仅媒体”）。有效时只发送作者和成功准备的附件；临时媒体失败下轮重试，明确策略跳过允许扫描基准推进。全局媒体不可用时仅在 WebUI 和日志提示并回退完整内容。
+
+## [0.16.0] - 2026-07-21
+
+### Removed
+
+- 移除暂存定时发布：配置项、`/推文队列` / `/推文发布` 命令、WebUI 暂存队列页、SQLite `pending_tweets` / `pending_media` 表与 `cache/staged/` 暂存媒体流程。
+- 移除非翻译 AI 能力：AI 摘要、智能过滤、改写、识图、AI 评论及相关配置、渲染与 WebUI 展示。
+- 升级时删除旧 pending 表和 `cache/staged/` 媒体；独立的 0.16 缓存迁移标记确保清理不会被旧 marker 跳过，相关旧配置会被清理。
+
+### Changed
+
+- 后台检查发现新推文后统一即时推送；QQ/aiocqhttp 仍可按 `merge_tweet_threshold` 合并转发。
+- AI 处理仅保留翻译；`metadata.yaml`、运维面板文案与 agent/项目文档同步为当前能力边界。
+- 回补最小调度与平台发送回归：seen watermark、发送失败不写 seen、QQ 合并顺序、Telegram flood control。
+- 清理删除后的死字段与兼容别名：`queued_tweets` / `pending_ids` / `image_caption` / `ai_comment`、`clear_non_staged_cache` 与 enrichment 日志参数。
 
 ## [0.15.0] - 2026-07-10
 

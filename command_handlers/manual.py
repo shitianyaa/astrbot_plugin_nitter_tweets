@@ -29,15 +29,15 @@ class ManualCommandMixin:
         username = normalize_username(username)
         if not username:
             await event.send(
-                event.plain_result(
-                    "用法：/推文 用户名 [数量]\n例如：/推文 nasa 5"
-                )
+                event.plain_result("用法：/推文 用户名 [数量]\n例如：/推文 nasa 5")
             )
             return
 
         cooldown_left = self._cooldown_left(event)
         if cooldown_left > 0:
-            await event.send(event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。"))
+            await event.send(
+                event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。")
+            )
             return
 
         limit_text = self._strip_self_at_argument(event, limit)
@@ -55,22 +55,140 @@ class ManualCommandMixin:
             event.plain_result(f"正在获取 @{username} 最近最多 {limit} 条推文...")
         )
 
+        if hasattr(self.nitter, "begin_run_host_skip"):
+            self.nitter.begin_run_host_skip()
         try:
-            instance, tweets = await self.nitter.fetch_tweets(username, limit)
-        except Exception as exc:
-            logger.warning(f"[NitterTweets] 手动获取 @{username} 推文失败: {exc}")
-            await event.send(
-                event.plain_result(
-                    f"获取 @{username} 推文失败：Nitter 实例暂时不可用或该用户无公开 RSS。"
+            try:
+                instance, tweets = await self.nitter.fetch_tweets(username, limit)
+            except Exception as exc:
+                logger.warning(f"[NitterTweets] 手动获取 @{username} 推文失败: {exc}")
+                instance, tweets = await self._fetch_user_with_html_fallback(
+                    username, limit, rss_error=exc
                 )
+                if not tweets:
+                    await event.send(
+                        event.plain_result(
+                            f"获取 @{username} 推文失败：Nitter RSS 与 HTML 回退均不可用。"
+                        )
+                    )
+                    return
+            else:
+                if not tweets:
+                    instance, tweets = await self._fetch_user_with_html_fallback(
+                        username, limit, rss_error=None
+                    )
+                    if not tweets:
+                        await event.send(
+                            event.plain_result(f"没有找到 @{username} 的公开推文。")
+                        )
+                        return
+
+        finally:
+            if hasattr(self.nitter, "end_run_host_skip"):
+                self.nitter.end_run_host_skip()
+        await self._send_tweets_response(event, username, instance, tweets)
+
+    async def _cmd_tweet_search_impl(self, event: AstrMessageEvent, args=GreedyStr):
+        """HTML 搜索公开推文：标签请带 #，短语直接写。"""
+        event.stop_event()
+
+        query, limit, error = self._parse_search_args(event, args)
+        if error:
+            await event.send(event.plain_result(error))
+            return
+
+        cooldown_left = self._cooldown_left(event, scope="search")
+        if cooldown_left > 0:
+            await event.send(
+                event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。")
             )
             return
 
-        if not tweets:
-            await event.send(event.plain_result(f"没有找到 @{username} 的公开推文。"))
+        html_backend = getattr(self, "html_backend", None)
+        if html_backend is None:
+            await event.send(event.plain_result("搜索后端未初始化。"))
+            return
+        if not getattr(html_backend.config, "search_enabled", True):
+            await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
             return
 
-        await self._send_tweets_response(event, username, instance, tweets)
+        self._mark_cooldown(event, scope="search")
+        await event.send(event.plain_result(f"正在搜索「{query}」，最多 {limit} 条..."))
+        try:
+            instance, tweets = await asyncio.to_thread(
+                html_backend.search, query, limit
+            )
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
+            await event.send(event.plain_result(f"搜索失败：{exc}"))
+            return
+        if not tweets:
+            await event.send(
+                event.plain_result(f"没有找到与「{query}」相关的公开推文。")
+            )
+            return
+        await self._send_tweets_response(event, query, instance, tweets)
+
+    async def _fetch_user_with_html_fallback(
+        self, username: str, limit: int, rss_error=None
+    ):
+        html_backend = getattr(self, "html_backend", None)
+        if html_backend is None:
+            return "", []
+        try:
+            from ..config import config_get
+        except ImportError:  # pragma: no cover
+            from config import config_get
+
+        if not bool(config_get(self.config, "user_html_fallback", True)):
+            return "", []
+        try:
+            instance, tweets = await asyncio.to_thread(
+                html_backend.fetch_user, username, limit
+            )
+            if tweets:
+                logger.info(
+                    f"[NitterTweets] HTML 回退成功 @{username} via {instance}"
+                    + (f" after RSS error={rss_error}" if rss_error else "")
+                )
+            return instance, list(tweets or [])
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] HTML 回退失败 @{username}: {exc}")
+            return "", []
+
+    def _parse_search_args(self, event: AstrMessageEvent, args=GreedyStr):
+        text = ""
+        if args is not None and str(args).strip():
+            text = str(args).strip()
+        else:
+            text = (event.get_message_str() or "").strip()
+            # strip command token
+            for prefix in ("/推文搜索", "推文搜索", "/tweetsearch", "tweetsearch"):
+                if text.startswith(prefix):
+                    text = text[len(prefix) :].strip()
+                    break
+        if not text:
+            return (
+                "",
+                0,
+                "用法：/推文搜索 <query> [数量]\n"
+                "标签请带 #，例如：#圣娅\n"
+                "普通词/短语直接写：python programming",
+            )
+        parts = text.rsplit(None, 1)
+        limit = int(getattr(self, "search_default_limit", self.default_limit))
+        query = text
+        if len(parts) == 2 and parts[1].isdigit():
+            query = parts[0].strip()
+            limit = int(parts[1])
+        max_limit = int(getattr(self, "search_max_limit", 10))
+        if limit < 1:
+            return "", 0, "数量至少为 1。"
+        if limit > max_limit:
+            limit = max_limit
+        if not query:
+            return "", 0, "查询内容不能为空。"
+        return query, limit, ""
 
     async def _cmd_mirror_probe_impl(self, event: AstrMessageEvent, args=GreedyStr):
         """用临时 Nitter 镜像站测试获取推文。"""
@@ -84,7 +202,9 @@ class ManualCommandMixin:
 
         cooldown_left = self._cooldown_left(event)
         if cooldown_left > 0:
-            await event.send(event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。"))
+            await event.send(
+                event.plain_result(f"请求太快啦，{cooldown_left:.0f} 秒后再试。")
+            )
             return
 
         self._mark_cooldown(event)
@@ -159,9 +279,7 @@ class ManualCommandMixin:
                     progress_index=index,
                     progress_total=total,
                 )
-                notices = [
-                    notice for notice in notices if notice not in sent_notices
-                ]
+                notices = [notice for notice in notices if notice not in sent_notices]
                 sent_notices.update(notices)
                 await self._send_manual_tweets_with_fallback(
                     event,
@@ -169,8 +287,7 @@ class ManualCommandMixin:
                     instance,
                     [tweet],
                     notices=notices,
-                    header_text=f"@{username} 本次结果 {index}/{total}",
-                    tweet_start_index=index,
+                    tweet_start_index=1,
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
@@ -185,24 +302,21 @@ class ManualCommandMixin:
     ) -> list[str]:
         translation_report = await self.translator.attach_translations(tweets, umo)
         await self.media.attach_media(tweets)
-        enrich_report = await self.enricher.attach_enrichments(tweets, umo)
         if username:
             self._log_ai_process_results(
                 username,
                 tweets,
                 translation_report,
-                enrich_report,
                 progress_index,
                 progress_total,
             )
-        return enrich_report.visible_notices()
+        return []
 
     def _log_ai_process_results(
         self,
         username: str,
         tweets,
         translation_report=None,
-        enrich_report=None,
         progress_index: int = 0,
         progress_total: int = 0,
     ) -> None:
@@ -214,7 +328,6 @@ class ManualCommandMixin:
                     username,
                     tweet,
                     translation_report,
-                    enrich_report,
                     start + offset,
                     total,
                 )
@@ -265,10 +378,7 @@ class ManualCommandMixin:
                     )
                 )
             except Exception as notice_exc:
-                logger.warning(
-                    "[NitterTweets] 发送手动推文失败提示失败: "
-                    f"{notice_exc}"
-                )
+                logger.warning(f"[NitterTweets] 发送手动推文失败提示失败: {notice_exc}")
 
     @staticmethod
     def _dedupe_texts(values: list[str]) -> list[str]:
@@ -301,8 +411,11 @@ class ManualCommandMixin:
             if self._looks_like_instance(token):
                 instance_index = index
         if instance_index < 0:
-            return "", 0, "", (
-                "请提供完整 Nitter 镜像站地址，例如：/镜像测试 https://nitter.net"
+            return (
+                "",
+                0,
+                "",
+                ("请提供完整 Nitter 镜像站地址，例如：/镜像测试 https://nitter.net"),
             )
 
         instance_text = tokens[instance_index]
@@ -317,8 +430,11 @@ class ManualCommandMixin:
         for token in extras:
             if self._looks_like_limit(token):
                 if seen_limit:
-                    return "", 0, "", (
-                        "数量只能填写一次，例如：/镜像测试 3 https://nitter.net"
+                    return (
+                        "",
+                        0,
+                        "",
+                        ("数量只能填写一次，例如：/镜像测试 3 https://nitter.net"),
                     )
                 parsed_limit, limit_error = self._parse_command_limit(token)
                 if limit_error:
@@ -331,8 +447,11 @@ class ManualCommandMixin:
             if not normalized:
                 return "", 0, "", usage
             if seen_username:
-                return "", 0, "", (
-                    "用户名只能填写一次，例如：/镜像测试 nasa https://nitter.net"
+                return (
+                    "",
+                    0,
+                    "",
+                    ("用户名只能填写一次，例如：/镜像测试 nasa https://nitter.net"),
                 )
             username = normalized
             seen_username = True
@@ -401,16 +520,22 @@ class ManualCommandMixin:
             return False
         return "." in value or "localhost" in value
 
-    def _cooldown_key(self, event: AstrMessageEvent) -> str:
+    def _cooldown_key(self, event: AstrMessageEvent, scope: str = "tweet") -> str:
         sender = safe_call(event, "get_sender_id") or "unknown"
         group = safe_call(event, "get_group_id") or "private"
-        return f"{group}:{sender}"
+        return f"{scope}:{group}:{sender}"
 
-    def _cooldown_left(self, event: AstrMessageEvent) -> float:
-        if self.cooldown_seconds <= 0:
+    def _cooldown_seconds_for(self, scope: str = "tweet") -> float:
+        if scope == "search":
+            return float(getattr(self, "search_cooldown_seconds", 30.0) or 0.0)
+        return float(getattr(self, "cooldown_seconds", 0.0) or 0.0)
+
+    def _cooldown_left(self, event: AstrMessageEvent, scope: str = "tweet") -> float:
+        seconds = self._cooldown_seconds_for(scope)
+        if seconds <= 0:
             return 0
-        last = self._cooldowns.get(self._cooldown_key(event), 0)
-        return max(0.0, self.cooldown_seconds - (time.time() - last))
+        last = self._cooldowns.get(self._cooldown_key(event, scope), 0)
+        return max(0.0, seconds - (time.time() - last))
 
-    def _mark_cooldown(self, event: AstrMessageEvent) -> None:
-        self._cooldowns[self._cooldown_key(event)] = time.time()
+    def _mark_cooldown(self, event: AstrMessageEvent, scope: str = "tweet") -> None:
+        self._cooldowns[self._cooldown_key(event, scope)] = time.time()

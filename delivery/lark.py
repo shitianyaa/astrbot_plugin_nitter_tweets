@@ -50,6 +50,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
     ) -> bool:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -59,6 +60,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
+            media_only=media_only,
         )
         client = lark_client_from_event(event, sender._platform_inst_from_context)
         if client is None:
@@ -71,14 +73,20 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
             )
 
         text = plain_text_from_components(components)
+        post_title = (
+            f"@{username}"
+            if media_only
+            else lark_tweet_post_title(username, len(tweets), header_text)
+        )
         reply_message_id = lark_reply_message_id(event)
         receive_id_type, receive_id = lark_event_target(event)
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets), header_text),
+            post_title,
             components,
             "manual Lark tweet post",
             is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
@@ -100,7 +108,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             )
             post_attempt = await send_lark_post(
                 client,
-                lark_tweet_post_title(username, len(tweets), header_text),
+                post_title,
                 components,
                 "manual Lark tweet post fallback",
                 is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
@@ -187,6 +195,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
     ) -> SendOutcome:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -197,8 +206,14 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
+            media_only=media_only,
         )
         text = plain_text_from_components(components)
+        post_title = (
+            f"@{username}"
+            if media_only
+            else lark_tweet_post_title(username, len(tweets), header_text)
+        )
         client, receive_id_type, receive_id = lark_client_and_target(
             context, umo, sender._platform_inst_from_context
         )
@@ -217,11 +232,12 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 header_text,
                 batch_summary,
                 tweet_start_index,
+                media_only,
             )
 
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets), header_text),
+            post_title,
             components,
             "scheduled Lark tweet post",
             is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
