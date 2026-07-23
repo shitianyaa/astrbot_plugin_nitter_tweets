@@ -382,11 +382,12 @@ class TweetMessageRenderer:
         link_style: str = "plain",
     ):
         """Render only the author marker and successfully prepared media."""
-        author = f"@{username}"
+        author_name = TweetMessageRenderer.display_username(username, tweet)
+        author = f"@{author_name}" if author_name else "@unknown"
         status_url = (tweet.x_url or tweet.link or "").strip()
         if link_style == "telegram_md" and status_url:
             preview = TweetMessageRenderer.telegram_link_preview(
-                tweet, username, max_chars=40
+                tweet, author_name, max_chars=40
             )
             author = TweetMessageRenderer.telegram_markdown_link(preview, status_url)
         components = [Plain(author)]
@@ -926,6 +927,22 @@ class TweetMessageRenderer:
             index, username, tweet, source=source, **kwargs
         )
 
+
+    @staticmethod
+    def display_username(username: str, tweet: TweetItem | None = None) -> str:
+        """Prefer real author from tweet link; batch key may be a search query."""
+        from_link = ""
+        if tweet is not None:
+            from_link = (getattr(tweet, "username", None) or "").strip().lstrip("@")
+        key = str(username or "").strip()
+        # Tag schedule keys: q:...
+        if key.lower().startswith("q:"):
+            return from_link or key[2:].lstrip("#") or key
+        # Manual /推文搜索 passes raw query as username.
+        if key.startswith("#") or (" " in key) or (key and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", key.lstrip("@"))):
+            return from_link or key.lstrip("@")
+        return from_link or key.lstrip("@")
+
     @staticmethod
     def format_tweet(
         index: int,
@@ -938,10 +955,11 @@ class TweetMessageRenderer:
         link_preview_max_chars: int = 40,
     ) -> str:
         status_url = (tweet.x_url or tweet.link or "").strip()
-        author_line = f"@{username}"
+        author = TweetMessageRenderer.display_username(username, tweet)
+        author_line = f"@{author}" if author else "@unknown"
         if link_style == "telegram_md" and status_url:
             preview = TweetMessageRenderer.telegram_link_preview(
-                tweet, username, max_chars=link_preview_max_chars
+                tweet, author, max_chars=link_preview_max_chars
             )
             author_line = TweetMessageRenderer.telegram_markdown_link(
                 preview, status_url
@@ -1075,8 +1093,10 @@ class TweetMessageRenderer:
         link_style: str = "plain",
     ) -> str:
         if media_only:
-            return f"@{username}"
-        lines = [f"@{username}", "图片附件"]
+            author = TweetMessageRenderer.display_username(username, tweet)
+            return f"@{author}" if author else "@unknown"
+        author = TweetMessageRenderer.display_username(username, tweet)
+        lines = [f"@{author}" if author else "@unknown", "图片附件"]
         if not omit_status_url:
             original_link = tweet.x_url or tweet.link
             if original_link:

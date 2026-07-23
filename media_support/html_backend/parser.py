@@ -113,6 +113,46 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
     return media
 
 
+
+
+def _extract_tweet_text(chunk: str) -> str:
+    """Pull main tweet body from a timeline-item chunk."""
+    patterns = (
+        r'(?s)<div class="tweet-content[^"]*"[^>]*>(.*?)</div>',
+        r'(?s)<div class="tweet-content media-body"[^>]*>(.*?)</div>',
+        r'(?s)<div class="tweet-body"[^>]*>.*?<div class="tweet-content[^"]*"[^>]*>(.*?)</div>',
+    )
+    for pat in patterns:
+        match = re.search(pat, chunk, re.I)
+        if not match:
+            continue
+        text = clean_html_text(match.group(1))
+        if text:
+            return text
+
+    cleaned = re.sub(r'(?is)<script[^>]*>.*?</script>', '', chunk or '')
+    cleaned = re.sub(r'(?is)<style[^>]*>.*?</style>', '', cleaned)
+    cleaned = re.sub(
+        r'(?is)<div class="quote(?:-tweet)?[^"]*"[^>]*>.*?</div>\s*</div>',
+        '',
+        cleaned,
+    )
+    text = clean_html_text(cleaned)
+    lines_out = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    kept = []
+    noise = {'retweet', 'quote', 'reply', 'load more'}
+    for ln in lines_out:
+        low = ln.lower()
+        if low in noise:
+            continue
+        if re.fullmatch(r'[@#]?\w{1,32}', ln) and not kept:
+            continue
+        if re.fullmatch(r'[\d,.]+[KMBkmb]?', ln):
+            continue
+        kept.append(ln)
+    return chr(10).join(kept[:12]).strip()
+
+
 def parse_timeline_html(html: str, instance: str, *, source: str = "") -> TimelinePage:
     del source  # plugin TweetItem has no source field; keep API compatible
     if "timeline-item" not in html:
@@ -123,7 +163,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
     seen: set[str] = set()
     raw = 0
     for chunk in chunks:
-        if "tweet-content" not in chunk:
+        if "tweet-content" not in chunk and "tweet-body" not in chunk:
             continue
         sm = re.search(
             r'href="/(?P<user>[A-Za-z0-9_]+)/status(?:es)?/(?P<id>\d+)',
@@ -137,10 +177,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
         if key in seen:
             continue
         seen.add(key)
-        cm = re.search(
-            r'(?s)<div class="tweet-content[^"]*"[^>]*>(.*?)</div>', chunk
-        )
-        text = clean_html_text(cm.group(1) if cm else "")
+        text = _extract_tweet_text(chunk)
         dm = re.search(
             r'(?s)<span class="tweet-date">\s*<a[^>]*title="([^"]+)"', chunk
         )

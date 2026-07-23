@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 修复搜索结果作者显示为标签/查询词、正文为空，以及 Telegram 链接摘要误用查询词：渲染优先 tweet 链接作者与正文；HTML 解析增强 tweet-content 提取。
 ### Added
 
 - 分组开关 `omit_status_url`（默认开启）：发送时去掉推文 URL 明文，并剥离正文/译文中的 http(s)；Telegram 使用摘要 Markdown 链到原文（`MessageChain.use_markdown`）。仅媒体模式仍不调用 AI 翻译。
