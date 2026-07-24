@@ -161,6 +161,8 @@ class NitterTweetsPlugin(
                 ),
             ),
             log=lambda msg: logger.info(f"[NitterTweets][html] {msg}"),
+            # Align HTML chatter with scheduler/RSS brief mode (default on).
+            brief_log=bool(config_get(self.config, "brief_log_enabled", True)),
         )
 
     def _cleanup_legacy_media_cache_once(self) -> None:

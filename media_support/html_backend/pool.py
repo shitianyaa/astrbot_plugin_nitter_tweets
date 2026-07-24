@@ -14,12 +14,14 @@ except ImportError:  # pragma: no cover
     from shared.utils import TweetItem
 
 try:
+    from ..host_score import HostScoreBook
     from .http_session import HTML_ACCEPT, HttpSession
     from .modes import GateKeeper, detect_gate
     from .parser import parse_timeline_html
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
+    from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import HTML_ACCEPT, HttpSession
     from media_support.html_backend.modes import GateKeeper, detect_gate
     from media_support.html_backend.parser import parse_timeline_html
@@ -49,10 +51,12 @@ class HtmlNitterPool:
         log: Callable[[str], None] | None = None,
         shared_limiter: RateLimiter | None = None,
         shared_session: HttpSession | None = None,
+        score_book: HostScoreBook | None = None,
     ):
         self.config = config
         self.log = log or (lambda _m: None)
         self.limiter = shared_limiter or RateLimiter(config.rate)
+        self.scores = score_book or HostScoreBook()
         default_ua = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -66,8 +70,6 @@ class HtmlNitterPool:
         )
         self.gates = GateKeeper(self.session, log=self.log)
         self.instances = [self._norm(u) for u in config.instances if str(u).strip()]
-        # Round-robin start so retries do not always hammer the first mirror.
-        self._rr_index = 0
 
     @staticmethod
     def _norm(url: str) -> str:
@@ -76,25 +78,12 @@ class HtmlNitterPool:
             u = "https://" + u
         return u
 
-    def _hosts_ready(self) -> list[str]:
-        ready = []
-        for base in self.instances:
-            host = self.session.host_of(base)
-            if self.limiter.is_cooling(host):
-                self.log(
-                    f"skip cooling {host} "
-                    f"remain={self.limiter.cooldown_remaining(host):.0f}s"
-                )
-                continue
-            ready.append(base)
-        return ready or list(self.instances)
-
     def _hosts_for_rotation(self, instance: str | None = None) -> list[str]:
         """Ordered hosts for multi-mirror retry (ready first, then cooling).
 
-        Explicit ``instance`` (mirror probe) stays single-host. Pool searches
-        rotate the start index so each call prefers the next mirror, and on
-        failure always continues through the remaining list.
+        Explicit ``instance`` (mirror probe) stays single-host. Ready hosts are
+        sorted by in-memory success score (higher first); cooling hosts stay
+        last as fallback. On failure the caller continues through the list.
         """
         if instance and str(instance).strip():
             base = self._norm(str(instance).strip())
@@ -117,47 +106,63 @@ class HtmlNitterPool:
             else:
                 ready.append(base)
 
-        # Prefer ready mirrors; still try cooling ones after ready failures.
-        ordered = ready + cooling if ready else list(all_hosts)
-        if len(ordered) <= 1:
-            return ordered
-
-        start = self._rr_index % len(ordered)
-        self._rr_index = (self._rr_index + 1) % max(1, len(ordered))
-        return ordered[start:] + ordered[:start]
+        # Prefer ready mirrors by success score; cooling only as last resort.
+        if ready:
+            return self.scores.order(ready) + self.scores.order(cooling)
+        return self.scores.order(list(all_hosts))
 
     def _get_html(self, base: str, path: str) -> bytes:
+        """Fetch HTML. Score only failures here; caller scores success once."""
         host = self.session.host_of(base)
-        self.limiter.wait(host)
-        if not self.gates.ensure(base, seed_path="/NASA"):
-            self.log(f"ensure soft-fail {host}, trying path anyway")
-        self.limiter.wait(host)
-        url = f"{base}{path}"
-        resp = self.session.request(url, accept=HTML_ACCEPT)
-        gate = detect_gate(resp.body)
-        if resp.code == 429 or (
-            resp.code == 503 and gate not in {"anubis", "poast_sha1"}
-        ):
-            sec = self.limiter.punish(host)
-            self.log(f"punish {host} http={resp.code} cooldown={sec:.0f}s")
-            raise RuntimeError(f"{host} HTTP {resp.code}")
-        if gate in {"anubis", "poast_sha1"}:
-            if not self.gates.ensure(
-                base, seed_path=path if path.startswith("/") else "/NASA"
-            ):
-                raise RuntimeError(f"{host} gate failed")
+        scored_failure = False
+        try:
             self.limiter.wait(host)
+            if not self.gates.ensure(base, seed_path="/NASA"):
+                self.log(f"ensure soft-fail {host}, trying path anyway")
+            self.limiter.wait(host)
+            url = f"{base}{path}"
             resp = self.session.request(url, accept=HTML_ACCEPT)
             gate = detect_gate(resp.body)
-        if resp.code != 200:
-            raise RuntimeError(f"{host} HTTP {resp.code} {resp.error or ''}".strip())
-        if gate == "cf":
-            raise RuntimeError(f"{host} cloudflare unsupported")
-        if gate in {"anubis", "poast_sha1"}:
-            raise RuntimeError(f"{host} still gated")
-        self.limiter.reward(host)
-        self.session.save_cookies(host)
-        return resp.body
+            if resp.code == 429 or (
+                resp.code == 503 and gate not in {"anubis", "poast_sha1"}
+            ):
+                sec = self.limiter.punish(host)
+                self.scores.record_failure(host)
+                scored_failure = True
+                self.log(f"punish {host} http={resp.code} cooldown={sec:.0f}s")
+                raise RuntimeError(f"{host} HTTP {resp.code}")
+            if gate in {"anubis", "poast_sha1"}:
+                if not self.gates.ensure(
+                    base, seed_path=path if path.startswith("/") else "/NASA"
+                ):
+                    self.scores.record_failure(host)
+                    scored_failure = True
+                    raise RuntimeError(f"{host} gate failed")
+                self.limiter.wait(host)
+                resp = self.session.request(url, accept=HTML_ACCEPT)
+                gate = detect_gate(resp.body)
+            if resp.code != 200:
+                self.scores.record_failure(host)
+                scored_failure = True
+                raise RuntimeError(
+                    f"{host} HTTP {resp.code} {resp.error or ''}".strip()
+                )
+            if gate == "cf":
+                self.scores.record_failure(host)
+                scored_failure = True
+                raise RuntimeError(f"{host} cloudflare unsupported")
+            if gate in {"anubis", "poast_sha1"}:
+                self.scores.record_failure(host)
+                scored_failure = True
+                raise RuntimeError(f"{host} still gated")
+            self.limiter.reward(host)
+            self.session.save_cookies(host)
+            return resp.body
+        except Exception:
+            # Timeouts/connection errors never hit explicit branches above.
+            if not scored_failure:
+                self.scores.record_failure(host)
+            raise
 
     def fetch_user(
         self,
@@ -168,6 +173,9 @@ class HtmlNitterPool:
     ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
+        # At least one host answered with a parsed empty timeline. Do not treat
+        # that as hard failure after rotation; scheduler empty-init depends on it.
+        empty_success_base: str | None = None
         hosts = self._hosts_for_rotation(instance)
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
@@ -176,23 +184,34 @@ class HtmlNitterPool:
                 self.log(f"user try {index}/{total} host={host} user={user}")
                 tweets = self._paginate_user(base, user, limit)
                 if tweets:
+                    self.scores.record_success(host)
                     if index > 1:
                         self.log(
                             f"user ok after rotate host={host} "
                             f"tried={index}/{total}"
                         )
                     return base, tweets[:limit]
+                empty_success_base = base
+                # Alive empty timeline: soft success (aligned with RSS empty feed).
+                self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
                 self.log(
                     f"user empty host={host}, rotate next "
                     f"({index}/{total})"
                 )
             except Exception as exc:  # noqa: BLE001
+                # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
                 self.log(
                     f"user fail host={host}, rotate next "
                     f"({index}/{total}): {exc}"
                 )
+        if empty_success_base is not None:
+            self.log(
+                f"user empty after rotate hosts={total}, "
+                f"last_empty={self.session.host_of(empty_success_base)}"
+            )
+            return empty_success_base, []
         raise RuntimeError("HTML user failed: " + "; ".join(errors[-4:]))
 
     def search(
@@ -211,6 +230,11 @@ class HtmlNitterPool:
         if resolved not in {"tag", "phrase"}:
             resolved = query_kind(q)
         errors: list[str] = []
+        # Empty after pure-RT filter is a valid search result. Keep rotating in
+        # case another mirror still has non-RT hits, but if every host only
+        # yields empty, return [] so tag schedule can skip seen init instead of
+        # treating the query as permanently failed.
+        empty_success_base: str | None = None
         hosts = self._hosts_for_rotation(instance)
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
@@ -224,23 +248,35 @@ class HtmlNitterPool:
                     base, q, limit, kind=resolved, max_pages=max_pages
                 )
                 if tweets:
+                    self.scores.record_success(host)
                     if index > 1:
                         self.log(
                             f"search ok after rotate host={host} "
                             f"tried={index}/{total}"
                         )
                     return base, tweets[:limit]
+                empty_success_base = base
+                # Empty after RT filter: soft success, not an outage.
+                self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
                 self.log(
                     f"search empty host={host}, rotate next "
                     f"({index}/{total})"
                 )
             except Exception as exc:  # noqa: BLE001
+                # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
                 self.log(
                     f"search fail host={host}, rotate next "
                     f"({index}/{total}): {exc}"
                 )
+        if empty_success_base is not None:
+            self.log(
+                f"search empty after rotate hosts={total}, "
+                f"query={q!r} kind={resolved}, "
+                f"last_empty={self.session.host_of(empty_success_base)}"
+            )
+            return empty_success_base, []
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
 
     def _hosts_for_probe(self, instance: str | None) -> list[str]:

@@ -4,9 +4,12 @@
 
 ## [Unreleased]
 
+- 镜像选择：按请求成功率内存记分（有结果满分成功、空结果 soft、失败降权；HTML transport 异常也记失败），博主 RSS、博主 HTML 回退、搜索/标签 HTML 三池分账；ready 高分优先，冷却殿后；不写盘。
+- 日志：`brief_log_enabled`（默认开）同时收敛 HTML 搜索/回退过程日志；`session load` 全抑制，gate 同类去重，try/冷却/空页过程行在简略模式下不刷屏；失败、punish、轮换成功/全空摘要仍保留。
+- 修复 HTML 搜索/用户页：全部镜像 HTTP 成功但结果为空（含整页纯转推被滤掉）时返回空列表，不再 `HTML search failed`；标签定时可正确走「首次空结果不 init seen」，避免一直记失败、永远不推。
 - 手动命令：新增 `manual_send_interval`，非合并转发时逐条消息间隔（默认 0）；在平台适配前 sleep，多平台生效。
 - AI 翻译：全局 `show_original_when_translated`（默认 true）；关闭后有译文时隐藏原文；分组 `hide_original_when_translated` 可在全局显示时再隐藏。
-- HTML 搜索/用户页：多镜像失败后轮换下一实例（ready 优先，冷却实例殿后）；round-robin 起始镜像，避免总打第一个。
+- HTML 搜索/用户页：多镜像失败后轮换下一实例（ready 优先按成功率排序，冷却实例殿后）。
 - `watch_queries` 落盘改为纯字符串列表，避免 AstrBot WebUI 把对象显示成 `[object Object]`；兼容读取旧 `{query,type}`，并丢弃损坏的 `[object Object]` 项。
 - 文档：标签定时获取/发送数量（固定约 20、滤 RT/seen、新帖全发）；配置示例改为字符串列表。
 - 标签分组增加风险提示：使用私人 QQ 号作为 Bot 时不建议启用标签定时。

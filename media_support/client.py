@@ -35,6 +35,7 @@ except ImportError:
         normalize_external_links,
     )
 
+from .host_score import HostScoreBook
 from .network import compat_urlopen
 from .rss_run_skip import RssRunHostSkip
 
@@ -261,6 +262,8 @@ class NitterClient:
         self.brief_log_enabled = bool(
             config_get(config, "brief_log_enabled", True)
         )
+        # In-memory RSS mirror scores (not shared with HTML pools).
+        self.host_scores = HostScoreBook()
         # S2=A: set only for one check/command via begin_run_host_skip().
         self._run_host_skip: RssRunHostSkip | None = None
 
@@ -321,9 +324,12 @@ class NitterClient:
     def _instances_for_run(self, instances: list[str]) -> list[str]:
         skip = self._active_run_host_skip()
         if skip is None or not skip:
-            return list(instances)
-        filtered = skip.filter_instances(instances)
-        return filtered if filtered else list(instances)
+            candidates = list(instances)
+        else:
+            filtered = skip.filter_instances(instances)
+            candidates = filtered if filtered else list(instances)
+        # Availability-first: higher success score first; ties keep input order.
+        return self.host_scores.order(candidates)
 
     async def fetch_tweets(
         self,
@@ -453,6 +459,8 @@ class NitterClient:
                 )
             except EmptyFeedError as exc:
                 empty_instances.append(instance)
+                # Valid empty feed: host is reachable; soft success only.
+                self.host_scores.record_success(instance, soft=True)
                 errors.append(f"{instance}: {exc}")
                 self._log_instance_fetch_failure(
                     index, instance, username, exc, run_instances
@@ -460,11 +468,13 @@ class NitterClient:
                 continue
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
+                self.host_scores.record_failure(instance)
                 self._mark_run_host_skip(instance, exc)
                 self._log_instance_fetch_failure(
                     index, instance, username, exc, run_instances
                 )
                 continue
+            self.host_scores.record_success(instance)
             self._log_instance_fetch_success(index, instance, username, result)
             return instance, result
         # If every configured instance returned a valid but empty RSS feed,
@@ -525,14 +535,18 @@ class NitterClient:
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
+                self.host_scores.record_failure(instance)
                 self._mark_run_host_skip(instance, exc)
                 self._log_instance_fetch_failure(
                     index, instance, username, exc, run_instances
                 )
                 continue
             if result.tweets or result.saw_items:
+                self.host_scores.record_success(instance)
                 self._log_instance_fetch_success(index, instance, username, result)
                 return instance, result.tweets, result.plain_text_filtered
+            # Reachable empty feed: soft success, keep trying other mirrors.
+            self.host_scores.record_success(instance, soft=True)
             errors.append(f"{instance}: empty feed")
             self._log_instance_fetch_failure(
                 index, instance, username, "empty feed", run_instances

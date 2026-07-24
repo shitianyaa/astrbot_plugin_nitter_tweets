@@ -126,6 +126,7 @@ class GateKeeper:
         url = f"{base}{seed_path}"
         resp = self.session.request(url)
         gate = detect_gate(resp.body)
+        # QuietHtmlLog drops repeated gate-ok; still emit once for diagnostics.
         self.log(f"gate {host} mode={mode} http={resp.code} detect={gate}")
 
         if gate == "ok" and resp.code == 200:

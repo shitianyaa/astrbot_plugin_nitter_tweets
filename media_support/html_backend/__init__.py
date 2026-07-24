@@ -8,6 +8,7 @@ from .query import (
     query_kind,
     seen_account_key_for_query,
 )
+from .logging_util import QuietHtmlLog
 from .service import DEFAULT_HTML_INSTANCES, HtmlBackendConfig, HtmlNitterService
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "HtmlNitterPool",
     "HtmlNitterService",
     "PoolConfig",
+    "QuietHtmlLog",
     "normalize_query",
     "normalize_watch_query",
     "query_kind",

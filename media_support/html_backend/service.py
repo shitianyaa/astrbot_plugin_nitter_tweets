@@ -13,12 +13,16 @@ except ImportError:  # pragma: no cover
     from shared.utils import TweetItem
 
 try:
+    from ..host_score import HostScoreBook
     from .http_session import DEFAULT_UA, HttpSession
+    from .logging_util import QuietHtmlLog
     from .pool import HtmlNitterPool, PoolConfig
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
+    from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import DEFAULT_UA, HttpSession
+    from media_support.html_backend.logging_util import QuietHtmlLog
     from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
@@ -56,9 +60,17 @@ class HtmlNitterService:
         config: HtmlBackendConfig | None = None,
         *,
         log: Callable[[str], None] | None = None,
+        brief_log: bool = True,
     ):
         self.config = config or HtmlBackendConfig()
-        self.log = log or (lambda _m: None)
+        raw_log = log or (lambda _m: None)
+        # Always wrap so session-load / gate-ok spam is capped even if caller
+        # passes a raw logger.info sink.
+        self.log = (
+            log
+            if isinstance(log, QuietHtmlLog)
+            else QuietHtmlLog(raw_log, brief=bool(brief_log))
+        )
         session_dir = self.config.session_dir
         rate = RateLimitConfig(global_min_interval=self.config.html_min_interval)
         self.limiter = RateLimiter(rate)
@@ -69,6 +81,7 @@ class HtmlNitterService:
             session_dir=Path(session_dir) if session_dir else None,
             log=self.log,
         )
+        # Separate score books: blogger HTML fallback vs search/tag pool.
         self.blogger_html = HtmlNitterPool(
             PoolConfig(
                 instances=list(self.config.blogger_html_instances),
@@ -82,6 +95,7 @@ class HtmlNitterService:
             log=self.log,
             shared_limiter=self.limiter,
             shared_session=self.session,
+            score_book=HostScoreBook(),
         )
         self.search_pool = HtmlNitterPool(
             PoolConfig(
@@ -96,6 +110,7 @@ class HtmlNitterService:
             log=self.log,
             shared_limiter=self.limiter,
             shared_session=self.session,
+            score_book=HostScoreBook(),
         )
 
     def fetch_user(

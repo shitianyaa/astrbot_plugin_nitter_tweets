@@ -185,9 +185,16 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 | 配置 | 说明 |
 | --- | --- |
-| `brief_log_enabled` | 后台日志简略模式；默认开启。开启后正常流程只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；关闭后输出详细处理过程日志。 |
+| `brief_log_enabled` | 后台日志简略模式；默认开启。开启后正常流程只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；**同时收敛 HTML 过程日志**（见下）。关闭后输出详细处理过程日志。 |
 
 `brief_log_enabled` 只影响 AstrBot 后台 logger 输出，不影响聊天消息、推送内容、命令返回或发送行为。
+
+HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
+
+- 始终抑制：`session load`（cookie 重载刷屏）
+- 始终去重：同一 host 的同类 `gate ... detect=...` 只保留首次
+- 简略开启时再抑制：每次 `search/user try`、空页轮换过程行、冷却 skip/defer、soft-fail、Anubis/Poast solved 过程行
+- 简略仍保留：`punish`/冷却处罚、镜像 fail、ok after rotate、empty after rotate、Cloudflare 等硬错误
 
 ### 并发与限流
 
@@ -300,6 +307,8 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 因此「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。
 HTTP 层仍可能有 Anubis 门禁与限流，日志里会看到多次 `session load` / `gate`，不等于死循环。
 
+**空结果与纯转推：** 搜索会轮换 `search_instances`；若镜像 HTTP 成功但本页无可用推文（含整页被滤成纯转推），最终返回空列表，**不当作抓取失败**。标签组首次空结果仍不写 seen；只有全部镜像请求异常时才记失败。首次抓到非空结果只初始化 seen，不推历史；之后出现新帖才推送。
+
 ### 实例列表
 
 | 列表 | 用途 |
@@ -310,7 +319,23 @@ HTTP 层仍可能有 Anubis 门禁与限流，日志里会看到多次 `session 
 
 HTML 全局串行节流；429 冷却约 30s 起、封顶 5 分钟。Cookie 落在插件数据目录 `html_sessions/`。
 
-搜索/HTML 用户页失败时会按 `search_instances` / `blogger_html_instances` **轮换下一镜像**（非冷却优先，冷却实例仍会作为后备尝试）；起始镜像 round-robin，避免总打列表第一个。单次镜像探测（指定 instance）不轮换。
+搜索/HTML 用户页失败时会按 `search_instances` / `blogger_html_instances` **轮换下一镜像**（非冷却优先，冷却实例仍会作为后备尝试）。**可用性优先：** 进程内按请求成功率给主机记分，ready 主机按分数从高到低尝试；冷却中主机仍殿后。
+
+记分规则（内存，重启清零；RSS / 博主 HTML / 搜索 HTML 三份名单分账）：
+
+- 有可用推文/成功 RSS：满分成功（+0.5，封顶 10）
+- 可达但空（空 feed、空时间线、整页滤成纯转推）：soft 成功（+0.15）
+- 超时/连接错误/HTTP 错误/门禁失败/429：失败（×0.5，保底 0.1）；HTML 在 `_get_html` 统一记失败（含 transport 异常）
+- 单次探测（指定 instance）不轮换；成功/失败仍记入对应池
+
+### 博主 RSS 与博主 HTML 的区别
+
+| | RSS | 博主 HTML 回退 |
+|--|-----|----------------|
+| 配置 | `basic.instances` | `blogger_html_instances` |
+| 协议 | 用户 RSS 源 `/{user}/rss` | 用户时间线 HTML `/{user}` |
+| 何时用 | 博主分组主路径；`/推文` 主路径 | RSS 全失败或空且开启 `user_html_fallback` |
+| 标签组 | 不用 | 不用（标签只走 `search_instances`） |
 
 ## RSS 重试与本轮跳过（第二刀）
 
