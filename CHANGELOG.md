@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+- 修复发送层 hide_original/link_style 接线：adapter 接受 hide；UMO 直发/合并转发关键字透传；避免 link_style 位置参数错位导致 Telegram markdown 丢失。
+- 推文布局：Telegram 首行改为 [@作者](链接)；正文/译文始终剥离内嵌 URL；空正文占位；有译文时翻译块在原文前。
+- 分组开关 hide_original_when_translated：有 AI 译文时只发翻译、隐藏原文；无译文仍发原文。修复搜索会话缓冲假空文案，缓存命中不消耗冷却。
+- 手动 /推文搜索：按会话缓存整页搜索结果，按请求条数发放，不足再翻页拉取；同会话同查询约 10 分钟内不重复已展示推文，每查询最多缓存 40 条（默认开启，无额外配置）。
+- 修复搜索结果作者显示为标签/查询词、正文为空，以及 Telegram 链接摘要误用查询词：渲染优先 tweet 链接作者与正文；HTML 解析增强 tweet-content 提取。
 ### Added
 
 - 分组开关 `omit_status_url`（默认开启）：发送时去掉推文 URL 明文，并剥离正文/译文中的 http(s)；Telegram 使用摘要 Markdown 链到原文（`MessageChain.use_markdown`）。仅媒体模式仍不调用 AI 翻译。

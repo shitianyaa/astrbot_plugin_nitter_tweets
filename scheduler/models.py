@@ -33,6 +33,7 @@ class PendingTweetBatch:
     tweet_total: int = 0
     media_only: bool = False
     omit_status_url: bool = True
+    hide_original_when_translated: bool = False
     media_status: str = "ready"
     media_cleaned: bool = field(default=False, repr=False, compare=False)
 

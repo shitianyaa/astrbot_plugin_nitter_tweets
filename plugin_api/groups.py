@@ -73,6 +73,7 @@ class WebUIGroupEditor:
                 "filter_plain_text_enabled": False,
                 "media_only_enabled": False,
                 "omit_status_url": True,
+                "hide_original_when_translated": False,
             }
         )
         save_error = self._save_groups(previous_groups, groups)
@@ -150,6 +151,13 @@ class WebUIGroupEditor:
                 raw_group.get("omit_status_url", True),
             ),
             True,
+        )
+        raw_group["hide_original_when_translated"] = self._bool(
+            data.get(
+                "hide_original_when_translated",
+                raw_group.get("hide_original_when_translated", False),
+            ),
+            False,
         )
         if existing_type == "tag":
             try:

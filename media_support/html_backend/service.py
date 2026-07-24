@@ -114,11 +114,16 @@ class HtmlNitterService:
         *,
         kind: str | None = None,
         instance: str | None = None,
+        max_pages: int | None = None,
     ) -> tuple[str, list[TweetItem]]:
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
         q = normalize_query(query)
         resolved = kind or query_kind(q)
         return self.search_pool.search(
-            q, limit, kind=resolved, instance=instance
+            q,
+            limit,
+            kind=resolved,
+            instance=instance,
+            max_pages=max_pages,
         )

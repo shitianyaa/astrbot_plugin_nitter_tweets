@@ -230,7 +230,7 @@ class MediaService(MediaCacheMixin):
                 if not video_disabled_warned:
                     self._add_media_warning(
                         tweet,
-                        "视频/GIF 附件发送功能仍在优化，当前按配置不发送，已保留原文链接",
+                        "视频/GIF 发送已关闭，已跳过下载",
                         log_warning=False,
                     )
                     video_disabled_warned = True

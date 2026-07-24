@@ -109,6 +109,7 @@ class NitterTweetsPlugin(
             config_get(config, "search_max_limit", 10), 10
         )
         self._cooldowns: dict[str, float] = {}
+        self._search_session_store = None  # lazy SearchSessionStore
         self.scheduler.start(reason="__init__")
 
     def _build_html_backend(self) -> HtmlNitterService:

@@ -110,6 +110,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         adapter = self._delivery_adapter_for_event(event)
@@ -129,6 +130,7 @@ class TweetSender:
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -138,6 +140,7 @@ class TweetSender:
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -146,6 +149,7 @@ class TweetSender:
             tweet_start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
 
@@ -165,6 +169,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         chunks = self._tweet_chunks(tweets)
@@ -184,6 +189,7 @@ class TweetSender:
                 tweet_start_index=item[0],
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             ),
         )
@@ -198,6 +204,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         nodes = self.renderer.build_nodes(
@@ -205,6 +212,7 @@ class TweetSender:
             start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         raw_nodes = self.renderer.build_onebot_nodes(
@@ -212,6 +220,7 @@ class TweetSender:
             start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         try:
@@ -234,6 +243,7 @@ class TweetSender:
                     start_index=tweet_start_index,
                     media_only=media_only,
                     omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
                 )
                 await event.send(event.chain_result([nodes_nv]))
@@ -273,6 +283,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         return (
@@ -282,11 +293,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
-                media_only,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
         ).success
 
@@ -303,6 +317,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> SendOutcome:
         adapter = self._delivery_adapter_for_umo(context, umo)
@@ -317,13 +332,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
-                media_only,
-                omit_status_url,
-                link_style,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
@@ -333,11 +349,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
-                media_only,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         return await self._send_forward_chunk_to_umo(
@@ -346,11 +365,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
-            media_only,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def send_summary_to_umo(self, context, umo: str, summary: str) -> SendOutcome:
@@ -371,6 +393,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> SendOutcome:
         chunks = self._tweet_chunks(tweets)
@@ -387,11 +410,14 @@ class TweetSender:
                 username,
                 instance,
                 item[2],
-                group_label,
-                header_text,
-                batch_summary if item[0] == 0 else "",
-                item[1],
-                media_only,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary if item[0] == 0 else "",
+                tweet_start_index=item[1],
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             ),
             lambda error, warning: SendOutcome(
                 success=True,
@@ -420,6 +446,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> SendOutcome:
         nodes = self.renderer.build_nodes_for_uin(
@@ -433,6 +460,7 @@ class TweetSender:
             batch_summary=batch_summary,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
         attempt = await self._send_context_message(
@@ -461,6 +489,7 @@ class TweetSender:
                 batch_summary=batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             attempt_nv = await self._send_context_message(
@@ -503,6 +532,7 @@ class TweetSender:
                             batch_summary=batch_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
                             link_style=link_style,
                         )
                     )
@@ -533,6 +563,7 @@ class TweetSender:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> MergedSendOutcome:
         tweet_count = self._count_batch_tweets(batches)
@@ -541,6 +572,7 @@ class TweetSender:
                 context, umo, batches, group_label, batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -549,6 +581,7 @@ class TweetSender:
                 context, umo, batches, group_label, batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -557,6 +590,7 @@ class TweetSender:
                 context, umo, batches, group_label, batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
 
@@ -564,6 +598,7 @@ class TweetSender:
             context, umo, batches, group_label, batch_summary,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
 
@@ -576,6 +611,7 @@ class TweetSender:
         batch_summary: str = "",
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = 0
@@ -600,6 +636,7 @@ class TweetSender:
                 tweet_start_index=indexed_chunk[1],
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             ),
             lambda error, warning: MergedSendOutcome(
@@ -631,6 +668,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
@@ -652,6 +690,7 @@ class TweetSender:
                 batch_summary=batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             attempt = await self._send_onebot_umo_forward(
@@ -677,6 +716,7 @@ class TweetSender:
                 batch_summary=batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             attempt = await self._send_context_message(
@@ -703,6 +743,7 @@ class TweetSender:
                 batch_summary=batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             raw_retry_attempt = await self._send_onebot_umo_forward(
@@ -743,6 +784,7 @@ class TweetSender:
                 batch_summary=batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
             retry_attempt = await self._send_context_message(
@@ -789,6 +831,7 @@ class TweetSender:
                             batch_summary=batch_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
                             link_style=link_style,
                         )
                     )
@@ -824,6 +867,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         return await self._delivery_adapter_for_event(event).send_event(
@@ -836,6 +880,7 @@ class TweetSender:
             tweet_start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
 
@@ -850,6 +895,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> bool:
         profile = self.platform_resolver.from_event(event)
@@ -863,6 +909,7 @@ class TweetSender:
             tweet_start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
 
@@ -879,6 +926,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> SendOutcome:
         return await self._delivery_adapter_for_umo(context, umo).send_to_umo(
@@ -887,13 +935,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
-            media_only,
-            omit_status_url,
-            link_style,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_default_direct_to_umo(
@@ -909,6 +958,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> SendOutcome:
         profile = self.platform_resolver.from_umo(context, umo)
@@ -918,11 +968,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
-            media_only,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_merged_direct_to_umo(
@@ -935,6 +988,7 @@ class TweetSender:
         tweet_start_index: int = 1,
         media_only: bool = False,
         omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
@@ -949,6 +1003,7 @@ class TweetSender:
                     batch_summary=batch_summary,
                     media_only=media_only,
                     omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
                 )
             ),
@@ -978,6 +1033,7 @@ class TweetSender:
                         batch_summary=batch_summary,
                         media_only=media_only,
                         omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
                         link_style=link_style,
                     )
                 ),
@@ -1019,6 +1075,7 @@ class TweetSender:
                             batch_summary=batch_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
                             link_style=link_style,
                         )
                     )

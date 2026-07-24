@@ -746,6 +746,7 @@ class NitterTweetScheduler:
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
                             omit_status_url=bool(getattr(group, 'omit_status_url', True)),
+                    hide_original_when_translated=bool(getattr(group, "hide_original_when_translated", False)),
                             tweet_index=len(new_tweets),
                             tweet_total=len(new_tweets),
                         )
@@ -1614,6 +1615,7 @@ class NitterTweetScheduler:
             tweet_total=len(discovered_batch.tweets),
             media_only=discovered_batch.media_only,
             omit_status_url=bool(getattr(discovered_batch, 'omit_status_url', True)),
+            hide_original_when_translated=bool(getattr(discovered_batch, "hide_original_when_translated", False)),
         )
 
     async def _record_prepare_failure(
@@ -1824,6 +1826,7 @@ class NitterTweetScheduler:
                     if batch.media_only:
                         send_kwargs["media_only"] = True
                     send_kwargs["omit_status_url"] = bool(getattr(batch, "omit_status_url", True))
+                    send_kwargs["hide_original_when_translated"] = bool(getattr(batch, "hide_original_when_translated", False))
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -2010,6 +2013,10 @@ class NitterTweetScheduler:
                 merge_kwargs = {
                     "omit_status_url": all(
                         bool(getattr(batch, "omit_status_url", True))
+                        for batch in target_batches
+                    ),
+                    "hide_original_when_translated": all(
+                        bool(getattr(batch, "hide_original_when_translated", False))
                         for batch in target_batches
                     ),
                 }

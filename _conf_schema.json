@@ -379,6 +379,13 @@
                 "default": true,
                 "hint": "开启后定时/手动推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
+                    "hide_original_when_translated": {
+                        "description": "有翻译时只发译文（隐藏原文）",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                    },
+
               "aliases": {
                 "description": "分组别名",
                 "type": "list",
@@ -496,6 +503,13 @@
                 "default": true,
                 "hint": "开启后定时/手动推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
+                    "hide_original_when_translated": {
+                        "description": "有翻译时只发译文（隐藏原文）",
+                        "type": "bool",
+                        "default": false,
+                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                    },
+
               "aliases": {
                 "description": "分组别名",
                 "type": "list",

@@ -148,6 +148,7 @@ class HtmlNitterPool:
         *,
         kind: str | None = None,
         instance: str | None = None,
+        max_pages: int | None = None,
     ) -> tuple[str, list[TweetItem]]:
         q = normalize_query(query)
         if not q:
@@ -159,7 +160,9 @@ class HtmlNitterPool:
         hosts = self._hosts_for_probe(instance)
         for base in hosts:
             try:
-                tweets = self._paginate_search(base, q, limit, kind=resolved)
+                tweets = self._paginate_search(
+                    base, q, limit, kind=resolved, max_pages=max_pages
+                )
                 if tweets:
                     return base, tweets[:limit]
                 errors.append(f"{base}: empty")
@@ -206,13 +209,20 @@ class HtmlNitterPool:
         return tweets
 
     def _paginate_search(
-        self, base: str, query: str, limit: int, *, kind: str
+        self,
+        base: str,
+        query: str,
+        limit: int,
+        *,
+        kind: str,
+        max_pages: int | None = None,
     ) -> list[TweetItem]:
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
         allow_hashtag = kind == "tag"
-        for page_i in range(max(1, self.config.max_pages)):
+        pages = self.config.max_pages if max_pages is None else max_pages
+        for page_i in range(max(1, int(pages or 1))):
             params = {"f": "tweets", "q": query}
             if cursor:
                 params["cursor"] = cursor

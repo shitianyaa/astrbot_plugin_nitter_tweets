@@ -832,6 +832,7 @@ function snapshotEditableGroup(group) {
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
     media_only_enabled: !!group.media_only_enabled,
     omit_status_url: group.omit_status_url !== false,
+    hide_original_when_translated: !!group.hide_original_when_translated,
     push_targets: [...(group.push_targets || [])],
     watch_queries: (group.watch_queries || []).map((item) => ({
       query: item.query || "",
@@ -1198,6 +1199,19 @@ function renderGroupEditor() {
           draft.omit_status_url !== false,
         ),
       ),
+      editorField(
+        "有翻译时只显示译文",
+        toggleField(
+          group.group_id,
+          "hide_original_when_translated",
+          !!draft.hide_original_when_translated,
+        ),
+      ),
+      el("p", {
+        className: "helper-text",
+        text: "开启后：存在译文时隐藏原文块，仅发送翻译；无译文时仍显示原文。仅媒体模式不调用翻译。",
+      }),
+
       el("p", {
         className: "helper-text",
         text: "默认开启：不发送推文 URL 明文，并去掉正文/译文中的 http(s) 链接。Telegram 仍可用摘要链到原文。仅媒体模式不调用翻译。",
