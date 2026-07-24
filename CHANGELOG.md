@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- `watch_queries` 落盘改为纯字符串列表，避免 AstrBot WebUI 把对象显示成 `[object Object]`；兼容读取旧 `{query,type}`，并丢弃损坏的 `[object Object]` 项。
+- 文档：标签定时获取/发送数量（固定约 20、滤 RT/seen、新帖全发）；配置示例改为字符串列表。
+- 标签分组增加风险提示：使用私人 QQ 号作为 Bot 时不建议启用标签定时。
 - 转推过滤：`/推文`/`/镜像测试` 固定不过滤；`/推文搜索` 与标签分组定时固定过滤纯转推（无配置项）；博主分组仍用 filter_reposts_enabled。
 - OneBot 合并转发遇到 retcode 1200 / res_id 失败时，自动拆成更小段重试；仅对未送达段降级直发（再失败则纯文本），避免半成功整包重复发送。
 - 配置文案：去掉 send_video_attachments「不太成熟/还在优化」表述，改为默认关闭与能力说明。

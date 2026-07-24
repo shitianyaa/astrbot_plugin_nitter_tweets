@@ -268,15 +268,36 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 - `group_type: blogger`：只使用 `watch_users`，RSS 主路径；`user_html_fallback` 开启时 RSS 失败/空结果可回退 HTML 用户页（`blogger_html_instances`）。
 - `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 账号键为 `q:<casefold query>`。
+- **风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时搜索/推送**（查询与推送更频繁，有封号风险）。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 users 与 queries。
 - 标签首次空结果不初始化 seen，避免下一页刷屏。
 - 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。
 
-### 查询规则
+### 查询规则（配置怎么写）
 
-- 前导 `#` → `type=tag`（保存时可补 `#`）；否则 `type=phrase`（禁止自动加 `#`）。
-- 运行时优先信存盘 `type`；tag 可回退 `/hashtag/`，phrase 仅 `/search`。
-- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。
+- **落盘格式：每项一个字符串**（推荐）。示例：`#圣娅`、`蔚蓝档案`。
+- 前导 `#` → `type=tag`；否则 `type=phrase`（禁止自动给短语加 `#`）。
+- 兼容读取旧的 `{query, type}` 对象，启动/保存时会规范成字符串，避免 AstrBot 配置列表显示成 `[object Object]`。
+- 若配置里已出现字面量 `[object Object]`，该项无效，请删除后重新填写 `#标签` 或短语。
+- 运行时：tag 可回退 `/hashtag/`，phrase 仅 `/search`。
+- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。手动搜索为凑满条数最多翻约 3 页；**定时标签组默认只取约 1 页**。
+
+### 标签分组定时：获取与发送数量
+
+```text
+每个 watch_query / 每轮检查
+  → HTML 搜索（组内串行；默认 html_max_pages=1）
+  → 上限固定 fetch_limit=20（scheduled_fetch_limit 不生效）
+  → 固定丢掉纯转推
+  → 可选：纯文本过滤 / 仅媒体
+  → 与 seen（q:...）差集 → 只要新推文
+  → 首次仅初始化 seen，不推历史
+  → 新推文全部发送（没有「每轮最多 5 条」截断）
+  → 发送成功后才写 seen
+```
+
+因此「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。
+HTTP 层仍可能有 Anubis 门禁与限流，日志里会看到多次 `session load` / `gate`，不等于死循环。
 
 ### 实例列表
 

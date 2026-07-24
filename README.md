@@ -94,14 +94,16 @@ tweet_groups:
     group_id: tags1
     group_type: tag
     watch_queries:
-      - query: "#圣娅"
-        type: tag
-      - query: "python programming"
-        type: phrase
+      - "#圣娅"
+      - "python programming"
     push_targets: aiocqhttp:GroupMessage:123456
 ```
 
 每个分组有 `group_type`：`blogger` 使用 `watch_users`，`tag` 使用 `watch_queries`（勿混用）。共用 `push_targets` 与检查调度。
+
+`watch_queries` 请填**纯字符串**（`#标签` 或短语）。不要在 AstrBot 配置列表里塞对象，否则会显示成 `[object Object]`。标签定时：每查询约拉一页最多 20 条 → 滤纯转推/可选纯文本 → 与 seen 差集 → 新帖全发。
+
+**风险提示：** Bot 使用**私人 QQ 号**时，不建议启用标签分组定时功能。
 
 - 博主组：`/订阅导入` `/订阅删除`
 - 标签组：`/标签导入` `/标签删除`（须指定标签分组名；`#标签,短语 分组名`）

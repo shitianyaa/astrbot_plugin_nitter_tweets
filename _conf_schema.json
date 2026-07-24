@@ -305,7 +305,7 @@
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。",
+        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时功能。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -440,7 +440,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示。风险提示：若 Bot 使用私人 QQ 号登录，不建议启用标签分组定时搜索/推送。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -452,7 +452,8 @@
               "enabled": {
                 "description": "启用分组",
                 "type": "bool",
-                "default": true
+                "default": true,
+                "hint": "使用私人 QQ 号作为 Bot 时，建议不要开启标签分组（定时搜索与推送较频繁，有封号风险）。"
               },
               "group_type": {
                 "description": "分组类型",
@@ -465,7 +466,7 @@
                 "description": "搜索订阅",
                 "type": "list",
                 "default": [],
-                "hint": "每项建议为对象：query + type(tag|phrase)。也可写字符串：#标签 或 短语。前导 # 为标签；短语禁止自动加 #。"
+                "hint": "每行一个纯字符串：#标签 或短语。前导 # 为标签搜索，否则为短语（不会自动加 #）。不要填对象，否则 WebUI 会显示 [object Object]。也可用插件 Dashboard 管理。定时每查询约拉一页最多 20 条，过滤纯转推与已 seen 后发送全部新帖。"
               },
               "push_targets": {
                 "description": "分组推送目标",

@@ -35,10 +35,10 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 - `name`: 显示名，可用于命令。
 - `group_id`: 存储 ID。新建默认分组为 `default`；由插件自动分配并保持稳定，已有值（包括旧 `global`）保留。缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。
-- `group_type`: `blogger`（默认）或 `tag`。创建后锁定；决定使用哪类订阅字段。
+- `group_type`: `blogger`（默认）或 `tag`。创建后锁定；决定使用哪类订阅字段。标签组：Bot 使用私人 QQ 号时不建议启用定时搜索/推送。
 - `enabled`: 是否启用。
 - `watch_users`: **博主组**关注账号；标签组忽略。
-- `watch_queries`: **标签组**搜索订阅列表。项为 `{query, type}`，`type` 为 `tag` 或 `phrase`。前导 `#` 推断为 tag，否则 phrase；phrase 禁止自动加 `#`。
+- `watch_queries`: **标签组**搜索订阅列表。**落盘为字符串列表**（如 `#圣娅`、`蔚蓝档案`）。前导 `#` → tag，否则 phrase；phrase 禁止自动加 `#`。仍可读旧 `{query,type}` 对象，但会规范成字符串，避免 AstrBot `list` 显示 `[object Object]`。
 - `push_targets`: 分组推送目标 UMO。
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
@@ -48,9 +48,9 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 
-后台博主检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
+后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
-标签组定时检查走 `search_instances` HTML 搜索，组内 query 串行；seen 账号键为 `q:<casefold query>`；首次启用只 init 不推历史；标签首次空结果不初始化 seen。
+后台**标签**检查：每个 `watch_query` 走 HTML 搜索（`search_instances`），组内串行；`fetch_limit` 固定 20、默认约 1 页（`html_max_pages`）；固定滤纯转推；可选纯文本/仅媒体；与 seen（`q:...`）差集后**新帖全发**（无每轮 5 条上限）；首次启用只 init 不推历史；标签首次空结果不初始化 seen。
 
 ## 新增配置项清单
 
