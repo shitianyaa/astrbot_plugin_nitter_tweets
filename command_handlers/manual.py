@@ -183,11 +183,15 @@ class ManualCommandMixin:
                 )
             except Exception as exc:
                 logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
-                await event.send(event.plain_result(f"搜索失败：{exc}"))
+                await event.send(
+                    event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
+                )
                 return
         except Exception as exc:
             logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
-            await event.send(event.plain_result(f"搜索失败：{exc}"))
+            await event.send(
+                event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
+            )
             return
 
         added = buf.add_tweets(list(fetched or []), instance=instance or "")

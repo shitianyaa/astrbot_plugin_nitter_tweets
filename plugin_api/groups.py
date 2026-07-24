@@ -149,15 +149,13 @@ class WebUIGroupEditor:
             data.get(
                 "omit_status_url",
                 raw_group.get("omit_status_url", True),
-            ),
-            True,
+            )
         )
         raw_group["hide_original_when_translated"] = self._bool(
             data.get(
                 "hide_original_when_translated",
                 raw_group.get("hide_original_when_translated", False),
-            ),
-            False,
+            )
         )
         if existing_type == "tag":
             try:
