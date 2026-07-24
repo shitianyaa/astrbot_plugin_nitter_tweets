@@ -248,6 +248,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 batch_summary,
                 tweet_start_index,
                 media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         post_attempt = await send_lark_post(

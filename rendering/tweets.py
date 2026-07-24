@@ -612,7 +612,14 @@ class TweetMessageRenderer:
         return [
             Plain(
                 self.format_video_attachment_text(
-                    index, username, tweet, source, media_only=media_only
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
             ),
             Video.fromFileSystem(str(media.path)),
@@ -635,7 +642,14 @@ class TweetMessageRenderer:
         return [
             Plain(
                 self.format_image_attachment_text(
-                    index, username, tweet, source, media_only=media_only
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
             ),
             Image.fromFileSystem(str(media.path)),
@@ -764,7 +778,14 @@ class TweetMessageRenderer:
         return [
             self.raw_text(
                 self.format_video_attachment_text(
-                    index, username, tweet, source, media_only=media_only
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
             ),
             self.raw_media(media),
@@ -787,7 +808,14 @@ class TweetMessageRenderer:
         return [
             self.raw_text(
                 self.format_image_attachment_text(
-                    index, username, tweet, source, media_only=media_only
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
             ),
             self.raw_media(media),
@@ -1106,6 +1134,7 @@ class TweetMessageRenderer:
         safe_url = safe_url.replace("(", "%28").replace(")", "%29")
         return "[" + safe_label + "](" + safe_url + ")"
 
+    @staticmethod
     def format_video_attachment_text(
         index: int,
         username: str,

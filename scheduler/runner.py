@@ -471,6 +471,14 @@ class NitterTweetScheduler:
             account_total=1,
             tweet_index=1,
             tweet_total=1,
+            media_only=bool(getattr(group, "media_only_enabled", False)),
+            omit_status_url=bool(getattr(group, "omit_status_url", True)),
+            hide_original_when_translated=resolve_hide_original_when_translated(
+                self.config,
+                group_hide=bool(
+                    getattr(group, "hide_original_when_translated", False)
+                ),
+            ),
         )
         try:
             if translator_enabled:
@@ -502,6 +510,11 @@ class NitterTweetScheduler:
                         group_label=group_label,
                         batch_summary="",
                         tweet_start_index=1,
+                        media_only=batch.media_only,
+                        omit_status_url=batch.omit_status_url,
+                        hide_original_when_translated=(
+                            batch.hide_original_when_translated
+                        ),
                     )
                     if outcome.success:
                         await self._record_batch_push_history(
@@ -1765,7 +1778,13 @@ class NitterTweetScheduler:
 
     async def _cleanup_batch_media_many(self, batches: list[PendingTweetBatch]) -> None:
         for batch in batches:
-            await self._cleanup_batch_media(batch)
+            try:
+                await self._cleanup_batch_media(batch)
+            except Exception as exc:
+                logger.warning(
+                    "[NitterTweets] 批量媒体清理失败，继续清理其余批次: "
+                    f"user=@{batch.username}, error={exc}"
+                )
 
     async def _send_per_user_updates(
         self,

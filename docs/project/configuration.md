@@ -1,7 +1,5 @@
 # 配置说明
 
-（默认 true，去推文链接）与 # 配置说明
-
 配置真源是 `_conf_schema.json`。读取、迁移规则在 `config/compat.py`，分组解析规则在 `scheduler/config.py`。
 
 ## 分组
