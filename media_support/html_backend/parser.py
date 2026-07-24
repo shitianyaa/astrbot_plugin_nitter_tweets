@@ -1,0 +1,245 @@
+# -*- coding: utf-8 -*-
+"""Shared Nitter HTML timeline parser (all hosts)."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from html import unescape
+from urllib.parse import unquote, urljoin
+
+try:
+    from ...shared.utils import TweetItem, TweetMedia
+except ImportError:  # pragma: no cover
+    from shared.utils import TweetItem, TweetMedia
+
+try:
+    from .query import normalize_query, query_kind
+except ImportError:  # pragma: no cover
+    from media_support.html_backend.query import normalize_query, query_kind
+
+
+@dataclass(slots=True)
+class TimelinePage:
+    tweets: list[TweetItem]
+    next_cursor: str = ""
+    raw_item_count: int = 0
+
+
+def clean_html_text(raw: str) -> str:
+    text = re.sub(r"(?i)<br\s*/?>", "\n", raw or "")
+    text = re.sub(r"(?s)<[^>]+>", "", text)
+    text = unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def abs_url(instance: str, maybe_relative: str) -> str:
+    value = (maybe_relative or "").strip()
+    if not value:
+        return ""
+    if value.startswith("//"):
+        return "https:" + value
+    if value.startswith(("http://", "https://")):
+        return value
+    return urljoin(instance.rstrip("/") + "/", value.lstrip("/"))
+
+
+def prefer_orig_pbs(url: str) -> str:
+    if "pbs.twimg.com/media/" not in url:
+        return url
+    if "name=" in url:
+        return re.sub(r"([?&])name=[^&]*", r"\1name=orig", url)
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}name=orig"
+
+
+def extract_next_cursor(html: str) -> str:
+    for pat in (
+        r'class="show-more"[^>]*>\s*<a[^>]+href="[^"]*?cursor=([^"&#]+)',
+        r'href="[^"]*?cursor=([^"&#]+)[^"]*"[^>]*>\s*Load more',
+        r'(?:[?&]|amp;)cursor=([A-Za-z0-9_\-%=]+)',
+    ):
+        match = re.search(pat, html, re.I)
+        if match:
+            return unquote(match.group(1))
+    return ""
+
+
+def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
+    media: list[TweetMedia] = []
+    seen: set[str] = set()
+
+    def add(kind: str, url: str) -> None:
+        url = (url or "").strip()
+        if not url or url in seen:
+            return
+        if "profile_images" in url or "profile_banners" in url:
+            return
+        if kind == "image" and (
+            "video_thumb" in url or "amplify_video_thumb" in url or "emoji" in url
+        ):
+            return
+        if kind == "image" and "pbs.twimg.com" in url:
+            url = prefer_orig_pbs(url)
+        seen.add(url)
+        media.append(TweetMedia(kind=kind, url=url))
+
+    for href in re.findall(
+        r'class="still-image"[^>]*href="([^"]+)"|href="([^"]+)"[^>]*class="still-image"',
+        chunk,
+        re.I,
+    ):
+        add("image", href[0] or href[1])
+    for rel in re.findall(r'(?:href|src)="(/pic/orig/media[^"]+)"', chunk):
+        add("image", abs_url(instance, rel))
+    if not any(m.is_image for m in media):
+        for rel in re.findall(r'(?:href|src)="(/pic/media[^"]+)"', chunk):
+            add("image", abs_url(instance, rel))
+    if 'class="attachments' in chunk:
+        idx = chunk.find('class="attachments')
+        scan = chunk[idx : idx + 5000]
+        for href in re.findall(
+            r'href="(https://pbs\.twimg\.com/media/[^"]+)"', scan
+        ):
+            add("image", href)
+    for rel in re.findall(r'(?:href|src)="(/video/[^"]+)"', chunk):
+        add("video", abs_url(instance, rel))
+    for href in re.findall(
+        r'(?:href|src)="(https://video\.twimg\.com/[^"]+)"', chunk
+    ):
+        add("video", href)
+    return media
+
+
+
+
+def _extract_tweet_text(chunk: str) -> str:
+    """Pull main tweet body from a timeline-item chunk."""
+    patterns = (
+        r'(?s)<div class="tweet-content[^"]*"[^>]*>(.*?)</div>',
+        r'(?s)<div class="tweet-content media-body"[^>]*>(.*?)</div>',
+        r'(?s)<div class="tweet-body"[^>]*>.*?<div class="tweet-content[^"]*"[^>]*>(.*?)</div>',
+    )
+    for pat in patterns:
+        match = re.search(pat, chunk, re.I)
+        if not match:
+            continue
+        text = clean_html_text(match.group(1))
+        if text:
+            return text
+
+    cleaned = re.sub(r'(?is)<script[^>]*>.*?</script>', '', chunk or '')
+    cleaned = re.sub(r'(?is)<style[^>]*>.*?</style>', '', cleaned)
+    cleaned = re.sub(
+        r'(?is)<div class="quote(?:-tweet)?[^"]*"[^>]*>.*?</div>\s*</div>',
+        '',
+        cleaned,
+    )
+    text = clean_html_text(cleaned)
+    lines_out = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    kept = []
+    noise = {'retweet', 'quote', 'reply', 'load more'}
+    for ln in lines_out:
+        low = ln.lower()
+        if low in noise:
+            continue
+        if re.fullmatch(r'[@#]?\w{1,32}', ln) and not kept:
+            continue
+        if re.fullmatch(r'[\d,.]+[KMBkmb]?', ln):
+            continue
+        kept.append(ln)
+    return chr(10).join(kept[:12]).strip()
+
+
+
+def is_pure_retweet_chunk(chunk: str) -> bool:
+    """Best-effort pure-retweet detection for Nitter HTML timeline items.
+
+    Do not use footer action icons (icon-retweet) — every tweet has a retweet button.
+    Prefer retweet-header / retweeted-by text in the region before tweet body.
+    """
+    if not chunk:
+        return False
+    # Nitter puts retweet-header *inside* tweet-body, before tweet-content.
+    # Only cut at tweet-content (not tweet-body), else pure-RT headers are missed.
+    low = chunk.lower()
+    cut = len(chunk)
+    for marker in (
+        'class="tweet-content',
+        "class='tweet-content",
+    ):
+        idx = low.find(marker)
+        if idx != -1:
+            cut = min(cut, idx)
+    head = chunk[: min(cut, 2500)]
+
+    if re.search(r'class="[^"]*retweet-header[^"]*"', head, re.I):
+        return True
+    if re.search(r"class='[^']*retweet-header[^']*'", head, re.I):
+        return True
+    if re.search(r"retweeted\s+by", head, re.I):
+        return True
+    if re.search(r"(转推了|转推自)", head[:800]):
+        return True
+    return False
+
+
+def parse_timeline_html(html: str, instance: str, *, source: str = "") -> TimelinePage:
+    del source  # plugin TweetItem has no source field; keep API compatible
+    if "timeline-item" not in html:
+        return TimelinePage(tweets=[], next_cursor=extract_next_cursor(html))
+
+    chunks = re.split(r'(?=<div class="timeline-item\b)', html)
+    tweets: list[TweetItem] = []
+    seen: set[str] = set()
+    raw = 0
+    for chunk in chunks:
+        if "tweet-content" not in chunk and "tweet-body" not in chunk:
+            continue
+        sm = re.search(
+            r'href="/(?P<user>[A-Za-z0-9_]+)/status(?:es)?/(?P<id>\d+)',
+            chunk,
+        )
+        if not sm:
+            continue
+        raw += 1
+        user, sid = sm.group("user"), sm.group("id")
+        key = f"{user}:{sid}"
+        if key in seen:
+            continue
+        seen.add(key)
+        text = _extract_tweet_text(chunk)
+        dm = re.search(
+            r'(?s)<span class="tweet-date">\s*<a[^>]*title="([^"]+)"', chunk
+        )
+        published = unescape(dm.group(1)) if dm else ""
+        link = f"https://x.com/{user}/status/{sid}"
+        tweets.append(
+            TweetItem(
+                text=text or "(无正文)",
+                link=link,
+                published=published,
+                media=_extract_media(chunk, instance),
+                is_retweet=is_pure_retweet_chunk(chunk),
+            )
+        )
+    return TimelinePage(
+        tweets=tweets,
+        next_cursor=extract_next_cursor(html),
+        raw_item_count=raw,
+    )
+
+
+__all__ = [
+    "TimelinePage",
+    "abs_url",
+    "clean_html_text",
+    "extract_next_cursor",
+    "normalize_query",
+    "is_pure_retweet_chunk",
+    "parse_timeline_html",
+    "prefer_orig_pbs",
+    "query_kind",
+]

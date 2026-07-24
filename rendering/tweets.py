@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from urllib.parse import urlparse
 
 try:
@@ -51,6 +53,10 @@ class TweetMessageRenderer:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
         return self.build_nodes_for_uin(
             node_uin(event),
@@ -63,6 +69,7 @@ class TweetMessageRenderer:
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
+            media_only=media_only,
         )
 
     def build_nodes_for_uin(
@@ -77,27 +84,26 @@ class TweetMessageRenderer:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
         nodes = Nodes([])
-        nodes.nodes.append(
-            Node(
-                uin=uin,
-                name="Nitter",
-                content=[
-                    Plain(
-                        self.format_header(
-                            username,
-                            instance,
-                            len(tweets),
-                            notices,
-                            group_label,
-                            header_text,
-                            batch_summary,
-                        )
-                    )
-                ],
-            )
+        header = self.format_header(
+            username,
+            instance,
+            len(tweets),
+            notices,
+            group_label,
+            header_text,
+            batch_summary,
+            media_only=media_only,
         )
+        if header:
+            nodes.nodes.append(
+                Node(uin=uin, name="Nitter", content=[Plain(header)])
+            )
 
         for offset, tweet in enumerate(tweets):
             index = start_index + offset
@@ -112,6 +118,10 @@ class TweetMessageRenderer:
                         exclude_videos=exclude_videos,
                         include_videos=False,
                         include_images=False,
+                        media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                     ),
                 )
             )
@@ -127,6 +137,10 @@ class TweetMessageRenderer:
                                 tweet,
                                 media,
                                 source=instance,
+                                media_only=media_only,
+                                omit_status_url=omit_status_url,
+                                hide_original_when_translated=hide_original_when_translated,
+                                link_style=link_style,
                             ),
                         )
                     )
@@ -143,6 +157,10 @@ class TweetMessageRenderer:
                                     tweet,
                                     media,
                                     source=instance,
+                                    media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             )
                         )
@@ -156,21 +174,15 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
         nodes = Nodes([])
-        nodes.nodes.append(
-            Node(
-                uin=uin,
-                name="Nitter",
-                content=[
-                    Plain(
-                        self.format_merged_header(
-                            batches, group_label, batch_summary
-                        )
-                    )
-                ],
-            )
-        )
+        header = self.format_merged_header(batches, group_label, batch_summary)
+        if header:
+            nodes.nodes.append(Node(uin=uin, name="Nitter", content=[Plain(header)]))
 
         index = start_index
         for username, instance, tweets in batches:
@@ -187,6 +199,10 @@ class TweetMessageRenderer:
                             exclude_videos=exclude_videos,
                             include_videos=False,
                             include_images=False,
+                            media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                         ),
                     )
                 )
@@ -202,6 +218,10 @@ class TweetMessageRenderer:
                                     tweet,
                                     media,
                                     source=instance,
+                                    media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             )
                         )
@@ -218,6 +238,10 @@ class TweetMessageRenderer:
                                         tweet,
                                         media,
                                         source=instance,
+                                        media_only=media_only,
+                                        omit_status_url=omit_status_url,
+                                        hide_original_when_translated=hide_original_when_translated,
+                                        link_style=link_style,
                                     ),
                                 )
                             )
@@ -232,20 +256,21 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> list[dict]:
-        items = [
-            {
-                "name": "Nitter",
-                "uin": str(uin),
-                "content": [
-                    self.raw_text(
-                        self.format_merged_header(
-                            batches, group_label, batch_summary
-                        )
-                    )
-                ],
-            }
-        ]
+        items = []
+        header = self.format_merged_header(batches, group_label, batch_summary)
+        if header:
+            items.append(
+                {
+                    "name": "Nitter",
+                    "uin": str(uin),
+                    "content": [self.raw_text(header)],
+                }
+            )
 
         index = start_index
         for username, instance, tweets in batches:
@@ -258,6 +283,10 @@ class TweetMessageRenderer:
                     exclude_videos=exclude_videos,
                     include_videos=False,
                     include_images=False,
+                    media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
                 )
                 items.append(
                     {
@@ -278,6 +307,7 @@ class TweetMessageRenderer:
                                     tweet,
                                     media,
                                     source=instance,
+                                    media_only=media_only,
                                 ),
                             }
                         )
@@ -294,6 +324,7 @@ class TweetMessageRenderer:
                                         tweet,
                                         media,
                                         source=instance,
+                                        media_only=media_only,
                                     ),
                                 }
                             )
@@ -324,32 +355,75 @@ class TweetMessageRenderer:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
-        components = [
-            Plain(
-                self.format_header(
-                    username,
-                    instance,
-                    len(tweets),
-                    notices,
-                    group_label,
-                    header_text,
-                    batch_summary,
-                )
-            )
-        ]
+        components = []
+        header = self.format_header(
+            username,
+            instance,
+            len(tweets),
+            notices,
+            group_label,
+            header_text,
+            batch_summary,
+            media_only=media_only,
+        )
+        if header:
+            components.append(Plain(header))
         for offset, tweet in enumerate(tweets):
             index = start_index + offset
-            components.extend(
-                self.build_direct_tweet_components(
-                    index,
-                    username,
-                    tweet,
-                    exclude_videos=exclude_videos,
-                    include_videos=include_videos,
-                    include_images=include_images,
-                )
+            tweet_components = self.build_direct_tweet_components(
+                index,
+                username,
+                tweet,
+                exclude_videos=exclude_videos,
+                include_videos=include_videos,
+                include_images=include_images,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
+            self._prepend_component_separator(tweet_components, bool(components))
+            components.extend(tweet_components)
+        return components
+
+    def build_media_only_components(
+        self,
+        username: str,
+        tweet: TweetItem,
+        *,
+        exclude_videos: bool = False,
+        include_videos: bool = True,
+        include_images: bool = True,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
+    ):
+        """Render only the author marker and successfully prepared media."""
+        author_name = TweetMessageRenderer.display_username(username, tweet)
+        author = f"@{author_name}" if author_name else "@unknown"
+        status_url = (tweet.x_url or tweet.link or "").strip()
+        if link_style == "telegram_md" and status_url:
+            author = TweetMessageRenderer.telegram_markdown_link(
+                author, status_url
+            )
+        components = [Plain(author)]
+        for media in tweet.media:
+            if not media.path:
+                continue
+            if media.is_image and self.send_image_attachments and include_images:
+                components.append(Image.fromFileSystem(str(media.path)))
+            elif (
+                media.is_video
+                and self.send_video_attachments
+                and include_videos
+                and not exclude_videos
+            ):
+                components.append(Video.fromFileSystem(str(media.path)))
         return components
 
     def build_merged_direct_components(
@@ -359,23 +433,32 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
-        components = [
-            Plain(self.format_merged_header(batches, group_label, batch_summary))
-        ]
+        components = []
+        header = self.format_merged_header(batches, group_label, batch_summary)
+        if header:
+            components.append(Plain(header))
         index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
-                components.extend(
-                    self.build_direct_tweet_components(
-                        index,
-                        username,
-                        tweet,
-                        source=instance,
-                        exclude_videos=exclude_videos,
-                        include_images=True,
-                    )
+                tweet_components = self.build_direct_tweet_components(
+                    index,
+                    username,
+                    tweet,
+                    source=instance,
+                    exclude_videos=exclude_videos,
+                    include_images=True,
+                    media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
                 )
+                self._prepend_component_separator(tweet_components, bool(components))
+                components.extend(tweet_components)
                 index += 1
         return components
 
@@ -388,6 +471,10 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         include_videos: bool = True,
         include_images: bool = True,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
         components = self.build_components(
             index,
@@ -397,10 +484,19 @@ class TweetMessageRenderer:
             exclude_videos=exclude_videos,
             include_videos=include_videos,
             include_images=include_images,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
-        if components and isinstance(components[0], Plain):
-            components[0].text = "\n\n" + components[0].text
         return components
+
+    @staticmethod
+    def _prepend_component_separator(components, needed: bool) -> None:
+        if not needed or not components or not isinstance(components[0], Plain):
+            return
+        if components[0].text:
+            components[0].text = "\n\n" + components[0].text
 
     def build_direct_image_components(self, tweets: list[TweetItem]):
         components = []
@@ -430,7 +526,7 @@ class TweetMessageRenderer:
             if original_link in seen_links:
                 continue
             seen_links.add(original_link)
-            lines.append(f"视频/GIF 附件未作为消息发送，请打开原文查看：{original_link}")
+            lines.append("视频/GIF 发送已关闭，已跳过下载")
         if not lines:
             return []
         return [Plain("\n".join(lines))]
@@ -440,8 +536,33 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         include_videos: bool = True,
         include_images: bool = True,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
-        text = self.format_tweet_with_source(index, username, tweet, source)
+        if media_only:
+            return self.build_media_only_components(
+                username,
+                tweet,
+                exclude_videos=exclude_videos,
+                include_videos=include_videos,
+                include_images=include_images,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
+            )
+
+        text = self.format_tweet_with_source(
+            index,
+            username,
+            tweet,
+            source,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
+        )
+        status_url = (tweet.x_url or tweet.link or "").strip()
         components = [Plain(text)]
         video_notice_added = False
         for media in tweet.media:
@@ -451,8 +572,10 @@ class TweetMessageRenderer:
                 if not video_notice_added:
                     components.append(
                         Plain(
-                            "视频/GIF 附件未作为消息发送，请打开原文查看："
-                            f"{tweet.x_url}"
+                            TweetMessageRenderer.video_not_sent_notice(
+                                omit_status_url=omit_status_url,
+                                status_url=status_url,
+                            )
                         )
                     )
                     video_notice_added = True
@@ -460,10 +583,7 @@ class TweetMessageRenderer:
             if media.is_video and not self.send_video_attachments:
                 if not video_notice_added:
                     components.append(
-                        Plain(
-                            "视频/GIF 附件发送功能仍在优化，当前按配置不发送，"
-                            f"请打开原文查看：{tweet.x_url}"
-                        )
+                        Plain("视频/GIF 发送已关闭，已跳过下载")
                     )
                     video_notice_added = True
                 continue
@@ -482,9 +602,26 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         media: TweetMedia,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
+        if media_only:
+            return [Video.fromFileSystem(str(media.path))]
         return [
-            Plain(self.format_video_attachment_text(index, username, tweet, source)),
+            Plain(
+                self.format_video_attachment_text(
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
+            ),
             Video.fromFileSystem(str(media.path)),
         ]
 
@@ -495,9 +632,26 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         media: TweetMedia,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ):
+        if media_only:
+            return [Image.fromFileSystem(str(media.path))]
         return [
-            Plain(self.format_image_attachment_text(index, username, tweet, source)),
+            Plain(
+                self.format_image_attachment_text(
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
+            ),
             Image.fromFileSystem(str(media.path)),
         ]
 
@@ -511,26 +665,30 @@ class TweetMessageRenderer:
         notices: list[str] | None = None,
         group_label: str = "",
         header_text: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> list[dict]:
         uin = str(node_uin(event))
-        items = [
-            {
-                "name": "Nitter",
-                "uin": uin,
-                "content": [
-                    self.raw_text(
-                        self.format_header(
-                            username,
-                            instance,
-                            len(tweets),
-                            notices,
-                            group_label,
-                            header_text,
-                        )
-                    )
-                ],
-            }
-        ]
+        items = []
+        header = self.format_header(
+            username,
+            instance,
+            len(tweets),
+            notices,
+            group_label,
+            header_text,
+            media_only=media_only,
+        )
+        if header:
+            items.append(
+                {
+                    "name": "Nitter",
+                    "uin": uin,
+                    "content": [self.raw_text(header)],
+                }
+            )
         for offset, tweet in enumerate(tweets):
             index = start_index + offset
             content = self._build_onebot_tweet_content(
@@ -540,6 +698,10 @@ class TweetMessageRenderer:
                 tweet,
                 include_videos=False,
                 include_images=False,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             items.append({"name": f"@{username}", "uin": uin, "content": content})
             for media in tweet.media:
@@ -554,6 +716,7 @@ class TweetMessageRenderer:
                                 tweet,
                                 media,
                                 source=instance,
+                                media_only=media_only,
                             ),
                         }
                     )
@@ -570,6 +733,7 @@ class TweetMessageRenderer:
                                     tweet,
                                     media,
                                     source=instance,
+                                    media_only=media_only,
                                 ),
                             }
                         )
@@ -604,10 +768,25 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         media: TweetMedia,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> list[dict]:
+        if media_only:
+            return [self.raw_media(media)]
         return [
             self.raw_text(
-                self.format_video_attachment_text(index, username, tweet, source)
+                self.format_video_attachment_text(
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
             ),
             self.raw_media(media),
         ]
@@ -619,10 +798,25 @@ class TweetMessageRenderer:
         tweet: TweetItem,
         media: TweetMedia,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> list[dict]:
+        if media_only:
+            return [self.raw_media(media)]
         return [
             self.raw_text(
-                self.format_image_attachment_text(index, username, tweet, source)
+                self.format_image_attachment_text(
+                    index,
+                    username,
+                    tweet,
+                    source,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
             ),
             self.raw_media(media),
         ]
@@ -636,21 +830,34 @@ class TweetMessageRenderer:
         exclude_videos: bool = False,
         include_videos: bool = True,
         include_images: bool = True,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> list[dict]:
-        content = [
-            self.raw_text(self.format_tweet_with_source(index, username, tweet, instance))
-        ]
+        if media_only:
+            content = [self.raw_text(f"@{TweetMessageRenderer.display_username(username, tweet)}")]
+        else:
+            content = [
+                self.raw_text(
+                    self.format_tweet_with_source(index, username, tweet, instance, omit_status_url=omit_status_url, hide_original_when_translated=hide_original_when_translated, link_style=link_style)
+                )
+            ]
         video_notice_added = False
         for media in tweet.media:
             if not media.path:
                 continue
             if media.is_video and exclude_videos:
+                if media_only:
+                    continue
                 if not video_notice_added:
                     content.append(
                         self.raw_text(
-                            "视频/GIF 附件未作为消息发送，请打开原文查看："
-                            f"{tweet.x_url}"
+                        TweetMessageRenderer.video_not_sent_notice(
+                            omit_status_url=omit_status_url,
+                            status_url=(tweet.x_url or tweet.link or "").strip(),
                         )
+                    )
                     )
                     video_notice_added = True
                 continue
@@ -675,26 +882,42 @@ class TweetMessageRenderer:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> str:
-        blocks = [
-            self.format_header(
-                username,
-                instance,
-                len(tweets),
-                notices,
-                group_label,
-                header_text,
-                batch_summary,
-            )
-        ]
-        notice_text = self.format_notices(notices)
-        if notice_text and notice_text not in blocks[0]:
-            blocks.append(notice_text)
+        # format_header already embeds notices when media_only is false.
+        blocks = []
+        header = self.format_header(
+            username,
+            instance,
+            len(tweets),
+            notices,
+            group_label,
+            header_text,
+            batch_summary,
+            media_only=media_only,
+        )
+        if header:
+            blocks.append(header)
         blocks.extend(
-            self.format_tweet_with_source(start_index + offset, username, tweet, instance)
+            (
+                f"@{username}"
+                if media_only
+                else self.format_tweet_with_source(
+                    start_index + offset,
+                    username,
+                    tweet,
+                    instance,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
+            )
             for offset, tweet in enumerate(tweets)
         )
-        return "\n\n".join(blocks)
+        return "\n\n".join(block for block in blocks if block)
 
     def format_merged_plain(
         self,
@@ -702,13 +925,29 @@ class TweetMessageRenderer:
         start_index: int = 1,
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> str:
         blocks = [self.format_merged_header(batches, group_label, batch_summary)]
         index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
                 blocks.append(
-                    self.format_tweet_with_source(index, username, tweet, instance)
+                    (
+                        f"@{username}"
+                        if media_only
+                        else self.format_tweet_with_source(
+                        index,
+                        username,
+                        tweet,
+                        instance,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    )
                 )
                 index += 1
         return "\n\n".join(blocks)
@@ -733,21 +972,40 @@ class TweetMessageRenderer:
         counts: dict[str, int] = {}
         for username, _, tweets in batches:
             counts[username] = counts.get(username, 0) + len(tweets)
-        accounts = "，".join(
-            f"@{username} {count} 条" for username, count in counts.items()
-        )
-        lines = [f"Nitter {action_text} {total} 条新推文"]
+        lines = [f"Nitter {action_text}更新"]
+        lines.append(f"博主：{len(counts)} 个")
+        lines.append(f"推文：{total} 条")
         if group_label:
             lines.append(f"分组：{group_label}")
-        if accounts:
-            lines.append(f"更新账号：{accounts}")
         return "\n".join(lines)
 
     @staticmethod
     def format_tweet_with_source(
-        index: int, username: str, tweet: TweetItem, source: str = ""
+        index: int,
+        username: str,
+        tweet: TweetItem,
+        source: str = "",
+        **kwargs,
     ) -> str:
-        return TweetMessageRenderer.format_tweet(index, username, tweet, source=source)
+        return TweetMessageRenderer.format_tweet(
+            index, username, tweet, source=source, **kwargs
+        )
+
+
+    @staticmethod
+    def display_username(username: str, tweet: TweetItem | None = None) -> str:
+        """Prefer real author from tweet link; batch key may be a search query."""
+        from_link = ""
+        if tweet is not None:
+            from_link = (getattr(tweet, "username", None) or "").strip().lstrip("@")
+        key = str(username or "").strip()
+        # Tag schedule keys: q:...
+        if key.lower().startswith("q:"):
+            return from_link or key[2:].lstrip("#") or key
+        # Manual /推文搜索 passes raw query as username.
+        if key.startswith("#") or (" " in key) or (key and not re.fullmatch(r"[A-Za-z0-9_]{1,15}", key.lstrip("@"))):
+            return from_link or key.lstrip("@")
+        return from_link or key.lstrip("@")
 
     @staticmethod
     def format_tweet(
@@ -755,47 +1013,126 @@ class TweetMessageRenderer:
         username: str,
         tweet: TweetItem,
         source: str = "",
+        *,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
+        link_preview_max_chars: int = 40,
     ) -> str:
-        blocks = [f"#{index} @{username}"]
+        status_url = (tweet.x_url or tweet.link or "").strip()
+        author = TweetMessageRenderer.display_username(username, tweet)
+        author_label = f"@{author}" if author else "@unknown"
+
+        # Telegram: [@author](status_url) only — body lives in 原文/翻译 blocks.
+        if link_style == "telegram_md" and status_url:
+            author_line = TweetMessageRenderer.telegram_markdown_link(
+                author_label, status_url
+            )
+        else:
+            author_line = author_label
+
+        blocks: list[str] = [author_line]
         if tweet.published:
-            blocks[0] = f"{blocks[0]}\n时间：{tweet.published}"
+            blocks.append("时间：" + str(tweet.published))
+
+        translation = (tweet.translation or "").strip()
+        if translation:
+            translation = strip_external_links(
+                normalize_external_links(translation).strip()
+            )
 
         original_text = normalize_external_links(tweet.text).strip()
-        if original_text:
-            blocks.append(f"原文：\n{original_text}")
+        # Always strip inline http(s) from bodies to cut link spam / risk.
+        original_text = strip_external_links(original_text)
 
-        translation = strip_external_links(tweet.translation)
+        show_original = bool(original_text)
+        if hide_original_when_translated and translation and show_original:
+            show_original = False
+
+        # Translation first when both are shown (CN-reader friendly).
         if translation:
-            blocks.append(f"翻译：\n{translation}")
-
-        ai_comment = normalize_external_links(tweet.ai_comment).strip()
-        if ai_comment:
-            blocks.append(f"评论：\n{ai_comment}")
+            blocks.append("翻译：\n" + translation)
+        if show_original:
+            blocks.append("原文：\n" + original_text)
+        elif not translation and not show_original:
+            blocks.append("（无正文）")
 
         if tweet.ai_warnings:
-            blocks.append(
-                "AI提示：\n"
-                + "\n".join(f"- {warning}" for warning in tweet.ai_warnings if warning)
-            )
+            warns = "\n".join(f"- {w}" for w in tweet.ai_warnings if w)
+            if warns:
+                blocks.append("AI提示：\n" + warns)
 
-        original_link = tweet.x_url or tweet.link
-        if original_link:
-            blocks.append(f"原帖：\n{original_link}")
+        # Footer status URL only for non-TG when omit is off (TG has header link).
+        if not omit_status_url and status_url and link_style != "telegram_md":
+            blocks.append("原文链接：\n" + status_url)
 
         if tweet.media_warnings:
-            blocks.append(
-                "媒体提示：\n"
-                + "\n".join(f"- {warning}" for warning in tweet.media_warnings)
-            )
+            processed_warns = []
+            status_for_warn = "" if omit_status_url else (status_url or "").strip()
+            for w in tweet.media_warnings:
+                msg = str(w or "").strip()
+                if (
+                    status_for_warn
+                    and msg
+                    and "视频/GIF" in msg
+                    and status_for_warn not in msg
+                    and "http" not in msg
+                ):
+                    msg = f"{msg} 原文链接：{status_for_warn}"
+                if msg:
+                    processed_warns.append(msg)
+            if processed_warns:
+                warns = "\n".join(f"- {w}" for w in processed_warns)
+                blocks.append("媒体提示：\n" + warns)
 
         media_summary = TweetMessageRenderer.format_media_summary(tweet)
         if media_summary:
             blocks.append(media_summary)
 
         if source:
-            blocks.append(f"Nitter：{TweetMessageRenderer.format_instance_label(source)}")
+            blocks.append(
+                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
+            )
 
         return "\n\n".join(blocks)
+
+    def telegram_link_preview(
+        tweet: TweetItem,
+        username: str,
+        *,
+        max_chars: int = 40,
+    ) -> str:
+        text = strip_external_links(tweet.text or "").replace("\n", " ").strip()
+        if not text:
+            text = f"@{username}"
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) > max_chars:
+            text = text[: max(1, max_chars - 1)].rstrip() + "…"
+        return text or f"@{username}"
+
+
+    @staticmethod
+    def video_not_sent_notice(
+        *,
+        omit_status_url: bool = True,
+        status_url: str = "",
+    ) -> str:
+        base = "视频/GIF 发送已关闭，已跳过下载。"
+        url = (status_url or "").strip()
+        if omit_status_url or not url:
+            return base
+        return f"{base} 原文链接：{url}"
+
+    @staticmethod
+    def telegram_markdown_link(label: str, url: str) -> str:
+        safe_label = str(label or "")
+        for ch in ("\\", "`", "*", "_", "[", "]", "(", ")"):
+            safe_label = safe_label.replace(ch, "\\" + ch)
+        safe_url = str(url or "").strip()
+        if safe_url and not safe_url.startswith(("http://", "https://")):
+            safe_url = "https://" + safe_url.lstrip("/")
+        safe_url = safe_url.replace("(", "%28").replace(")", "%29")
+        return "[" + safe_label + "](" + safe_url + ")"
 
     @staticmethod
     def format_video_attachment_text(
@@ -803,16 +1140,25 @@ class TweetMessageRenderer:
         username: str,
         tweet: TweetItem,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> str:
+        if media_only:
+            return f"@{username}"
         text = TweetMessageRenderer.format_tweet(
             index,
             username,
             tweet,
             source=source,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         if text:
             return f"{text}\n\n视频/GIF 附件"
-        return f"#{index} @{username}\n视频/GIF 附件"
+        return f"@{username}\n视频/GIF 附件"
 
     @staticmethod
     def format_image_attachment_text(
@@ -820,14 +1166,26 @@ class TweetMessageRenderer:
         username: str,
         tweet: TweetItem,
         source: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> str:
-        lines = [f"#{index} @{username}", "图片附件"]
-        original_link = tweet.x_url or tweet.link
-        if original_link:
-            lines.append(f"原帖：{original_link}")
+        if media_only:
+            author = TweetMessageRenderer.display_username(username, tweet)
+            return f"@{author}" if author else "@unknown"
+        author = TweetMessageRenderer.display_username(username, tweet)
+        lines = [f"@{author}" if author else "@unknown", "图片附件"]
+        if not omit_status_url:
+            original_link = tweet.x_url or tweet.link
+            if original_link:
+                lines.append("原帖：" + original_link)
         if source:
-            lines.append(f"Nitter：{TweetMessageRenderer.format_instance_label(source)}")
+            lines.append(
+                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
+            )
         return "\n".join(lines)
+
 
     @classmethod
     def format_header(
@@ -839,15 +1197,20 @@ class TweetMessageRenderer:
         group_label: str = "",
         header_text: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> str:
         summary = batch_summary.strip()
         lines = []
         if summary:
             lines.append(summary)
-        lines.append(header_text.strip() or f"@{username} 最近 {tweet_count} 条推文")
-        if group_label and f"分组：{group_label}" not in summary:
+        if header_text.strip():
+            lines.append(header_text.strip())
+        if group_label and (summary or header_text.strip()) and f"分组：{group_label}" not in summary:
             lines.append(f"分组：{group_label}")
-        notice_text = cls.format_notices(notices)
+        notice_text = "" if media_only else cls.format_notices(notices)
         if notice_text:
             lines.append(notice_text)
         return "\n".join(lines)

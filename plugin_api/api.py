@@ -13,6 +13,10 @@ try:
     from ..config import (
         config_get,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
+        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from ..config.subscriptions import (
         ensure_default_import_group,
@@ -23,19 +27,22 @@ try:
     )
     from ..scheduler import ScheduleGroup
     from ..storage import (
-        PendingQueueSummary,
-        PendingTweetRecord,
         PushHistoryGroupSummary,
         PushHistoryRecord,
     )
     from ..delivery import PlatformResolver, parse_umo
     from ..shared import TweetItem, normalize_username
     from ..shared.group_ids import normalize_stable_group_id
+    from ..media_support.html_backend.query import normalize_query, query_kind
     from .groups import WebUIGroupEditor
 except ImportError:
     from config import (
         config_get,
         configured_merge_tweet_threshold,
+        media_only_unavailable_reason,
+        parse_config_bool,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
     )
     from config.subscriptions import (
         ensure_default_import_group,
@@ -47,13 +54,12 @@ except ImportError:
     from delivery import PlatformResolver, parse_umo
     from scheduler import ScheduleGroup
     from storage import (
-        PendingQueueSummary,
-        PendingTweetRecord,
         PushHistoryGroupSummary,
         PushHistoryRecord,
     )
     from shared import TweetItem, normalize_username
     from shared.group_ids import normalize_stable_group_id
+    from media_support.html_backend.query import normalize_query, query_kind
     from plugin_api.groups import WebUIGroupEditor
 
 
@@ -78,9 +84,7 @@ class NitterWebAPI:
             ("web/history/orphans", "handle_history_orphans", ["GET"]),
             ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
-            ("web/pending", "handle_pending", ["GET"]),
             ("web/check", "handle_check", ["POST"]),
-            ("web/publish", "handle_publish", ["POST"]),
             ("web/cache/clear", "handle_cache_clear", ["POST"]),
             ("web/seen/clear", "handle_seen_clear", ["POST"]),
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
@@ -100,16 +104,6 @@ class NitterWebAPI:
 
     async def handle_groups(self):
         return await self._json_response(self.build_groups)
-
-    async def handle_pending(self):
-        async def action():
-            group_id = str(request.args.get("group_id", "") or "").strip()
-            limit = self._parse_int(
-                request.args.get("limit"), 50, minimum=1, maximum=200
-            )
-            return await self.build_pending(group_id, limit)
-
-        return await self._json_response(action)
 
     async def handle_history(self):
         async def action():
@@ -177,13 +171,6 @@ class NitterWebAPI:
 
         return await self._json_response(action)
 
-    async def handle_publish(self):
-        async def action():
-            data = await self._request_json()
-            return await self.publish_pending(data)
-
-        return await self._json_response(action)
-
     async def handle_cache_clear(self):
         return await self._json_response(self.clear_cache)
 
@@ -221,7 +208,6 @@ class NitterWebAPI:
 
     async def build_overview(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        summaries = await self._pending_summaries(groups)
 
         total_raw_users = sum(group.users_info.raw_count for group in groups)
         total_duplicates = sum(len(group.users_info.duplicates) for group in groups)
@@ -236,14 +222,7 @@ class NitterWebAPI:
             "duplicate_watch_users": total_duplicates,
             "invalid_watch_users": total_invalid_users,
             "push_targets": sum(len(group.targets) for group in groups),
-            "invalid_push_targets": sum(
-                len(group.invalid_targets) for group in groups
-            ),
-            "pending_tweets": sum(item.pending_count for item in summaries.values()),
-            "failed_pending_tweets": sum(
-                item.failed_count for item in summaries.values()
-            ),
-            "pending_media": sum(item.media_count for item in summaries.values()),
+            "invalid_push_targets": sum(len(group.invalid_targets) for group in groups),
         }
         scheduler_state = {
             "running": bool(getattr(self.scheduler, "is_running", False)),
@@ -252,22 +231,21 @@ class NitterWebAPI:
             ),
         }
         features = {
-            "images": bool(config_get(self.config, "send_image_attachments", True)),
-            "videos": bool(config_get(self.config, "send_video_attachments", False)),
-            "translation": bool(config_get(self.config, "translate_enabled", False)),
-            "ai_vision": bool(config_get(self.config, "vision_enabled", False)),
-            "ai_comment": bool(config_get(self.config, "comment_enabled", False)),
-            "deferred_publish_groups": sum(
-                1 for group in groups if group.deferred_publish_enabled
+            "images": resolve_send_image_attachments(self.config),
+            "videos": resolve_send_video_attachments(self.config),
+            "translation": parse_config_bool(
+                config_get(self.config, "translate_enabled", False), False
             ),
         }
-        instances = list(getattr(getattr(self.plugin, "nitter", None), "instances", []))
+        instance_lists = self._configured_instance_lists()
+        instances = list(instance_lists["rss"])
         return self._ok(
             scheduler=scheduler_state,
             counts=counts,
             features=features,
-            config_summary=self._config_summary(instances, groups),
+            config_summary=self._config_summary(instances, groups, instance_lists),
             instances=instances,
+            instance_lists=instance_lists,
             attention_items=self._overview_attention_items(
                 counts, scheduler_state, instances, groups
             ),
@@ -276,12 +254,8 @@ class NitterWebAPI:
 
     async def build_groups(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        summaries = await self._pending_summaries(groups)
         return self._ok(
-            groups=[
-                self._serialize_group(group, summaries.get(group.group_id))
-                for group in groups
-            ],
+            groups=[self._serialize_group(group) for group in groups],
             terminology=self._terminology(),
         )
 
@@ -294,9 +268,8 @@ class NitterWebAPI:
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
         payload = self._ok(
-            group=self._serialize_group(group, summary),
+            group=self._serialize_group(group),
         )
         if sync_error:
             payload["sync_error"] = sync_error
@@ -312,9 +285,8 @@ class NitterWebAPI:
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
-        summary = await self.storage.get_pending_queue_summary(group.group_id)
         payload = self._ok(
-            group=self._serialize_group(group, summary),
+            group=self._serialize_group(group),
         )
         if sync_error:
             payload["sync_error"] = sync_error
@@ -327,9 +299,7 @@ class NitterWebAPI:
             return result
 
         runtime_summary = None
-        media_summary = None
         runtime_error = ""
-        media_error = ""
         try:
             runtime_summary = await self.storage.delete_group_runtime_data(
                 result["group_id"]
@@ -340,40 +310,19 @@ class NitterWebAPI:
                 "[NitterTweets] WebUI 删除分组运行数据清理失败: "
                 f"group={result['group_id']}, error={runtime_error}"
             )
-        try:
-            media_summary = await asyncio.to_thread(
-                self.plugin.media.delete_staged_media_group,
-                result["group_id"],
-            )
-        except Exception as exc:
-            media_error = str(exc)
-            logger.warning(
-                "[NitterTweets] WebUI 删除分组暂存媒体清理失败: "
-                f"group={result['group_id']}, error={media_error}"
-            )
         sync_error = await self._sync_groups()
         payload = self._ok(
             group_id=result["group_id"],
             group_name=result["group_name"],
             runtime_summary=runtime_summary,
-            media_summary=(
-                self._serialize_cache_result(media_summary)
-                if media_summary is not None
-                else None
-            ),
-            cleanup_status=(
-                "partial_failure" if runtime_error or media_error else "ok"
-            ),
+            cleanup_status=("partial_failure" if runtime_error else "ok"),
         )
         if runtime_error:
             payload["runtime_error"] = runtime_error
-        if media_error:
-            payload["media_error"] = media_error
-        if runtime_error or media_error:
             payload["message"] = "分组已删除，但部分运行数据清理失败，请查看详情"
         if sync_error:
             payload["sync_error"] = sync_error
-            if runtime_error or media_error:
+            if runtime_error:
                 payload["message"] += f"；数据库同步失败：{sync_error}"
             else:
                 payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
@@ -467,39 +416,6 @@ class NitterWebAPI:
             return "non_onebot"
         return "default"
 
-    async def build_pending(self, group_id: str = "", limit: int = 50) -> dict[str, Any]:
-        groups = self._schedule_groups()
-        selected_groups = self._select_groups(groups, group_id)
-        if group_id and not selected_groups:
-            return self._error(f"未找到分组：{group_id}")
-
-        summaries = await self._pending_summaries(groups)
-        records: list[dict[str, Any]] = []
-        group_names = {group.group_id: group.name for group in groups}
-        remaining = max(1, int(limit))
-        for group in selected_groups:
-            if remaining <= 0:
-                break
-            group_records = await self.storage.get_pending_tweets(
-                group.group_id, remaining
-            )
-            records.extend(
-                self._serialize_pending_record(record, group_names)
-                for record in group_records
-            )
-            remaining -= len(group_records)
-
-        return self._ok(
-            selected_group_id=group_id.strip(),
-            summaries=[
-                self._serialize_pending_summary(summary, group_names)
-                for summary in summaries.values()
-            ],
-            records=records,
-            limit=limit,
-            terminology=self._terminology(),
-        )
-
     async def build_history(
         self,
         group_id: str = "",
@@ -526,7 +442,9 @@ class NitterWebAPI:
         )
         group_names = {group.group_id: group.name for group in self._schedule_groups()}
         groups_by_id = {group.group_id: group for group in self._schedule_groups()}
-        grouped_records = self._group_history_records(records, group_names, groups_by_id)
+        grouped_records = self._group_history_records(
+            records, group_names, groups_by_id
+        )
         has_next = len(grouped_records) > limit
         visible_records = grouped_records[:limit]
         return self._ok(
@@ -547,10 +465,7 @@ class NitterWebAPI:
 
     async def build_history_orphans(self) -> dict[str, Any]:
         groups = self._schedule_groups()
-        configured_ids = {
-            normalize_stable_group_id(group.group_id)
-            for group in groups
-        }
+        configured_ids = {normalize_stable_group_id(group.group_id) for group in groups}
         summaries = await self.storage.get_push_history_group_summaries()
         orphans = [
             self._serialize_history_group_summary(summary)
@@ -577,14 +492,9 @@ class NitterWebAPI:
             return self._error("清理失效分组运行数据需要显式确认")
 
         summary = await self.storage.delete_orphan_group_runtime_data(group_id)
-        media_summary = await asyncio.to_thread(
-            self.plugin.media.delete_staged_media_group,
-            group_id,
-        )
         return self._ok(
             group_id=group_id,
             summary=summary,
-            media_summary=self._serialize_cache_result(media_summary),
         )
 
     async def replay_history(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -616,32 +526,14 @@ class NitterWebAPI:
             reason="webui",
             notify_no_updates=False,
             group_name=group.group_id,
-            force_immediate=True,
         )
         return self._ok(
             message=result.format_message(),
             result=self._serialize_check_result(result),
         )
 
-    async def publish_pending(self, data: dict[str, Any]) -> dict[str, Any]:
-        group_id = self._data_text(data, "group_id") or self._data_text(
-            data, "group_name"
-        )
-        group, error = self._resolve_group(group_id)
-        if error:
-            return self._error(error)
-
-        result = await self.scheduler.publish_pending(
-            group_name=group.group_id,
-            reason="webui_publish",
-        )
-        return self._ok(
-            message=result.format_message("Nitter 暂存发布结果"),
-            result=self._serialize_check_result(result),
-        )
-
     async def clear_cache(self) -> dict[str, Any]:
-        result = await asyncio.to_thread(self.plugin.media.clear_non_staged_cache)
+        result = await asyncio.to_thread(self.plugin.media.clear_cache)
         return self._ok(result=self._serialize_cache_result(result))
 
     async def clear_seen(self, group_id: str = "", confirm: str = "") -> dict[str, Any]:
@@ -657,15 +549,15 @@ class NitterWebAPI:
             if error:
                 return self._error(error)
 
-        deleted = await self.storage.clear_seen_records(group.group_id if group else None)
+        deleted = await self.storage.clear_seen_records(
+            group.group_id if group else None
+        )
         legacy_deleted = await self.storage.delete_legacy_seen_kv()
         return self._ok(
             scope=self._group_label(group) if group else "全部分组",
             deleted=deleted,
             legacy_deleted=bool(legacy_deleted),
-            warning=(
-                "推送记录已清理；关注账号、推送目标、暂存队列和媒体文件不会被删除。"
-            ),
+            warning=("推送记录已清理；关注账号、推送目标和媒体文件不会被删除。"),
         )
 
     async def import_subscriptions(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -722,7 +614,7 @@ class NitterWebAPI:
                 "saved": bool(added),
                 "save_error": save_error,
                 "sync_error": sync_error,
-            }
+            },
         )
 
     async def delete_subscriptions(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -762,12 +654,8 @@ class NitterWebAPI:
             for user in requested
             if user.lower() in existing_by_key
         ]
-        missing = [
-            user for user in requested if user.lower() not in existing_by_key
-        ]
-        remaining = [
-            user for user in existing_users if user.lower() not in delete_keys
-        ]
+        missing = [user for user in requested if user.lower() not in existing_by_key]
+        remaining = [user for user in existing_users if user.lower() not in delete_keys]
 
         if removed:
             set_import_group_users(
@@ -797,46 +685,164 @@ class NitterWebAPI:
                 "saved": bool(removed),
                 "save_error": save_error,
                 "sync_error": sync_error,
-            }
+            },
         )
 
     async def probe_mirror(self, data: dict[str, Any]) -> dict[str, Any]:
         instance = self._data_text(data, "instance")
         if not self.plugin._looks_like_instance(instance):
-            return self._error("请填写完整 Nitter 镜像站地址，例如 https://nitter.net")
+            return self._error(
+                "请填写完整 Nitter 镜像站地址，例如 https://nitter.net"
+            )
 
-        username = normalize_username(self._data_text(data, "username") or "nasa")
-        if not username:
-            return self._error("关注账号格式无效")
+        mode = self._data_text(data, "mode") or "blogger_rss"
+        mode = mode.strip().lower().replace("-", "_")
+        if mode not in {"blogger_rss", "blogger_html", "search"}:
+            return self._error(
+                "mode 仅支持 blogger_rss / blogger_html / search"
+            )
 
         limit = self._parse_int(
             data.get("limit"),
             int(getattr(self.plugin, "default_limit", 5) or 5),
             minimum=1,
-            maximum=200,
+            maximum=50,
         )
+
         try:
-            used_instance, tweets = await self.plugin.nitter.fetch_tweets_from_instance(
-                instance,
-                username,
-                limit,
-            )
+            if mode == "blogger_rss":
+                username = normalize_username(
+                    self._data_text(data, "username")
+                    or self._data_text(data, "query")
+                    or "nasa"
+                )
+                if not username:
+                    return self._error("关注账号格式无效")
+                used_instance, tweets = (
+                    await self.plugin.nitter.fetch_tweets_from_instance(
+                        instance,
+                        username,
+                        limit,
+                    )
+                )
+                subject = username
+                kind = ""
+            elif mode == "blogger_html":
+                username = normalize_username(
+                    self._data_text(data, "username")
+                    or self._data_text(data, "query")
+                    or "nasa"
+                )
+                if not username:
+                    return self._error("关注账号格式无效")
+                html_backend = getattr(self.plugin, "html_backend", None)
+                if html_backend is None:
+                    return self._error("HTML 后端未初始化")
+                if not bool(getattr(getattr(html_backend, "config", None), "user_html_fallback", True)):
+                    return self._error("user_html_fallback 已关闭，无法测试博主 HTML")
+                used_instance, tweets = await asyncio.to_thread(
+                    html_backend.fetch_user,
+                    username,
+                    limit,
+                    instance=instance,
+                )
+                subject = username
+                kind = ""
+            else:
+                query = normalize_query(
+                    self._data_text(data, "query")
+                    or self._data_text(data, "username")
+                    or ""
+                )
+                if not query:
+                    return self._error("请填写搜索内容（#标签 或短语）")
+                if len(query) > 200:
+                    return self._error("搜索内容过长（最多 200 字符）")
+                html_backend = getattr(self.plugin, "html_backend", None)
+                if html_backend is None:
+                    return self._error("HTML 后端未初始化")
+                if not bool(getattr(getattr(html_backend, "config", None), "search_enabled", True)):
+                    return self._error("search_enabled 已关闭")
+                kind = query_kind(query)
+                used_instance, tweets = await asyncio.to_thread(
+                    html_backend.search,
+                    query,
+                    limit,
+                    kind=kind,
+                    instance=instance,
+                )
+                subject = query
+                username = query
         except Exception as exc:
             logger.warning(
                 "[NitterTweets] WebUI 镜像测试失败: "
-                f"instance={instance}, username={username}, error={exc}"
+                f"mode={mode}, instance={instance}, error={exc}"
             )
+            if mode == "search":
+                return self._error(
+                    f"通过 {instance} 搜索失败：实例不可达、被限流，或搜索门禁未通过。"
+                )
+            if mode == "blogger_html":
+                return self._error(
+                    f"通过 {instance} 获取 HTML 用户页失败：实例不可达、被限流，或门禁未通过。"
+                )
             return self._error(
-                f"通过 {instance} 获取 @{username} 推文失败：Nitter 镜像暂时不可用或该用户无公开 RSS。"
+                f"通过 {instance} 获取失败：Nitter 暂时不可用，或用户没有公开 RSS。"
             )
 
         return self._ok(
+            mode=mode,
             instance=used_instance,
-            username=username,
+            username=username if mode != "search" else "",
+            query=subject if mode == "search" else "",
+            kind=kind,
+            subject=subject,
             limit=limit,
             tweet_count=len(tweets),
             tweets=[self._serialize_probe_tweet(tweet) for tweet in tweets[:limit]],
         )
+
+    def _configured_instance_lists(self) -> dict[str, list[str]]:
+        """Three config lists for mirror probe UI (deduped, order preserved)."""
+        rss = list(getattr(getattr(self.plugin, "nitter", None), "instances", []) or [])
+        html_backend = getattr(self.plugin, "html_backend", None)
+        blogger_html: list[str] = []
+        search: list[str] = []
+        if html_backend is not None:
+            cfg = getattr(html_backend, "config", None)
+            if cfg is not None:
+                blogger_html = list(getattr(cfg, "blogger_html_instances", []) or [])
+                search = list(getattr(cfg, "search_instances", []) or [])
+        # Do not use load_instances() here: empty config must stay empty
+        # (load_instances falls back to DEFAULT_INSTANCES / nitter.net).
+        if not blogger_html:
+            blogger_html = list(
+                config_get(self.config, "blogger_html_instances", []) or []
+            )
+        if not search:
+            search = list(config_get(self.config, "search_instances", []) or [])
+        return {
+            "rss": self._dedupe_instances(rss),
+            "blogger_html": self._dedupe_instances(blogger_html),
+            "search": self._dedupe_instances(search),
+        }
+
+    @staticmethod
+    def _dedupe_instances(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in values:
+            item = str(raw or "").strip().rstrip("/")
+            if not item:
+                continue
+            if not item.startswith(("http://", "https://")):
+                item = f"https://{item}"
+            key = item.rstrip("/").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item.rstrip("/"))
+        return out
 
     @property
     def config(self):
@@ -864,19 +870,6 @@ class NitterWebAPI:
             logger.warning(f"[NitterTweets] WebUI 分组同步失败: {error}")
             return error
         return ""
-
-    async def _pending_summaries(
-        self, groups: list[ScheduleGroup]
-    ) -> dict[str, PendingQueueSummary]:
-        if not groups:
-            return {}
-        results = await asyncio.gather(
-            *[
-                self.storage.get_pending_queue_summary(group.group_id)
-                for group in groups
-            ]
-        )
-        return {group.group_id: summary for group, summary in zip(groups, results)}
 
     def _select_groups(
         self, groups: list[ScheduleGroup], group_id: str
@@ -940,24 +933,24 @@ class NitterWebAPI:
         return f"{action}完成"
 
     def _config_summary(
-        self, instances: list[str], groups: list[ScheduleGroup] | None = None
+        self,
+        instances: list[str],
+        groups: list[ScheduleGroup] | None = None,
+        instance_lists: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         effective_group = self._effective_config_group(groups or [])
+        lists = instance_lists or {}
         return {
             "nitter_instance_count": len(instances),
+            "blogger_html_instance_count": len(lists.get("blogger_html") or []),
+            "search_instance_count": len(lists.get("search") or []),
             "default_limit": self._default_limit(),
-            "scheduled_fetch_limit": self._group_value(
-                effective_group, "scheduled_fetch_limit", 5
-            ),
             "check_interval_minutes": self._group_value(
                 effective_group, "check_interval_minutes", 30
             ),
             "merge_tweet_threshold": configured_merge_tweet_threshold(self.config),
             "send_target_interval": self._group_value(
                 effective_group, "send_target_interval", 1.5
-            ),
-            "deferred_publish_batch_limit": self._group_value(
-                effective_group, "deferred_publish_batch_limit", 50
             ),
             "concurrent_fetch_enabled": bool(
                 self._group_value(effective_group, "concurrent_fetch_enabled", False)
@@ -1017,7 +1010,7 @@ class NitterWebAPI:
                     "key": "scheduler_not_running",
                     "level": "warning",
                     "title": "调度器未运行",
-                    "detail": "后台检查和暂存发布不会自动执行。",
+                    "detail": "后台检查不会自动执行。",
                 }
             )
         if not scheduler_state.get("schedule_enabled", False):
@@ -1026,7 +1019,7 @@ class NitterWebAPI:
                     "key": "schedule_disabled",
                     "level": "warning",
                     "title": "后台检查总开关关闭",
-                    "detail": "定时检查和暂存发布时间不会自动触发。",
+                    "detail": "定时检查不会自动触发。",
                 }
             )
         if not instances:
@@ -1074,16 +1067,9 @@ class NitterWebAPI:
                     "detail": f"{counts['invalid_watch_users']} 个关注账号格式无效。",
                 }
             )
-        if int(counts.get("failed_pending_tweets", 0)) > 0:
-            items.append(
-                {
-                    "key": "failed_pending_tweets",
-                    "level": "warning",
-                    "title": "暂存队列有失败记录",
-                    "detail": f"{counts['failed_pending_tweets']} 条待发布推文需要关注。",
-                }
-            )
-        items.extend(NitterWebAPI._overview_group_diagnostics(groups or []))
+        if groups:
+            items.extend(NitterWebAPI._overview_group_diagnostics(groups))
+
         if not items:
             items.append(
                 {
@@ -1104,17 +1090,21 @@ class NitterWebAPI:
             return []
 
         items: list[dict[str, str]] = []
-        no_watch_users = [group for group in enabled_groups if not group.users]
+        no_watch_users = [
+            group
+            for group in enabled_groups
+            if group.is_blogger_group and not group.users
+        ]
+        no_watch_queries = [
+            group
+            for group in enabled_groups
+            if group.is_tag_group and not group.queries
+        ]
         no_push_targets = [group for group in enabled_groups if not group.targets]
         no_check_triggers = [
             group
             for group in enabled_groups
             if not group.interval_check_enabled and not group.daily_check_enabled
-        ]
-        deferred_without_times = [
-            group
-            for group in enabled_groups
-            if group.deferred_publish_enabled and not group.deferred_publish_times
         ]
 
         if no_watch_users:
@@ -1122,10 +1112,22 @@ class NitterWebAPI:
                 {
                     "key": "groups_without_watch_users",
                     "level": "warning",
-                    "title": "启用分组没有关注账号",
+                    "title": "启用博主分组没有关注账号",
                     "detail": (
                         "这些分组不会检查任何账号："
                         + NitterWebAPI._format_group_names(no_watch_users)
+                    ),
+                }
+            )
+        if no_watch_queries:
+            items.append(
+                {
+                    "key": "groups_without_watch_queries",
+                    "level": "warning",
+                    "title": "启用标签分组没有搜索订阅",
+                    "detail": (
+                        "这些分组不会检查任何查询："
+                        + NitterWebAPI._format_group_names(no_watch_queries)
                     ),
                 }
             )
@@ -1153,18 +1155,6 @@ class NitterWebAPI:
                     ),
                 }
             )
-        if deferred_without_times:
-            items.append(
-                {
-                    "key": "deferred_without_publish_times",
-                    "level": "warning",
-                    "title": "暂存发布没有发布时间",
-                    "detail": (
-                        "这些分组已开启暂存发布，但全局发布时间为空："
-                        + NitterWebAPI._format_group_names(deferred_without_times)
-                    ),
-                }
-            )
         return items
 
     @staticmethod
@@ -1177,19 +1167,25 @@ class NitterWebAPI:
     def _serialize_group(
         self,
         group: ScheduleGroup,
-        summary: PendingQueueSummary | None = None,
     ) -> dict[str, Any]:
-        pending_summary = summary or PendingQueueSummary(group_id=group.group_id)
         return {
             "group_id": group.group_id,
             "name": group.name,
             "enabled": group.enabled,
+            "group_type": group.group_type,
             "aliases": list(group.aliases),
             "watch_users": list(group.users),
             "watch_user_count": len(group.users),
             "raw_watch_user_count": group.users_info.raw_count,
             "duplicate_watch_users": list(group.users_info.duplicates),
             "invalid_watch_users": list(group.users_info.invalid_entries),
+            "watch_queries": [
+                {"query": item.query, "type": item.type} for item in group.queries
+            ],
+            "watch_query_count": len(group.queries),
+            "raw_watch_query_count": group.queries_info.raw_count,
+            "duplicate_watch_queries": list(group.queries_info.duplicates),
+            "invalid_watch_queries": list(group.queries_info.invalid_entries),
             "push_targets": list(group.targets),
             "push_target_count": len(group.targets),
             "invalid_push_targets": list(group.invalid_targets),
@@ -1198,24 +1194,24 @@ class NitterWebAPI:
             "check_interval_minutes": group.check_interval_minutes,
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
-            "scheduled_fetch_limit": group.scheduled_fetch_limit,
-            "deferred_publish_enabled": group.deferred_publish_enabled,
-            "deferred_publish_times": self._format_times(
-                group.deferred_publish_times
-            ),
-            "deferred_publish_batch_limit": group.deferred_publish_batch_limit,
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
-            "pending_summary": self._serialize_pending_summary(
-                pending_summary,
-                {group.group_id: group.name},
-            ),
-            "attention_items": self._group_attention_items(group, pending_summary),
+            "media_only_enabled": group.media_only_enabled,
+            "omit_status_url": bool(getattr(group, "omit_status_url", True)),
+            "media_only_effective": self._media_only_effective(group),
+            # Global media availability only; independent of saved group toggle
+            # so the dashboard draft can warn before save.
+            "media_only_unavailable_reason": media_only_unavailable_reason(self.config),
+            "attention_items": self._group_attention_items(group),
         }
+
+    def _media_only_effective(self, group: ScheduleGroup) -> bool:
+        return bool(
+            group.media_only_enabled and not media_only_unavailable_reason(self.config)
+        )
 
     @staticmethod
     def _group_attention_items(
         group: ScheduleGroup,
-        summary: PendingQueueSummary,
     ) -> list[dict[str, str]]:
         items: list[dict[str, str]] = []
         if not group.enabled:
@@ -1227,7 +1223,17 @@ class NitterWebAPI:
                     "detail": "停用分组不会参与后台检查。",
                 }
             )
-        if not group.users:
+        if group.is_tag_group:
+            if not group.queries:
+                items.append(
+                    {
+                        "key": "no_watch_queries",
+                        "level": "warning",
+                        "title": "无搜索订阅",
+                        "detail": "该标签分组没有可检查的搜索订阅。",
+                    }
+                )
+        elif not group.users:
             items.append(
                 {
                     "key": "no_watch_users",
@@ -1263,66 +1269,7 @@ class NitterWebAPI:
                     "detail": f"{len(group.invalid_targets)} 个推送目标未通过 UMO 校验。",
                 }
             )
-        if summary.failed_count > 0:
-            items.append(
-                {
-                    "key": "failed_pending_tweets",
-                    "level": "warning",
-                    "title": "暂存发布失败",
-                    "detail": f"{summary.failed_count} 条待发布推文有失败记录。",
-                }
-            )
         return items
-
-    @staticmethod
-    def _serialize_pending_summary(
-        summary: PendingQueueSummary,
-        group_names: dict[str, str],
-    ) -> dict[str, Any]:
-        return {
-            "group_id": summary.group_id,
-            "group_name": group_names.get(summary.group_id, summary.group_id),
-            "pending_count": summary.pending_count,
-            "failed_count": summary.failed_count,
-            "media_count": summary.media_count,
-            "oldest_created_at": summary.oldest_created_at,
-            "newest_created_at": summary.newest_created_at,
-            "user_counts": [
-                {"username": username, "count": count}
-                for username, count in summary.user_counts
-            ],
-        }
-
-    @staticmethod
-    def _serialize_pending_record(
-        record: PendingTweetRecord,
-        group_names: dict[str, str],
-    ) -> dict[str, Any]:
-        media_kinds = list(dict.fromkeys(media.kind for media in record.tweet.media))
-        return {
-            "id": record.id,
-            "group_id": record.group_id,
-            "group_name": group_names.get(record.group_id, record.group_id),
-            "username": record.username,
-            "status_id": record.status_id,
-            "instance": record.instance,
-            "original_link": record.tweet.x_url,
-            "published": record.tweet.published,
-            "text_preview": NitterWebAPI._text_preview(record.tweet.text),
-            "created_at": record.created_at,
-            "scheduled_at": record.scheduled_at,
-            "published_at": record.published_at,
-            "sent_at": record.sent_at,
-            "failed_at": record.failed_at,
-            "fail_count": record.fail_count,
-            "last_error": record.last_error,
-            "delivered_target_count": len(record.delivered_targets),
-            "media_count": len(record.tweet.media),
-            "media_kinds": media_kinds,
-            "has_translation": bool(record.tweet.translation),
-            "has_ai_comment": bool(record.tweet.ai_comment),
-            "has_image_caption": bool(record.tweet.image_caption),
-        }
 
     @staticmethod
     def _serialize_history_record(
@@ -1346,7 +1293,6 @@ class NitterWebAPI:
             "published": tweet.published,
             "text_preview": NitterWebAPI._text_preview(tweet.text),
             "translation_preview": NitterWebAPI._text_preview(tweet.translation),
-            "ai_comment_preview": NitterWebAPI._text_preview(tweet.ai_comment),
         }
 
     @staticmethod
@@ -1428,10 +1374,7 @@ class NitterWebAPI:
             "group_name": getattr(result, "group_name", ""),
             "skipped_reason": getattr(result, "skipped_reason", ""),
             "new_tweet_count": getattr(result, "new_tweet_count", 0),
-            "queued_tweet_count": getattr(result, "queued_tweet_count", 0),
-            "pushed_target_successes": getattr(
-                result, "pushed_target_successes", 0
-            ),
+            "pushed_target_successes": getattr(result, "pushed_target_successes", 0),
             "pushed_target_attempts": getattr(result, "pushed_target_attempts", 0),
         }
 
@@ -1450,9 +1393,7 @@ class NitterWebAPI:
             "removed_other": int(
                 getattr(result, "removed_other", getattr(result, "other", 0)) or 0
             ),
-            "removed_empty_dirs": int(
-                getattr(result, "removed_empty_dirs", 0) or 0
-            ),
+            "removed_empty_dirs": int(getattr(result, "removed_empty_dirs", 0) or 0),
         }
 
     @staticmethod
@@ -1481,7 +1422,6 @@ class NitterWebAPI:
             "watch_users": "关注账号",
             "push_targets": "推送目标",
             "seen": "推送记录",
-            "pending_queue": "暂存队列",
         }
 
     @staticmethod

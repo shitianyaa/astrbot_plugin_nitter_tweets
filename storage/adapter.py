@@ -15,9 +15,7 @@ try:
     )
     from .seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from .sqlite import (
-        PendingQueueSummary,
-        PendingTweetRecord,
-        PushHistoryGroupSummary,
+                        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -30,9 +28,7 @@ except ImportError:
     )
     from storage.seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from storage.sqlite import (
-        PendingQueueSummary,
-        PendingTweetRecord,
-        PushHistoryGroupSummary,
+                        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -146,6 +142,31 @@ class StorageAdapter:
             sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
         )
 
+    async def get_group_scan_watermarks(
+        self, group_id: str
+    ) -> dict[str, list[str]]:
+        """Get initialized scan anchor windows for every user in a group."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_group_scan_watermarks,
+            self._storage_group_id(group_id),
+        )
+
+    async def set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """Set one user's scan anchor window and mark the source initialized."""
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.set_scan_watermark,
+            self._storage_group_id(group_id),
+            username,
+            status_ids,
+        )
+
     async def clear_seen_records(self, group_id: str | None = None) -> int:
         """Clear SQLite seen records for a group, or all groups when omitted."""
         sqlite = await self._ensure_sqlite_connected()
@@ -169,77 +190,13 @@ class StorageAdapter:
             return False
         return True
 
-    async def enqueue_pending_tweets(
-        self,
-        group_id: str,
-        username: str,
-        instance: str,
-        tweets: list,
-        scheduled_at: int | None = None,
-    ) -> int:
-        """Add prepared tweets to the pending publish queue."""
-        sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(
-            sqlite.enqueue_pending_tweets,
-            self._storage_group_id(group_id),
-            username,
-            instance,
-            tweets,
-            scheduled_at,
-        )
 
-    async def get_pending_tweets(
-        self, group_id: str, limit: int
-    ) -> list[PendingTweetRecord]:
-        """Get unsent pending tweets for a group."""
-        sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(
-            sqlite.get_pending_tweets, self._storage_group_id(group_id), limit
-        )
 
-    async def get_pending_queue_summary(
-        self, group_id: str
-    ) -> PendingQueueSummary:
-        """Get pending queue counts for a group."""
-        sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(
-            sqlite.get_pending_queue_summary, self._storage_group_id(group_id)
-        )
 
-    async def get_pending_media_paths(self) -> set[str]:
-        """Get staged media paths still referenced by unsent queue rows."""
-        sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(sqlite.get_pending_media_paths)
 
-    async def mark_pending_tweets_published(self, pending_ids: list[int]) -> None:
-        """Mark pending tweets as sent."""
-        sqlite = await self._ensure_sqlite_connected()
-        await asyncio.to_thread(
-            sqlite.mark_pending_tweets_published, pending_ids
-        )
 
-    async def mark_pending_tweets_delivered(
-        self, pending_ids: list[int], target: str
-    ) -> None:
-        """Record that pending tweets reached one configured target."""
-        sqlite = await self._ensure_sqlite_connected()
-        await asyncio.to_thread(
-            sqlite.mark_pending_tweets_delivered, pending_ids, target
-        )
 
-    async def mark_pending_tweets_failed(
-        self, pending_ids: list[int], error: str
-    ) -> None:
-        """Record a publish failure for pending tweets."""
-        sqlite = await self._ensure_sqlite_connected()
-        await asyncio.to_thread(
-            sqlite.mark_pending_tweets_failed, pending_ids, error
-        )
 
-    async def delete_pending_tweets(self, pending_ids: list[int]) -> None:
-        """Delete pending tweets and media rows."""
-        sqlite = await self._ensure_sqlite_connected()
-        await asyncio.to_thread(sqlite.delete_pending_tweets, pending_ids)
 
     async def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows from SQLite."""
@@ -256,12 +213,6 @@ class StorageAdapter:
             normalize_stable_group_id(group_id),
         )
 
-    async def cleanup_sent_pending_tweets(self, older_than: int) -> int:
-        """Delete sent pending tweet rows older than a timestamp."""
-        sqlite = await self._ensure_sqlite_connected()
-        return await asyncio.to_thread(
-            sqlite.cleanup_sent_pending_tweets, older_than
-        )
 
     async def record_push_history(
         self,

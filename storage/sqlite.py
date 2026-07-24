@@ -7,7 +7,7 @@ import json
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,7 @@ try:
         normalize_stable_group_id,
     )
     from .seen import SEEN_LIMIT_PER_USER
-    from ..shared import TweetItem, TweetMedia, normalize_username
+    from ..shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
 except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
@@ -29,25 +29,13 @@ except ImportError:
         normalize_stable_group_id,
     )
     from storage.seen import SEEN_LIMIT_PER_USER
-    from shared import TweetItem, TweetMedia, normalize_username
+    from shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 9
 ORPHAN_SEEN_RETENTION_DAYS = 30
+SCAN_ANCHOR_LIMIT = 20
 
-PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS: dict[str, str] = {
-    "instance": "ALTER TABLE pending_tweets ADD COLUMN instance TEXT NOT NULL DEFAULT ''",
-    "published_at": "ALTER TABLE pending_tweets ADD COLUMN published_at INTEGER",
-    "failed_at": "ALTER TABLE pending_tweets ADD COLUMN failed_at INTEGER",
-    "fail_count": "ALTER TABLE pending_tweets ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0",
-    "last_error": "ALTER TABLE pending_tweets ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
-}
-PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS: dict[str, str] = {
-    "delivered_targets": (
-        "ALTER TABLE pending_tweets "
-        "ADD COLUMN delivered_targets TEXT NOT NULL DEFAULT '[]'"
-    ),
-}
 PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
     "delivery_status": (
         "ALTER TABLE push_history "
@@ -58,36 +46,9 @@ PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
         "ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"
     ),
 }
-SQLITE_TABLE_NAMES = {"pending_tweets", "pending_media", "push_history"}
+SQLITE_TABLE_NAMES = {"push_history"}
 
 
-@dataclass(slots=True)
-class PendingTweetRecord:
-    id: int
-    group_id: str
-    username: str
-    status_id: str
-    instance: str
-    tweet: TweetItem
-    created_at: int
-    scheduled_at: int | None = None
-    published_at: int | None = None
-    sent_at: int | None = None
-    failed_at: int | None = None
-    fail_count: int = 0
-    last_error: str = ""
-    delivered_targets: tuple[str, ...] = ()
-
-
-@dataclass(slots=True)
-class PendingQueueSummary:
-    group_id: str
-    pending_count: int = 0
-    failed_count: int = 0
-    media_count: int = 0
-    oldest_created_at: int | None = None
-    newest_created_at: int | None = None
-    user_counts: list[tuple[str, int]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -273,60 +234,9 @@ class SQLiteStorage:
                 ON seen_tweets(group_id, username)
             """)
 
-            # pending_tweets 表：待推/发送队列
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pending_tweets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    group_id TEXT NOT NULL,
-                    username TEXT NOT NULL,
-                    status_id TEXT NOT NULL,
-                    instance TEXT NOT NULL DEFAULT '',
-                    tweet_data TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    scheduled_at INTEGER,
-                    published_at INTEGER,
-                    sent_at INTEGER,
-                    failed_at INTEGER,
-                    fail_count INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT NOT NULL DEFAULT '',
-                    delivered_targets TEXT NOT NULL DEFAULT '[]'
-                )
-            """)
-            cursor.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tweets_unique
-                ON pending_tweets(group_id, username, status_id)
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_tweets_schedule
-                ON pending_tweets(group_id, scheduled_at)
-                WHERE sent_at IS NULL
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_tweets_unsent
-                ON pending_tweets(group_id, created_at)
-                WHERE sent_at IS NULL
-            """)
+            # scan_watermarks 表：每个分组账号的连续扫描水位和初始化状态
+            self._create_scan_watermarks_table(cursor)
 
-            # pending_media 表：暂存推文媒体，按推文 ID + 媒体索引绑定
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pending_media (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pending_tweet_id INTEGER NOT NULL,
-                    media_index INTEGER NOT NULL,
-                    kind TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    path TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL,
-                    FOREIGN KEY(pending_tweet_id)
-                        REFERENCES pending_tweets(id)
-                        ON DELETE CASCADE,
-                    UNIQUE(pending_tweet_id, media_index)
-                )
-            """)
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_pending_media_tweet_id
-                ON pending_media(pending_tweet_id)
-            """)
 
             self._create_push_history_table(cursor)
 
@@ -345,6 +255,12 @@ class SQLiteStorage:
             self._migrate_schema_v5(cursor)
         if stored_version < 6:
             self._migrate_schema_v6(cursor)
+        if stored_version < 7:
+            self._migrate_schema_v7(cursor)
+        if stored_version < 8:
+            self._migrate_schema_v8(cursor)
+        if stored_version < 9:
+            self._migrate_schema_v9(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -357,41 +273,200 @@ class SQLiteStorage:
         )
 
     def _migrate_schema_v2(self, cursor: sqlite3.Cursor) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        columns = self._table_columns(cursor, "pending_tweets")
-        for name, statement in PENDING_TWEETS_V2_COLUMN_ADD_STATEMENTS.items():
-            if name not in columns:
-                cursor.execute(statement)
-        cursor.execute(
-            """
-            DELETE FROM pending_tweets
-            WHERE id NOT IN (
-                SELECT MIN(id)
-                FROM pending_tweets
-                GROUP BY group_id, username, status_id
-            )
-            """
-        )
+        return
 
     def _migrate_schema_v3(self, cursor: sqlite3.Cursor) -> None:
         return
 
     def _migrate_schema_v4(self, cursor: sqlite3.Cursor) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        columns = self._table_columns(cursor, "pending_tweets")
-        for name, statement in PENDING_TWEETS_V4_COLUMN_ADD_STATEMENTS.items():
-            if name not in columns:
-                cursor.execute(statement)
+        return
 
     def _migrate_schema_v5(self, cursor: sqlite3.Cursor) -> None:
         self._create_push_history_table(cursor)
 
     def _migrate_schema_v6(self, cursor: sqlite3.Cursor) -> None:
         self._ensure_push_history_delivery_columns(cursor)
+
+    def _migrate_schema_v7(self, cursor: sqlite3.Cursor) -> None:
+        # Pending/deferred publishing was removed in 0.16.0.
+        cursor.execute("DROP TABLE IF EXISTS pending_media")
+        cursor.execute("DROP TABLE IF EXISTS pending_tweets")
+
+    def _migrate_schema_v8(self, cursor: sqlite3.Cursor) -> None:
+        self._create_scan_watermarks_table(cursor)
+        self._backfill_scan_watermarks(cursor)
+
+    def _migrate_schema_v9(self, cursor: sqlite3.Cursor) -> None:
+        if not self._table_exists(cursor, "scan_watermarks"):
+            self._create_scan_watermarks_table(cursor)
+            self._backfill_scan_watermarks(cursor)
+            return
+
+        columns = {
+            str(row[1])
+            for row in cursor.execute(
+                "PRAGMA table_info(scan_watermarks)"
+            ).fetchall()
+        }
+        if "status_id" not in columns or "status_ids" in columns:
+            self._create_scan_watermarks_table(cursor)
+            self._backfill_scan_watermarks(cursor)
+            return
+
+        cursor.execute("ALTER TABLE scan_watermarks RENAME TO scan_watermarks_v8")
+        self._create_scan_watermarks_table(cursor)
+        rows = cursor.execute(
+            """
+            SELECT group_id, username, initialized, status_id, updated_at
+            FROM scan_watermarks_v8
+            """
+        ).fetchall()
+        for row in rows:
+            anchors = self._normalize_scan_anchor_ids([row[3]])
+            cursor.execute(
+                """
+                INSERT INTO scan_watermarks
+                (group_id, username, initialized, status_ids, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(row[0]),
+                    str(row[1]),
+                    int(row[2] or 0),
+                    json.dumps(anchors, ensure_ascii=False),
+                    int(row[4] or 0),
+                ),
+            )
+        cursor.execute("DROP TABLE scan_watermarks_v8")
+        self._create_scan_watermarks_table(cursor)
+        self._backfill_scan_watermarks(cursor)
+
+    @staticmethod
+    def _create_scan_watermarks_table(cursor: sqlite3.Cursor) -> None:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scan_watermarks (
+                group_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                initialized INTEGER NOT NULL DEFAULT 0,
+                status_ids TEXT NOT NULL DEFAULT '[]',
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (group_id, username)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_scan_watermarks_group_user
+            ON scan_watermarks(group_id, username)
+        """)
+
+    @classmethod
+    def _backfill_scan_watermarks(cls, cursor: sqlite3.Cursor) -> None:
+        """Backfill a recent anchor window from existing seen IDs."""
+        if not cls._table_exists(cursor, "seen_tweets"):
+            return
+
+        rows = cursor.execute(
+            """
+            SELECT group_id, username, MAX(seen_at) AS updated_at
+            FROM seen_tweets
+            GROUP BY group_id, username
+            """
+        ).fetchall()
+        for row in rows:
+            group_id = str(row[0])
+            username = str(row[1])
+            seen_rows = cursor.execute(
+                """
+                SELECT status_id FROM seen_tweets
+                WHERE group_id = ? AND username = ?
+                ORDER BY seen_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (group_id, username, SCAN_ANCHOR_LIMIT),
+            ).fetchall()
+            seen_anchors = cls._normalize_scan_anchor_ids(
+                [row[0] for row in seen_rows]
+            )
+            existing = cursor.execute(
+                """
+                SELECT initialized, status_ids, updated_at
+                FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (group_id, username),
+            ).fetchone()
+            if existing is not None:
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*cls._decode_scan_anchor_ids(existing[1]), *seen_anchors]
+                )
+                updated_at = max(int(row[2] or 0), int(existing[2] or 0))
+                cursor.execute(
+                    """
+                    UPDATE scan_watermarks
+                    SET initialized = ?, status_ids = ?, updated_at = ?
+                    WHERE group_id = ? AND username = ?
+                    """,
+                    (
+                        1,
+                        json.dumps(anchors, ensure_ascii=False),
+                        updated_at,
+                        group_id,
+                        username,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO scan_watermarks
+                    (group_id, username, initialized, status_ids, updated_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    """,
+                    (
+                        group_id,
+                        username,
+                        json.dumps(seen_anchors, ensure_ascii=False),
+                        int(row[2] or 0),
+                    ),
+                )
+
+    @staticmethod
+    def _decode_scan_anchor_ids(value: object) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        text = str(value or "").strip()
+        if not text:
+            return []
+        try:
+            decoded = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return [text]
+        if not isinstance(decoded, list):
+            return [text]
+        return [str(item) for item in decoded]
+
+    @classmethod
+    def _normalize_scan_anchor_ids(cls, values: object) -> list[str]:
+        if isinstance(values, (str, bytes)) or values is None:
+            raw_values = cls._decode_scan_anchor_ids(values)
+        else:
+            try:
+                raw_values = list(values)
+            except TypeError:
+                raw_values = [values]
+        return list(
+            dict.fromkeys(
+                str(value).strip()
+                for value in raw_values
+                if str(value or "").strip().isdigit()
+            )
+        )[:SCAN_ANCHOR_LIMIT]
+
+    @staticmethod
+    def _max_numeric_status_id(first: object, second: object) -> str | None:
+        values = [str(value).strip() for value in (first, second) if value]
+        numeric = [value for value in values if value.isdigit()]
+        if numeric:
+            return max(numeric, key=lambda value: (len(value), value))
+        return values[0] if values else None
 
     def _create_push_history_table(self, cursor: sqlite3.Cursor) -> None:
         cursor.execute("""
@@ -469,7 +544,78 @@ class SQLiteStorage:
             default_id=default_id,
             key_column=("username", "status_id"),
         )
-        self._merge_pending_tweets(cursor, legacy_id=legacy_id, default_id=default_id)
+        self._merge_scan_watermarks(cursor, legacy_id, default_id)
+
+    @classmethod
+    def _merge_scan_watermarks(
+        cls,
+        cursor: sqlite3.Cursor,
+        legacy_id: str,
+        default_id: str,
+    ) -> None:
+        if not cls._table_exists(cursor, "scan_watermarks"):
+            return
+
+        legacy_rows = cursor.execute(
+            """
+            SELECT username, initialized, status_ids, updated_at
+            FROM scan_watermarks
+            WHERE group_id = ?
+            """,
+            (legacy_id,),
+        ).fetchall()
+        for row in legacy_rows:
+            username = str(row[0])
+            target = cursor.execute(
+                """
+                SELECT initialized, status_ids, updated_at
+                FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (default_id, username),
+            ).fetchone()
+            if target is None:
+                cursor.execute(
+                    """
+                    UPDATE scan_watermarks
+                    SET group_id = ?
+                    WHERE group_id = ? AND username = ?
+                    """,
+                    (default_id, legacy_id, username),
+                )
+                continue
+
+            legacy_anchors = cls._decode_scan_anchor_ids(row[2])
+            target_anchors = cls._decode_scan_anchor_ids(target[1])
+            if int(row[3] or 0) >= int(target[2] or 0):
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*legacy_anchors, *target_anchors]
+                )
+            else:
+                anchors = cls._normalize_scan_anchor_ids(
+                    [*target_anchors, *legacy_anchors]
+                )
+            cursor.execute(
+                """
+                UPDATE scan_watermarks
+                SET initialized = ?, status_ids = ?, updated_at = ?
+                WHERE group_id = ? AND username = ?
+                """,
+                (
+                    1 if bool(row[1]) or bool(target[0]) else 0,
+                    json.dumps(anchors, ensure_ascii=False),
+                    max(int(row[3] or 0), int(target[2] or 0)),
+                    default_id,
+                    username,
+                ),
+            )
+            cursor.execute(
+                """
+                DELETE FROM scan_watermarks
+                WHERE group_id = ? AND username = ?
+                """,
+                (legacy_id, username),
+            )
 
     def _merge_group_key_table(
         self,
@@ -502,46 +648,6 @@ class SQLiteStorage:
             (default_id, legacy_id),
         )
 
-    def _merge_pending_tweets(
-        self,
-        cursor: sqlite3.Cursor,
-        legacy_id: str,
-        default_id: str,
-    ) -> None:
-        if not self._table_exists(cursor, "pending_tweets"):
-            return
-
-        duplicate_ids = [
-            int(row[0])
-            for row in cursor.execute(
-                """
-                SELECT source.id
-                FROM pending_tweets AS source
-                WHERE source.group_id = ?
-                  AND EXISTS (
-                      SELECT 1
-                      FROM pending_tweets AS target
-                      WHERE target.group_id = ?
-                        AND target.username = source.username
-                        AND target.status_id = source.status_id
-                  )
-                """,
-                (legacy_id, default_id),
-            ).fetchall()
-        ]
-        if duplicate_ids:
-            cursor.executemany(
-                "DELETE FROM pending_media WHERE pending_tweet_id = ?",
-                [(pending_id,) for pending_id in duplicate_ids],
-            )
-            cursor.executemany(
-                "DELETE FROM pending_tweets WHERE id = ?",
-                [(pending_id,) for pending_id in duplicate_ids],
-            )
-        cursor.execute(
-            "UPDATE pending_tweets SET group_id = ? WHERE group_id = ?",
-            (default_id, legacy_id),
-        )
 
     @staticmethod
     def _table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:
@@ -770,7 +876,7 @@ class SQLiteStorage:
         assert self.conn is not None
 
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
+        normalized_username = normalize_seen_account_key(username)
 
         if not normalized_username:
             return []
@@ -779,7 +885,7 @@ class SQLiteStorage:
             """
             SELECT status_id FROM seen_tweets
             WHERE group_id = ? AND username = ?
-            ORDER BY seen_at DESC
+            ORDER BY seen_at DESC, rowid DESC
             LIMIT ?
             """,
             (normalized_group_id, normalized_username, SEEN_LIMIT_PER_USER),
@@ -797,14 +903,16 @@ class SQLiteStorage:
         assert self.conn is not None
 
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
+        normalized_username = normalize_seen_account_key(username)
 
         if not normalized_username or not status_ids:
             return
 
         now = int(time.time())
 
-        # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）
+        # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）。输入列表是
+        # newest-first，因此反向写入，让同秒记录按 rowid DESC 读取时仍
+        # 保持原顺序，同时保证后续调用写入的新 ID 不会被限额清理误删。
         self.conn.executemany(
             """
             REPLACE INTO seen_tweets (group_id, username, status_id, seen_at)
@@ -812,7 +920,7 @@ class SQLiteStorage:
             """,
             [
                 (normalized_group_id, normalized_username, sid, now)
-                for sid in status_ids
+                for sid in reversed(status_ids)
                 if sid
             ],
         )
@@ -825,7 +933,7 @@ class SQLiteStorage:
               AND rowid NOT IN (
                   SELECT rowid FROM seen_tweets
                   WHERE group_id = ? AND username = ?
-                  ORDER BY seen_at DESC
+                  ORDER BY seen_at DESC, rowid DESC
                   LIMIT ?
               )
             """,
@@ -844,7 +952,7 @@ class SQLiteStorage:
             """
             SELECT username, status_id FROM seen_tweets
             WHERE group_id = ?
-            ORDER BY username, seen_at DESC
+            ORDER BY username, seen_at DESC, rowid DESC
             """,
             (normalized_group_id,),
         ).fetchall()
@@ -860,315 +968,107 @@ class SQLiteStorage:
 
         return seen_map
 
+    def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:
+        """获取分组中已初始化账号的最近扫描基准组。"""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_stable_group_id(group_id)
+        rows = self.conn.execute(
+            """
+            SELECT username, status_ids
+            FROM scan_watermarks
+            WHERE group_id = ? AND initialized = 1
+            ORDER BY username
+            """,
+            (normalized_group_id,),
+        ).fetchall()
+        return {
+            str(row[0]): self._decode_scan_anchor_ids(row[1])
+            for row in rows
+        }
+
+    def set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """设置一个分组账号的最近扫描基准组并标记为已初始化。"""
+        assert self.conn is not None
+
+        normalized_group_id = normalize_stable_group_id(group_id)
+        normalized_username = normalize_seen_account_key(username)
+        if not normalized_username:
+            return
+
+        normalized_status_ids = self._normalize_scan_anchor_ids(status_ids)
+        self.conn.execute(
+            """
+            INSERT INTO scan_watermarks
+            (group_id, username, initialized, status_ids, updated_at)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(group_id, username) DO UPDATE SET
+                initialized = 1,
+                status_ids = excluded.status_ids,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalized_group_id,
+                normalized_username,
+                json.dumps(normalized_status_ids, ensure_ascii=False),
+                int(time.time()),
+            ),
+        )
+
     def clear_seen_tweets(self, group_id: str | None = None) -> int:
         """清理 seen 记录；group_id 为空时清理全部分组."""
         assert self.conn is not None
 
         if group_id:
+            normalized_group_id = normalize_stable_group_id(group_id)
             cursor = self.conn.execute(
                 "DELETE FROM seen_tweets WHERE group_id = ?",
-                (normalize_stable_group_id(group_id),),
+                (normalized_group_id,),
+            )
+            self.conn.execute(
+                "DELETE FROM scan_watermarks WHERE group_id = ?",
+                (normalized_group_id,),
             )
         else:
             cursor = self.conn.execute("DELETE FROM seen_tweets")
+            self.conn.execute("DELETE FROM scan_watermarks")
         return int(cursor.rowcount or 0)
 
-    def enqueue_pending_tweets(
-        self,
-        group_id: str,
-        username: str,
-        instance: str,
-        tweets: list[TweetItem],
-        scheduled_at: int | None = None,
-    ) -> int:
-        """Add tweets to the pending publish queue."""
-        assert self.conn is not None
 
-        normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username)
-        if not normalized_username or not tweets:
-            return 0
 
-        now = int(time.time())
-        inserted = 0
-        for tweet in tweets:
-            status_id = str(tweet.status_id or "").strip()
-            if not status_id:
-                continue
-            cursor = self.conn.execute(
-                """
-                INSERT OR IGNORE INTO pending_tweets (
-                    group_id, username, status_id, instance, tweet_data,
-                    created_at, scheduled_at, published_at, sent_at,
-                    failed_at, fail_count, last_error, delivered_targets
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, '', '[]')
-                """,
-                (
-                    normalized_group_id,
-                    normalized_username,
-                    status_id,
-                    instance or "",
-                    self._serialize_tweet(tweet),
-                    now,
-                    scheduled_at,
-                ),
-            )
-            if int(cursor.rowcount or 0) <= 0:
-                continue
 
-            pending_tweet_id = int(cursor.lastrowid)
-            media_rows = [
-                (
-                    pending_tweet_id,
-                    media_index,
-                    media.kind,
-                    media.url,
-                    str(media.path) if media.path else "",
-                    now,
-                )
-                for media_index, media in enumerate(tweet.media)
-            ]
-            if media_rows:
-                self.conn.executemany(
-                    """
-                    INSERT INTO pending_media (
-                        pending_tweet_id, media_index, kind, url, path, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    media_rows,
-                )
-            inserted += 1
-        return inserted
 
-    def get_pending_tweets(
-        self,
-        group_id: str,
-        limit: int,
-    ) -> list[PendingTweetRecord]:
-        """Get unsent pending tweets for a group."""
-        assert self.conn is not None
 
-        with self._conn_lock:
-            normalized_group_id = normalize_stable_group_id(group_id)
-            rows = self.conn.execute(
-                """
-                SELECT * FROM pending_tweets
-                WHERE group_id = ? AND sent_at IS NULL
-                ORDER BY created_at ASC, id ASC
-                LIMIT ?
-                """,
-                (normalized_group_id, max(1, int(limit))),
-            ).fetchall()
-            if not rows:
-                return []
 
-            pending_ids = [int(row["id"]) for row in rows]
-            media_map = self._pending_media_map(pending_ids)
-            return [self._pending_record_from_row(row, media_map) for row in rows]
 
-    def get_pending_queue_summary(self, group_id: str) -> PendingQueueSummary:
-        """Get pending queue counts for a group."""
-        assert self.conn is not None
-
-        normalized_group_id = normalize_stable_group_id(group_id)
-        row = self.conn.execute(
-            """
-            SELECT
-                COUNT(*) AS pending_count,
-                SUM(CASE WHEN failed_at IS NOT NULL THEN 1 ELSE 0 END)
-                    AS failed_count,
-                MIN(created_at) AS oldest_created_at,
-                MAX(created_at) AS newest_created_at
-            FROM pending_tweets
-            WHERE group_id = ? AND sent_at IS NULL
-            """,
-            (normalized_group_id,),
-        ).fetchone()
-        media_row = self.conn.execute(
-            """
-            SELECT COUNT(*) AS media_count
-            FROM pending_media
-            WHERE pending_tweet_id IN (
-                SELECT id FROM pending_tweets
-                WHERE group_id = ? AND sent_at IS NULL
-            )
-            """,
-            (normalized_group_id,),
-        ).fetchone()
-        user_rows = self.conn.execute(
-            """
-            SELECT username, COUNT(*) AS pending_count
-            FROM pending_tweets
-            WHERE group_id = ? AND sent_at IS NULL
-            GROUP BY username
-            ORDER BY pending_count DESC, username COLLATE NOCASE ASC
-            LIMIT 10
-            """,
-            (normalized_group_id,),
-        ).fetchall()
-        return PendingQueueSummary(
-            group_id=normalized_group_id,
-            pending_count=int(row["pending_count"] or 0),
-            failed_count=int(row["failed_count"] or 0),
-            media_count=int(media_row["media_count"] or 0),
-            oldest_created_at=row["oldest_created_at"],
-            newest_created_at=row["newest_created_at"],
-            user_counts=[
-                (str(item["username"]), int(item["pending_count"] or 0))
-                for item in user_rows
-            ],
-        )
-
-    def get_pending_media_paths(self) -> set[str]:
-        """Get staged media paths still referenced by unsent queue rows."""
-        assert self.conn is not None
-        rows = self.conn.execute(
-            """
-            SELECT pending_media.path
-            FROM pending_media
-            JOIN pending_tweets
-                ON pending_tweets.id = pending_media.pending_tweet_id
-            WHERE pending_tweets.sent_at IS NULL
-              AND pending_media.path != ''
-            """
-        ).fetchall()
-        return {str(row[0]) for row in rows if row[0]}
-
-    def mark_pending_tweets_published(self, pending_ids: list[int]) -> None:
-        """Mark pending tweets as sent."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        now = int(time.time())
-        self.conn.executemany(
-            """
-            UPDATE pending_tweets
-            SET published_at = COALESCE(published_at, ?),
-                sent_at = ?,
-                last_error = '',
-                delivered_targets = '[]'
-            WHERE id = ?
-            """,
-            [(now, now, pending_id) for pending_id in ids],
-        )
-
-    def mark_pending_tweets_delivered(
-        self, pending_ids: list[int], target: str
-    ) -> None:
-        """Record that pending tweets reached one configured target."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        normalized_target = str(target or "").strip()
-        if not ids or not normalized_target:
-            return
-
-        placeholders = ",".join("?" for _ in ids)
-        rows = self.conn.execute(
-            f"""
-            SELECT id, delivered_targets
-            FROM pending_tweets
-            WHERE sent_at IS NULL
-              AND id IN ({placeholders})
-            """,
-            ids,
-        ).fetchall()
-        updates: list[tuple[str, int]] = []
-        for row in rows:
-            delivered = list(
-                self._deserialize_delivered_targets(row["delivered_targets"])
-            )
-            if normalized_target in delivered:
-                continue
-            delivered.append(normalized_target)
-            updates.append(
-                (self._serialize_delivered_targets(delivered), int(row["id"]))
-            )
-        if updates:
-            self.conn.executemany(
-                """
-                UPDATE pending_tweets
-                SET delivered_targets = ?
-                WHERE id = ? AND sent_at IS NULL
-                """,
-                updates,
-            )
-
-    def mark_pending_tweets_failed(
-        self, pending_ids: list[int], error: str
-    ) -> None:
-        """Record a publish failure for pending tweets."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        now = int(time.time())
-        message = str(error or "")[:1000]
-        self.conn.executemany(
-            """
-            UPDATE pending_tweets
-            SET failed_at = ?,
-                fail_count = fail_count + 1,
-                last_error = ?
-            WHERE id = ? AND sent_at IS NULL
-            """,
-            [(now, message, pending_id) for pending_id in ids],
-        )
-
-    def delete_pending_tweets(self, pending_ids: list[int]) -> None:
-        """Delete pending tweets and their media rows."""
-        assert self.conn is not None
-        ids = [int(item) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return
-        self.conn.executemany(
-            "DELETE FROM pending_media WHERE pending_tweet_id = ?",
-            [(pending_id,) for pending_id in ids],
-        )
-        self.conn.executemany(
-            "DELETE FROM pending_tweets WHERE id = ?",
-            [(pending_id,) for pending_id in ids],
-        )
 
     def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
-        pending_ids = [
-            int(row[0])
-            for row in self.conn.execute(
-                "SELECT id FROM pending_tweets WHERE group_id = ?",
-                (normalized_group_id,),
-            ).fetchall()
-        ]
         summary = {
             "groups_deleted": 0,
             "users_deleted": 0,
             "targets_deleted": 0,
             "seen_deleted": 0,
-            "pending_deleted": 0,
-            "pending_media_deleted": 0,
+            "scan_watermarks_deleted": 0,
             "push_history_deleted": 0,
         }
-        if pending_ids:
-            placeholders = ",".join("?" for _ in pending_ids)
-            summary["pending_media_deleted"] = int(
-                self.conn.execute(
-                    f"DELETE FROM pending_media WHERE pending_tweet_id IN ({placeholders})",
-                    pending_ids,
-                ).rowcount
-                or 0
-            )
-        summary["pending_deleted"] = int(
+        summary["seen_deleted"] = int(
             self.conn.execute(
-                "DELETE FROM pending_tweets WHERE group_id = ?",
+                "DELETE FROM seen_tweets WHERE group_id = ?",
                 (normalized_group_id,),
             ).rowcount
             or 0
         )
-        summary["seen_deleted"] = int(
+        summary["scan_watermarks_deleted"] = int(
             self.conn.execute(
-                "DELETE FROM seen_tweets WHERE group_id = ?",
+                "DELETE FROM scan_watermarks WHERE group_id = ?",
                 (normalized_group_id,),
             ).rowcount
             or 0
@@ -1203,21 +1103,6 @@ class SQLiteStorage:
         )
         return summary
 
-    def cleanup_sent_pending_tweets(self, older_than: int) -> int:
-        """Delete sent pending tweet rows at or before the timestamp."""
-        assert self.conn is not None
-        ids = [
-            int(row[0])
-            for row in self.conn.execute(
-                """
-                SELECT id FROM pending_tweets
-                WHERE sent_at IS NOT NULL AND sent_at <= ?
-                """,
-                (older_than,),
-            ).fetchall()
-        ]
-        self.delete_pending_tweets(ids)
-        return len(ids)
 
     def record_push_history(
         self,
@@ -1234,7 +1119,7 @@ class SQLiteStorage:
         """Record one successfully pushed tweet/target pair."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_username(username) or str(username or "").strip()
+        normalized_username = normalize_seen_account_key(username) or str(username or "").strip()
         status_id = str(getattr(tweet, "status_id", "") or "").strip()
         if not normalized_group_id or not normalized_username or not status_id:
             return 0
@@ -1392,7 +1277,7 @@ class SQLiteStorage:
         return self._push_history_record_from_row(row)
 
     def cleanup_orphan_seen_tweets(self) -> int:
-        """清理长期不在订阅配置中的 seen 记录."""
+        """清理长期不在订阅配置中的 seen 和扫描水位记录."""
         assert self.conn is not None
 
         cutoff = int(time.time()) - ORPHAN_SEEN_RETENTION_DAYS * 86400
@@ -1404,6 +1289,18 @@ class SQLiteStorage:
                   SELECT 1 FROM group_users
                   WHERE group_users.group_id = seen_tweets.group_id
                     AND group_users.username = seen_tweets.username
+              )
+            """,
+            (cutoff,),
+        )
+        self.conn.execute(
+            """
+            DELETE FROM scan_watermarks
+            WHERE updated_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM group_users
+                  WHERE group_users.group_id = scan_watermarks.group_id
+                    AND group_users.username = scan_watermarks.username
               )
             """,
             (cutoff,),
@@ -1429,8 +1326,6 @@ class SQLiteStorage:
                 "media_warnings": tweet.media_warnings,
                 "ai_warnings": tweet.ai_warnings,
                 "translation": tweet.translation,
-                "image_caption": tweet.image_caption,
-                "ai_comment": tweet.ai_comment,
             },
             ensure_ascii=False,
         )
@@ -1466,8 +1361,6 @@ class SQLiteStorage:
                 if str(item)
             ],
             translation=str(data.get("translation") or ""),
-            image_caption=str(data.get("image_caption") or ""),
-            ai_comment=str(data.get("ai_comment") or ""),
         )
         return tweet
 
@@ -1488,74 +1381,7 @@ class SQLiteStorage:
             dict.fromkeys(str(item).strip() for item in data if str(item).strip())
         )
 
-    def _pending_media_map(
-        self, pending_ids: list[int]
-    ) -> dict[int, list[TweetMedia]]:
-        if not pending_ids:
-            return {}
-        assert self.conn is not None
-        ids = [(int(item),) for item in pending_ids if int(item) > 0]
-        if not ids:
-            return {}
-        self.conn.execute(
-            """
-            CREATE TEMP TABLE IF NOT EXISTS temp_pending_media_ids (
-                id INTEGER PRIMARY KEY
-            )
-            """
-        )
-        self.conn.execute("DELETE FROM temp_pending_media_ids")
-        self.conn.executemany(
-            "INSERT OR IGNORE INTO temp_pending_media_ids (id) VALUES (?)",
-            ids,
-        )
-        rows = self.conn.execute(
-            """
-            SELECT pending_tweet_id, kind, url, path
-            FROM pending_media
-            JOIN temp_pending_media_ids
-                ON temp_pending_media_ids.id = pending_media.pending_tweet_id
-            ORDER BY pending_tweet_id, media_index
-            """,
-        ).fetchall()
-        media_map: dict[int, list[TweetMedia]] = {}
-        for row in rows:
-            media_path = str(row["path"] or "")
-            media_map.setdefault(int(row["pending_tweet_id"]), []).append(
-                TweetMedia(
-                    kind=str(row["kind"] or ""),
-                    url=str(row["url"] or ""),
-                    path=Path(media_path) if media_path else None,
-                )
-            )
-        return media_map
 
-    def _pending_record_from_row(
-        self,
-        row: sqlite3.Row,
-        media_map: dict[int, list[TweetMedia]],
-    ) -> PendingTweetRecord:
-        pending_id = int(row["id"])
-        tweet = self._deserialize_tweet(row["tweet_data"])
-        tweet.media = media_map.get(pending_id, [])
-        return PendingTweetRecord(
-            id=pending_id,
-            group_id=str(row["group_id"]),
-            username=str(row["username"]),
-            status_id=str(row["status_id"]),
-            instance=str(row["instance"] or ""),
-            tweet=tweet,
-            created_at=int(row["created_at"]),
-            scheduled_at=row["scheduled_at"],
-            published_at=row["published_at"],
-            sent_at=row["sent_at"],
-            failed_at=row["failed_at"],
-            fail_count=int(row["fail_count"] or 0),
-            last_error=str(row["last_error"] or ""),
-            delivered_targets=self._deserialize_delivered_targets(
-                row["delivered_targets"]
-            ),
-        )
 
     def _push_history_record_from_row(self, row: sqlite3.Row) -> PushHistoryRecord:
         return PushHistoryRecord(
@@ -1615,7 +1441,7 @@ class SQLiteStorage:
                 normalized_group_id = normalize_stable_group_id(group_id)
 
                 for username, status_ids in seen_map.items():
-                    normalized_username = normalize_username(username)
+                    normalized_username = normalize_seen_account_key(username)
                     if not normalized_username:
                         continue
 
@@ -1631,12 +1457,16 @@ class SQLiteStorage:
                             """,
                             [
                                 (normalized_group_id, normalized_username, sid, now)
-                                for sid in limited_ids
+                                for sid in reversed(limited_ids)
                                 if sid
                             ],
                         )
                         total_users += 1
                         total_ids += len(limited_ids)
+
+            # KV 导入发生在 schema v8 迁移之后，因此为新导入的 seen
+            # 同步建立扫描水位，避免首次启动后重复初始化账号。
+            self._backfill_scan_watermarks(cursor)
 
             # 标记迁移完成
             cursor.execute(
@@ -1681,6 +1511,17 @@ class SQLiteStorage:
             fingerprint_data.append({
                 "group_id": group.group_id,
                 "name": group.name,
+                "enabled": group.enabled,
+                "check_on_startup": group.check_on_startup,
+                "interval_check_enabled": group.interval_check_enabled,
+                "check_interval_minutes": group.check_interval_minutes,
+                "daily_check_enabled": group.daily_check_enabled,
+                "daily_check_times": group.daily_check_times,
+                "scheduled_fetch_limit": group.scheduled_fetch_limit,
+                "send_target_interval": group.send_target_interval,
+                "send_user_interval": group.send_user_interval,
+                "notify_no_updates": group.notify_no_updates,
+                "aliases": sorted(group.aliases),
                 "users": sorted(group.users),
                 "targets": sorted(group.targets),
             })
@@ -1745,16 +1586,10 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "get_group_scan_watermarks",
+    "set_scan_watermark",
     "clear_seen_tweets",
-    "enqueue_pending_tweets",
-    "get_pending_tweets",
-    "get_pending_queue_summary",
-    "get_pending_media_paths",
-    "mark_pending_tweets_published",
-    "mark_pending_tweets_failed",
-    "delete_pending_tweets",
     "delete_group_runtime_data",
-    "cleanup_sent_pending_tweets",
     "record_push_history",
     "get_push_history",
     "count_push_history",

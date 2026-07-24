@@ -26,7 +26,11 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from ..config import config_get, configured_merge_tweet_threshold
+    from ..config import (
+        configured_merge_tweet_threshold,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
+    )
     from .lark_support import is_lark_platform
     from ..shared import (
         TweetItem,
@@ -38,7 +42,11 @@ try:
     from .platforms import PlatformDeliveryRegistry, PlatformResolver, normalize_platform
     from ..rendering import TweetBatch, TweetMessageRenderer
 except ImportError:
-    from config import config_get, configured_merge_tweet_threshold
+    from config import (
+        configured_merge_tweet_threshold,
+        resolve_send_image_attachments,
+        resolve_send_video_attachments,
+    )
     from delivery.lark_support import is_lark_platform
     from shared import (
         TweetItem,
@@ -69,19 +77,15 @@ class TweetSender:
         "napcat",
     }
     FORWARD_TWEET_CHUNK_SIZE = 8
+    # When NapCat/OneBot rejects a forward (often retcode 1200 / res_id fail),
+    # recursively split the tweet list and retry smaller merges.
+    FORWARD_SPLIT_MIN_TWEETS = 1
     UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
     def __init__(self, config=None):
         config = config or {}
-        image_config = config_get(config, "send_image_attachments", None)
-        if image_config is None:
-            image_config = bool(config_get(config, "download_media", True)) and bool(
-                config_get(config, "download_images", True)
-            )
-        self.send_image_attachments = bool(image_config)
-        self.send_video_attachments = bool(
-            config_get(config, "send_video_attachments", False)
-        )
+        self.send_image_attachments = resolve_send_image_attachments(config)
+        self.send_video_attachments = resolve_send_video_attachments(config)
         self.merge_tweet_threshold = configured_merge_tweet_threshold(config)
         self.renderer = TweetMessageRenderer(
             send_image_attachments=self.send_image_attachments,
@@ -89,6 +93,14 @@ class TweetSender:
         )
         self.platform_resolver = PlatformResolver()
         self.delivery_registry = PlatformDeliveryRegistry()
+
+
+    @staticmethod
+    def resolve_link_style(platform_name: str = "") -> str:
+        name = str(platform_name or "").strip().lower()
+        if name in {"telegram", "tg"}:
+            return "telegram_md"
+        return "plain"
 
     async def send(
         self,
@@ -99,8 +111,15 @@ class TweetSender:
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         adapter = self._delivery_adapter_for_event(event)
+        if link_style == "plain":
+            platform_name = getattr(adapter, "name", "") or ""
+            link_style = self.resolve_link_style(platform_name)
         if not adapter.supports_merged_forward or not self._should_use_merge_for_count(
             len(tweets)
         ):
@@ -112,17 +131,29 @@ class TweetSender:
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
             return await self._send_event_forward_chunks(
                 event, username, instance, tweets, notices=notices,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         return await self._send_event_forward_chunk(
             event, username, instance, tweets, notices=notices,
             tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     def should_merge_for_event(self, event, tweet_count: int) -> bool:
@@ -139,6 +170,10 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         chunks = self._tweet_chunks(tweets)
         indexed_chunks = []
@@ -155,6 +190,10 @@ class TweetSender:
                 item[1],
                 notices=notices,
                 tweet_start_index=item[0],
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             ),
         )
 
@@ -166,14 +205,26 @@ class TweetSender:
         tweets: list[TweetItem],
         notices: list[str] | None = None,
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         nodes = self.renderer.build_nodes(
             event, username, instance, tweets, notices=notices,
             start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         raw_nodes = self.renderer.build_onebot_nodes(
             event, username, instance, tweets, notices=notices,
             start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         try:
             await event.send(event.chain_result([nodes]))
@@ -193,6 +244,10 @@ class TweetSender:
                     event, username, instance, tweets,
                     exclude_videos=True, notices=notices,
                     start_index=tweet_start_index,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
                 await event.send(event.chain_result([nodes_nv]))
                 logger.info("[NitterTweets] 初次失败后已发送去除视频的合并转发")
@@ -207,15 +262,93 @@ class TweetSender:
                     f"[NitterTweets] 发送去除视频的合并转发节点失败: {exc}"
                 )
 
+        last_exc: Exception | None = None
         try:
-            return await self._send_onebot_forward(event, raw_nodes)
+            if await self._send_onebot_forward(event, raw_nodes):
+                return True
+            logger.warning(
+                f"[NitterTweets] 发送 OneBot 合并转发消息失败: action returned false "
+                f"(tweets={len(tweets)}, target={self._event_target(event)})"
+            )
         except Exception as exc:
+            last_exc = exc
             if self._is_uncertain_delivery_error(exc):
                 self._log_uncertain_delivery(
                     "manual OneBot forward fallback", self._event_target(event), exc
                 )
                 return True
             logger.warning(f"[NitterTweets] 发送 OneBot 合并转发消息失败: {exc}")
+
+        # retcode 1200 / res_id fail / explicit false: split smaller merges then retry.
+        # false return (no exception) is treated as payload reject so we can split.
+        should_split = last_exc is None or self._is_forward_payload_rejected_error(
+            last_exc
+        )
+        remaining = tweets
+        remaining_index = tweet_start_index
+        remaining_notices = notices
+        if should_split:
+            parts = self._split_tweets_for_forward_retry(tweets)
+            if parts:
+                logger.info(
+                    f"[NitterTweets] 合并转发失败，拆成 {len(parts)} 段重试 "
+                    f"(tweets={len(tweets)}, target={self._event_target(event)})"
+                )
+                index = tweet_start_index
+                for offset, part in enumerate(parts):
+                    part_ok = await self._send_event_forward_chunk(
+                        event,
+                        username,
+                        instance,
+                        part,
+                        notices=notices if offset == 0 else None,
+                        tweet_start_index=index,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    if not part_ok:
+                        # Never re-send already-delivered parts as a full-batch fallback.
+                        remaining = []
+                        for later in parts[offset:]:
+                            remaining.extend(later)
+                        remaining_index = index
+                        remaining_notices = notices if offset == 0 else None
+                        break
+                    index += len(part)
+                else:
+                    return True
+
+        if not remaining:
+            return False
+
+        # Final fallback: direct send only the undelivered remainder.
+        logger.info(
+            f"[NitterTweets] 合并转发仍失败，降级直发 "
+            f"(tweets={len(remaining)}/{len(tweets)}, "
+            f"target={self._event_target(event)})"
+        )
+        try:
+            return await self._delivery_adapter_for_event(event).send_event(
+                event,
+                username,
+                instance,
+                remaining,
+                notices=remaining_notices,
+                tweet_start_index=remaining_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
+            )
+        except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual direct after forward fail", self._event_target(event), exc
+                )
+                return True
+            logger.warning(f"[NitterTweets] 合并转发降级直发仍失败: {exc}")
             return False
 
     async def send_to_umo(
@@ -229,6 +362,10 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         return (
             await self.send_to_umo_with_outcome(
@@ -237,10 +374,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
         ).success
 
@@ -255,8 +396,14 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         adapter = self._delivery_adapter_for_umo(context, umo)
+        if link_style == "plain":
+            link_style = self.resolve_link_style(getattr(adapter, "name", ""))
         if not adapter.supports_merged_forward or not self._should_use_merge_for_count(
             len(tweets)
         ):
@@ -266,10 +413,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         if self._should_chunk_forward_tweets(len(tweets)):
@@ -279,10 +430,14 @@ class TweetSender:
                 username,
                 instance,
                 tweets,
-                group_label,
-                header_text,
-                batch_summary,
-                tweet_start_index,
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary,
+                tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         return await self._send_forward_chunk_to_umo(
@@ -291,10 +446,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def send_summary_to_umo(self, context, umo: str, summary: str) -> SendOutcome:
@@ -313,12 +472,16 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         chunks = self._tweet_chunks(tweets)
         indexed_chunks = []
         index = tweet_start_index
         for chunk in chunks:
-            indexed_chunks.append((index, chunk))
+            indexed_chunks.append((len(indexed_chunks), index, chunk))
             index += len(chunk)
         return await self._send_chunked_outcomes(
             indexed_chunks,
@@ -327,11 +490,15 @@ class TweetSender:
                 umo,
                 username,
                 instance,
-                item[1],
-                group_label,
-                header_text,
-                batch_summary,
-                item[0],
+                item[2],
+                group_label=group_label,
+                header_text=header_text,
+                batch_summary=batch_summary if item[0] == 0 else "",
+                tweet_start_index=item[1],
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             ),
             lambda error, warning: SendOutcome(
                 success=True,
@@ -358,6 +525,10 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         nodes = self.renderer.build_nodes_for_uin(
             10000,
@@ -368,6 +539,10 @@ class TweetSender:
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         attempt = await self._send_context_message(
             context, umo, MessageChain([nodes]), "scheduled forwarded tweets"
@@ -393,6 +568,10 @@ class TweetSender:
                 group_label=group_label,
                 header_text=header_text,
                 batch_summary=batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             attempt_nv = await self._send_context_message(
                 context,
@@ -418,7 +597,104 @@ class TweetSender:
                 )
             attempt = attempt_nv
 
-        fallback = await self._send_context_message(
+        # Only split on explicit payload reject (retcode 1200 / res_id).
+        # Other retryable errors (timeout/network) fall through to plain text.
+        reject = bool(attempt.error) and self._is_forward_payload_rejected_error(
+            Exception(str(attempt.error))
+        )
+        remaining = tweets
+        remaining_index = tweet_start_index
+        remaining_header = header_text
+        remaining_summary = batch_summary
+        any_part_sent = False
+        if reject:
+            parts = self._split_tweets_for_forward_retry(tweets)
+            if parts:
+                logger.info(
+                    f"[NitterTweets] 定时合并转发失败，拆成 {len(parts)} 段重试 "
+                    f"(tweets={len(tweets)}, target={umo})"
+                )
+                index = tweet_start_index
+                for offset, part in enumerate(parts):
+                    part_outcome = await self._send_forward_chunk_to_umo(
+                        context,
+                        umo,
+                        username,
+                        instance,
+                        part,
+                        group_label=group_label,
+                        header_text=header_text if offset == 0 else "",
+                        batch_summary=batch_summary if offset == 0 else "",
+                        tweet_start_index=index,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    if not part_outcome.success:
+                        remaining = []
+                        for later in parts[offset:]:
+                            remaining.extend(later)
+                        remaining_index = index
+                        remaining_header = header_text if offset == 0 else ""
+                        remaining_summary = batch_summary if offset == 0 else ""
+                        break
+                    any_part_sent = True
+                    index += len(part)
+                else:
+                    return SendOutcome(
+                        success=True,
+                        error=attempt.error,
+                        delivery_status=(
+                            "partial_failed" if attempt.error else "success"
+                        ),
+                        delivery_error=attempt.error,
+                    )
+
+        if not remaining:
+            return SendOutcome(
+                success=False,
+                error=attempt.error or "forward split produced empty remainder",
+                delivery_status="failed",
+                delivery_error=attempt.error or "",
+            )
+
+        # Prefer media-capable direct send for undelivered remainder only.
+        # If any split part already delivered, never re-send the full batch.
+        logger.info(
+            f"[NitterTweets] 定时合并转发仍失败，降级直发 "
+            f"(tweets={len(remaining)}/{len(tweets)}, target={umo})"
+        )
+        fallback = await self._send_direct_to_umo(
+            context,
+            umo,
+            username,
+            instance,
+            remaining,
+            group_label=group_label,
+            header_text=remaining_header,
+            batch_summary=remaining_summary,
+            tweet_start_index=remaining_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
+        )
+        if fallback.success:
+            return SendOutcome(
+                success=True,
+                error=attempt.error or fallback.error,
+                warning=fallback.warning,
+                delivery_status=(
+                    "partial_failed"
+                    if attempt.error or fallback.error or any_part_sent
+                    else "success"
+                ),
+                delivery_error=attempt.error or fallback.error or "",
+            )
+
+        # Second-level: plain text (lighter payload) for remainder only.
+        plain = await self._send_context_message(
             context,
             umo,
             MessageChain(
@@ -427,29 +703,43 @@ class TweetSender:
                         self.renderer.format_plain(
                             username,
                             instance,
-                            tweets,
-                            start_index=tweet_start_index,
+                            remaining,
+                            start_index=remaining_index,
                             group_label=group_label,
-                            header_text=header_text,
-                            batch_summary=batch_summary,
+                            header_text=remaining_header,
+                            batch_summary=remaining_summary,
+                            media_only=media_only,
+                            omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
                 ]
             ),
-            "scheduled tweet fallback",
+            "scheduled tweet plain fallback",
         )
+        plain_ok = plain.success or plain.uncertain
+        # Do not mark whole-batch success when only some split parts arrived:
+        # scheduler would advance seen and permanently drop the remainder.
+        # Prefer possible re-push of the first part over silent loss.
+        if plain_ok:
+            return SendOutcome(
+                success=True,
+                error=attempt.error or plain.error or fallback.error,
+                warning=plain.warning or fallback.warning,
+                delivery_status=(
+                    "partial_failed"
+                    if attempt.error or plain.error or fallback.error or any_part_sent
+                    else "success"
+                ),
+                delivery_error=attempt.error or plain.error or fallback.error or "",
+            )
         return SendOutcome(
-            success=fallback.success or fallback.uncertain,
-            error=fallback.error or attempt.error,
-            warning=fallback.warning,
-            delivery_status=(
-                "partial_failed"
-                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
-                else "success"
-            ),
-            delivery_error=(attempt.error or fallback.error)
-            if (fallback.success or fallback.uncertain)
-            else "",
+            success=False,
+            error=plain.error or fallback.error or attempt.error,
+            warning=plain.warning or fallback.warning,
+            delivery_status="failed",
+            delivery_error=plain.error or fallback.error or attempt.error or "",
         )
 
     async def send_merged_to_umo(
@@ -459,25 +749,45 @@ class TweetSender:
         batches: list[TweetBatch],
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> MergedSendOutcome:
         tweet_count = self._count_batch_tweets(batches)
         if not self._should_use_merge_for_count(tweet_count):
             return await self._send_merged_direct_to_umo(
-                context, umo, batches, group_label, batch_summary
+                context, umo, batches, group_label, batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         if not self._delivery_adapter_for_umo(context, umo).supports_merged_forward:
             return await self._send_merged_direct_to_umo(
-                context, umo, batches, group_label, batch_summary
+                context, umo, batches, group_label, batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         if self._should_chunk_forward_tweets(tweet_count):
             return await self._send_merged_forward_chunks_to_umo(
-                context, umo, batches, group_label, batch_summary
+                context, umo, batches, group_label, batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         return await self._send_merged_forward_chunk_to_umo(
-            context, umo, batches, group_label, batch_summary
+            context, umo, batches, group_label, batch_summary,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_merged_forward_chunks_to_umo(
@@ -487,6 +797,10 @@ class TweetSender:
         batches: list[TweetBatch],
         group_label: str = "",
         batch_summary: str = "",
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = 0
 
@@ -508,6 +822,10 @@ class TweetSender:
                 group_label,
                 batch_summary if indexed_chunk[0] == 0 else "",
                 tweet_start_index=indexed_chunk[1],
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             ),
             lambda error, warning: MergedSendOutcome(
                 success=True,
@@ -536,6 +854,10 @@ class TweetSender:
         group_label: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
         has_video = self._merged_forward_has_video(batches)
@@ -554,6 +876,10 @@ class TweetSender:
                 start_index=tweet_start_index,
                 group_label=group_label,
                 batch_summary=batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             attempt = await self._send_onebot_umo_forward(
                 context, umo, raw_nodes, "merged scheduled tweets"
@@ -576,6 +902,10 @@ class TweetSender:
                 start_index=tweet_start_index,
                 group_label=group_label,
                 batch_summary=batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             attempt = await self._send_context_message(
                 context, umo, MessageChain([nodes]), "merged scheduled tweets"
@@ -599,6 +929,10 @@ class TweetSender:
                 exclude_videos=True,
                 group_label=group_label,
                 batch_summary=batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             raw_retry_attempt = await self._send_onebot_umo_forward(
                 context,
@@ -636,6 +970,10 @@ class TweetSender:
                 exclude_videos=True,
                 group_label=group_label,
                 batch_summary=batch_summary,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
             retry_attempt = await self._send_context_message(
                 context,
@@ -679,6 +1017,10 @@ class TweetSender:
                             start_index=tweet_start_index,
                             group_label=group_label,
                             batch_summary=batch_summary,
+                            media_only=media_only,
+                            omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
                 ]
@@ -711,6 +1053,10 @@ class TweetSender:
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         return await self._delivery_adapter_for_event(event).send_event(
             event,
@@ -720,6 +1066,10 @@ class TweetSender:
             notices=notices,
             header_text=header_text,
             tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_default_direct_event(
@@ -731,6 +1081,10 @@ class TweetSender:
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         profile = self.platform_resolver.from_event(event)
         return await DefaultDeliveryAdapter(self, profile).send_event(
@@ -741,6 +1095,10 @@ class TweetSender:
             notices=notices,
             header_text=header_text,
             tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_direct_to_umo(
@@ -754,6 +1112,10 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         return await self._delivery_adapter_for_umo(context, umo).send_to_umo(
             context,
@@ -761,10 +1123,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_default_direct_to_umo(
@@ -778,6 +1144,10 @@ class TweetSender:
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         profile = self.platform_resolver.from_umo(context, umo)
         return await DefaultDeliveryAdapter(self, profile).send_to_umo(
@@ -786,10 +1156,14 @@ class TweetSender:
             username,
             instance,
             tweets,
-            group_label,
-            header_text,
-            batch_summary,
-            tweet_start_index,
+            group_label=group_label,
+            header_text=header_text,
+            batch_summary=batch_summary,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def _send_merged_direct_to_umo(
@@ -800,6 +1174,10 @@ class TweetSender:
         group_label: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> MergedSendOutcome:
         omitted_videos = self._count_attached_videos(batches)
         attempt = await self._send_context_message(
@@ -811,6 +1189,10 @@ class TweetSender:
                     start_index=tweet_start_index,
                     group_label=group_label,
                     batch_summary=batch_summary,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
                 )
             ),
             "direct merged tweets",
@@ -837,6 +1219,10 @@ class TweetSender:
                         exclude_videos=True,
                         group_label=group_label,
                         batch_summary=batch_summary,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
                     )
                 ),
                 "direct merged tweets without videos",
@@ -875,6 +1261,10 @@ class TweetSender:
                             start_index=tweet_start_index,
                             group_label=group_label,
                             batch_summary=batch_summary,
+                            media_only=media_only,
+                            omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
                 ]
@@ -1123,6 +1513,40 @@ class TweetSender:
 
     def _should_chunk_forward_tweets(self, tweet_count: int) -> bool:
         return tweet_count > self.FORWARD_TWEET_CHUNK_SIZE
+
+    @classmethod
+    def _is_forward_payload_rejected_error(cls, exc: Exception | None) -> bool:
+        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200)."""
+        if exc is None:
+            return False
+        if ActionFailed is not None and isinstance(exc, ActionFailed):
+            retcode = getattr(exc, "retcode", None)
+            try:
+                if int(retcode) == 1200:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        text = str(exc or "")
+        lowered = text.lower()
+        if "retcode=1200" in lowered or "retcode': 1200" in lowered:
+            return True
+        if "res_id" in lowered and ("失败" in text or "fail" in lowered):
+            return True
+        if "发送转发消息" in text and "失败" in text:
+            return True
+        return False
+
+    def _split_tweets_for_forward_retry(
+        self, tweets: list[TweetItem]
+    ) -> list[list[TweetItem]] | None:
+        if len(tweets) <= self.FORWARD_SPLIT_MIN_TWEETS:
+            return None
+        mid = max(1, len(tweets) // 2)
+        left = tweets[:mid]
+        right = tweets[mid:]
+        if not left or not right:
+            return None
+        return [left, right]
 
     @staticmethod
     async def _send_chunked_bool(chunks, send_chunk) -> bool:

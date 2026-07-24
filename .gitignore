@@ -8,8 +8,16 @@ diagnostics/
 design_concept/
 docs/superpowers/plans/
 output/
+test/output/
+/tests/
 tests/downloads/
 backups/
 *.db
 *.db-wal
 *.db-shm
+# Local planning notes under docs/dev (keep on disk; do not publish)
+docs/dev/*-plan.md
+docs/dev/*-prep.md
+docs/dev/html-search-fallback-plan.md
+docs/dev/module-split-plan.md
+docs/dev/phase1-release-prep.md

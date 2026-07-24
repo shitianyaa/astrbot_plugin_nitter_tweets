@@ -10,9 +10,11 @@ try:
     from ..config.subscriptions import (
         ensure_default_import_group,
         normalize_import_username,
+        set_import_group_queries,
         set_import_group_users,
         sync_import_config_groups,
     )
+    from ..media_support.html_backend import normalize_watch_query
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
@@ -22,9 +24,11 @@ except ImportError:
     from config.subscriptions import (
         ensure_default_import_group,
         normalize_import_username,
+        set_import_group_queries,
         set_import_group_users,
         sync_import_config_groups,
     )
+    from media_support.html_backend import normalize_watch_query
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
@@ -48,8 +52,7 @@ class SubscriptionCommandMixin:
         if info.users:
             lines.append("账号列表:")
             lines.extend(
-                f"{index}. @{user}"
-                for index, user in enumerate(info.users[:10], 1)
+                f"{index}. @{user}" for index, user in enumerate(info.users[:10], 1)
             )
             if len(info.users) > 10:
                 lines.append(f"... 还有 {len(info.users) - 10} 个")
@@ -58,22 +61,41 @@ class SubscriptionCommandMixin:
         if info.duplicates:
             lines.append("重复项: " + self._format_limited_values(info.duplicates))
         if info.invalid_entries:
-            lines.append(
-                "无效项: " + self._format_limited_values(info.invalid_entries)
-            )
+            lines.append("无效项: " + self._format_limited_values(info.invalid_entries))
 
         await event.send(event.plain_result("\n".join(lines)))
 
-    async def _cmd_tweets_export_subscriptions_impl(self, event: AstrMessageEvent):
-        """按分组导出已配置的订阅账号。"""
+    async def _cmd_tweets_export_subscriptions_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        """按分组导出订阅（博主 users / 标签 queries）。可选分组名。"""
         event.stop_event()
-        groups = self.scheduler.config_reader.schedule_groups(
-            log_invalid_targets=False
+        # GreedyStr is only a command-marker default; runtime empty is "" or non-str.
+        group_name = args.strip() if isinstance(args, str) else ""
+        groups = self.scheduler.config_reader.schedule_groups(log_invalid_targets=False)
+        if group_name:
+            group = self.scheduler.config_reader.schedule_group(
+                group_name, log_invalid_targets=False
+            )
+            if group is None:
+                await event.send(
+                    event.plain_result(
+                        f"未找到分组：{group_name}\n"
+                        "可用分组: "
+                        + self._format_limited_values(self._available_group_labels())
+                    )
+                )
+                return
+            groups = [group]
+
+        blogger_count = sum(
+            len(group.users) for group in groups if group.is_blogger_group
         )
-        total_users = sum(len(group.users) for group in groups)
+        query_count = sum(len(group.queries) for group in groups if group.is_tag_group)
         logger.info(
             "[NitterTweets] 导出订阅配置: "
-            f"groups={len(groups)}, users={total_users}"
+            f"groups={len(groups)}, blogger={blogger_count}, queries={query_count}"
+            + (f", filter={group_name!r}" if group_name else "")
         )
         await event.send(
             event.plain_result("\n".join(self._export_subscription_lines(groups)))
@@ -104,6 +126,13 @@ class SubscriptionCommandMixin:
                 )
             )
             return
+        if group is not None and group.is_tag_group:
+            await event.send(
+                event.plain_result(
+                    "该分组是标签分组，请使用 /标签删除；/订阅删除 仅用于博主分组。"
+                )
+            )
+            return
         if len(raw_entries) > 50:
             await event.send(
                 event.plain_result(
@@ -113,7 +142,9 @@ class SubscriptionCommandMixin:
             )
             return
 
-        existing_users = group.users if group else self.scheduler.watch_users_info().users
+        existing_users = (
+            group.users if group else self.scheduler.watch_users_info().users
+        )
         existing_by_key = {user.lower(): user for user in existing_users}
         delete_keys: set[str] = set()
         requested_users: list[str] = []
@@ -160,9 +191,7 @@ class SubscriptionCommandMixin:
                     save_config()
                 except Exception as exc:
                     save_error = str(exc)
-                    logger.warning(
-                        f"[NitterTweets] 保存订阅删除结果失败: {save_error}"
-                    )
+                    logger.warning(f"[NitterTweets] 保存订阅删除结果失败: {save_error}")
             else:
                 save_error = "当前配置对象不支持 save_config()"
             sync_error = await self._sync_import_config_groups()
@@ -271,7 +300,17 @@ class SubscriptionCommandMixin:
                 )
             )
             return
-        existing_users = group.users if group else self.scheduler.watch_users_info().users
+        if group is not None and group.is_tag_group:
+            await event.send(
+                event.plain_result(
+                    "该分组是标签分组，请使用 /标签导入；/订阅导入 仅用于博主分组。"
+                )
+            )
+            return
+
+        existing_users = (
+            group.users if group else self.scheduler.watch_users_info().users
+        )
         seen = {user.lower() for user in existing_users}
         added: list[str] = []
         duplicates: list[str] = []
@@ -305,9 +344,7 @@ class SubscriptionCommandMixin:
                     save_config()
                 except Exception as exc:
                     save_error = str(exc)
-                    logger.warning(
-                        f"[NitterTweets] 保存订阅导入结果失败: {save_error}"
-                    )
+                    logger.warning(f"[NitterTweets] 保存订阅导入结果失败: {save_error}")
             else:
                 save_error = "当前配置对象不支持 save_config()"
             sync_error = await self._sync_import_config_groups()
@@ -337,9 +374,7 @@ class SubscriptionCommandMixin:
         else:
             lines.append("保存结果: 未改动配置，没有可新增账号。")
         if duplicates:
-            lines.append(
-                "已存在或重复输入: " + self._format_limited_values(duplicates)
-            )
+            lines.append("已存在或重复输入: " + self._format_limited_values(duplicates))
         if invalid_entries:
             lines.append("无效项: " + self._format_limited_values(invalid_entries))
 
@@ -352,6 +387,285 @@ class SubscriptionCommandMixin:
             f"save_error={bool(save_error)}, sync_error={bool(sync_error)}"
         )
         await event.send(event.plain_result("\n".join(lines)))
+
+    async def _cmd_tag_import_impl(self, event: AstrMessageEvent, args=GreedyStr):
+        """批量导入标签分组搜索订阅。"""
+        event.stop_event()
+
+        raw_entries, group, group_error = self._parse_subscription_import_args(args)
+        if not raw_entries:
+            await event.send(
+                event.plain_result(
+                    "用法：/标签导入 #圣娅,python programming 分组名\n"
+                    "必须指定标签分组；前导 # 为标签，否则为短语。"
+                )
+            )
+            return
+        if group_error:
+            await event.send(
+                event.plain_result(
+                    "未找到分组："
+                    f"{group_error}\n"
+                    "可用标签分组: "
+                    + self._format_limited_values(self._available_tag_group_labels())
+                )
+            )
+            return
+        if group is None or not group.is_tag_group:
+            await event.send(
+                event.plain_result(
+                    "请指定标签分组（group_type=tag）。\n"
+                    "可用标签分组: "
+                    + self._format_limited_values(self._available_tag_group_labels())
+                )
+            )
+            return
+        if len(raw_entries) > 50:
+            await event.send(
+                event.plain_result(
+                    f"单次最多导入 50 个查询，本次输入 {len(raw_entries)} 个；请分批导入。"
+                )
+            )
+            return
+
+        existing = [{"query": item.query, "type": item.type} for item in group.queries]
+        seen_keys = {item.account_key for item in group.queries}
+        added: list[dict[str, str]] = []
+        duplicates: list[str] = []
+        invalid_entries: list[str] = []
+
+        for raw in raw_entries:
+            query, kind = normalize_watch_query(raw, None)
+            if not query:
+                invalid_entries.append(raw)
+                continue
+            try:
+                from ..media_support.html_backend import seen_account_key_for_query
+            except ImportError:
+                from media_support.html_backend import seen_account_key_for_query
+
+            key = seen_account_key_for_query(query)
+            if key in seen_keys:
+                duplicates.append(raw)
+                continue
+            seen_keys.add(key)
+            added.append({"query": query, "type": kind})
+
+        if added:
+            try:
+                set_import_group_queries(
+                    self.config,
+                    self.scheduler.config_reader,
+                    group,
+                    [*existing, *added],
+                )
+            except RuntimeError as exc:
+                await event.send(event.plain_result(str(exc)))
+                return
+
+        save_error = ""
+        sync_error = ""
+        if added:
+            save_config = getattr(self.config, "save_config", None)
+            if callable(save_config):
+                try:
+                    save_config()
+                except Exception as exc:
+                    save_error = str(exc)
+                    logger.warning(f"[NitterTweets] 保存标签导入结果失败: {save_error}")
+            else:
+                save_error = "当前配置对象不支持 save_config()"
+            sync_error = await self._sync_import_config_groups()
+
+        group_label = self._import_group_label(group)
+        lines = [
+            "Nitter 标签导入",
+            f"导入分组: {group_label}",
+            f"输入项: {len(raw_entries)} 个",
+            f"新增: {len(added)} 个",
+            f"已存在或重复输入: {len(duplicates)} 个",
+            f"无效: {len(invalid_entries)} 个",
+            f"操作后查询数: {len(existing) + len(added)} 个",
+        ]
+        if added:
+            lines.append(
+                "新增查询: "
+                + self._format_limited_values(
+                    [f"{item['query']} ({item['type']})" for item in added]
+                )
+            )
+            if save_error:
+                lines.append(f"保存结果: 已更新运行时配置，但保存失败：{save_error}")
+            else:
+                lines.append(
+                    f"保存结果: 已写入 tweet_groups[{group.group_id}].watch_queries。"
+                )
+            if sync_error:
+                lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
+        else:
+            lines.append("保存结果: 未改动配置，没有可新增查询。")
+        if duplicates:
+            lines.append("已存在或重复输入: " + self._format_limited_values(duplicates))
+        if invalid_entries:
+            lines.append("无效项: " + self._format_limited_values(invalid_entries))
+
+        logger.info(
+            "[NitterTweets] 标签导入完成: "
+            f"group={group_label}, input={len(raw_entries)}, added={len(added)}, "
+            f"dup={len(duplicates)}, invalid={len(invalid_entries)}"
+        )
+        await event.send(event.plain_result("\n".join(lines)))
+
+    async def _cmd_tag_delete_impl(self, event: AstrMessageEvent, args=GreedyStr):
+        """批量删除标签分组搜索订阅。"""
+        event.stop_event()
+
+        raw_entries, group, group_error = self._parse_subscription_import_args(args)
+        if not raw_entries:
+            await event.send(
+                event.plain_result(
+                    "用法：/标签删除 #圣娅,python programming 分组名\n"
+                    "必须指定标签分组。"
+                )
+            )
+            return
+        if group_error:
+            await event.send(
+                event.plain_result(
+                    "未找到分组："
+                    f"{group_error}\n"
+                    "可用标签分组: "
+                    + self._format_limited_values(self._available_tag_group_labels())
+                )
+            )
+            return
+        if group is None or not group.is_tag_group:
+            await event.send(
+                event.plain_result(
+                    "请指定标签分组（group_type=tag）。\n"
+                    "可用标签分组: "
+                    + self._format_limited_values(self._available_tag_group_labels())
+                )
+            )
+            return
+        if len(raw_entries) > 50:
+            await event.send(
+                event.plain_result(
+                    f"单次最多删除 50 个查询，本次输入 {len(raw_entries)} 个；请分批删除。"
+                )
+            )
+            return
+
+        try:
+            from ..media_support.html_backend import seen_account_key_for_query
+        except ImportError:
+            from media_support.html_backend import seen_account_key_for_query
+
+        existing_items = list(group.queries)
+        existing_by_key = {item.account_key: item for item in existing_items}
+        delete_keys: set[str] = set()
+        requested: list[str] = []
+        duplicates: list[str] = []
+        invalid_entries: list[str] = []
+
+        for raw in raw_entries:
+            query, _kind = normalize_watch_query(raw, None)
+            if not query:
+                invalid_entries.append(raw)
+                continue
+            key = seen_account_key_for_query(query)
+            if key in delete_keys:
+                duplicates.append(raw)
+                continue
+            delete_keys.add(key)
+            requested.append(query)
+
+        removed = [
+            existing_by_key[key] for key in delete_keys if key in existing_by_key
+        ]
+        missing = [
+            query
+            for query in requested
+            if seen_account_key_for_query(query) not in existing_by_key
+        ]
+        remaining = [
+            {"query": item.query, "type": item.type}
+            for item in existing_items
+            if item.account_key not in delete_keys
+        ]
+
+        if removed:
+            try:
+                set_import_group_queries(
+                    self.config,
+                    self.scheduler.config_reader,
+                    group,
+                    remaining,
+                )
+            except RuntimeError as exc:
+                await event.send(event.plain_result(str(exc)))
+                return
+
+        save_error = ""
+        sync_error = ""
+        if removed:
+            save_config = getattr(self.config, "save_config", None)
+            if callable(save_config):
+                try:
+                    save_config()
+                except Exception as exc:
+                    save_error = str(exc)
+                    logger.warning(f"[NitterTweets] 保存标签删除结果失败: {save_error}")
+            else:
+                save_error = "当前配置对象不支持 save_config()"
+            sync_error = await self._sync_import_config_groups()
+
+        group_label = self._import_group_label(group)
+        lines = [
+            "Nitter 标签删除",
+            f"删除分组: {group_label}",
+            f"输入项: {len(raw_entries)} 个",
+            f"删除: {len(removed)} 个",
+            f"原本未订阅: {len(missing)} 个",
+            f"重复输入: {len(duplicates)} 个",
+            f"无效: {len(invalid_entries)} 个",
+            f"操作后查询数: {len(remaining)} 个",
+        ]
+        if removed:
+            lines.append(
+                "已删除查询: "
+                + self._format_limited_values(
+                    [f"{item.query} ({item.type})" for item in removed]
+                )
+            )
+            if save_error:
+                lines.append(f"保存结果: 已更新运行时配置，但保存失败：{save_error}")
+            else:
+                lines.append(
+                    f"保存结果: 已写入 tweet_groups[{group.group_id}].watch_queries。"
+                )
+            if sync_error:
+                lines.append(f"同步结果: 配置已更新，但数据库同步失败：{sync_error}")
+        else:
+            lines.append("保存结果: 未改动配置，没有匹配到可删除查询。")
+        if missing:
+            lines.append("原本未订阅: " + self._format_limited_values(missing))
+        if duplicates:
+            lines.append("重复输入: " + self._format_limited_values(duplicates))
+        if invalid_entries:
+            lines.append("无效项: " + self._format_limited_values(invalid_entries))
+
+        logger.info(
+            "[NitterTweets] 标签删除完成: "
+            f"group={group_label}, removed={len(removed)}, missing={len(missing)}"
+        )
+        await event.send(event.plain_result("\n".join(lines)))
+
+    def _available_tag_group_labels(self) -> list[str]:
+        groups = self.scheduler.config_reader.schedule_groups(log_invalid_targets=False)
+        return [
+            f"{group.name} ({group.group_id})" for group in groups if group.is_tag_group
+        ]
 
     def _parse_subscription_import_args(
         self, args: str
@@ -368,17 +682,12 @@ class SubscriptionCommandMixin:
             if resolved_group is not None:
                 group = resolved_group
                 entries_text = match.group(1).strip()
-            elif (
-                "," in match.group(1)
-                and not self._normalize_import_username(candidate)
+            elif "," in match.group(1) and not self._normalize_import_username(
+                candidate
             ):
                 group_error = candidate
 
-        entries = [
-            item.strip()
-            for item in entries_text.split(",")
-            if item.strip()
-        ]
+        entries = [item.strip() for item in entries_text.split(",") if item.strip()]
         if entries and group is None and not group_error:
             group = self._ensure_default_import_group()
         return entries, group, group_error
@@ -427,10 +736,7 @@ class SubscriptionCommandMixin:
             for group in self.scheduler.config_reader.schedule_groups(
                 log_invalid_targets=False
             )
-            if (
-                target_umo in group.targets
-                and group.enabled
-            )
+            if (target_umo in group.targets and group.enabled)
         ]
         if matches:
             if len(matches) > 1:
@@ -450,9 +756,7 @@ class SubscriptionCommandMixin:
         )
 
     def _available_group_labels(self) -> list[str]:
-        groups = self.scheduler.config_reader.schedule_groups(
-            log_invalid_targets=False
-        )
+        groups = self.scheduler.config_reader.schedule_groups(log_invalid_targets=False)
         return [f"{group.name} ({group.group_id})" for group in groups]
 
     def _export_subscription_lines(
@@ -463,24 +767,39 @@ class SubscriptionCommandMixin:
             if groups is None
             else groups
         )
-        total_users = sum(len(group.users) for group in groups)
+        blogger_count = sum(
+            len(group.users) for group in groups if group.is_blogger_group
+        )
+        query_count = sum(len(group.queries) for group in groups if group.is_tag_group)
         lines = [
             "Nitter 订阅导出",
             f"分组数: {len(groups)} 个",
-            f"订阅账号: {total_users} 个",
+            f"博主订阅: {blogger_count} 个",
+            f"搜索订阅: {query_count} 个",
         ]
         if not groups:
             lines.append("没有可导出的分组。")
             return lines
 
-        lines.append("分组账号:")
+        lines.append("订阅列表:")
         for group in groups:
-            users = ",".join(group.users) if group.users else "（空）"
-            lines.append(
-                f"{self._export_group_label(group)} "
-                f"({group.group_id}, {len(group.users)} 个): {users}"
-            )
+            lines.append(self._format_export_group_line(group))
+        lines.append(
+            "提示: 博主组 /订阅导入 用户列表 分组名 ；标签组 /标签导入 查询列表 分组名"
+        )
         return lines
+
+    def _format_export_group_line(self, group: ScheduleGroup) -> str:
+        label = self._export_group_label(group)
+        if group.is_tag_group:
+            items = (
+                ",".join(item.query for item in group.queries)
+                if group.queries
+                else "（空）"
+            )
+            return f"{label} ({group.group_id}, 标签, {len(group.queries)} 个): {items}"
+        items = ",".join(group.users) if group.users else "（空）"
+        return f"{label} ({group.group_id}, 博主, {len(group.users)} 个): {items}"
 
     @staticmethod
     def _export_group_label(group: ScheduleGroup) -> str:

@@ -11,6 +11,7 @@ try:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        sanitize_removed_feature_group,
     )
     from ..shared.group_ids import (
         infer_legacy_group_id_from_name,
@@ -24,6 +25,7 @@ except ImportError:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        sanitize_removed_feature_group,
     )
     from shared.group_ids import (
         infer_legacy_group_id_from_name,
@@ -52,18 +54,26 @@ class WebUIGroupEditor:
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
+        group_type = self._group_type(data.get("group_type"))
+        template_key = (
+            "tag" if group_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+        )
         groups.append(
             {
-                TWEET_GROUP_TEMPLATE_KEY_FIELD: TWEET_GROUP_TEMPLATE_KEY,
+                TWEET_GROUP_TEMPLATE_KEY_FIELD: template_key,
                 "name": group_name,
                 "group_id": group_id,
                 "enabled": False,
+                "group_type": group_type,
                 "watch_users": [],
+                "watch_queries": [],
                 "push_targets": [],
                 "interval_check_enabled": True,
                 "daily_check_times": [],
-                "deferred_publish_enabled": False,
                 "filter_plain_text_enabled": False,
+                "media_only_enabled": False,
+                "omit_status_url": True,
+                "hide_original_when_translated": False,
             }
         )
         save_error = self._save_groups(previous_groups, groups)
@@ -97,12 +107,24 @@ class WebUIGroupEditor:
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 
-        raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = TWEET_GROUP_TEMPLATE_KEY
+        existing_type = self._group_type(raw_group.get("group_type"))
+        if "group_type" in data:
+            requested_type = self._group_type(data.get("group_type"))
+            if requested_type != existing_type:
+                return {
+                    "success": False,
+                    "error": "分组类型创建后不可修改，请新建对应类型的分组",
+                }
+
+        raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = (
+            "tag" if existing_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+        )
         raw_group["name"] = name
         raw_group["group_id"] = normalize_stable_group_id(group_id)
         raw_group["enabled"] = self._bool(
             data.get("enabled", raw_group.get("enabled", True))
         )
+        raw_group["group_type"] = existing_type
         raw_group["interval_check_enabled"] = self._bool(
             data.get(
                 "interval_check_enabled",
@@ -111,18 +133,45 @@ class WebUIGroupEditor:
         )
         raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
-        raw_group["deferred_publish_enabled"] = self._bool(
-            data.get(
-                "deferred_publish_enabled",
-                raw_group.get("deferred_publish_enabled", False),
-            )
-        )
         raw_group["filter_plain_text_enabled"] = self._bool(
             data.get(
                 "filter_plain_text_enabled",
                 raw_group.get("filter_plain_text_enabled", False),
             )
         )
+        raw_group["media_only_enabled"] = self._bool(
+            data.get(
+                "media_only_enabled",
+                raw_group.get("media_only_enabled", False),
+            )
+        )
+        raw_group["omit_status_url"] = self._bool(
+            data.get(
+                "omit_status_url",
+                raw_group.get("omit_status_url", True),
+            )
+        )
+        raw_group["hide_original_when_translated"] = self._bool(
+            data.get(
+                "hide_original_when_translated",
+                raw_group.get("hide_original_when_translated", False),
+            )
+        )
+        if existing_type == "tag":
+            try:
+                raw_group["watch_queries"] = self._normalized_watch_queries(
+                    data.get("watch_queries", raw_group.get("watch_queries", []))
+                )
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+            raw_group["watch_users"] = []
+        else:
+            if "watch_users" in data:
+                raw_group["watch_users"] = self._normalized_list(
+                    data.get("watch_users")
+                )
+            raw_group.setdefault("watch_users", raw_group.get("watch_users") or [])
+            raw_group["watch_queries"] = []
         groups[index] = raw_group
         save_error = self._save_groups(previous_groups, groups)
         if save_error:
@@ -168,6 +217,9 @@ class WebUIGroupEditor:
         previous_groups: list[dict[str, Any]],
         next_groups: list[dict[str, Any]],
     ) -> str:
+        for group in next_groups:
+            if isinstance(group, dict):
+                sanitize_removed_feature_group(group)
         config_set(self.config, "tweet_groups", next_groups)
         save_config = getattr(self.config, "save_config", None)
         if not callable(save_config):
@@ -254,6 +306,21 @@ class WebUIGroupEditor:
         return values
 
     @staticmethod
+    def _group_type(value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if text in {"tag", "search", "query", "keyword"}:
+            return "tag"
+        return "blogger"
+
+    def _normalized_watch_queries(self, raw_values: Any) -> list[str]:
+        info = self.scheduler.config_reader.parse_watch_queries(raw_values)
+        if info.invalid_entries:
+            raise ValueError("搜索订阅无效：" + ", ".join(info.invalid_entries[:5]))
+        # Store plain strings (not {query,type} objects) so AstrBot WebUI list
+        # fields do not render as "[object Object]". Type is inferred from #.
+        return [item.query for item in info.queries]
+
+    @staticmethod
     def _bool(value: Any) -> bool:
         if isinstance(value, str):
             normalized = value.strip().lower()
@@ -273,9 +340,7 @@ class WebUIGroupEditor:
             return inferred_group_id
         return normalize_stable_group_id(f"group_{index}")
 
-    def _group_identifiers(
-        self, raw_group: dict[str, Any], index: int
-    ) -> set[str]:
+    def _group_identifiers(self, raw_group: dict[str, Any], index: int) -> set[str]:
         identifiers = {self._group_identifier(raw_group, index)}
         name = str(raw_group.get("name") or "").strip()
         if name:
