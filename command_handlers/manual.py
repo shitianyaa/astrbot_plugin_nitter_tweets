@@ -69,7 +69,9 @@ class ManualCommandMixin:
             self.nitter.begin_run_host_skip()
         try:
             try:
-                instance, tweets = await self.nitter.fetch_tweets(username, limit)
+                instance, tweets = await self.nitter.fetch_tweets(
+                    username, limit, filter_reposts=False
+                )
             except Exception as exc:
                 logger.warning(f"[NitterTweets] 手动获取 @{username} 推文失败: {exc}")
                 instance, tweets = await self._fetch_user_with_html_fallback(
@@ -291,7 +293,7 @@ class ManualCommandMixin:
 
         try:
             instance, tweets = await self.nitter.fetch_tweets_from_instance(
-                instance_text, username, limit
+                instance_text, username, limit, filter_reposts=False
             )
         except Exception as exc:
             logger.warning(

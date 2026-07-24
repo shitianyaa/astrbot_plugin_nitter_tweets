@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- 转推过滤：`/推文`/`/镜像测试` 固定不过滤；`/推文搜索` 与标签分组定时固定过滤纯转推（无配置项）；博主分组仍用 filter_reposts_enabled。
+- OneBot 合并转发遇到 retcode 1200 / res_id 失败时，自动拆成更小段重试；仅对未送达段降级直发（再失败则纯文本），避免半成功整包重复发送。
+- 配置文案：去掉 send_video_attachments「不太成熟/还在优化」表述，改为默认关闭与能力说明。
 - 修复发送层 hide_original/link_style 接线：adapter 接受 hide；UMO 直发/合并转发关键字透传；避免 link_style 位置参数错位导致 Telegram markdown 丢失。
 - 推文布局：Telegram 首行改为 [@作者](链接)；正文/译文始终剥离内嵌 URL；空正文占位；有译文时翻译块在原文前。
 - 分组开关 hide_original_when_translated：有 AI 译文时只发翻译、隐藏原文；无译文仍发原文。修复搜索会话缓冲假空文案，缓存命中不消耗冷却。

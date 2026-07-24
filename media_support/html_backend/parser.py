@@ -153,6 +153,39 @@ def _extract_tweet_text(chunk: str) -> str:
     return chr(10).join(kept[:12]).strip()
 
 
+
+def is_pure_retweet_chunk(chunk: str) -> bool:
+    """Best-effort pure-retweet detection for Nitter HTML timeline items.
+
+    Do not use footer action icons (icon-retweet) — every tweet has a retweet button.
+    Prefer retweet-header / retweeted-by text in the region before tweet body.
+    """
+    if not chunk:
+        return False
+    # Nitter puts retweet-header *inside* tweet-body, before tweet-content.
+    # Only cut at tweet-content (not tweet-body), else pure-RT headers are missed.
+    low = chunk.lower()
+    cut = len(chunk)
+    for marker in (
+        'class="tweet-content',
+        "class='tweet-content",
+    ):
+        idx = low.find(marker)
+        if idx != -1:
+            cut = min(cut, idx)
+    head = chunk[: min(cut, 2500)]
+
+    if re.search(r'class="[^"]*retweet-header[^"]*"', head, re.I):
+        return True
+    if re.search(r"class='[^']*retweet-header[^']*'", head, re.I):
+        return True
+    if re.search(r"retweeted\s+by", head, re.I):
+        return True
+    if re.search(r"(转推了|转推自)", head[:800]):
+        return True
+    return False
+
+
 def parse_timeline_html(html: str, instance: str, *, source: str = "") -> TimelinePage:
     del source  # plugin TweetItem has no source field; keep API compatible
     if "timeline-item" not in html:
@@ -189,6 +222,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
                 link=link,
                 published=published,
                 media=_extract_media(chunk, instance),
+                is_retweet=is_pure_retweet_chunk(chunk),
             )
         )
     return TimelinePage(
@@ -204,6 +238,7 @@ __all__ = [
     "clean_html_text",
     "extract_next_cursor",
     "normalize_query",
+    "is_pure_retweet_chunk",
     "parse_timeline_html",
     "prefer_orig_pbs",
     "query_kind",

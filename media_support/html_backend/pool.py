@@ -246,6 +246,9 @@ class HtmlNitterPool:
                 body = self._get_html(base, path)
                 page = parse_timeline_html(body.decode("utf-8", "replace"), base)
             for t in page.tweets:
+                # /推文搜索 + tag schedule: always drop pure retweets (no user toggle).
+                if getattr(t, "is_retweet", False):
+                    continue
                 k = t.status_id or t.link
                 if k in seen:
                     continue
