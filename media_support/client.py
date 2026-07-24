@@ -330,9 +330,13 @@ class NitterClient:
         username: str,
         limit: int,
         skip_plain_text: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         instance, tweets, _ = await self.fetch_tweets_with_stats(
-            username, limit, skip_plain_text=skip_plain_text
+            username,
+            limit,
+            skip_plain_text=skip_plain_text,
+            filter_reposts=filter_reposts,
         )
         return instance, tweets
 
@@ -341,6 +345,7 @@ class NitterClient:
         username: str,
         limit: int,
         skip_plain_text: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem], int]:
         return await self._fetch_tweets_with_stats_from_instances(
             username,
@@ -348,6 +353,7 @@ class NitterClient:
             self.instances,
             skip_plain_text=skip_plain_text,
             retry_attempts=self.retry_attempts,
+            filter_reposts=filter_reposts,
         )
 
     async def fetch_tweets_with_stats_from_instances(
@@ -492,6 +498,7 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
         total_retry_attempts_per_instance: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem], int]:
         """Try instances in order until one returns RSS items or tweets.
 
@@ -514,6 +521,7 @@ class NitterClient:
                     skip_plain_text,
                     retry_attempts,
                     total_retry_attempts_per_instance,
+                    filter_reposts,
                 )
             except Exception as exc:
                 errors.append(f"{instance}: {exc}")
@@ -576,11 +584,16 @@ class NitterClient:
         username: str,
         limit: int,
         skip_plain_text: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         normalized = load_instances([instance])[0]
         result = await asyncio.to_thread(
             self._fetch_from_instance,
-            normalized, username, limit, skip_plain_text,
+            normalized,
+            username,
+            limit,
+            skip_plain_text,
+            filter_reposts=filter_reposts,
         )
         if not result.tweets and not result.saw_items:
             raise RuntimeError(f"{normalized}: empty feed")
@@ -613,6 +626,7 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
         total_retry_attempts_per_instance: bool = False,
+        filter_reposts: bool | None = None,
     ) -> InstanceFetchResult:
         if limit <= 0:
             return InstanceFetchResult([])
@@ -661,7 +675,7 @@ class NitterClient:
             saw_items = True
             plain_text_filtered_total += page.plain_text_filtered
             page_tweets, page_filtered_reposts = self._filter_reposts(
-                page.tweets, username
+                page.tweets, username, enabled=filter_reposts
             )
             # 本页 RSS 有 item 但全被过滤（纯文本或转发），过滤后 page_tweets 为空
             page_all_filtered = (
@@ -847,9 +861,14 @@ class NitterClient:
         )
 
     def _filter_reposts(
-        self, tweets: list[TweetItem], username: str,
+        self,
+        tweets: list[TweetItem],
+        username: str,
+        *,
+        enabled: bool | None = None,
     ) -> tuple[list[TweetItem], int]:
-        if not self.filter_reposts_enabled:
+        use = self.filter_reposts_enabled if enabled is None else bool(enabled)
+        if not use:
             return tweets, 0
 
         kept: list[TweetItem] = []

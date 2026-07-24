@@ -37,6 +37,7 @@ class TweetItem:
     media_warnings: list[str] = field(default_factory=list)
     ai_warnings: list[str] = field(default_factory=list)
     translation: str = ""
+    is_retweet: bool = False
 
     @property
     def status_id(self) -> str:

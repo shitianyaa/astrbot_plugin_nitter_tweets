@@ -77,6 +77,9 @@ class TweetSender:
         "napcat",
     }
     FORWARD_TWEET_CHUNK_SIZE = 8
+    # When NapCat/OneBot rejects a forward (often retcode 1200 / res_id fail),
+    # recursively split the tweet list and retry smaller merges.
+    FORWARD_SPLIT_MIN_TWEETS = 1
     UNCERTAIN_DELIVERY_WARNING = "发送状态不确定，已跳过降级重试。"
 
     def __init__(self, config=None):
@@ -259,15 +262,93 @@ class TweetSender:
                     f"[NitterTweets] 发送去除视频的合并转发节点失败: {exc}"
                 )
 
+        last_exc: Exception | None = None
         try:
-            return await self._send_onebot_forward(event, raw_nodes)
+            if await self._send_onebot_forward(event, raw_nodes):
+                return True
+            logger.warning(
+                f"[NitterTweets] 发送 OneBot 合并转发消息失败: action returned false "
+                f"(tweets={len(tweets)}, target={self._event_target(event)})"
+            )
         except Exception as exc:
+            last_exc = exc
             if self._is_uncertain_delivery_error(exc):
                 self._log_uncertain_delivery(
                     "manual OneBot forward fallback", self._event_target(event), exc
                 )
                 return True
             logger.warning(f"[NitterTweets] 发送 OneBot 合并转发消息失败: {exc}")
+
+        # retcode 1200 / res_id fail / explicit false: split smaller merges then retry.
+        # false return (no exception) is treated as payload reject so we can split.
+        should_split = last_exc is None or self._is_forward_payload_rejected_error(
+            last_exc
+        )
+        remaining = tweets
+        remaining_index = tweet_start_index
+        remaining_notices = notices
+        if should_split:
+            parts = self._split_tweets_for_forward_retry(tweets)
+            if parts:
+                logger.info(
+                    f"[NitterTweets] 合并转发失败，拆成 {len(parts)} 段重试 "
+                    f"(tweets={len(tweets)}, target={self._event_target(event)})"
+                )
+                index = tweet_start_index
+                for offset, part in enumerate(parts):
+                    part_ok = await self._send_event_forward_chunk(
+                        event,
+                        username,
+                        instance,
+                        part,
+                        notices=notices if offset == 0 else None,
+                        tweet_start_index=index,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    if not part_ok:
+                        # Never re-send already-delivered parts as a full-batch fallback.
+                        remaining = []
+                        for later in parts[offset:]:
+                            remaining.extend(later)
+                        remaining_index = index
+                        remaining_notices = notices if offset == 0 else None
+                        break
+                    index += len(part)
+                else:
+                    return True
+
+        if not remaining:
+            return False
+
+        # Final fallback: direct send only the undelivered remainder.
+        logger.info(
+            f"[NitterTweets] 合并转发仍失败，降级直发 "
+            f"(tweets={len(remaining)}/{len(tweets)}, "
+            f"target={self._event_target(event)})"
+        )
+        try:
+            return await self._delivery_adapter_for_event(event).send_event(
+                event,
+                username,
+                instance,
+                remaining,
+                notices=remaining_notices,
+                tweet_start_index=remaining_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
+            )
+        except Exception as exc:
+            if self._is_uncertain_delivery_error(exc):
+                self._log_uncertain_delivery(
+                    "manual direct after forward fail", self._event_target(event), exc
+                )
+                return True
+            logger.warning(f"[NitterTweets] 合并转发降级直发仍失败: {exc}")
             return False
 
     async def send_to_umo(
@@ -516,7 +597,104 @@ class TweetSender:
                 )
             attempt = attempt_nv
 
-        fallback = await self._send_context_message(
+        # Only split on explicit payload reject (retcode 1200 / res_id).
+        # Other retryable errors (timeout/network) fall through to plain text.
+        reject = bool(attempt.error) and self._is_forward_payload_rejected_error(
+            Exception(str(attempt.error))
+        )
+        remaining = tweets
+        remaining_index = tweet_start_index
+        remaining_header = header_text
+        remaining_summary = batch_summary
+        any_part_sent = False
+        if reject:
+            parts = self._split_tweets_for_forward_retry(tweets)
+            if parts:
+                logger.info(
+                    f"[NitterTweets] 定时合并转发失败，拆成 {len(parts)} 段重试 "
+                    f"(tweets={len(tweets)}, target={umo})"
+                )
+                index = tweet_start_index
+                for offset, part in enumerate(parts):
+                    part_outcome = await self._send_forward_chunk_to_umo(
+                        context,
+                        umo,
+                        username,
+                        instance,
+                        part,
+                        group_label=group_label,
+                        header_text=header_text if offset == 0 else "",
+                        batch_summary=batch_summary if offset == 0 else "",
+                        tweet_start_index=index,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    if not part_outcome.success:
+                        remaining = []
+                        for later in parts[offset:]:
+                            remaining.extend(later)
+                        remaining_index = index
+                        remaining_header = header_text if offset == 0 else ""
+                        remaining_summary = batch_summary if offset == 0 else ""
+                        break
+                    any_part_sent = True
+                    index += len(part)
+                else:
+                    return SendOutcome(
+                        success=True,
+                        error=attempt.error,
+                        delivery_status=(
+                            "partial_failed" if attempt.error else "success"
+                        ),
+                        delivery_error=attempt.error,
+                    )
+
+        if not remaining:
+            return SendOutcome(
+                success=False,
+                error=attempt.error or "forward split produced empty remainder",
+                delivery_status="failed",
+                delivery_error=attempt.error or "",
+            )
+
+        # Prefer media-capable direct send for undelivered remainder only.
+        # If any split part already delivered, never re-send the full batch.
+        logger.info(
+            f"[NitterTweets] 定时合并转发仍失败，降级直发 "
+            f"(tweets={len(remaining)}/{len(tweets)}, target={umo})"
+        )
+        fallback = await self._send_direct_to_umo(
+            context,
+            umo,
+            username,
+            instance,
+            remaining,
+            group_label=group_label,
+            header_text=remaining_header,
+            batch_summary=remaining_summary,
+            tweet_start_index=remaining_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
+        )
+        if fallback.success:
+            return SendOutcome(
+                success=True,
+                error=attempt.error or fallback.error,
+                warning=fallback.warning,
+                delivery_status=(
+                    "partial_failed"
+                    if attempt.error or fallback.error or any_part_sent
+                    else "success"
+                ),
+                delivery_error=attempt.error or fallback.error or "",
+            )
+
+        # Second-level: plain text (lighter payload) for remainder only.
+        plain = await self._send_context_message(
             context,
             umo,
             MessageChain(
@@ -525,11 +703,11 @@ class TweetSender:
                         self.renderer.format_plain(
                             username,
                             instance,
-                            tweets,
-                            start_index=tweet_start_index,
+                            remaining,
+                            start_index=remaining_index,
                             group_label=group_label,
-                            header_text=header_text,
-                            batch_summary=batch_summary,
+                            header_text=remaining_header,
+                            batch_summary=remaining_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
                             hide_original_when_translated=hide_original_when_translated,
@@ -538,20 +716,30 @@ class TweetSender:
                     )
                 ]
             ),
-            "scheduled tweet fallback",
+            "scheduled tweet plain fallback",
         )
+        plain_ok = plain.success or plain.uncertain
+        # Do not mark whole-batch success when only some split parts arrived:
+        # scheduler would advance seen and permanently drop the remainder.
+        # Prefer possible re-push of the first part over silent loss.
+        if plain_ok:
+            return SendOutcome(
+                success=True,
+                error=attempt.error or plain.error or fallback.error,
+                warning=plain.warning or fallback.warning,
+                delivery_status=(
+                    "partial_failed"
+                    if attempt.error or plain.error or fallback.error or any_part_sent
+                    else "success"
+                ),
+                delivery_error=attempt.error or plain.error or fallback.error or "",
+            )
         return SendOutcome(
-            success=fallback.success or fallback.uncertain,
-            error=fallback.error or attempt.error,
-            warning=fallback.warning,
-            delivery_status=(
-                "partial_failed"
-                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
-                else "success"
-            ),
-            delivery_error=(attempt.error or fallback.error)
-            if (fallback.success or fallback.uncertain)
-            else "",
+            success=False,
+            error=plain.error or fallback.error or attempt.error,
+            warning=plain.warning or fallback.warning,
+            delivery_status="failed",
+            delivery_error=plain.error or fallback.error or attempt.error or "",
         )
 
     async def send_merged_to_umo(
@@ -1325,6 +1513,40 @@ class TweetSender:
 
     def _should_chunk_forward_tweets(self, tweet_count: int) -> bool:
         return tweet_count > self.FORWARD_TWEET_CHUNK_SIZE
+
+    @classmethod
+    def _is_forward_payload_rejected_error(cls, exc: Exception | None) -> bool:
+        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200)."""
+        if exc is None:
+            return False
+        if ActionFailed is not None and isinstance(exc, ActionFailed):
+            retcode = getattr(exc, "retcode", None)
+            try:
+                if int(retcode) == 1200:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        text = str(exc or "")
+        lowered = text.lower()
+        if "retcode=1200" in lowered or "retcode': 1200" in lowered:
+            return True
+        if "res_id" in lowered and ("失败" in text or "fail" in lowered):
+            return True
+        if "发送转发消息" in text and "失败" in text:
+            return True
+        return False
+
+    def _split_tweets_for_forward_retry(
+        self, tweets: list[TweetItem]
+    ) -> list[list[TweetItem]] | None:
+        if len(tweets) <= self.FORWARD_SPLIT_MIN_TWEETS:
+            return None
+        mid = max(1, len(tweets) // 2)
+        left = tweets[:mid]
+        right = tweets[mid:]
+        if not left or not right:
+            return None
+        return [left, right]
 
     @staticmethod
     async def _send_chunked_bool(chunks, send_chunk) -> bool:
