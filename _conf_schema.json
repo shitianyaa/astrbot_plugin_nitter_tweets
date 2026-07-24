@@ -230,6 +230,12 @@
         "type": "text",
         "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
         "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。"
+      },
+      "show_original_when_translated": {
+        "description": "有译文时显示原文",
+        "type": "bool",
+        "default": true,
+        "hint": "全局开关。关闭后：手动与定时在存在 AI 译文时只发译文、隐藏原文（QQ/Telegram/Lark 等平台一致）。开启时：定时分组仍可用分组项「有翻译时只发译文」单独隐藏。无译文时始终显示原文。仅媒体模式不调用翻译，本项无效。"
       }
     }
   },
@@ -287,6 +293,12 @@
         "default": 2.0,
         "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
       },
+      "manual_send_interval": {
+        "description": "手动命令逐条发送间隔秒数",
+        "type": "float",
+        "default": 0.0,
+        "hint": "手动 /推文、/推文搜索、/镜像测试 在非合并转发时，每条推文消息之间的等待秒数。0 表示不间隔。在平台适配前 sleep，对 QQ/Telegram/Lark/微信 OC 等均生效。合并转发整包发送时不使用本项。范围 0-60。"
+      },
       "watch_users": {
         "description": "旧版关注账号列表",
         "type": "list",
@@ -305,7 +317,7 @@
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。",
+        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时功能。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -383,7 +395,7 @@
                         "description": "有翻译时只发译文（隐藏原文）",
                         "type": "bool",
                         "default": false,
-                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
                     },
 
               "aliases": {
@@ -440,7 +452,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示。风险提示：若 Bot 使用私人 QQ 号登录，不建议启用标签分组定时搜索/推送。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -452,7 +464,8 @@
               "enabled": {
                 "description": "启用分组",
                 "type": "bool",
-                "default": true
+                "default": true,
+                "hint": "使用私人 QQ 号作为 Bot 时，建议不要开启标签分组（定时搜索与推送较频繁，有封号风险）。"
               },
               "group_type": {
                 "description": "分组类型",
@@ -465,7 +478,7 @@
                 "description": "搜索订阅",
                 "type": "list",
                 "default": [],
-                "hint": "每项建议为对象：query + type(tag|phrase)。也可写字符串：#标签 或 短语。前导 # 为标签；短语禁止自动加 #。"
+                "hint": "每行一个纯字符串：#标签 或短语。前导 # 为标签搜索，否则为短语（不会自动加 #）。不要填对象，否则 WebUI 会显示 [object Object]。也可用插件 Dashboard 管理。定时每查询约拉一页最多 20 条，过滤纯转推与已 seen 后发送全部新帖。"
               },
               "push_targets": {
                 "description": "分组推送目标",
@@ -507,7 +520,7 @@
                         "description": "有翻译时只发译文（隐藏原文）",
                         "type": "bool",
                         "default": false,
-                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
                     },
 
               "aliases": {
@@ -792,6 +805,12 @@
     "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。",
     "invisible": true
   },
+  "show_original_when_translated": {
+    "description": "有译文时显示原文",
+    "type": "bool",
+    "default": true,
+    "invisible": true
+  },
   "schedule_enabled": {
     "description": "启用定时检查",
     "type": "bool",
@@ -897,6 +916,12 @@
     "type": "float",
     "default": 2.0,
     "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。",
+    "invisible": true
+  },
+  "manual_send_interval": {
+    "description": "手动命令逐条发送间隔秒数",
+    "type": "float",
+    "default": 0.0,
     "invisible": true
   },
   "watch_users": {

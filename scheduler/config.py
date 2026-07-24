@@ -244,10 +244,10 @@ class SchedulerConfigReader:
             group = by_id.get(gid)
             if group is None:
                 continue
-            healed = [
-                {"query": item.query, "type": item.type}
-                for item in group.queries_info.queries
-            ]
+            # Persist plain strings so AstrBot WebUI list fields do not show
+            # "[object Object]" (list items are string-only in the schema UI).
+            # Type remains recoverable: leading # => tag, else phrase.
+            healed = [item.query for item in group.queries_info.queries]
             if raw.get("watch_queries") != healed:
                 raw["watch_queries"] = healed
                 changed_any = True
@@ -494,7 +494,9 @@ class SchedulerConfigReader:
             if isinstance(raw, dict):
                 query_raw = str(raw.get("query") or raw.get("q") or "").strip()
                 type_hint = str(raw.get("type") or raw.get("kind") or "").strip()
-                display = query_raw or str(raw)
+                display = query_raw or "(object)"
+                # Object form is accepted for runtime, but disk prefers strings.
+                changed = True
             else:
                 query_raw = str(raw).strip()
                 type_hint = ""
@@ -502,20 +504,21 @@ class SchedulerConfigReader:
             if not query_raw and not display:
                 continue
             raw_count += 1
+            # AstrBot list UI stringifies dicts as this literal; drop & re-enter.
+            if query_raw.casefold() in {"[object object]", "object object"}:
+                invalid_entries.append("[object Object]（请重新填写 #标签 或短语）")
+                changed = True
+                continue
             if not query_raw:
                 invalid_entries.append(display)
+                changed = True
                 continue
             query, kind = normalize_watch_query(query_raw, type_hint or None)
             if not query:
                 invalid_entries.append(display)
                 continue
-            if isinstance(raw, dict):
-                if str(raw.get("type") or "").strip().lower() != kind:
-                    changed = True
-                if str(raw.get("query") or "").strip() != query:
-                    changed = True
-            else:
-                # Bare strings always need {query, type} on disk.
+            # Prefer plain-string persistence for schema UI compatibility.
+            if not isinstance(raw, str) or raw.strip() != query:
                 changed = True
             account_key = seen_account_key_for_query(query)
             if account_key in seen_keys:

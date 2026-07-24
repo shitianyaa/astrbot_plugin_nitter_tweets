@@ -314,11 +314,13 @@ class WebUIGroupEditor:
             return "tag"
         return "blogger"
 
-    def _normalized_watch_queries(self, raw_values: Any) -> list[dict[str, str]]:
+    def _normalized_watch_queries(self, raw_values: Any) -> list[str]:
         info = self.scheduler.config_reader.parse_watch_queries(raw_values)
         if info.invalid_entries:
             raise ValueError("搜索订阅无效：" + ", ".join(info.invalid_entries[:5]))
-        return [{"query": item.query, "type": item.type} for item in info.queries]
+        # Store plain strings (not {query,type} objects) so AstrBot WebUI list
+        # fields do not render as "[object Object]". Type is inferred from #.
+        return [item.query for item in info.queries]
 
     @staticmethod
     def _bool(value: Any) -> bool:

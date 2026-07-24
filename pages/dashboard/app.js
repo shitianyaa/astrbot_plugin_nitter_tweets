@@ -489,8 +489,48 @@ function historyDeliveryStatus(row) {
   return el("span", { className: "badge ok", text: "已送达" });
 }
 
+function formatWatchQueryLabel(item) {
+  if (item == null || item === "") return "";
+  if (typeof item === "string") return item;
+  if (typeof item === "object") {
+    const query = String(item.query || item.q || "").trim();
+    const type = String(item.type || item.kind || "").trim();
+    if (query && type) return `${query} (${type})`;
+    if (query) return query;
+    return "";
+  }
+  return String(item);
+}
+
+function normalizeWatchQueryItem(item) {
+  if (item == null || item === "") return null;
+  if (typeof item === "string") {
+    const query = item.trim();
+    if (!query || query.toLowerCase() === "[object object]") return null;
+    return {
+      query,
+      type: query.startsWith("#") ? "tag" : "phrase",
+    };
+  }
+  if (typeof item === "object") {
+    const query = String(item.query || item.q || "").trim();
+    if (!query || query.toLowerCase() === "[object object]") return null;
+    const typeRaw = String(item.type || item.kind || "").trim().toLowerCase();
+    const type =
+      typeRaw === "tag" || typeRaw === "phrase"
+        ? typeRaw
+        : query.startsWith("#")
+          ? "tag"
+          : "phrase";
+    return { query, type };
+  }
+  return null;
+}
+
 function compactList(values, empty = "无") {
-  const list = Array.isArray(values) ? values.filter(Boolean) : [];
+  const list = Array.isArray(values)
+    ? values.map((item) => formatWatchQueryLabel(item) || String(item || "")).filter(Boolean)
+    : [];
   if (!list.length) {
     return el("span", { className: "muted", text: empty });
   }
@@ -601,7 +641,9 @@ function buildWatchUserSection(group) {
 }
 
 function buildWatchQuerySection(group, draft) {
-  const queries = Array.isArray(draft.watch_queries) ? draft.watch_queries : [];
+  const queries = Array.isArray(draft.watch_queries)
+    ? draft.watch_queries.map(normalizeWatchQueryItem).filter(Boolean)
+    : [];
   const list = el("div", { className: "chip-list" });
   if (!queries.length) {
     list.appendChild(el("span", { className: "muted", text: "空" }));
@@ -622,7 +664,7 @@ function buildWatchQuerySection(group, draft) {
             },
             disabled: state.loading || state.actionBusy,
           },
-          `${item.query} (${item.type})`,
+          formatWatchQueryLabel(item),
         ),
       ),
     );
@@ -640,6 +682,10 @@ function buildWatchQuerySection(group, draft) {
     el("p", {
       className: "helper-text",
       text: "前导 # 为标签；否则为短语。不会自动给短语加 #。",
+    }),
+    el("p", {
+      className: "helper-text",
+      text: "风险提示：使用私人 QQ 号作为 Bot 时，不建议开启标签分组定时功能。",
     }),
     el("div", { className: "input-with-actions" }, [
       editorField("添加查询", queryInput),
@@ -834,10 +880,9 @@ function snapshotEditableGroup(group) {
     omit_status_url: group.omit_status_url !== false,
     hide_original_when_translated: !!group.hide_original_when_translated,
     push_targets: [...(group.push_targets || [])],
-    watch_queries: (group.watch_queries || []).map((item) => ({
-      query: item.query || "",
-      type: item.type || "phrase",
-    })),
+    watch_queries: (group.watch_queries || [])
+      .map(normalizeWatchQueryItem)
+      .filter(Boolean),
   };
 }
 
@@ -1209,7 +1254,7 @@ function renderGroupEditor() {
       ),
       el("p", {
         className: "helper-text",
-        text: "开启后：存在译文时隐藏原文块，仅发送翻译；无译文时仍显示原文。仅媒体模式不调用翻译。",
+        text: "分组级：存在译文时隐藏原文。若全局「有译文时显示原文」已关闭，则始终隐藏。无译文时仍显示原文。仅媒体模式不调用翻译。",
       }),
 
       el("p", {
@@ -1852,6 +1897,10 @@ function createGroup() {
     el("p", {
       className: "helper-text",
       text: "类型创建后不可修改。博主分组跟用户；标签分组跟搜索订阅（#标签 或短语）。",
+    }),
+    el("p", {
+      className: "helper-text",
+      text: "风险提示：若 Bot 使用私人 QQ 号，不建议创建或启用标签分组（定时搜索/推送较频繁，有封号风险）。",
     }),
   ]);
   openConfirm({

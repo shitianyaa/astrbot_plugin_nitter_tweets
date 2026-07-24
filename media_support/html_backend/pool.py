@@ -66,6 +66,8 @@ class HtmlNitterPool:
         )
         self.gates = GateKeeper(self.session, log=self.log)
         self.instances = [self._norm(u) for u in config.instances if str(u).strip()]
+        # Round-robin start so retries do not always hammer the first mirror.
+        self._rr_index = 0
 
     @staticmethod
     def _norm(url: str) -> str:
@@ -86,6 +88,43 @@ class HtmlNitterPool:
                 continue
             ready.append(base)
         return ready or list(self.instances)
+
+    def _hosts_for_rotation(self, instance: str | None = None) -> list[str]:
+        """Ordered hosts for multi-mirror retry (ready first, then cooling).
+
+        Explicit ``instance`` (mirror probe) stays single-host. Pool searches
+        rotate the start index so each call prefers the next mirror, and on
+        failure always continues through the remaining list.
+        """
+        if instance and str(instance).strip():
+            base = self._norm(str(instance).strip())
+            return [base] if base else self._hosts_for_rotation(None)
+
+        all_hosts = list(self.instances)
+        if not all_hosts:
+            return []
+
+        ready: list[str] = []
+        cooling: list[str] = []
+        for base in all_hosts:
+            host = self.session.host_of(base)
+            if self.limiter.is_cooling(host):
+                cooling.append(base)
+                self.log(
+                    f"defer cooling {host} "
+                    f"remain={self.limiter.cooldown_remaining(host):.0f}s"
+                )
+            else:
+                ready.append(base)
+
+        # Prefer ready mirrors; still try cooling ones after ready failures.
+        ordered = ready + cooling if ready else list(all_hosts)
+        if len(ordered) <= 1:
+            return ordered
+
+        start = self._rr_index % len(ordered)
+        self._rr_index = (self._rr_index + 1) % max(1, len(ordered))
+        return ordered[start:] + ordered[:start]
 
     def _get_html(self, base: str, path: str) -> bytes:
         host = self.session.host_of(base)
@@ -129,16 +168,31 @@ class HtmlNitterPool:
     ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
-        hosts = self._hosts_for_probe(instance)
-        for base in hosts:
+        hosts = self._hosts_for_rotation(instance)
+        total = len(hosts)
+        for index, base in enumerate(hosts, 1):
+            host = self.session.host_of(base)
             try:
+                self.log(f"user try {index}/{total} host={host} user={user}")
                 tweets = self._paginate_user(base, user, limit)
                 if tweets:
+                    if index > 1:
+                        self.log(
+                            f"user ok after rotate host={host} "
+                            f"tried={index}/{total}"
+                        )
                     return base, tweets[:limit]
                 errors.append(f"{base}: empty")
+                self.log(
+                    f"user empty host={host}, rotate next "
+                    f"({index}/{total})"
+                )
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{base}: {exc}")
-                self.log(f"user fail {base}: {exc}")
+                self.log(
+                    f"user fail host={host}, rotate next "
+                    f"({index}/{total}): {exc}"
+                )
         raise RuntimeError("HTML user failed: " + "; ".join(errors[-4:]))
 
     def search(
@@ -157,28 +211,41 @@ class HtmlNitterPool:
         if resolved not in {"tag", "phrase"}:
             resolved = query_kind(q)
         errors: list[str] = []
-        hosts = self._hosts_for_probe(instance)
-        for base in hosts:
+        hosts = self._hosts_for_rotation(instance)
+        total = len(hosts)
+        for index, base in enumerate(hosts, 1):
+            host = self.session.host_of(base)
             try:
+                self.log(
+                    f"search try {index}/{total} host={host} "
+                    f"query={q!r} kind={resolved}"
+                )
                 tweets = self._paginate_search(
                     base, q, limit, kind=resolved, max_pages=max_pages
                 )
                 if tweets:
+                    if index > 1:
+                        self.log(
+                            f"search ok after rotate host={host} "
+                            f"tried={index}/{total}"
+                        )
                     return base, tweets[:limit]
                 errors.append(f"{base}: empty")
+                self.log(
+                    f"search empty host={host}, rotate next "
+                    f"({index}/{total})"
+                )
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{base}: {exc}")
-                self.log(f"search fail {base}: {exc}")
+                self.log(
+                    f"search fail host={host}, rotate next "
+                    f"({index}/{total}): {exc}"
+                )
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
 
     def _hosts_for_probe(self, instance: str | None) -> list[str]:
-        """Prefer a single normalized host when probing; else ready pool order."""
-        if not instance or not str(instance).strip():
-            return self._hosts_ready()
-        base = self._norm(str(instance).strip())
-        if not base:
-            return self._hosts_ready()
-        return [base]
+        """Backward-compatible alias for mirror probe / single-host selection."""
+        return self._hosts_for_rotation(instance)
 
     def _paginate_user(self, base: str, user: str, limit: int) -> list[TweetItem]:
         tweets: list[TweetItem] = []

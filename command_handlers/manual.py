@@ -10,6 +10,10 @@ from astrbot.core.star.filter.command import GreedyStr
 
 try:
     from ..ai import format_ai_tweet_summary
+    from ..config import (
+        resolve_hide_original_when_translated,
+        resolve_manual_send_interval,
+    )
     from ..media_support.search_session_buffer import (
         MAX_FETCH_CAP,
         MAX_PAGES_PER_FILL,
@@ -18,6 +22,10 @@ try:
     from ..shared import normalize_username, safe_call
 except ImportError:
     from ai import format_ai_tweet_summary
+    from config import (
+        resolve_hide_original_when_translated,
+        resolve_manual_send_interval,
+    )
     from media_support.search_session_buffer import (
         MAX_FETCH_CAP,
         MAX_PAGES_PER_FILL,
@@ -321,6 +329,7 @@ class ManualCommandMixin:
         instance: str,
         tweets,
     ) -> None:
+        hide_original = resolve_hide_original_when_translated(self.config)
         if self.sender.should_merge_for_event(event, len(tweets)):
             notices = []
             try:
@@ -340,14 +349,19 @@ class ManualCommandMixin:
                     instance,
                     tweets,
                     notices=self._dedupe_texts(notices),
+                    hide_original_when_translated=hide_original,
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, tweets)
             return
 
+        # Sequential path: interval applies to all platforms before adapter send.
+        send_interval = resolve_manual_send_interval(self.config)
         sent_notices: set[str] = set()
         total = len(tweets)
         for index, tweet in enumerate(tweets, 1):
+            if index > 1 and send_interval > 0:
+                await asyncio.sleep(send_interval)
             try:
                 notices = await self._prepare_manual_tweets(
                     [tweet],
@@ -365,6 +379,7 @@ class ManualCommandMixin:
                     [tweet],
                     notices=notices,
                     tweet_start_index=1,
+                    hide_original_when_translated=hide_original,
                 )
             finally:
                 await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
@@ -419,6 +434,7 @@ class ManualCommandMixin:
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        hide_original_when_translated: bool = False,
     ) -> None:
         notices = notices or []
         if await self.sender.send(
@@ -429,6 +445,7 @@ class ManualCommandMixin:
             notices=notices,
             header_text=header_text,
             tweet_start_index=tweet_start_index,
+            hide_original_when_translated=hide_original_when_translated,
         ):
             return
         fallback_text = self.sender.renderer.format_plain(
@@ -438,6 +455,7 @@ class ManualCommandMixin:
             start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
+            hide_original_when_translated=hide_original_when_translated,
         )
         try:
             await event.send(MessageChain([Plain(fallback_text)]))
