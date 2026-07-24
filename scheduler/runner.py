@@ -27,6 +27,7 @@ try:
         configured_merge_tweet_threshold,
         media_only_unavailable_reason,
         migrate_default_group_config,
+        resolve_hide_original_when_translated,
     )
     from ..ai import (
         TranslationReport,
@@ -73,6 +74,7 @@ except ImportError:
         configured_merge_tweet_threshold,
         media_only_unavailable_reason,
         migrate_default_group_config,
+        resolve_hide_original_when_translated,
     )
     from ai import (
         TranslationReport,
@@ -746,7 +748,12 @@ class NitterTweetScheduler:
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
                             omit_status_url=bool(getattr(group, 'omit_status_url', True)),
-                    hide_original_when_translated=bool(getattr(group, "hide_original_when_translated", False)),
+                    hide_original_when_translated=resolve_hide_original_when_translated(
+                        self.config,
+                        group_hide=bool(
+                            getattr(group, "hide_original_when_translated", False)
+                        ),
+                    ),
                             tweet_index=len(new_tweets),
                             tweet_total=len(new_tweets),
                         )

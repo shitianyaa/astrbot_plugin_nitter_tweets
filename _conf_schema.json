@@ -230,6 +230,12 @@
         "type": "text",
         "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
         "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。"
+      },
+      "show_original_when_translated": {
+        "description": "有译文时显示原文",
+        "type": "bool",
+        "default": true,
+        "hint": "全局开关。关闭后：手动与定时在存在 AI 译文时只发译文、隐藏原文（QQ/Telegram/Lark 等平台一致）。开启时：定时分组仍可用分组项「有翻译时只发译文」单独隐藏。无译文时始终显示原文。仅媒体模式不调用翻译，本项无效。"
       }
     }
   },
@@ -286,6 +292,12 @@
         "type": "float",
         "default": 2.0,
         "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+      },
+      "manual_send_interval": {
+        "description": "手动命令逐条发送间隔秒数",
+        "type": "float",
+        "default": 0.0,
+        "hint": "手动 /推文、/推文搜索、/镜像测试 在非合并转发时，每条推文消息之间的等待秒数。0 表示不间隔。在平台适配前 sleep，对 QQ/Telegram/Lark/微信 OC 等均生效。合并转发整包发送时不使用本项。范围 0-60。"
       },
       "watch_users": {
         "description": "旧版关注账号列表",
@@ -383,7 +395,7 @@
                         "description": "有翻译时只发译文（隐藏原文）",
                         "type": "bool",
                         "default": false,
-                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
                     },
 
               "aliases": {
@@ -508,7 +520,7 @@
                         "description": "有翻译时只发译文（隐藏原文）",
                         "type": "bool",
                         "default": false,
-                        "hint": "需开启全局 AI 翻译。仅媒体模式不调用翻译，本项无效。无译文时仍显示原文。"
+                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
                     },
 
               "aliases": {
@@ -793,6 +805,12 @@
     "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。",
     "invisible": true
   },
+  "show_original_when_translated": {
+    "description": "有译文时显示原文",
+    "type": "bool",
+    "default": true,
+    "invisible": true
+  },
   "schedule_enabled": {
     "description": "启用定时检查",
     "type": "bool",
@@ -898,6 +916,12 @@
     "type": "float",
     "default": 2.0,
     "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。",
+    "invisible": true
+  },
+  "manual_send_interval": {
+    "description": "手动命令逐条发送间隔秒数",
+    "type": "float",
+    "default": 0.0,
     "invisible": true
   },
   "watch_users": {

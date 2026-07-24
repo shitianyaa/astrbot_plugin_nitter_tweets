@@ -44,7 +44,16 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `daily_check_times`: 每日检查时间。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文（博主 RSS 与标签/HTML 路径均适用）。
 - `omit_status_url`: 发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；Telegram 用正文摘要 Markdown 链到推文。仅媒体模式不调用翻译。
+- `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
+
+全局 AI：
+
+- `show_original_when_translated`（默认 `true`）：有译文时是否显示原文；关闭则全平台隐藏原文。
+
+全局推送：
+
+- `manual_send_interval`（默认 `0`）：手动命令逐条发送间隔秒数。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 

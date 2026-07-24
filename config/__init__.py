@@ -20,8 +20,11 @@ from .compat import (
     migrate_default_group_config,
     migrate_legacy_grouped_config,
     parse_config_bool,
+    resolve_hide_original_when_translated,
+    resolve_manual_send_interval,
     resolve_send_image_attachments,
     resolve_send_video_attachments,
+    resolve_show_original_when_translated,
     sanitize_removed_feature_config,
     sanitize_removed_feature_group,
 )
@@ -48,8 +51,11 @@ __all__ = [
     "migrate_default_group_config",
     "migrate_legacy_grouped_config",
     "parse_config_bool",
+    "resolve_hide_original_when_translated",
+    "resolve_manual_send_interval",
     "resolve_send_image_attachments",
     "resolve_send_video_attachments",
+    "resolve_show_original_when_translated",
     "sanitize_removed_feature_config",
     "sanitize_removed_feature_group",
 ]

@@ -109,6 +109,7 @@ CONFIG_GROUP_BY_KEY = {
     "translate_prompt": "ai_translation",
     "translate_system_prompt": "ai_translation",
     "translate_prompt_template": "ai_translation",
+    "show_original_when_translated": "ai_translation",
     "schedule_enabled": "schedule",
     "notify_no_updates": "schedule",
     "check_on_startup": "schedule",
@@ -126,6 +127,7 @@ CONFIG_GROUP_BY_KEY = {
     "merge_scheduled_updates": "push",
     "send_target_interval": "push",
     "send_user_interval": "push",
+    "manual_send_interval": "push",
     "watch_users": "push",
     "push_targets": "push",
     "tweet_groups": "push",
@@ -165,6 +167,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "translate_max_chars",
     "translate_chinese_ratio_threshold",
     "translate_prompt",
+    "show_original_when_translated",
     "schedule_enabled",
     "notify_no_updates",
     "check_on_startup",
@@ -180,6 +183,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "merge_tweet_threshold",
     "send_target_interval",
     "send_user_interval",
+    "manual_send_interval",
     "watch_users",
     "push_targets",
     "tweet_groups",
@@ -260,6 +264,38 @@ def resolve_send_image_attachments(config) -> bool:
 def resolve_send_video_attachments(config) -> bool:
     """Resolve effective video/GIF-attachment delivery."""
     return parse_config_bool(config_get(config, "send_video_attachments", False), False)
+
+
+def resolve_show_original_when_translated(config) -> bool:
+    """Global AI toggle: show original body when a translation exists."""
+    return parse_config_bool(
+        config_get(config, "show_original_when_translated", True), True
+    )
+
+
+def resolve_hide_original_when_translated(
+    config,
+    *,
+    group_hide: bool = False,
+) -> bool:
+    """Effective hide-original flag for all platforms.
+
+    - Global ``show_original_when_translated=false`` forces hide when translated.
+    - Group ``hide_original_when_translated=true`` can still hide when global shows.
+    Renderer only hides when a translation actually exists.
+    """
+    if not resolve_show_original_when_translated(config):
+        return True
+    return bool(group_hide)
+
+
+def resolve_manual_send_interval(config) -> float:
+    """Seconds between sequential manual tweet messages (0 = no delay)."""
+    try:
+        value = float(config_get(config, "manual_send_interval", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return max(0.0, min(60.0, value))
 
 
 def media_only_unavailable_reason(

@@ -65,7 +65,7 @@
 /推文搜索 python programming 5
 ```
 
-标签请带 `#`；普通词/短语直接写，不会自动加 `#`。走 `search_instances` HTML 搜索，与 `/推文` 冷却分离（`search_cooldown_seconds`）。
+标签请带 `#`；普通词/短语直接写，不会自动加 `#`。走 `search_instances` HTML 搜索，与 `/推文` 冷却分离（`search_cooldown_seconds`）。非合并转发时可用 `manual_send_interval` 控制逐条发送间隔（默认 0）。有译文时是否显示原文由全局 `show_original_when_translated` 控制（默认显示）。
 
 ### 镜像测试
 
