@@ -429,6 +429,12 @@
                 "type": "float",
                 "default": 2.0,
                 "invisible": true
+              },
+              "max_tweets_per_check": {
+                "description": "单次检查最多推送推文数",
+                "type": "int",
+                "default": 0,
+                "hint": "单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
               }
             }
           },
@@ -554,6 +560,12 @@
                 "type": "float",
                 "default": 2.0,
                 "invisible": true
+              },
+              "max_tweets_per_check": {
+                "description": "单次检查最多推送推文数",
+                "type": "int",
+                "default": 0,
+                "hint": "单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
               }
             }
           }

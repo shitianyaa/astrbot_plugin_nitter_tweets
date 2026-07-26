@@ -151,6 +151,9 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `push_targets` | 该分组推送目标列表。 |
 | `interval_check_enabled` | 是否让该分组参与全局间隔检查；只有 `schedule_enabled` 开启后才会触发。 |
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
+| `send_target_interval` | 该分组多个目标之间的发送间隔（秒）；不设置则使用全局 `send_target_interval` 值。 |
+| `send_user_interval` | 该分组多个账号之间的发送间隔（秒）；不设置则使用全局 `send_user_interval` 值。标签分组的查询之间抓取时也按该间隔等待。 |
+| `max_tweets_per_check` | 单个账号/查询单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的推文不写 seen，下轮继续推送。 |
 | `filter_plain_text_enabled` | 是否过滤没有当前作者上传图片、视频或 GIF 的纯文本推文；只影响该分组的后台检查，手动 `/推文`、`/镜像测试` 不受影响。 |
 | `media_only_enabled` | 是否只发送作者和成功准备的图片/视频/GIF；受全局媒体类型开关和 `max_media_per_tweet` 控制。全局媒体不可用时只在 WebUI 和日志提示，并自动回退完整内容。仅媒体有效时：`policy_skipped` 允许扫描基准推进，`transient_failure` / `no_candidate` 下轮重试且不写 seen；手动命令和历史重推不受影响。 |
 
@@ -295,17 +298,17 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 ```text
 每个 watch_query / 每轮检查
-  → HTML 搜索（组内串行；默认 html_max_pages=1）
+  → HTML 搜索（组内串行，查询间按 send_user_interval 等待；默认 html_max_pages=1）
   → 上限固定 fetch_limit=20（scheduled_fetch_limit 不生效）
   → 固定丢掉纯转推
   → 可选：纯文本过滤 / 仅媒体
   → 与 seen（q:...）差集 → 只要新推文
   → 首次有可用结果仅初始化 seen，不推历史；首轮全被过滤则记录空扫描水位
-  → 新推文全部发送（没有「每轮最多 5 条」截断）
+  → 应用 max_tweets_per_check 限制（0 表示不限制）；超出上限的较旧推文标记 seen，避免下轮重复
   → 发送成功后才写 seen
 ```
 
-因此「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。
+因此「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。`max_tweets_per_check` 可避免爆发式更新时一次推送过多消息；被截断的推文已标记 seen，不会下轮重新推送。
 HTTP 层可能有 Anubis 门禁与限流。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
 **空结果与全量过滤：** 搜索走 `search_instances`（默认单站 tiekoetter）；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。

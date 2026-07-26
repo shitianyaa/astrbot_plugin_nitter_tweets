@@ -798,6 +798,28 @@ class NitterTweetScheduler:
                     )
 
                 if new_tweets:
+                    # max_tweets_per_check: keep the newest N; the excess is
+                    # marked seen (like pre-watermark history) so the advanced
+                    # scan watermark cannot silently drop it next round.
+                    max_tweets = group.max_tweets_per_check
+                    if max_tweets > 0 and len(new_tweets) > max_tweets:
+                        dropped_tweets = new_tweets[max_tweets:]
+                        new_tweets = new_tweets[:max_tweets]
+                        dropped_ids = [
+                            tweet.status_id
+                            for tweet in dropped_tweets
+                            if tweet.status_id
+                        ]
+                        if dropped_ids:
+                            seen_ids = self._merge_seen_ids(dropped_ids, seen_ids)
+                            seen_map[username] = seen_ids
+                            await self._put_seen_map(group.group_id, seen_map)
+                        self._log_verbose_info(
+                            "[NitterTweets] 定时检查超出单次推送上限，已跳过较旧推文: "
+                            f"group={group.group_id}, username={username}, "
+                            f"max={max_tweets}, skipped={len(dropped_tweets)}"
+                        )
+
                     selected_ids = {
                         tweet.status_id for tweet in new_tweets if tweet.status_id
                     }
@@ -1010,7 +1032,7 @@ class NitterTweetScheduler:
             f"{total_users} 个（配置 {total_raw_users} 项，"
             f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
-            f"全部分组已记录账号索引: {total_seen_users} 个",
+            f"全部分组已记录索引: {total_seen_users} 个",
         ]
         if default_group is not None:
             lines.append("默认分组详情:")
@@ -1096,6 +1118,9 @@ class NitterTweetScheduler:
         if group.is_tag_group or not self._should_use_concurrent_fetch(group):
             results = []
             for index, username in enumerate(accounts):
+                # Add delay between queries (except before the first one)
+                if index > 0 and group.send_user_interval > 0:
+                    await asyncio.sleep(group.send_user_interval)
                 results.append(
                     await self._fetch_group_user(
                         group,
@@ -1345,13 +1370,28 @@ class NitterTweetScheduler:
                 ),
             )
         html_backend = self.html_backend
+
+        logger.info(
+            f"[NitterTweets] 标签查询开始: group={group.group_id}, "
+            f"query={query_item.query}, type={query_item.type}, limit={fetch_limit}"
+        )
+
         try:
             instance, tweets = await asyncio.to_thread(
                 lambda: html_backend.search(
                     query_item.query, fetch_limit, kind=query_item.type
                 )
             )
+            logger.info(
+                f"[NitterTweets] 标签查询成功: group={group.group_id}, "
+                f"query={query_item.query}, instance={instance}, "
+                f"tweets={len(list(tweets))}"
+            )
         except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] 标签查询失败: group={group.group_id}, "
+                f"query={query_item.query}, error={type(exc).__name__}: {exc}"
+            )
             return UserFetchResult(
                 index=index,
                 username=account_key,
@@ -2537,7 +2577,7 @@ class NitterTweetScheduler:
             f"（无效 {len(group.invalid_targets)} 个）"
         )
         if seen_count is not None:
-            lines.append(f"  已记录账号索引: {seen_count} 个")
+            lines.append(f"  已记录索引: {seen_count} 个")
         daily_times = group.daily_check_times
         if daily_times:
             formatted_times = ", ".join(

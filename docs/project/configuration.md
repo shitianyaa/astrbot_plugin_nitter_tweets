@@ -45,6 +45,8 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `omit_status_url`: 该分组定时发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；关闭时正文/译文链接保留。Telegram 用正文摘要 Markdown 链到推文。仅媒体模式不调用翻译。
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
+- `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置。`send_user_interval` 同时用于标签组查询之间的抓取间隔。
+- `max_tweets_per_check`: 单个账号/查询单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；博主组与标签组均生效。
 
 全局 AI：
 
@@ -58,7 +60,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
-后台**标签**检查：每个 `watch_query` 走 HTML 搜索（`search_instances`），组内串行；`fetch_limit` 固定 20、默认约 1 页（`html_max_pages`）；固定滤纯转推；可选纯文本/仅媒体；与 seen（`q:...`）差集后**新帖全发**（无每轮 5 条上限）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
+后台**标签**检查：每个 `watch_query` 走 HTML 搜索（`search_instances`），组内串行、查询之间按 `send_user_interval` 等待；`fetch_limit` 固定 20、默认约 1 页（`html_max_pages`）；固定滤纯转推；可选纯文本/仅媒体；与 seen（`q:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
 
 ## 新增配置项清单
 
