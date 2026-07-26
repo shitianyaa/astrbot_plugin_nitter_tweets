@@ -143,7 +143,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 # Ordinary mode keeps the visible post accepted to avoid a
                 # duplicate text fallback. Media-only still needs real media.
                 return not media_only
-            return True
+            # 空组件时 post 与媒体重试都会返回 success；media_only 不能据此判定完成。
+            return bool(media_components(components)) or not media_only
 
         logger.warning(
             "[NitterTweets] Lark post 发送失败，降级为文本/媒体发送: "
@@ -197,7 +198,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             # Ordinary mode keeps the visible text accepted to avoid a
             # duplicate fallback. Media-only must retain its media for retry.
             return not media_only
-        return True
+        # 同上：媒体列表为空时的 success 不能让 media_only 判定完成。
+        return bool(media_components(components)) or not media_only
 
     async def send_to_umo(
         self,
@@ -288,8 +290,12 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     f"{video_attempt.error}"
                 )
             media_ok = video_attempt.success or video_attempt.uncertain
+            # 图片随 post 一起送达，视频单独发。但空组件时 send_lark_post 和
+            # send_media_with_video_retry 都会返回 success，media_only 下会出现
+            # 一条媒体都没发却判定完成、进而推进 seen 的情况。
+            has_media = bool(media_components(components))
             return SendOutcome(
-                success=media_ok or not media_only,
+                success=(media_ok and has_media) or not media_only,
                 error=(
                     video_attempt.error
                     if not media_ok
@@ -340,8 +346,11 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 f"[NitterTweets] Lark 推文文本已发送到 {umo}，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
+        # 降级路径的文本不含媒体；空媒体列表会让 send_media_with_video_retry
+        # 直接返回 success，media_only 下不能据此判定完成。
+        has_media = bool(media_components(components))
         return SendOutcome(
-            success=media_ok or not media_only,
+            success=(media_ok and has_media) or not media_only,
             error="" if media_ok else media_attempt.error,
             warning=warning,
             delivery_status=(
