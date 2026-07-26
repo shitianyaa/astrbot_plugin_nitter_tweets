@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -17,6 +18,7 @@ try:
     from ..host_score import HostScoreBook
     from .http_session import HTML_ACCEPT, HttpSession
     from .modes import GateKeeper, detect_gate
+    from ..network import UnsafeUrlError, validate_http_url
     from .parser import parse_timeline_html
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
@@ -24,6 +26,7 @@ except ImportError:  # pragma: no cover
     from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import HTML_ACCEPT, HttpSession
     from media_support.html_backend.modes import GateKeeper, detect_gate
+    from media_support.network import UnsafeUrlError, validate_http_url
     from media_support.html_backend.parser import parse_timeline_html
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
@@ -39,6 +42,29 @@ class PoolConfig:
     rate: RateLimitConfig = field(default_factory=RateLimitConfig)
     max_pages: int = 1
     filter_reposts: bool = False
+
+
+class HtmlSearchResult(list[TweetItem]):
+    """List-compatible search result carrying parser/filter statistics."""
+
+    def __init__(
+        self,
+        tweets=(),
+        *,
+        raw_item_count: int = 0,
+        retweet_filtered: int = 0,
+    ):
+        super().__init__(tweets or ())
+        self.raw_item_count = max(0, int(raw_item_count or 0))
+        self.retweet_filtered = max(0, int(retweet_filtered or 0))
+
+    def limited(self, limit: int) -> "HtmlSearchResult":
+        """Return a bounded result while retaining parser statistics."""
+        return HtmlSearchResult(
+            self[:limit],
+            raw_item_count=self.raw_item_count,
+            retweet_filtered=self.retweet_filtered,
+        )
 
 
 class HtmlNitterPool:
@@ -69,14 +95,32 @@ class HtmlNitterPool:
             log=self.log,
         )
         self.gates = GateKeeper(self.session, log=self.log)
-        self.instances = [self._norm(u) for u in config.instances if str(u).strip()]
+        self.instances = []
+        for raw in config.instances:
+            if not str(raw or "").strip():
+                continue
+            try:
+                self.instances.append(self._norm(raw))
+            except UnsafeUrlError as exc:
+                # A stale/private configured mirror must not make plugin
+                # startup fail. Explicit probe URLs are rejected by
+                # _hosts_for_rotation instead of silently falling back.
+                self.log(f"skip unsafe HTML instance ({type(exc).__name__})")
 
     @staticmethod
     def _norm(url: str) -> str:
         u = str(url).strip().rstrip("/")
-        if not u.startswith("http"):
+        if not u.lower().startswith(("http://", "https://")):
             u = "https://" + u
-        return u
+        return validate_http_url(u, resolve_dns=False).rstrip("/")
+
+    @staticmethod
+    def _page_count(value) -> int:
+        try:
+            number = int(value or 1)
+        except (TypeError, ValueError):
+            number = 1
+        return max(1, min(5, number))
 
     def _hosts_for_rotation(self, instance: str | None = None) -> list[str]:
         """Ordered hosts for multi-mirror retry (ready first, then cooling).
@@ -87,7 +131,7 @@ class HtmlNitterPool:
         """
         if instance and str(instance).strip():
             base = self._norm(str(instance).strip())
-            return [base] if base else self._hosts_for_rotation(None)
+            return [base]
 
         all_hosts = list(self.instances)
         if not all_hosts:
@@ -111,7 +155,22 @@ class HtmlNitterPool:
             return self.scores.order(ready) + self.scores.order(cooling)
         return self.scores.order(list(all_hosts))
 
+    @contextmanager
+    def _session_transaction(self):
+        """Serialize gate + fetch sequences for a shared CookieJar/session."""
+        lock = getattr(self.session, "serial_lock", None)
+        if lock is None:
+            with nullcontext():
+                yield
+            return
+        with lock:
+            yield
+
     def _get_html(self, base: str, path: str) -> bytes:
+        with self._session_transaction():
+            return self._get_html_unlocked(base, path)
+
+    def _get_html_unlocked(self, base: str, path: str) -> bytes:
         """Fetch HTML. Score only failures here; caller scores success once."""
         host = self.session.host_of(base)
         scored_failure = False
@@ -147,10 +206,17 @@ class HtmlNitterPool:
                 raise RuntimeError(
                     f"{host} HTTP {resp.code} {resp.error or ''}".strip()
                 )
-            if gate == "cf":
+            if gate in {"cf", "error", "other"}:
                 self.scores.record_failure(host)
                 scored_failure = True
-                raise RuntimeError(f"{host} cloudflare unsupported")
+                reason = (
+                    "cloudflare unsupported"
+                    if gate == "cf"
+                    else "login/maintenance/error page"
+                    if gate == "error"
+                    else "unexpected HTML page"
+                )
+                raise RuntimeError(f"{host} {reason}")
             if gate in {"anubis", "poast_sha1"}:
                 self.scores.record_failure(host)
                 scored_failure = True
@@ -235,6 +301,7 @@ class HtmlNitterPool:
         # yields empty, return [] so tag schedule can skip seen init instead of
         # treating the query as permanently failed.
         empty_success_base: str | None = None
+        empty_success_result = HtmlSearchResult()
         hosts = self._hosts_for_rotation(instance)
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
@@ -244,8 +311,10 @@ class HtmlNitterPool:
                     f"search try {index}/{total} host={host} "
                     f"query={q!r} kind={resolved}"
                 )
-                tweets = self._paginate_search(
-                    base, q, limit, kind=resolved, max_pages=max_pages
+                tweets = self._as_search_result(
+                    self._paginate_search(
+                        base, q, limit, kind=resolved, max_pages=max_pages
+                    )
                 )
                 if tweets:
                     self.scores.record_success(host)
@@ -254,8 +323,10 @@ class HtmlNitterPool:
                             f"search ok after rotate host={host} "
                             f"tried={index}/{total}"
                         )
-                    return base, tweets[:limit]
+                    return base, tweets.limited(limit)
                 empty_success_base = base
+                empty_success_result.raw_item_count += tweets.raw_item_count
+                empty_success_result.retweet_filtered += tweets.retweet_filtered
                 # Empty after RT filter: soft success, not an outage.
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
@@ -276,8 +347,15 @@ class HtmlNitterPool:
                 f"query={q!r} kind={resolved}, "
                 f"last_empty={self.session.host_of(empty_success_base)}"
             )
-            return empty_success_base, []
+            return empty_success_base, empty_success_result
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
+
+    @staticmethod
+    def _as_search_result(value) -> HtmlSearchResult:
+        """Normalize legacy or mocked list results without changing the API."""
+        if isinstance(value, HtmlSearchResult):
+            return value
+        return HtmlSearchResult(value or ())
 
     def _hosts_for_probe(self, instance: str | None) -> list[str]:
         """Backward-compatible alias for mirror probe / single-host selection."""
@@ -287,7 +365,8 @@ class HtmlNitterPool:
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
-        for _ in range(max(1, self.config.max_pages)):
+        page_count = self._page_count(self.config.max_pages)
+        for _ in range(page_count):
             path = f"/{quote(user)}"
             if cursor:
                 path += "?" + urlencode({"cursor": cursor})
@@ -319,13 +398,16 @@ class HtmlNitterPool:
         *,
         kind: str,
         max_pages: int | None = None,
-    ) -> list[TweetItem]:
-        tweets: list[TweetItem] = []
+    ) -> HtmlSearchResult:
+        tweets = HtmlSearchResult()
         seen: set[str] = set()
         cursor = ""
+        raw_item_count = 0
+        retweet_filtered = 0
         allow_hashtag = kind == "tag"
         pages = self.config.max_pages if max_pages is None else max_pages
-        for page_i in range(max(1, int(pages or 1))):
+        page_count = self._page_count(pages)
+        for page_i in range(page_count):
             params = {"f": "tweets", "q": query}
             if cursor:
                 params["cursor"] = cursor
@@ -339,6 +421,9 @@ class HtmlNitterPool:
                 else:
                     raise
             page = parse_timeline_html(body.decode("utf-8", "replace"), base)
+            raw_item_count += int(
+                getattr(page, "raw_item_count", len(page.tweets)) or 0
+            )
             if (
                 not page.tweets
                 and page_i == 0
@@ -348,9 +433,13 @@ class HtmlNitterPool:
                 path = f"/hashtag/{quote(query.lstrip('#'), safe='')}"
                 body = self._get_html(base, path)
                 page = parse_timeline_html(body.decode("utf-8", "replace"), base)
+                raw_item_count += int(
+                    getattr(page, "raw_item_count", len(page.tweets)) or 0
+                )
             for t in page.tweets:
                 # /推文搜索 + tag schedule: always drop pure retweets (no user toggle).
                 if getattr(t, "is_retweet", False):
+                    retweet_filtered += 1
                     continue
                 k = t.status_id or t.link
                 if k in seen:
@@ -358,8 +447,12 @@ class HtmlNitterPool:
                 seen.add(k)
                 tweets.append(t)
                 if len(tweets) >= limit:
+                    tweets.raw_item_count = raw_item_count
+                    tweets.retweet_filtered = retweet_filtered
                     return tweets
             if not page.next_cursor or page.next_cursor == cursor:
                 break
             cursor = page.next_cursor
+        tweets.raw_item_count = raw_item_count
+        tweets.retweet_filtered = retweet_filtered
         return tweets

@@ -15,11 +15,11 @@
 
 ## 边界
 
-- 处理公开 RSS，以及配置开启时的 HTML 用户页回退 / HTML 搜索结果。
+- 处理博主公开 RSS 和配置开启时的 HTML 搜索结果；博主不使用 HTML 用户页回退池。
 - 不绕过 X/Twitter、Nitter、xdown 或消息平台限制。
 - SQLite 会保存运行所需的分组、账号和目标索引、seen、独立扫描基准组，以及最近推送所需的 push history 快照；push history 用于 WebUI 历史查看和重推，不会主动抓取或归档账号的全部历史推文。
 - 手动查询不写入 seen、扫描基准或 push history。
-- 后台检查首次启用账号只初始化 seen 和最近最多 20 个扫描基准 ID，不推送历史；空 feed 或全过滤结果也会保留初始化状态。
+- 后台检查首次启用博主账号只初始化 seen 和最近最多 20 个扫描基准 ID，不推送历史；标签真正空首轮保持未初始化，有原始结果但全被过滤时记录空扫描水位。
 - 纯文本过滤只影响开启该分组开关的后台检查，手动命令不受影响。
 - 分组 `media_only_enabled` 只影响定时推送；有效时只发送作者和成功准备的媒体，全局媒体不可用时回退完整内容。
 
@@ -28,7 +28,7 @@
 - 插件入口：`main.py`
 - 用户命令：`command_handlers/`
 - 后台调度：`scheduler/`
-- Nitter RSS：`media_support/client.py`；HTML 搜索/回退：`media_support/html_backend/`
+- Nitter RSS：`media_support/client.py`；HTML 搜索与旧兼容实现：`media_support/html_backend/`
 - 媒体：`media_support/service.py`
 - 发送：`delivery/`
 - 配置：`_conf_schema.json`、`config/`、`scheduler/config.py`

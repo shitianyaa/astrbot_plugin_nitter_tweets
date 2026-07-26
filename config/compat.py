@@ -29,6 +29,13 @@ MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
+SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY = "_search_instances_default_v17_migrated"
+LEGACY_DEFAULT_SEARCH_INSTANCES = (
+    "https://nitter.tiekoetter.com",
+    "https://nitter.poast.org",
+    "https://nitter.kareem.one",
+)
+CURRENT_DEFAULT_SEARCH_INSTANCES = ("https://nitter.tiekoetter.com",)
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 # Legacy single template name used by pre-tag-group configs.
 TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
@@ -59,6 +66,7 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "vision_prompt",
         "vision_max_images",
         "vision_max_total",
+        "blogger_html_instances",
         "deferred_publish_enabled",
         "deferred_publish_times",
         "deferred_publish_batch_limit",
@@ -83,7 +91,6 @@ CONFIG_GROUP_BY_KEY = {
     "user_agent": "basic",
     "filter_reposts_enabled": "basic",
     "user_html_fallback": "basic",
-    "blogger_html_instances": "basic",
     "search_enabled": "basic",
     "search_instances": "basic",
     "search_cooldown_seconds": "basic",
@@ -144,7 +151,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "cooldown_seconds",
     "user_agent",
     "user_html_fallback",
-    "blogger_html_instances",
     "search_enabled",
     "search_instances",
     "search_cooldown_seconds",
@@ -341,7 +347,11 @@ def migrate_legacy_grouped_config(config) -> bool:
     changed = sanitize_removed_feature_config(config)
     if _migrate_max_video_duration_grouped_config(config):
         changed = True
-    if bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False)):
+    if _migrate_search_instances_default(config):
+        changed = True
+    if parse_config_bool(
+        _dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False), False
+    ):
         save_config = getattr(config, "save_config", None)
         if changed and callable(save_config):
             save_config()
@@ -399,7 +409,9 @@ def _sanitize_ignored_tweet_group_config(group: dict) -> bool:
 
 
 def _migrate_max_video_duration_grouped_config(config) -> bool:
-    if bool(_dict_get(config, MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY, False)):
+    if parse_config_bool(
+        _dict_get(config, MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY, False), False
+    ):
         return False
 
     key = "max_video_duration_minutes"
@@ -431,7 +443,9 @@ def _numeric_equals(value, expected: float) -> bool:
 
 
 def migrate_default_group_config(config, *, save: bool = True) -> bool:
-    if bool(_dict_get(config, DEFAULT_GROUP_CONFIG_MIGRATION_KEY, False)):
+    if parse_config_bool(
+        _dict_get(config, DEFAULT_GROUP_CONFIG_MIGRATION_KEY, False), False
+    ):
         return ensure_tweet_group_template_keys(config, save=save)
 
     raw_groups = config_get(config, "tweet_groups", []) or []
@@ -706,24 +720,38 @@ def _clamp_int(value, minimum: int, maximum: int) -> int:
 
 def resolve_tweet_group_template_key(group: dict) -> str:
     """Map stored group to AstrBot template_list key (blogger | tag)."""
-    raw_type = str(group.get("group_type") or "").strip().lower()
-    if raw_type == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        return TWEET_GROUP_TEMPLATE_KEY_TAG
+    desired, _preserve_mixed = _resolve_tweet_group_type(group)
+    return desired
 
-    raw_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
-    if raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        return TWEET_GROUP_TEMPLATE_KEY_TAG
-    # Legacy template "group" and missing keys are pure blogger groups.
-    if raw_key in {
-        "",
-        TWEET_GROUP_TEMPLATE_KEY_LEGACY,
-        TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
-    }:
-        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-    if raw_type == TWEET_GROUP_TEMPLATE_KEY_BLOGGER:
-        return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-    # Unknown keys: prefer blogger unless type says tag (handled above).
-    return TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+
+def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
+    """Resolve group type and whether mixed subscription lists must be kept."""
+    raw_type = str(group.get("group_type") or "").strip().lower()
+    if raw_type in {TWEET_GROUP_TEMPLATE_KEY_TAG, "search", "query", "keyword"}:
+        desired = TWEET_GROUP_TEMPLATE_KEY_TAG
+    elif raw_type in {TWEET_GROUP_TEMPLATE_KEY_BLOGGER, "user", "users"}:
+        desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    else:
+        desired = ""
+
+    raw_key = (
+        str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip().lower()
+    )
+    has_users = not _is_empty_value(group.get("watch_users"))
+    has_queries = not _is_empty_value(group.get("watch_queries"))
+    preserve_mixed = has_users and has_queries
+
+    if not desired:
+        if has_queries and not has_users:
+            desired = TWEET_GROUP_TEMPLATE_KEY_TAG
+        elif has_users and not has_queries:
+            desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+        elif raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
+            desired = TWEET_GROUP_TEMPLATE_KEY_TAG
+        else:
+            # Legacy/unknown/missing template keys remain blogger-compatible.
+            desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    return desired, preserve_mixed
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:
@@ -732,7 +760,7 @@ def _ensure_tweet_group_template_key(group: dict) -> bool:
     Migrates legacy ``__template_key=group`` (old 用户分组) to blogger.
     """
     changed = False
-    desired = resolve_tweet_group_template_key(group)
+    desired, preserve_mixed = _resolve_tweet_group_type(group)
     current_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip()
     if current_key != desired:
         group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = desired
@@ -743,12 +771,47 @@ def _ensure_tweet_group_template_key(group: dict) -> bool:
         group["group_type"] = desired
         changed = True
 
-    # Drop opposite subscription list when present so schema forms stay clean.
-    if desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
-        if group.get("watch_users"):
-            group["watch_users"] = []
+    # Never discard a mixed legacy config during automatic migration. Runtime
+    # follows the resolved type; the opposite list remains available for an
+    # operator to move or recover explicitly.
+    if not preserve_mixed:
+        if desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
+            if group.get("watch_users"):
+                group["watch_users"] = []
+                changed = True
+        elif group.get("watch_queries"):
+            group["watch_queries"] = []
             changed = True
-    elif group.get("watch_queries"):
-        group["watch_queries"] = []
-        changed = True
     return changed
+
+
+def _migrate_search_instances_default(config) -> bool:
+    """Drop retired public search defaults without overwriting custom lists."""
+    if parse_config_bool(
+        _dict_get(config, SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY, False), False
+    ):
+        return False
+
+    legacy = tuple(item.rstrip("/").casefold() for item in LEGACY_DEFAULT_SEARCH_INSTANCES)
+    current = list(CURRENT_DEFAULT_SEARCH_INSTANCES)
+    basic = _dict_get(config, "basic", {})
+    if isinstance(basic, dict) and "search_instances" in basic:
+        values = tuple(
+            str(item or "").strip().rstrip("/").casefold()
+            for item in _normalize_list(basic.get("search_instances"))
+        )
+        if values == legacy:
+            basic["search_instances"] = list(current)
+            config["basic"] = basic
+
+    if _dict_has(config, "search_instances"):
+        raw = _dict_get(config, "search_instances")
+        values = tuple(
+            str(item or "").strip().rstrip("/").casefold()
+            for item in _normalize_list(raw)
+        )
+        if values == legacy:
+            config["search_instances"] = list(current)
+
+    config[SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY] = True
+    return True

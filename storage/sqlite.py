@@ -21,7 +21,7 @@ try:
         normalize_stable_group_id,
     )
     from .seen import SEEN_LIMIT_PER_USER
-    from ..shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
+    from ..shared import TweetItem, TweetMedia, normalize_seen_account_key
 except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
@@ -29,7 +29,7 @@ except ImportError:
         normalize_stable_group_id,
     )
     from storage.seen import SEEN_LIMIT_PER_USER
-    from shared import TweetItem, TweetMedia, normalize_seen_account_key, normalize_username
+    from shared import TweetItem, TweetMedia, normalize_seen_account_key
 
 
 SCHEMA_VERSION = 9
@@ -111,12 +111,30 @@ class SQLiteStorage:
                 return
 
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(
+            connection = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
             )
-            self.conn.row_factory = sqlite3.Row
-            await asyncio.to_thread(self._init_schema)
+            connection.row_factory = sqlite3.Row
+            self.conn = connection
+            try:
+                await asyncio.to_thread(self._init_schema)
+            except BaseException:
+                # Schema checks/migrations can fail before the first usable
+                # connection is established.  Drop the failed handle so a
+                # later lifecycle retry opens a fresh connection instead of
+                # treating the half-initialized one as healthy.
+                with self._conn_lock:
+                    if self.conn is connection:
+                        try:
+                            connection.rollback()
+                        except sqlite3.Error:
+                            pass
+                        try:
+                            connection.close()
+                        finally:
+                            self.conn = None
+                raise
 
     def close(self) -> None:
         """关闭数据库连接."""
@@ -288,9 +306,11 @@ class SQLiteStorage:
         self._ensure_push_history_delivery_columns(cursor)
 
     def _migrate_schema_v7(self, cursor: sqlite3.Cursor) -> None:
-        # Pending/deferred publishing was removed in 0.16.0.
-        cursor.execute("DROP TABLE IF EXISTS pending_media")
-        cursor.execute("DROP TABLE IF EXISTS pending_tweets")
+        # Keep legacy pending/staged tables intact.  The current runtime no
+        # longer consumes them, but an upgrade must not destroy operators'
+        # unpublished queue or its media before an explicit migration policy
+        # has been chosen.
+        return
 
     def _migrate_schema_v8(self, cursor: sqlite3.Cursor) -> None:
         self._create_scan_watermarks_table(cursor)
@@ -545,6 +565,11 @@ class SQLiteStorage:
             key_column=("username", "status_id"),
         )
         self._merge_scan_watermarks(cursor, legacy_id, default_id)
+        if self._table_exists(cursor, "push_history"):
+            cursor.execute(
+                "UPDATE push_history SET group_id = ? WHERE group_id = ?",
+                (default_id, legacy_id),
+            )
 
     @classmethod
     def _merge_scan_watermarks(
@@ -781,9 +806,13 @@ class SQLiteStorage:
         )
 
         # 插入新的
-        normalized_usernames = [
-            normalize_username(u) for u in usernames if normalize_username(u)
-        ]
+        normalized_usernames = list(
+            dict.fromkeys(
+                normalized
+                for u in usernames
+                if (normalized := normalize_seen_account_key(u))
+            )
+        )
 
         if normalized_usernames:
             self.conn.executemany(
@@ -1116,7 +1145,7 @@ class SQLiteStorage:
         delivery_status: str = "success",
         delivery_error: str = "",
     ) -> int:
-        """Record one successfully pushed tweet/target pair."""
+        """Record one successful or partially delivered tweet/target pair."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = normalize_seen_account_key(username) or str(username or "").strip()
@@ -1155,7 +1184,7 @@ class SQLiteStorage:
         limit: int = 50,
         offset: int = 0,
     ) -> list[PushHistoryRecord]:
-        """Return recent successful push history records."""
+        """Return recent successful and partially delivered push history records."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         params.extend(
@@ -1200,7 +1229,7 @@ class SQLiteStorage:
         return [self._push_history_record_from_row(row) for row in rows]
 
     def count_push_history(self, group_id: str = "", username: str = "") -> int:
-        """Return count of grouped successful push history display records."""
+        """Return count of grouped successful and partial push history records."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         row = self.conn.execute(
@@ -1218,7 +1247,7 @@ class SQLiteStorage:
         return int(row["count"] if row is not None else 0)
 
     def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:
-        """Return successful push history counts grouped by stable group id."""
+        """Return successful and partial push history counts by stable group id."""
         assert self.conn is not None
         rows = self.conn.execute(
             """
@@ -1508,6 +1537,10 @@ class SQLiteStorage:
 
         fingerprint_data = []
         for group in schedule_groups:
+            account_keys = list(
+                getattr(group, "account_keys", None)
+                or getattr(group, "users", [])
+            )
             fingerprint_data.append({
                 "group_id": group.group_id,
                 "name": group.name,
@@ -1522,7 +1555,10 @@ class SQLiteStorage:
                 "send_user_interval": group.send_user_interval,
                 "notify_no_updates": group.notify_no_updates,
                 "aliases": sorted(group.aliases),
-                "users": sorted(group.users),
+                # Tag groups use q:<casefold query> as their runtime account
+                # key.  Include the effective keys so query edits refresh the
+                # active-subscription table and orphan cleanup remains safe.
+                "account_keys": sorted(account_keys),
                 "targets": sorted(group.targets),
             })
 
@@ -1539,6 +1575,10 @@ class SQLiteStorage:
         logger.info("[NitterTweets] 正在同步配置分组到数据库...")
 
         for group in schedule_groups:
+            account_keys = list(
+                getattr(group, "account_keys", None)
+                or getattr(group, "users", [])
+            )
             # 同步分组配置
             self.upsert_group(
                 group_id=group.group_id,
@@ -1557,7 +1597,7 @@ class SQLiteStorage:
             )
 
             # 同步订阅账号
-            self.set_group_users(group.group_id, group.users)
+            self.set_group_users(group.group_id, account_keys)
 
             # 同步推送目标
             self.set_group_targets(group.group_id, group.targets)

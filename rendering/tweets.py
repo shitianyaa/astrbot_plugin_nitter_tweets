@@ -70,6 +70,9 @@ class TweetMessageRenderer:
             header_text=header_text,
             batch_summary=batch_summary,
             media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     def build_nodes_for_uin(
@@ -308,6 +311,9 @@ class TweetMessageRenderer:
                                     media,
                                     source=instance,
                                     media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             }
                         )
@@ -325,6 +331,9 @@ class TweetMessageRenderer:
                                         media,
                                         source=instance,
                                         media_only=media_only,
+                                        omit_status_url=omit_status_url,
+                                        hide_original_when_translated=hide_original_when_translated,
+                                        link_style=link_style,
                                     ),
                                 }
                             )
@@ -583,7 +592,12 @@ class TweetMessageRenderer:
             if media.is_video and not self.send_video_attachments:
                 if not video_notice_added:
                     components.append(
-                        Plain("视频/GIF 发送已关闭，已跳过下载")
+                        Plain(
+                            TweetMessageRenderer.video_not_sent_notice(
+                                omit_status_url=omit_status_url,
+                                status_url=status_url,
+                            )
+                        )
                     )
                     video_notice_added = True
                 continue
@@ -717,6 +731,9 @@ class TweetMessageRenderer:
                                 media,
                                 source=instance,
                                 media_only=media_only,
+                                omit_status_url=omit_status_url,
+                                hide_original_when_translated=hide_original_when_translated,
+                                link_style=link_style,
                             ),
                         }
                     )
@@ -734,6 +751,9 @@ class TweetMessageRenderer:
                                     media,
                                     source=instance,
                                     media_only=media_only,
+                                    omit_status_url=omit_status_url,
+                                    hide_original_when_translated=hide_original_when_translated,
+                                    link_style=link_style,
                                 ),
                             }
                         )
@@ -1037,13 +1057,13 @@ class TweetMessageRenderer:
 
         translation = (tweet.translation or "").strip()
         if translation:
-            translation = strip_external_links(
-                normalize_external_links(translation).strip()
-            )
+            translation = normalize_external_links(translation).strip()
+            if omit_status_url:
+                translation = strip_external_links(translation)
 
         original_text = normalize_external_links(tweet.text).strip()
-        # Always strip inline http(s) from bodies to cut link spam / risk.
-        original_text = strip_external_links(original_text)
+        if omit_status_url:
+            original_text = strip_external_links(original_text)
 
         show_original = bool(original_text)
         if hide_original_when_translated and translation and show_original:

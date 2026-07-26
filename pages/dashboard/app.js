@@ -80,20 +80,20 @@ const els = {
 const viewMeta = {
   overview: {
     title: "Nitter 推文控制台总览",
-    desc: "聚合查看博主订阅分组、推送目标状态以及 Nitter 节点连通性。",
+    desc: "聚合查看博主/标签订阅分组、推送目标状态以及 Nitter 节点连通性。",
   },
   groups: {
-    title: "订阅分组与博主管理",
+    title: "订阅分组管理",
     desc: "维护订阅（关注账号或搜索）、推送目标与分组级检查策略。",
   },
 
   history: {
     title: "最近推送历史",
-    desc: "查看成功送达记录，按分组和博主筛选，并选择当前推送目标重新推送。",
+    desc: "查看成功或部分送达记录，按分组和账号/查询筛选，并选择当前推送目标重新推送。",
   },
   mirror: {
     title: "Nitter 镜像连通诊断",
-    desc: "按模式测试 RSS / HTML 用户页 / 搜索；实例从配置同步（去重），不写推送记录。",
+    desc: "按模式测试博主 RSS 或标签/短语搜索；实例从配置同步（去重），不写推送记录。",
   },
   cleanup: {
     title: "系统维护清理",
@@ -479,14 +479,29 @@ function historyTargetChips(row) {
 
 function historyDeliveryStatus(row) {
   if (row.delivery_status === "partial_failed") {
-    const error = row.delivery_error || "媒体附件发送失败";
+    const error = row.delivery_error || "部分内容未完整送达";
     return el("span", {
       className: "badge warning",
       attrs: { title: error },
-      text: "媒体失败",
+      text: "部分送达",
     });
   }
   return el("span", { className: "badge ok", text: "已送达" });
+}
+
+function historyAccountLabel(row) {
+  const accountKey = String(row.username || "").trim();
+  const isQuery =
+    row.group_type === "tag" || accountKey.toLowerCase().startsWith("q:");
+  if (isQuery) {
+    return accountKey.replace(/^q:/i, "").trim() || accountKey || "-";
+  }
+  return accountKey ? `@${accountKey}` : "-";
+}
+
+function isDefaultGroupId(value) {
+  const groupId = String(value || "").trim().toLowerCase();
+  return groupId === "default" || groupId === "global" || groupId === "全局";
 }
 
 function formatWatchQueryLabel(item) {
@@ -1153,7 +1168,7 @@ function renderGroupEditor() {
       attrs: { type: "button" },
       dataset: { deleteGroup: group.group_id },
       disabled:
-        group.group_id === "default" || state.loading || state.actionBusy,
+        isDefaultGroupId(group.group_id) || state.loading || state.actionBusy,
     },
     "删除分组",
   );
@@ -1382,7 +1397,7 @@ function renderHistory() {
   const records = payload.records || [];
   if (!records.length) {
     els.historyContent.replaceChildren(
-      emptyState("暂无发送成功历史，新版本启用后成功送达的推送会显示在这里。"),
+      emptyState("暂无推送历史，成功或部分送达的推送会显示在这里。"),
     );
     return;
   }
@@ -1397,7 +1412,7 @@ function renderHistory() {
       return el("tr", {}, [
         el("td", { text: formatTime(row.pushed_at) }),
         el("td", { text: row.group_name || row.group_id || "-" }),
-        el("td", { text: `@${row.username}` }),
+        el("td", { text: historyAccountLabel(row) }),
         tweetCell,
         el("td", {}, [historyTargetChips(row)]),
         el("td", { text: row.source || "-" }),
@@ -1424,7 +1439,7 @@ function renderHistory() {
           el("tr", {}, [
             el("th", { text: "发送时间" }),
             el("th", { text: "分组" }),
-            el("th", { text: "博主" }),
+            el("th", { text: "账号/查询" }),
             el("th", { text: "推文" }),
             el("th", { text: "当时推送目标" }),
             el("th", { text: "来源" }),
@@ -1532,12 +1547,10 @@ function instancesForMirrorMode(mode) {
     : Array.isArray(state.overview?.instances)
       ? state.overview.instances
       : [];
-  if (mode === "blogger_html") {
-    return Array.isArray(lists.blogger_html) ? lists.blogger_html : [];
-  }
   if (mode === "search") {
     return Array.isArray(lists.search) ? lists.search : [];
   }
+  // blogger_html mode removed; always use RSS list for non-search probes.
   return rss;
 }
 
@@ -1560,7 +1573,6 @@ function syncMirrorModeUi() {
   }
   const titles = {
     blogger_rss: "配置实例（RSS）",
-    blogger_html: "配置实例（博主 HTML）",
     search: "配置实例（搜索）",
   };
   if (els.mirrorInstanceListTitle) {
@@ -1569,7 +1581,7 @@ function syncMirrorModeUi() {
   if (els.mirrorInstanceListHint) {
     els.mirrorInstanceListHint.textContent = isSearch
       ? "点击填入左侧 URL；搜索请用 search_instances，勿混用 RSS 列表"
-      : "点击填入左侧 URL";
+      : "点击填入左侧 URL（博主仅测 RSS）";
   }
 }
 
@@ -2240,12 +2252,7 @@ async function probeMirror(event) {
       link.appendChild(el("span", { text: tweet.text_preview || "" }));
       return link;
     });
-    const modeLabel =
-      result.mode === "search"
-        ? "搜索"
-        : result.mode === "blogger_html"
-          ? "博主 HTML"
-          : "博主 RSS";
+    const modeLabel = result.mode === "search" ? "搜索" : "博主 RSS";
     const subject =
       result.mode === "search"
         ? result.query || result.subject || query
@@ -2290,6 +2297,7 @@ function confirmClearCache() {
           `视频 ${formatNumber(detail.removed_videos)}`,
           `其他 ${formatNumber(detail.removed_other)}`,
           `空目录 ${formatNumber(detail.removed_empty_dirs)}`,
+          `发送中跳过 ${formatNumber(detail.skipped_active)}`,
           `跳过目录 ${formatNumber(detail.skipped_dirs)}`,
           `失败 ${formatNumber(detail.failed)}`,
         ];

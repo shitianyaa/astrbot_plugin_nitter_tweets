@@ -115,7 +115,22 @@ class TweetSender:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        on_sent_progress=None,
     ) -> bool:
+        sent_count = 0
+        total = len(tweets)
+
+        def record_delivered(delta: int) -> None:
+            nonlocal sent_count
+            try:
+                delivered = max(0, int(delta))
+            except (TypeError, ValueError, OverflowError):
+                return
+            if delivered <= 0 or sent_count >= total:
+                return
+            sent_count = min(total, sent_count + delivered)
+            self._notify_sent_progress(on_sent_progress, sent_count)
+
         adapter = self._delivery_adapter_for_event(event)
         if link_style == "plain":
             platform_name = getattr(adapter, "name", "") or ""
@@ -123,7 +138,7 @@ class TweetSender:
         if not adapter.supports_merged_forward or not self._should_use_merge_for_count(
             len(tweets)
         ):
-            return await self._send_direct_event(
+            accepted = await self._send_direct_event(
                 event,
                 username,
                 instance,
@@ -136,25 +151,36 @@ class TweetSender:
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
+            if accepted:
+                record_delivered(total)
+            return accepted
 
         if self._should_chunk_forward_tweets(len(tweets)):
-            return await self._send_event_forward_chunks(
+            accepted = await self._send_event_forward_chunks(
                 event, username, instance, tweets, notices=notices,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
+                on_delivered=record_delivered,
             )
+            if accepted and sent_count < total:
+                record_delivered(total - sent_count)
+            return accepted
 
-        return await self._send_event_forward_chunk(
+        accepted = await self._send_event_forward_chunk(
             event, username, instance, tweets, notices=notices,
             tweet_start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
             hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
+            on_delivered=record_delivered,
         )
+        if accepted and sent_count < total:
+            record_delivered(total - sent_count)
+        return accepted
 
     def should_merge_for_event(self, event, tweet_count: int) -> bool:
         return (
@@ -174,6 +200,7 @@ class TweetSender:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        on_delivered=None,
     ) -> bool:
         chunks = self._tweet_chunks(tweets)
         indexed_chunks = []
@@ -194,6 +221,7 @@ class TweetSender:
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
+                on_delivered=on_delivered,
             ),
         )
 
@@ -209,6 +237,7 @@ class TweetSender:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        on_delivered=None,
     ) -> bool:
         nodes = self.renderer.build_nodes(
             event, username, instance, tweets, notices=notices,
@@ -228,17 +257,21 @@ class TweetSender:
         )
         try:
             await event.send(event.chain_result([nodes]))
+            self._notify_delivered(on_delivered, len(tweets))
             return True
         except Exception as exc:
             if self._is_uncertain_delivery_error(exc):
                 self._log_uncertain_delivery(
                     "manual forwarded tweets", self._event_target(event), exc
                 )
+                self._notify_delivered(on_delivered, len(tweets))
                 return True
             logger.warning(f"[NitterTweets] 发送合并转发节点失败: {exc}")
 
         # 去掉视频后重试
-        if any(m.is_video for t in tweets for m in t.media if m.path):
+        if not media_only and any(
+            m.is_video for t in tweets for m in t.media if m.path
+        ):
             try:
                 nodes_nv = self.renderer.build_nodes(
                     event, username, instance, tweets,
@@ -251,12 +284,14 @@ class TweetSender:
                 )
                 await event.send(event.chain_result([nodes_nv]))
                 logger.info("[NitterTweets] 初次失败后已发送去除视频的合并转发")
+                self._notify_delivered(on_delivered, len(tweets))
                 return True
             except Exception as exc:
                 if self._is_uncertain_delivery_error(exc):
                     self._log_uncertain_delivery(
                         "manual tweets without videos", self._event_target(event), exc
                     )
+                    self._notify_delivered(on_delivered, len(tweets))
                     return True
                 logger.warning(
                     f"[NitterTweets] 发送去除视频的合并转发节点失败: {exc}"
@@ -265,6 +300,7 @@ class TweetSender:
         last_exc: Exception | None = None
         try:
             if await self._send_onebot_forward(event, raw_nodes):
+                self._notify_delivered(on_delivered, len(tweets))
                 return True
             logger.warning(
                 f"[NitterTweets] 发送 OneBot 合并转发消息失败: action returned false "
@@ -276,6 +312,7 @@ class TweetSender:
                 self._log_uncertain_delivery(
                     "manual OneBot forward fallback", self._event_target(event), exc
                 )
+                self._notify_delivered(on_delivered, len(tweets))
                 return True
             logger.warning(f"[NitterTweets] 发送 OneBot 合并转发消息失败: {exc}")
 
@@ -296,6 +333,20 @@ class TweetSender:
                 )
                 index = tweet_start_index
                 for offset, part in enumerate(parts):
+                    part_delivered = 0
+
+                    def record_part_delivered(count: int) -> None:
+                        nonlocal part_delivered
+                        try:
+                            delivered = max(0, int(count))
+                        except (TypeError, ValueError, OverflowError):
+                            return
+                        delivered = min(len(part) - part_delivered, delivered)
+                        if delivered <= 0:
+                            return
+                        part_delivered += delivered
+                        self._notify_delivered(on_delivered, delivered)
+
                     part_ok = await self._send_event_forward_chunk(
                         event,
                         username,
@@ -307,21 +358,26 @@ class TweetSender:
                         omit_status_url=omit_status_url,
                         hide_original_when_translated=hide_original_when_translated,
                         link_style=link_style,
+                        on_delivered=record_part_delivered,
                     )
+                    if part_ok and part_delivered < len(part):
+                        record_part_delivered(len(part) - part_delivered)
                     if not part_ok:
                         # Never re-send already-delivered parts as a full-batch fallback.
-                        remaining = []
-                        for later in parts[offset:]:
+                        remaining = list(part[part_delivered:])
+                        for later in parts[offset + 1 :]:
                             remaining.extend(later)
-                        remaining_index = index
-                        remaining_notices = notices if offset == 0 else None
+                        remaining_index = index + part_delivered
+                        remaining_notices = (
+                            notices if offset == 0 and part_delivered == 0 else None
+                        )
                         break
                     index += len(part)
                 else:
                     return True
 
         if not remaining:
-            return False
+            return True
 
         # Final fallback: direct send only the undelivered remainder.
         logger.info(
@@ -330,7 +386,7 @@ class TweetSender:
             f"target={self._event_target(event)})"
         )
         try:
-            return await self._delivery_adapter_for_event(event).send_event(
+            accepted = await self._delivery_adapter_for_event(event).send_event(
                 event,
                 username,
                 instance,
@@ -342,11 +398,15 @@ class TweetSender:
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
+            if accepted:
+                self._notify_delivered(on_delivered, len(remaining))
+            return accepted
         except Exception as exc:
             if self._is_uncertain_delivery_error(exc):
                 self._log_uncertain_delivery(
                     "manual direct after forward fail", self._event_target(event), exc
                 )
+                self._notify_delivered(on_delivered, len(remaining))
                 return True
             logger.warning(f"[NitterTweets] 合并转发降级直发仍失败: {exc}")
             return False
@@ -483,35 +543,67 @@ class TweetSender:
         for chunk in chunks:
             indexed_chunks.append((len(indexed_chunks), index, chunk))
             index += len(chunk)
-        return await self._send_chunked_outcomes(
-            indexed_chunks,
-            lambda item: self._send_forward_chunk_to_umo(
+        errors: list[str] = []
+        warnings: list[str] = []
+        delivery_errors: list[str] = []
+        delivered: list[str] = []
+        partial_delivery = False
+        for item in indexed_chunks:
+            outcome = await self._send_forward_chunk_to_umo(
                 context,
                 umo,
                 username,
                 instance,
                 item[2],
-                group_label=group_label,
-                header_text=header_text,
+                group_label=group_label if item[0] == 0 else "",
+                header_text=header_text if item[0] == 0 else "",
                 batch_summary=batch_summary if item[0] == 0 else "",
                 tweet_start_index=item[1],
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
-            ),
-            lambda error, warning: SendOutcome(
-                success=True,
-                error=error,
-                warning=warning,
-                delivery_status="partial_failed" if error else "success",
-                delivery_error=error,
-            ),
-            lambda outcome, error, warning: SendOutcome(
-                success=False,
-                error=error or outcome.error,
-                warning=warning,
-            ),
+            )
+            if outcome.error:
+                errors.append(outcome.error)
+            if outcome.warning:
+                warnings.append(outcome.warning)
+            status = self._normalized_delivery_status(outcome)
+            if status in {"partial_failed", "failed"}:
+                partial_delivery = True
+            outcome_delivery_error = getattr(outcome, "delivery_error", "")
+            if outcome_delivery_error:
+                delivery_errors.append(outcome_delivery_error)
+            delivered.extend(
+                getattr(outcome, "delivered_status_ids", ())
+                or self._status_ids_from_tweets(item[2])
+                if outcome.success
+                else getattr(outcome, "delivered_status_ids", ())
+            )
+            if not outcome.success:
+                delivery_error = "; ".join(delivery_errors) or "; ".join(errors)
+                return SendOutcome(
+                    success=False,
+                    error="; ".join(errors) or outcome.error,
+                    warning="; ".join(warnings),
+                    delivery_status=(
+                        "partial_failed"
+                        if delivered or status == "partial_failed"
+                        else "failed"
+                    ),
+                    delivery_error=delivery_error or outcome.error,
+                    delivered_status_ids=self._dedupe_status_ids(delivered),
+                )
+        final_delivery_error = "; ".join(delivery_errors)
+        if partial_delivery and not final_delivery_error:
+            final_delivery_error = "; ".join(errors)
+        return SendOutcome(
+            success=True,
+            error="; ".join(errors),
+            warning="; ".join(warnings),
+            delivery_status="partial_failed" if partial_delivery else "success",
+            delivery_error=final_delivery_error,
+            delivered_status_ids=self._dedupe_status_ids(delivered),
         )
 
     async def _send_forward_chunk_to_umo(
@@ -548,7 +640,10 @@ class TweetSender:
             context, umo, MessageChain([nodes]), "scheduled forwarded tweets"
         )
         if attempt.success:
-            return SendOutcome(success=True)
+            return SendOutcome(
+                success=True,
+                delivered_status_ids=self._status_ids_from_tweets(tweets),
+            )
         if not attempt.retryable:
             return SendOutcome(
                 success=attempt.uncertain,
@@ -557,7 +652,9 @@ class TweetSender:
             )
 
         # 去掉视频后重试
-        if any(m.is_video for t in tweets for m in t.media if m.path):
+        if not media_only and any(
+            m.is_video for t in tweets for m in t.media if m.path
+        ):
             nodes_nv = self.renderer.build_nodes_for_uin(
                 10000,
                 username,
@@ -584,16 +681,29 @@ class TweetSender:
                     f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频的定时推文"
                 )
                 return SendOutcome(
-                    success=True,
+                    success=not media_only,
                     error=attempt.error,
                     delivery_status="partial_failed",
                     delivery_error=attempt.error,
+                    delivered_status_ids=(
+                        () if media_only else self._status_ids_from_tweets(tweets)
+                    ),
                 )
             if not attempt_nv.retryable:
+                retry_accepted = attempt_nv.uncertain
                 return SendOutcome(
-                    success=attempt_nv.uncertain,
+                    success=retry_accepted and not media_only,
                     error=attempt_nv.error or attempt.error,
                     warning=attempt_nv.warning,
+                    delivery_status=(
+                        "partial_failed" if retry_accepted else "failed"
+                    ),
+                    delivery_error=attempt_nv.error or attempt.error,
+                    delivered_status_ids=(
+                        self._status_ids_from_tweets(tweets)
+                        if retry_accepted and not media_only
+                        else ()
+                    ),
                 )
             attempt = attempt_nv
 
@@ -607,6 +717,9 @@ class TweetSender:
         remaining_header = header_text
         remaining_summary = batch_summary
         any_part_sent = False
+        delivered: list[str] = []
+        split_error = ""
+        split_warning = ""
         if reject:
             parts = self._split_tweets_for_forward_retry(tweets)
             if parts:
@@ -622,7 +735,7 @@ class TweetSender:
                         username,
                         instance,
                         part,
-                        group_label=group_label,
+                        group_label=group_label if offset == 0 else "",
                         header_text=header_text if offset == 0 else "",
                         batch_summary=batch_summary if offset == 0 else "",
                         tweet_start_index=index,
@@ -631,13 +744,36 @@ class TweetSender:
                         hide_original_when_translated=hide_original_when_translated,
                         link_style=link_style,
                     )
+                    part_delivered = tuple(
+                        getattr(part_outcome, "delivered_status_ids", ()) or ()
+                    )
+                    if part_outcome.success and not part_delivered:
+                        part_delivered = self._status_ids_from_tweets(part)
+                    delivered.extend(part_delivered)
+                    if part_delivered:
+                        any_part_sent = True
                     if not part_outcome.success:
-                        remaining = []
+                        split_error = (
+                            getattr(part_outcome, "delivery_error", "")
+                            or part_outcome.error
+                        )
+                        split_warning = part_outcome.warning
+                        tail = []
                         for later in parts[offset:]:
-                            remaining.extend(later)
-                        remaining_index = index
-                        remaining_header = header_text if offset == 0 else ""
-                        remaining_summary = batch_summary if offset == 0 else ""
+                            tail.extend(later)
+                        delivered_set = set(self._dedupe_status_ids(delivered))
+                        remaining_with_offsets = [
+                            (tail_offset, tweet)
+                            for tail_offset, tweet in enumerate(tail)
+                            if not tweet.status_id
+                            or str(tweet.status_id) not in delivered_set
+                        ]
+                        remaining = [tweet for _, tweet in remaining_with_offsets]
+                        if remaining_with_offsets:
+                            remaining_index = index + remaining_with_offsets[0][0]
+                        keep_leading_text = offset == 0 and not any_part_sent
+                        remaining_header = header_text if keep_leading_text else ""
+                        remaining_summary = batch_summary if keep_leading_text else ""
                         break
                     any_part_sent = True
                     index += len(part)
@@ -649,14 +785,20 @@ class TweetSender:
                             "partial_failed" if attempt.error else "success"
                         ),
                         delivery_error=attempt.error,
+                        delivered_status_ids=self._dedupe_status_ids(delivered),
                     )
 
         if not remaining:
+            error = split_error or attempt.error or "forward split produced empty remainder"
             return SendOutcome(
                 success=False,
-                error=attempt.error or "forward split produced empty remainder",
-                delivery_status="failed",
-                delivery_error=attempt.error or "",
+                error=error,
+                warning=split_warning,
+                delivery_status=(
+                    "partial_failed" if any_part_sent or delivered else "failed"
+                ),
+                delivery_error=error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
             )
 
         # Prefer media-capable direct send for undelivered remainder only.
@@ -680,17 +822,70 @@ class TweetSender:
             hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
+        fallback_delivered = tuple(
+            getattr(fallback, "delivered_status_ids", ()) or ()
+        )
         if fallback.success:
+            delivered.extend(
+                fallback_delivered or self._status_ids_from_tweets(remaining)
+            )
             return SendOutcome(
                 success=True,
-                error=attempt.error or fallback.error,
-                warning=fallback.warning,
+                error=attempt.error or fallback.error or split_error,
+                warning=fallback.warning or split_warning,
                 delivery_status=(
                     "partial_failed"
-                    if attempt.error or fallback.error or any_part_sent
+                    if attempt.error or fallback.error or split_error or any_part_sent
                     else "success"
                 ),
-                delivery_error=attempt.error or fallback.error or "",
+                delivery_error=attempt.error or fallback.error or split_error or "",
+                delivered_status_ids=self._dedupe_status_ids(delivered),
+            )
+        if fallback_delivered:
+            delivered.extend(fallback_delivered)
+            delivered_set = set(self._dedupe_status_ids(delivered))
+            remaining_with_offsets = [
+                (offset, tweet)
+                for offset, tweet in enumerate(remaining)
+                if not tweet.status_id
+                or str(tweet.status_id) not in delivered_set
+            ]
+            remaining = [tweet for _, tweet in remaining_with_offsets]
+            if remaining_with_offsets:
+                remaining_index += remaining_with_offsets[0][0]
+            remaining_header = ""
+            remaining_summary = ""
+            any_part_sent = True
+            if not remaining:
+                error = (
+                    getattr(fallback, "delivery_error", "")
+                    or fallback.error
+                    or split_error
+                )
+                return SendOutcome(
+                    success=False,
+                    error=error,
+                    warning=fallback.warning or split_warning,
+                    delivery_status="partial_failed",
+                    delivery_error=error,
+                    delivered_status_ids=self._dedupe_status_ids(delivered),
+                )
+
+        if media_only:
+            error = (
+                getattr(fallback, "delivery_error", "")
+                or fallback.error
+                or split_error
+                or attempt.error
+                or "media-only delivery failed"
+            )
+            return SendOutcome(
+                success=False,
+                error=error,
+                warning=fallback.warning or split_warning,
+                delivery_status="partial_failed" if delivered else "failed",
+                delivery_error=error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
             )
 
         # Second-level: plain text (lighter payload) for remainder only.
@@ -719,27 +914,60 @@ class TweetSender:
             "scheduled tweet plain fallback",
         )
         plain_ok = plain.success or plain.uncertain
+        if plain.success and not media_only:
+            delivered.extend(self._status_ids_from_tweets(remaining))
         # Do not mark whole-batch success when only some split parts arrived:
         # scheduler would advance seen and permanently drop the remainder.
         # Prefer possible re-push of the first part over silent loss.
+        if plain_ok and media_only:
+            error = (
+                plain.error
+                or fallback.error
+                or split_error
+                or attempt.error
+                or "media-only fallback omitted media"
+            )
+            return SendOutcome(
+                success=False,
+                error=error,
+                warning=plain.warning or fallback.warning or split_warning,
+                delivery_status="partial_failed" if delivered else "failed",
+                delivery_error=error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
+            )
         if plain_ok:
             return SendOutcome(
                 success=True,
-                error=attempt.error or plain.error or fallback.error,
-                warning=plain.warning or fallback.warning,
+                error=attempt.error or plain.error or fallback.error or split_error,
+                warning=plain.warning or fallback.warning or split_warning,
                 delivery_status=(
                     "partial_failed"
-                    if attempt.error or plain.error or fallback.error or any_part_sent
+                    if attempt.error
+                    or plain.error
+                    or fallback.error
+                    or split_error
+                    or any_part_sent
                     else "success"
                 ),
-                delivery_error=attempt.error or plain.error or fallback.error or "",
+                delivery_error=(
+                    attempt.error
+                    or plain.error
+                    or fallback.error
+                    or split_error
+                    or ""
+                ),
+                delivered_status_ids=self._dedupe_status_ids(delivered),
             )
+        error = plain.error or fallback.error or split_error or attempt.error
         return SendOutcome(
             success=False,
-            error=plain.error or fallback.error or attempt.error,
-            warning=plain.warning or fallback.warning,
-            delivery_status="failed",
-            delivery_error=plain.error or fallback.error or attempt.error or "",
+            error=error,
+            warning=plain.warning or fallback.warning or split_warning,
+            delivery_status=(
+                "partial_failed" if any_part_sent or delivered else "failed"
+            ),
+            delivery_error=error or "",
+            delivered_status_ids=self._dedupe_status_ids(delivered),
         )
 
     async def send_merged_to_umo(
@@ -754,6 +982,9 @@ class TweetSender:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> MergedSendOutcome:
+        adapter = self._delivery_adapter_for_umo(context, umo)
+        if link_style == "plain":
+            link_style = self.resolve_link_style(getattr(adapter, "name", ""))
         tweet_count = self._count_batch_tweets(batches)
         if not self._should_use_merge_for_count(tweet_count):
             return await self._send_merged_direct_to_umo(
@@ -764,7 +995,7 @@ class TweetSender:
                 link_style=link_style,
             )
 
-        if not self._delivery_adapter_for_umo(context, umo).supports_merged_forward:
+        if not adapter.supports_merged_forward:
             return await self._send_merged_direct_to_umo(
                 context, umo, batches, group_label, batch_summary,
                 media_only=media_only,
@@ -813,37 +1044,69 @@ class TweetSender:
         for chunk_index, chunk in enumerate(self._batch_chunks(batches)):
             chunked_batches.append((chunk_index, start_index, chunk))
             start_index += self._count_batch_tweets(chunk)
-        return await self._send_chunked_outcomes(
-            chunked_batches,
-            lambda indexed_chunk: self._send_merged_forward_chunk_to_umo(
+        errors: list[str] = []
+        warnings: list[str] = []
+        delivery_errors: list[str] = []
+        delivered: list[str] = []
+        partial_delivery = False
+        for indexed_chunk in chunked_batches:
+            outcome = await self._send_merged_forward_chunk_to_umo(
                 context,
                 umo,
                 indexed_chunk[2],
-                group_label,
+                group_label if indexed_chunk[0] == 0 else "",
                 batch_summary if indexed_chunk[0] == 0 else "",
                 tweet_start_index=indexed_chunk[1],
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
-            ),
-            lambda error, warning: MergedSendOutcome(
-                success=True,
-                mode="chunked_forward",
-                omitted_videos=omitted_videos,
-                error=error,
-                warning=warning,
-                delivery_status="partial_failed" if error else "success",
-                delivery_error=error,
-            ),
-            lambda outcome, error, warning: MergedSendOutcome(
-                success=False,
-                mode=outcome.mode,
-                omitted_videos=omitted_videos,
-                error=error or outcome.error,
-                warning=warning,
-            ),
-            after_outcome=track_omitted_videos,
+            )
+            track_omitted_videos(outcome)
+            if outcome.error:
+                errors.append(outcome.error)
+            if outcome.warning:
+                warnings.append(outcome.warning)
+            status = self._normalized_delivery_status(outcome)
+            if status in {"partial_failed", "failed"}:
+                partial_delivery = True
+            outcome_delivery_error = getattr(outcome, "delivery_error", "")
+            if outcome_delivery_error:
+                delivery_errors.append(outcome_delivery_error)
+            if outcome.success:
+                delivered.extend(
+                    getattr(outcome, "delivered_status_ids", ())
+                    or self._status_ids_from_batches(indexed_chunk[2])
+                )
+            else:
+                delivered.extend(getattr(outcome, "delivered_status_ids", ()))
+                delivery_error = "; ".join(delivery_errors) or "; ".join(errors)
+                return MergedSendOutcome(
+                    success=False,
+                    mode=outcome.mode,
+                    omitted_videos=omitted_videos,
+                    error="; ".join(errors) or outcome.error,
+                    warning="; ".join(warnings),
+                    delivery_status=(
+                        "partial_failed"
+                        if delivered or status == "partial_failed"
+                        else "failed"
+                    ),
+                    delivery_error=delivery_error or outcome.error,
+                    delivered_status_ids=self._dedupe_status_ids(delivered),
+                )
+        final_delivery_error = "; ".join(delivery_errors)
+        if partial_delivery and not final_delivery_error:
+            final_delivery_error = "; ".join(errors)
+        return MergedSendOutcome(
+            success=True,
+            mode="chunked_forward",
+            omitted_videos=omitted_videos,
+            error="; ".join(errors),
+            warning="; ".join(warnings),
+            delivery_status="partial_failed" if partial_delivery else "success",
+            delivery_error=final_delivery_error,
+            delivered_status_ids=self._dedupe_status_ids(delivered),
         )
 
     async def _send_merged_forward_chunk_to_umo(
@@ -921,7 +1184,7 @@ class TweetSender:
                     warning=attempt.warning,
                 )
 
-        if omitted_videos:
+        if omitted_videos and not media_only:
             raw_nodes_nv = self.renderer.build_merged_onebot_nodes_for_uin(
                 10000,
                 batches,
@@ -946,7 +1209,7 @@ class TweetSender:
                     f"{omitted_videos} 个视频/GIF 附件的合并推文"
                 )
                 return MergedSendOutcome(
-                    success=True,
+                    success=not media_only,
                     mode="raw_forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
@@ -954,14 +1217,19 @@ class TweetSender:
                     delivery_error=attempt.error,
                 )
             if not raw_retry_attempt.retryable:
+                retry_accepted = raw_retry_attempt.uncertain
                 return MergedSendOutcome(
-                    success=raw_retry_attempt.uncertain,
+                    success=retry_accepted and not media_only,
                     mode=(
-                        "uncertain_delivery" if raw_retry_attempt.uncertain else "failed"
+                        "uncertain_delivery" if retry_accepted else "failed"
                     ),
                     omitted_videos=omitted_videos,
                     error=raw_retry_attempt.error or attempt.error,
                     warning=raw_retry_attempt.warning,
+                    delivery_status=(
+                        "partial_failed" if retry_accepted else "failed"
+                    ),
+                    delivery_error=raw_retry_attempt.error or attempt.error,
                 )
             nodes_nv = self.renderer.build_merged_nodes_for_uin(
                 10000,
@@ -987,7 +1255,7 @@ class TweetSender:
                     f"{omitted_videos} 个视频/GIF 附件的合并推文"
                 )
                 return MergedSendOutcome(
-                    success=True,
+                    success=not media_only,
                     mode="forward_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
@@ -995,16 +1263,120 @@ class TweetSender:
                     delivery_error=attempt.error,
                 )
             if not retry_attempt.retryable:
+                retry_accepted = retry_attempt.uncertain
                 return MergedSendOutcome(
-                    success=retry_attempt.uncertain,
+                    success=retry_accepted and not media_only,
                     mode=(
-                        "uncertain_delivery" if retry_attempt.uncertain else "failed"
+                        "uncertain_delivery" if retry_accepted else "failed"
                     ),
                     omitted_videos=omitted_videos,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
+                    delivery_status=(
+                        "partial_failed" if retry_accepted else "failed"
+                    ),
+                    delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
+
+        reject = bool(attempt.error) and self._is_forward_payload_rejected_error(
+            Exception(str(attempt.error))
+        )
+        remaining_batches = batches
+        remaining_start_index = tweet_start_index
+        remaining_group_label = group_label
+        remaining_summary = batch_summary
+        delivered: list[str] = []
+        split_error = ""
+        split_warning = ""
+        split_omitted_videos = 0
+        if reject:
+            parts = self._split_batches_for_forward_retry(batches)
+            if parts:
+                logger.info(
+                    f"[NitterTweets] 定时多批次合并转发失败，拆成 {len(parts)} 段重试 "
+                    f"(tweets={self._count_batch_tweets(batches)}, target={umo})"
+                )
+                index = tweet_start_index
+                for offset, part in enumerate(parts):
+                    part_outcome = await self._send_merged_forward_chunk_to_umo(
+                        context,
+                        umo,
+                        part,
+                        group_label if offset == 0 else "",
+                        batch_summary if offset == 0 else "",
+                        tweet_start_index=index,
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    )
+                    split_omitted_videos += part_outcome.omitted_videos
+                    part_delivered = tuple(
+                        getattr(part_outcome, "delivered_status_ids", ()) or ()
+                    )
+                    if part_outcome.success and not part_delivered:
+                        part_delivered = self._status_ids_from_batches(part)
+                    delivered.extend(part_delivered)
+                    if not part_outcome.success:
+                        split_error = (
+                            getattr(part_outcome, "delivery_error", "")
+                            or part_outcome.error
+                        )
+                        split_warning = part_outcome.warning
+                        tail = []
+                        for later in parts[offset:]:
+                            tail.extend(later)
+                        (
+                            remaining_batches,
+                            first_remaining_offset,
+                        ) = self._batches_without_status_ids(tail, delivered)
+                        remaining_start_index = index + first_remaining_offset
+                        keep_leading_text = offset == 0 and not delivered
+                        remaining_group_label = (
+                            group_label if keep_leading_text else ""
+                        )
+                        remaining_summary = (
+                            batch_summary if keep_leading_text else ""
+                        )
+                        break
+                    index += self._count_batch_tweets(part)
+                else:
+                    return MergedSendOutcome(
+                        success=True,
+                        mode="split_forward",
+                        omitted_videos=split_omitted_videos,
+                        error=attempt.error,
+                        delivery_status="partial_failed",
+                        delivery_error=attempt.error,
+                        delivered_status_ids=self._dedupe_status_ids(delivered),
+                    )
+
+        if not remaining_batches:
+            error = split_error or attempt.error or "forward split produced empty remainder"
+            return MergedSendOutcome(
+                success=False,
+                mode="failed",
+                omitted_videos=split_omitted_videos or omitted_videos,
+                error=error,
+                warning=split_warning,
+                delivery_status="partial_failed" if delivered else "failed",
+                delivery_error=error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
+            )
+
+        if media_only:
+            error = split_error or attempt.error or "media-only delivery failed"
+            return MergedSendOutcome(
+                success=False,
+                mode="failed",
+                omitted_videos=split_omitted_videos or omitted_videos,
+                error=error,
+                warning=split_warning,
+                delivery_status="partial_failed" if delivered else "failed",
+                delivery_error=error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
+            )
 
         fallback = await self._send_context_message(
             context,
@@ -1013,10 +1385,10 @@ class TweetSender:
                 [
                     Plain(
                         self.renderer.format_merged_plain(
-                            batches,
-                            start_index=tweet_start_index,
-                            group_label=group_label,
-                            batch_summary=batch_summary,
+                            remaining_batches,
+                            start_index=remaining_start_index,
+                            group_label=remaining_group_label,
+                            batch_summary=remaining_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
                             hide_original_when_translated=hide_original_when_translated,
@@ -1028,20 +1400,49 @@ class TweetSender:
             "merged scheduled tweet fallback",
         )
         if fallback.success or fallback.uncertain:
+            if media_only:
+                error = (
+                    split_error
+                    or attempt.error
+                    or fallback.error
+                    or "media-only fallback omitted media"
+                )
+                return MergedSendOutcome(
+                    success=False,
+                    mode="plain_fallback",
+                    omitted_videos=split_omitted_videos or omitted_videos,
+                    error=error,
+                    warning=fallback.warning or split_warning,
+                    delivery_status="partial_failed" if delivered else "failed",
+                    delivery_error=error,
+                    delivered_status_ids=self._dedupe_status_ids(delivered),
+                )
+            if fallback.success:
+                delivered.extend(self._status_ids_from_batches(remaining_batches))
             return MergedSendOutcome(
                 success=True,
                 mode="uncertain_delivery" if fallback.uncertain else "plain_fallback",
-                omitted_videos=omitted_videos,
-                error=attempt.error,
-                warning=fallback.warning,
-                delivery_status="partial_failed" if attempt.error else "success",
-                delivery_error=attempt.error,
+                omitted_videos=split_omitted_videos or omitted_videos,
+                error=split_error or attempt.error,
+                warning=fallback.warning or split_warning,
+                delivery_status=(
+                    "partial_failed"
+                    if split_error or attempt.error or delivered
+                    else "success"
+                ),
+                delivery_error=split_error or attempt.error,
+                delivered_status_ids=self._dedupe_status_ids(delivered),
             )
+        error = fallback.error or split_error or attempt.error
         return MergedSendOutcome(
             success=False,
             mode="failed",
-            omitted_videos=omitted_videos,
-            error=fallback.error or attempt.error,
+            omitted_videos=split_omitted_videos or omitted_videos,
+            error=error,
+            warning=fallback.warning or split_warning,
+            delivery_status="partial_failed" if delivered else "failed",
+            delivery_error=error,
+            delivered_status_ids=self._dedupe_status_ids(delivered),
         )
 
     async def _send_direct_event(
@@ -1208,6 +1609,17 @@ class TweetSender:
                 warning=attempt.warning,
             )
 
+        if media_only:
+            return MergedSendOutcome(
+                success=False,
+                mode="failed",
+                omitted_videos=omitted_videos,
+                error=attempt.error,
+                warning=attempt.warning,
+                delivery_status="failed",
+                delivery_error=attempt.error,
+            )
+
         if omitted_videos:
             retry_attempt = await self._send_context_message(
                 context,
@@ -1233,20 +1645,27 @@ class TweetSender:
                     f"{omitted_videos} 个视频/GIF 附件的直发合并推文"
                 )
                 return MergedSendOutcome(
-                    success=True,
+                    success=not media_only,
                     mode="direct_without_videos",
                     omitted_videos=omitted_videos,
                     error=attempt.error,
+                    delivery_status="partial_failed",
+                    delivery_error=attempt.error,
                 )
             if not retry_attempt.retryable:
+                retry_accepted = retry_attempt.uncertain
                 return MergedSendOutcome(
-                    success=retry_attempt.uncertain,
+                    success=retry_accepted and not media_only,
                     mode=(
-                        "uncertain_delivery" if retry_attempt.uncertain else "failed"
+                        "uncertain_delivery" if retry_accepted else "failed"
                     ),
                     omitted_videos=omitted_videos,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
+                    delivery_status=(
+                        "partial_failed" if retry_accepted else "failed"
+                    ),
+                    delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
 
@@ -1272,12 +1691,25 @@ class TweetSender:
             "direct merged fallback",
         )
         if fallback.success or fallback.uncertain:
+            if media_only:
+                error = attempt.error or fallback.error or "media-only fallback omitted media"
+                return MergedSendOutcome(
+                    success=False,
+                    mode="plain_fallback",
+                    omitted_videos=omitted_videos,
+                    error=error,
+                    warning=fallback.warning,
+                    delivery_status="failed",
+                    delivery_error=error,
+                )
             return MergedSendOutcome(
                 success=True,
                 mode="uncertain_delivery" if fallback.uncertain else "plain_fallback",
                 omitted_videos=omitted_videos,
                 error=attempt.error,
                 warning=fallback.warning,
+                delivery_status="partial_failed" if attempt.error else "success",
+                delivery_error=attempt.error,
             )
         return MergedSendOutcome(
             success=False,
@@ -1549,6 +1981,24 @@ class TweetSender:
         return [left, right]
 
     @staticmethod
+    def _notify_sent_progress(callback, count: int) -> None:
+        if not callable(callback):
+            return
+        try:
+            callback(count)
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] 手动发送进度回调失败: {exc}")
+
+    @staticmethod
+    def _notify_delivered(callback, count: int) -> None:
+        if not callable(callback) or count <= 0:
+            return
+        try:
+            callback(count)
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] 手动发送分段进度回调失败: {exc}")
+
+    @staticmethod
     async def _send_chunked_bool(chunks, send_chunk) -> bool:
         for chunk in chunks:
             if not await send_chunk(chunk):
@@ -1585,6 +2035,40 @@ class TweetSender:
         size = self.FORWARD_TWEET_CHUNK_SIZE
         return [tweets[index : index + size] for index in range(0, len(tweets), size)]
 
+    @staticmethod
+    def _status_ids_from_tweets(tweets: list[TweetItem]) -> tuple[str, ...]:
+        return tuple(
+            str(getattr(tweet, "status_id", "") or "")
+            for tweet in tweets
+            if str(getattr(tweet, "status_id", "") or "")
+        )
+
+    @classmethod
+    def _status_ids_from_batches(
+        cls, batches: list[TweetBatch]
+    ) -> tuple[str, ...]:
+        ids: list[str] = []
+        for _username, _instance, tweets in batches:
+            ids.extend(cls._status_ids_from_tweets(tweets))
+        return tuple(ids)
+
+    @staticmethod
+    def _dedupe_status_ids(values) -> tuple[str, ...]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for value in values or ():
+            text = str(value or "")
+            if text and text not in seen:
+                seen.add(text)
+                result.append(text)
+        return tuple(result)
+
+    @staticmethod
+    def _normalized_delivery_status(outcome) -> str:
+        return str(
+            getattr(outcome, "delivery_status", "success") or "success"
+        ).strip().lower()
+
     def _batch_chunks(self, batches: list[TweetBatch]) -> list[list[TweetBatch]]:
         chunks: list[list[TweetBatch]] = []
         current: list[TweetBatch] = []
@@ -1603,6 +2087,50 @@ class TweetSender:
         if current:
             chunks.append(current)
         return chunks
+
+    def _split_batches_for_forward_retry(
+        self, batches: list[TweetBatch]
+    ) -> list[list[TweetBatch]] | None:
+        total = self._count_batch_tweets(batches)
+        if total <= self.FORWARD_SPLIT_MIN_TWEETS:
+            return None
+        mid = max(1, total // 2)
+        left: list[TweetBatch] = []
+        right: list[TweetBatch] = []
+        consumed = 0
+        for username, instance, tweets in batches:
+            split_at = max(0, min(len(tweets), mid - consumed))
+            if split_at:
+                left.append((username, instance, list(tweets[:split_at])))
+            if split_at < len(tweets):
+                right.append((username, instance, list(tweets[split_at:])))
+            consumed += split_at
+        if not left or not right:
+            return None
+        return [left, right]
+
+    @staticmethod
+    def _batches_without_status_ids(
+        batches: list[TweetBatch], delivered_status_ids
+    ) -> tuple[list[TweetBatch], int]:
+        delivered = {str(value or "") for value in delivered_status_ids if value}
+        result: list[TweetBatch] = []
+        first_remaining_offset: int | None = None
+        offset = 0
+        for username, instance, tweets in batches:
+            remaining = []
+            for tweet in tweets:
+                status_id = str(getattr(tweet, "status_id", "") or "")
+                if status_id and status_id in delivered:
+                    offset += 1
+                    continue
+                if first_remaining_offset is None:
+                    first_remaining_offset = offset
+                remaining.append(tweet)
+                offset += 1
+            if remaining:
+                result.append((username, instance, remaining))
+        return result, first_remaining_offset or 0
 
     def supports_merged_forward_for_umo(self, context, umo: str) -> bool:
         return self._delivery_adapter_for_umo(context, umo).supports_merged_forward

@@ -7,7 +7,7 @@
 AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）或 **标签分组**（`tag`）。
 旧版单一模板 `group`（用户分组）启动时迁移为 `blogger`。
 
-- `basic`: Nitter 实例、默认数量、冷却、基础平台字段；HTML 回退与搜索相关键（见下「三列表」）。
+- `basic`: Nitter 实例、默认数量、冷却、基础平台字段与 HTML 搜索相关键（见下「两列表」）。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
@@ -15,13 +15,14 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
 
-## 三列表（禁止混用）
+## 两列表（禁止混用）
 
 | 配置键 | 用途 | 说明 |
 | --- | --- | --- |
-| `instances`（`basic`） | 博主 RSS | 可含 nitter.net |
-| `blogger_html_instances` | 博主 HTML 用户页回退 | `user_html_fallback` 开启且 RSS 失败/空时使用 |
-| `search_instances` | HTML 搜索 | `/推文搜索` 与标签分组定时；默认不要放 nitter.net |
+| `instances`（`basic`） | 博主 RSS | 默认 `https://nitter.net`，可配多个 |
+| `search_instances` | HTML 搜索 | 默认仅 `https://nitter.tiekoetter.com`；`/推文搜索` 与标签分组定时；禁止默认放 nitter.net |
+
+博主路径**不设**独立 HTML 回退列表；公共 HTML 留给搜索，避免抢 tie 资源。
 
 相关：`search_enabled`、`search_cooldown_seconds`、`search_default_limit`、`search_max_limit`、`html_min_interval`、`html_max_pages`、`html_request_timeout`。
 
@@ -41,7 +42,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文（博主 RSS 与标签/HTML 路径均适用）。
-- `omit_status_url`: 发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；Telegram 用正文摘要 Markdown 链到推文。仅媒体模式不调用翻译。
+- `omit_status_url`: 该分组定时发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；关闭时正文/译文链接保留。Telegram 用正文摘要 Markdown 链到推文。仅媒体模式不调用翻译。
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
 
@@ -57,7 +58,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
-后台**标签**检查：每个 `watch_query` 走 HTML 搜索（`search_instances`），组内串行；`fetch_limit` 固定 20、默认约 1 页（`html_max_pages`）；固定滤纯转推；可选纯文本/仅媒体；与 seen（`q:...`）差集后**新帖全发**（无每轮 5 条上限）；首次启用只 init 不推历史；标签首次空结果不初始化 seen。
+后台**标签**检查：每个 `watch_query` 走 HTML 搜索（`search_instances`），组内串行；`fetch_limit` 固定 20、默认约 1 页（`html_max_pages`）；固定滤纯转推；可选纯文本/仅媒体；与 seen（`q:...`）差集后**新帖全发**（无每轮 5 条上限）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
 
 ## 新增配置项清单
 

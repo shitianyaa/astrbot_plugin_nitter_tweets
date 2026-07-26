@@ -225,7 +225,7 @@ class StorageAdapter:
         delivery_status: str = "success",
         delivery_error: str = "",
     ) -> int:
-        """Record one successful push delivery."""
+        """Record one successful or partially delivered push."""
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
             sqlite.record_push_history,
@@ -247,7 +247,7 @@ class StorageAdapter:
         limit: int = 50,
         offset: int = 0,
     ) -> list[PushHistoryRecord]:
-        """Return recent successful push history."""
+        """Return recent successful and partially delivered push history."""
         sqlite = await self._ensure_sqlite_connected()
         storage_group_id = self._storage_group_id(group_id) if group_id else ""
         return await asyncio.to_thread(
@@ -259,7 +259,7 @@ class StorageAdapter:
         )
 
     async def count_push_history(self, group_id: str = "", username: str = "") -> int:
-        """Return count of grouped successful push history records."""
+        """Return count of grouped successful and partial push history records."""
         sqlite = await self._ensure_sqlite_connected()
         storage_group_id = self._storage_group_id(group_id) if group_id else ""
         return await asyncio.to_thread(
@@ -269,7 +269,7 @@ class StorageAdapter:
         )
 
     async def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:
-        """Return successful push history counts grouped by stable group id."""
+        """Return successful and partial push history counts by stable group id."""
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(sqlite.get_push_history_group_summaries)
 

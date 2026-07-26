@@ -213,8 +213,10 @@ class SchedulerConfigReader:
         """Persist normalized watch_queries when type/query was auto-fixed."""
         try:
             from ..config.compat import config_set
+            from ..media_support.html_backend import encode_watch_query
         except ImportError:  # pragma: no cover
             from config.compat import config_set
+            from media_support.html_backend import encode_watch_query
 
         raw_groups = config_get(self.config, "tweet_groups", []) or []
         if not isinstance(raw_groups, list):
@@ -247,7 +249,10 @@ class SchedulerConfigReader:
             # Persist plain strings so AstrBot WebUI list fields do not show
             # "[object Object]" (list items are string-only in the schema UI).
             # Type remains recoverable: leading # => tag, else phrase.
-            healed = [item.query for item in group.queries_info.queries]
+            healed = [
+                encode_watch_query(item.query, item.type)
+                for item in group.queries_info.queries
+            ]
             if raw.get("watch_queries") != healed:
                 raw["watch_queries"] = healed
                 changed_any = True
@@ -320,7 +325,12 @@ class SchedulerConfigReader:
             group_id, "filter_plain_text_enabled", False
         )
 
-        group_type = self.parse_group_type(raw_group.get("group_type"))
+        group_type = self.parse_group_type(
+            raw_group.get("group_type"),
+            raw_group.get("watch_users"),
+            raw_group.get("watch_queries"),
+            raw_group.get("__template_key"),
+        )
         users_info = self.parse_watch_users(raw_group.get("watch_users", []))
         queries_info = self.parse_watch_queries(raw_group.get("watch_queries", []))
         # Tag groups only follow queries; blogger groups only follow users.
@@ -458,20 +468,36 @@ class SchedulerConfigReader:
         )
 
     @staticmethod
-    def parse_group_type(raw_type) -> str:
+    def parse_group_type(
+        raw_type,
+        raw_users=None,
+        raw_queries=None,
+        raw_template_key=None,
+    ) -> str:
         text = str(raw_type or "").strip().lower()
         if text in {GROUP_TYPE_TAG, "search", "query", "keyword"}:
+            return GROUP_TYPE_TAG
+        if text in {GROUP_TYPE_BLOGGER, "user", "users"}:
+            return GROUP_TYPE_BLOGGER
+        template_key = str(raw_template_key or "").strip().lower()
+        if template_key == GROUP_TYPE_TAG:
+            return GROUP_TYPE_TAG
+        # Legacy hand-written configs may omit group_type. Preserve a query-only
+        # group as a tag group before the type-specific parser drops it.
+        if bool(raw_queries) and not bool(raw_users):
             return GROUP_TYPE_TAG
         return GROUP_TYPE_BLOGGER
 
     def parse_watch_queries(self, raw_queries) -> WatchQueriesInfo:
         try:
             from ..media_support.html_backend import (
+                encode_watch_query,
                 normalize_watch_query,
                 seen_account_key_for_query,
             )
         except ImportError:  # pragma: no cover
             from media_support.html_backend import (
+                encode_watch_query,
                 normalize_watch_query,
                 seen_account_key_for_query,
             )
@@ -516,13 +542,17 @@ class SchedulerConfigReader:
             query, kind = normalize_watch_query(query_raw, type_hint or None)
             if not query:
                 invalid_entries.append(display)
+                changed = True
                 continue
-            # Prefer plain-string persistence for schema UI compatibility.
-            if not isinstance(raw, str) or raw.strip() != query:
+            canonical = encode_watch_query(query, kind)
+            # Prefer schema-compatible strings while retaining an explicit type
+            # through the reversible prefix when inference is insufficient.
+            if not isinstance(raw, str) or raw.strip() != canonical:
                 changed = True
             account_key = seen_account_key_for_query(query)
             if account_key in seen_keys:
                 duplicates.append(display)
+                changed = True
                 continue
             seen_keys.add(account_key)
             queries.append(

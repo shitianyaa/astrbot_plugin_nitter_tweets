@@ -13,6 +13,7 @@ try:
         config_set,
         sanitize_removed_feature_group,
     )
+    from ..media_support.html_backend import encode_watch_query
     from ..shared.group_ids import (
         infer_legacy_group_id_from_name,
         is_default_group,
@@ -27,6 +28,7 @@ except ImportError:
         config_set,
         sanitize_removed_feature_group,
     )
+    from media_support.html_backend import encode_watch_query
     from shared.group_ids import (
         infer_legacy_group_id_from_name,
         is_default_group,
@@ -95,6 +97,7 @@ class WebUIGroupEditor:
             index, raw_group = self._find_group(groups, group_id)
         except KeyError:
             return {"success": False, "error": f"未找到分组：{group_id}"}
+        stable_group_id = self._group_identifier(raw_group, index + 1)
 
         try:
             name = self._validated_name(groups, self._text(data, "name"), index)
@@ -120,7 +123,7 @@ class WebUIGroupEditor:
             "tag" if existing_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
         )
         raw_group["name"] = name
-        raw_group["group_id"] = normalize_stable_group_id(group_id)
+        raw_group["group_id"] = stable_group_id
         raw_group["enabled"] = self._bool(
             data.get("enabled", raw_group.get("enabled", True))
         )
@@ -164,14 +167,15 @@ class WebUIGroupEditor:
                 )
             except ValueError as exc:
                 return {"success": False, "error": str(exc)}
-            raw_group["watch_users"] = []
         else:
             if "watch_users" in data:
                 raw_group["watch_users"] = self._normalized_list(
                     data.get("watch_users")
                 )
             raw_group.setdefault("watch_users", raw_group.get("watch_users") or [])
-            raw_group["watch_queries"] = []
+        # Automatic migration intentionally preserves mixed legacy lists for
+        # operator recovery. Runtime follows group_type, so an ordinary
+        # Dashboard edit must not silently erase the inactive subscription list.
         groups[index] = raw_group
         save_error = self._save_groups(previous_groups, groups)
         if save_error:
@@ -193,6 +197,9 @@ class WebUIGroupEditor:
             index, raw_group = self._find_group(groups, group_id)
         except KeyError:
             return {"success": False, "error": f"未找到分组：{group_id}"}
+        stable_group_id = self._group_identifier(raw_group, index + 1)
+        if is_default_group(stable_group_id):
+            return {"success": False, "error": "默认分组不能在 WebUI 中删除"}
 
         deleted = groups.pop(index)
         save_error = self._save_groups(previous_groups, groups)
@@ -200,8 +207,8 @@ class WebUIGroupEditor:
             return {"success": False, "error": f"配置保存失败：{save_error}"}
         return {
             "success": True,
-            "group_id": normalize_stable_group_id(group_id),
-            "group_name": str(deleted.get("name") or group_id),
+            "group_id": stable_group_id,
+            "group_name": str(deleted.get("name") or stable_group_id),
         }
 
     def _raw_groups(self) -> list[dict[str, Any]]:
@@ -258,11 +265,19 @@ class WebUIGroupEditor:
     def _find_group(
         self, groups: list[dict[str, Any]], group_id: str
     ) -> tuple[int, dict[str, Any]]:
-        target = normalize_group_id(group_id)
+        stable_target = normalize_stable_group_id(group_id)
         for index, raw_group in enumerate(groups):
-            if self._group_identifier(raw_group, index + 1) == target:
+            if self._group_identifier(raw_group, index + 1) == stable_target:
                 return index, raw_group
-        raise KeyError(target)
+        alias_target = normalize_group_id(group_id)
+        for index, raw_group in enumerate(groups):
+            identifiers = {
+                normalize_group_id(identifier)
+                for identifier in self._group_identifiers(raw_group, index + 1)
+            }
+            if alias_target in identifiers:
+                return index, raw_group
+        raise KeyError(stable_target)
 
     def _validated_name(
         self,
@@ -316,9 +331,11 @@ class WebUIGroupEditor:
         info = self.scheduler.config_reader.parse_watch_queries(raw_values)
         if info.invalid_entries:
             raise ValueError("搜索订阅无效：" + ", ".join(info.invalid_entries[:5]))
-        # Store plain strings (not {query,type} objects) so AstrBot WebUI list
-        # fields do not render as "[object Object]". Type is inferred from #.
-        return [item.query for item in info.queries]
+        # AstrBot list fields require strings. Keep explicit type reversible
+        # when it cannot be inferred from the leading '#'.
+        return [
+            encode_watch_query(item.query, item.type) for item in info.queries
+        ]
 
     @staticmethod
     def _bool(value: Any) -> bool:

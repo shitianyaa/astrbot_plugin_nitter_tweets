@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 import ssl
 import time
@@ -15,7 +16,7 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
+    from ..config import config_get, parse_config_bool
     from ..shared import (
         TweetItem,
         clean_text,
@@ -25,7 +26,7 @@ try:
         normalize_external_links,
     )
 except ImportError:
-    from config import config_get
+    from config import config_get, parse_config_bool
     from shared import (
         TweetItem,
         clean_text,
@@ -256,16 +257,39 @@ class NitterClient:
         self.retry_delay_seconds = clamp_float(
             config_get(config, "retry_delay_seconds", 5.0), 0.0, 60.0
         )
-        self.filter_reposts_enabled = bool(
-            config_get(config, "filter_reposts_enabled", True)
+        self.filter_reposts_enabled = parse_config_bool(
+            config_get(config, "filter_reposts_enabled", True), True
         )
-        self.brief_log_enabled = bool(
-            config_get(config, "brief_log_enabled", True)
+        self.brief_log_enabled = parse_config_bool(
+            config_get(config, "brief_log_enabled", True), True
         )
         # In-memory RSS mirror scores (not shared with HTML pools).
         self.host_scores = HostScoreBook()
         # S2=A: set only for one check/command via begin_run_host_skip().
-        self._run_host_skip: RssRunHostSkip | None = None
+        # Context-local state prevents overlapping manual and scheduled tasks
+        # from marking one another's mirror set.  A property below preserves
+        # the old private attribute used by a few tests/integrations.
+        self._run_host_skip_var = contextvars.ContextVar(
+            f"nitter_run_host_skip_{id(self)}", default=None
+        )
+        self._run_host_skip_stack_var = contextvars.ContextVar(
+            f"nitter_run_host_skip_stack_{id(self)}", default=()
+        )
+
+    @property
+    def _run_host_skip(self) -> RssRunHostSkip | None:
+        variable = getattr(self, "_run_host_skip_var", None)
+        if variable is not None:
+            return variable.get()
+        return getattr(self, "_legacy_run_host_skip", None)
+
+    @_run_host_skip.setter
+    def _run_host_skip(self, value: RssRunHostSkip | None) -> None:
+        variable = getattr(self, "_run_host_skip_var", None)
+        if variable is not None:
+            variable.set(value)
+        else:  # tolerate lightweight __new__ instances in tests
+            self._legacy_run_host_skip = value
 
     def begin_run_host_skip(self) -> RssRunHostSkip:
         """Start a per-run skip set (caller must end_run_host_skip).
@@ -275,20 +299,31 @@ class NitterClient:
         """
         previous = self._run_host_skip
         token = RssRunHostSkip()
-        stack = getattr(self, "_run_host_skip_stack", None)
-        if stack is None:
-            stack = []
-            self._run_host_skip_stack = stack
-        stack.append(previous)
+        stack_var = getattr(self, "_run_host_skip_stack_var", None)
+        if stack_var is not None:
+            stack_var.set((*stack_var.get(), previous))
+        else:
+            stack = getattr(self, "_legacy_run_host_skip_stack", [])
+            stack.append(previous)
+            self._legacy_run_host_skip_stack = stack
         self._run_host_skip = token
         return token
 
     def end_run_host_skip(self) -> None:
-        stack = getattr(self, "_run_host_skip_stack", None)
-        if stack:
-            self._run_host_skip = stack.pop()
+        stack_var = getattr(self, "_run_host_skip_stack_var", None)
+        if stack_var is not None:
+            stack = stack_var.get()
+            if stack:
+                self._run_host_skip = stack[-1]
+                stack_var.set(stack[:-1])
+            else:
+                self._run_host_skip = None
         else:
-            self._run_host_skip = None
+            stack = getattr(self, "_legacy_run_host_skip_stack", [])
+            if stack:
+                self._run_host_skip = stack.pop()
+            else:
+                self._run_host_skip = None
 
     def _active_run_host_skip(self) -> RssRunHostSkip | None:
         return self._run_host_skip
@@ -327,7 +362,11 @@ class NitterClient:
             candidates = list(instances)
         else:
             filtered = skip.filter_instances(instances)
-            candidates = filtered if filtered else list(instances)
+            # S2=A means a host that already failed this run is not retried
+            # merely because every configured mirror is currently skipped.
+            # Returning an empty candidate list lets the caller report a
+            # bounded run failure; the next check gets a fresh skip set.
+            candidates = filtered
         # Availability-first: higher success score first; ties keep input order.
         return self.host_scores.order(candidates)
 

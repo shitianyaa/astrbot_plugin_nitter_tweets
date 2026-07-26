@@ -9,7 +9,6 @@ design_concept/
 docs/superpowers/plans/
 output/
 test/output/
-/tests/
 tests/downloads/
 backups/
 *.db

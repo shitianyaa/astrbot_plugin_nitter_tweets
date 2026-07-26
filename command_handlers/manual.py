@@ -11,6 +11,7 @@ from astrbot.core.star.filter.command import GreedyStr
 try:
     from ..ai import format_ai_tweet_summary
     from ..config import (
+        parse_config_bool,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -19,10 +20,13 @@ try:
         MAX_PAGES_PER_FILL,
         SearchSessionStore,
     )
+    from ..media_support.html_backend.query import MAX_QUERY_LENGTH
+    from ..media_support.network import UnsafeUrlError, validate_http_url
     from ..shared import normalize_username, safe_call
 except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
+        parse_config_bool,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -31,6 +35,8 @@ except ImportError:
         MAX_PAGES_PER_FILL,
         SearchSessionStore,
     )
+    from media_support.html_backend.query import MAX_QUERY_LENGTH
+    from media_support.network import UnsafeUrlError, validate_http_url
     from shared import normalize_username, safe_call
 
 
@@ -137,17 +143,41 @@ class ManualCommandMixin:
         query_key = self._search_query_key(query)
         buf = store.get_or_create(session_id, query_key)
 
+        sent_progress = [0]
+
+        def record_sent_progress(count: int) -> None:
+            # The send coroutine may abort after one or more messages were
+            # accepted. Preserve that prefix when finalizing the reservation.
+            sent_progress[0] = max(sent_progress[0], int(count))
+
+        def abort_reservation(token: str) -> None:
+            if sent_progress[0] > 0:
+                buf.finalize(token, sent_progress[0])
+            else:
+                buf.rollback(token)
+
         # Pure buffer hit: no network — skip cooldown burn for short fun use.
         if len(buf) >= limit:
-            tweets = buf.take(limit)
+            reservation_token, tweets = buf.reserve(limit)
             instance = buf.instance or "buffer"
-            await event.send(
-                event.plain_result(
-                    f"从本会话缓存发送「{query}」{len(tweets)} 条"
-                    f"（缓存剩余 {len(buf)}）。"
+            try:
+                await event.send(
+                    event.plain_result(
+                        f"从本会话缓存发送「{query}」{len(tweets)} 条"
+                        f"（缓存剩余 {len(buf)}）。"
+                    )
                 )
-            )
-            await self._send_tweets_response(event, query, instance, tweets)
+                sent_count = await self._send_tweets_response(
+                    event,
+                    query,
+                    instance,
+                    tweets,
+                    on_sent_progress=record_sent_progress,
+                )
+            except BaseException:
+                abort_reservation(reservation_token)
+                raise
+            buf.finalize(reservation_token, sent_count)
             return
 
         self._mark_cooldown(event, scope="search")
@@ -200,8 +230,9 @@ class ManualCommandMixin:
             f"fetched={len(fetched or [])} added={added} pool={len(buf)}"
         )
 
-        tweets = buf.take(limit)
+        reservation_token, tweets = buf.reserve(limit)
         if not tweets:
+            buf.rollback(reservation_token)
             if had_known or (fetched and added == 0):
                 await event.send(
                     event.plain_result(
@@ -214,9 +245,18 @@ class ManualCommandMixin:
                     event.plain_result(f"没有找到与「{query}」相关的公开推文。")
                 )
             return
-        await self._send_tweets_response(
-            event, query, buf.instance or instance or "", tweets
-        )
+        try:
+            sent_count = await self._send_tweets_response(
+                event,
+                query,
+                buf.instance or instance or "",
+                tweets,
+                on_sent_progress=record_sent_progress,
+            )
+        except BaseException:
+            abort_reservation(reservation_token)
+            raise
+        buf.finalize(reservation_token, sent_count)
 
     async def _fetch_user_with_html_fallback(
         self, username: str, limit: int, rss_error=None
@@ -229,7 +269,9 @@ class ManualCommandMixin:
         except ImportError:  # pragma: no cover
             from config import config_get
 
-        if not bool(config_get(self.config, "user_html_fallback", True)):
+        if not parse_config_bool(
+            config_get(self.config, "user_html_fallback", False), False
+        ):
             return "", []
         try:
             instance, tweets = await asyncio.to_thread(
@@ -277,6 +319,8 @@ class ManualCommandMixin:
             limit = max_limit
         if not query:
             return "", 0, "查询内容不能为空。"
+        if len(query) > MAX_QUERY_LENGTH:
+            return "", 0, f"查询内容过长（最多 {MAX_QUERY_LENGTH} 字符）。"
         return query, limit, ""
 
     async def _cmd_mirror_probe_impl(self, event: AstrMessageEvent, args=GreedyStr):
@@ -332,10 +376,28 @@ class ManualCommandMixin:
         username: str,
         instance: str,
         tweets,
-    ) -> None:
+        on_sent_progress=None,
+    ) -> int:
         hide_original = resolve_hide_original_when_translated(self.config)
         if self.sender.should_merge_for_event(event, len(tweets)):
             notices = []
+            sent_count = 0
+
+            def record_sent(count: int) -> None:
+                nonlocal sent_count
+                try:
+                    confirmed = max(0, min(len(tweets), int(count)))
+                except (TypeError, ValueError, OverflowError):
+                    return
+                if confirmed <= sent_count:
+                    return
+                sent_count = confirmed
+                if callable(on_sent_progress):
+                    try:
+                        on_sent_progress(sent_count)
+                    except Exception as exc:
+                        logger.warning(f"[NitterTweets] 手动发送进度记录失败: {exc}")
+
             try:
                 for tweet_index, tweet in enumerate(tweets, 1):
                     notices.extend(
@@ -347,22 +409,28 @@ class ManualCommandMixin:
                             progress_total=len(tweets),
                         )
                     )
-                await self._send_manual_tweets_with_fallback(
+                sent = await self._send_manual_tweets_with_fallback(
                     event,
                     username,
                     instance,
                     tweets,
                     notices=self._dedupe_texts(notices),
                     hide_original_when_translated=hide_original,
+                    on_sent_progress=record_sent,
                 )
+                # Preserve compatibility with older overrides that returned
+                # None/True without invoking the new progress callback.
+                if sent is not False:
+                    record_sent(len(tweets))
+                return sent_count
             finally:
-                await asyncio.to_thread(self.media.cleanup_after_send, tweets)
-            return
+                await self._cleanup_manual_media(tweets)
 
         # Sequential path: interval applies to all platforms before adapter send.
         send_interval = resolve_manual_send_interval(self.config)
         sent_notices: set[str] = set()
         total = len(tweets)
+        sent_count = 0
         for index, tweet in enumerate(tweets, 1):
             if index > 1 and send_interval > 0:
                 await asyncio.sleep(send_interval)
@@ -376,7 +444,7 @@ class ManualCommandMixin:
                 )
                 notices = [notice for notice in notices if notice not in sent_notices]
                 sent_notices.update(notices)
-                await self._send_manual_tweets_with_fallback(
+                sent = await self._send_manual_tweets_with_fallback(
                     event,
                     username,
                     instance,
@@ -385,8 +453,29 @@ class ManualCommandMixin:
                     tweet_start_index=1,
                     hide_original_when_translated=hide_original,
                 )
+                # Keep compatibility with pre-reservation overrides that
+                # returned None after a successful send.
+                if sent is False:
+                    break
+                sent_count += 1
+                if callable(on_sent_progress):
+                    on_sent_progress(sent_count)
+            except Exception as exc:
+                logger.warning(
+                    f"[NitterTweets] 手动推文准备/发送失败: username={username}, "
+                    f"index={index}, error={exc}"
+                )
+                break
             finally:
-                await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
+                await self._cleanup_manual_media([tweet])
+        return sent_count
+
+    async def _cleanup_manual_media(self, tweets) -> None:
+        """Keep cleanup failures from changing an already confirmed send."""
+        try:
+            await asyncio.to_thread(self.media.cleanup_after_send, tweets)
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] 手动推文媒体清理失败: {exc}")
 
     async def _prepare_manual_tweets(
         self,
@@ -439,8 +528,23 @@ class ManualCommandMixin:
         header_text: str = "",
         tweet_start_index: int = 1,
         hide_original_when_translated: bool = False,
-    ) -> None:
+        on_sent_progress=None,
+    ) -> bool:
         notices = notices or []
+        sent_count = 0
+
+        def record_sent(count: int) -> None:
+            nonlocal sent_count
+            try:
+                confirmed = max(0, min(len(tweets), int(count)))
+            except (TypeError, ValueError, OverflowError):
+                return
+            if confirmed <= sent_count:
+                return
+            sent_count = confirmed
+            if callable(on_sent_progress):
+                on_sent_progress(sent_count)
+
         if await self.sender.send(
             event,
             username,
@@ -450,19 +554,29 @@ class ManualCommandMixin:
             header_text=header_text,
             tweet_start_index=tweet_start_index,
             hide_original_when_translated=hide_original_when_translated,
+            on_sent_progress=record_sent,
         ):
-            return
+            record_sent(len(tweets))
+            return True
+        remaining = list(tweets[sent_count:])
+        if not remaining:
+            return True
+        remaining_start_index = tweet_start_index + sent_count
+        remaining_notices = notices if sent_count == 0 else []
+        remaining_header = header_text if sent_count == 0 else ""
         fallback_text = self.sender.renderer.format_plain(
             username,
             instance,
-            tweets,
-            start_index=tweet_start_index,
-            notices=notices,
-            header_text=header_text,
+            remaining,
+            start_index=remaining_start_index,
+            notices=remaining_notices,
+            header_text=remaining_header,
             hide_original_when_translated=hide_original_when_translated,
         )
         try:
             await event.send(MessageChain([Plain(fallback_text)]))
+            record_sent(len(tweets))
+            return True
         except Exception as exc:
             logger.warning(f"[NitterTweets] 发送手动推文降级消息失败: {exc}")
             try:
@@ -478,6 +592,7 @@ class ManualCommandMixin:
                 )
             except Exception as notice_exc:
                 logger.warning(f"[NitterTweets] 发送手动推文失败提示失败: {notice_exc}")
+            return False
 
     @staticmethod
     def _dedupe_texts(values: list[str]) -> list[str]:
@@ -518,6 +633,17 @@ class ManualCommandMixin:
             )
 
         instance_text = tokens[instance_index]
+        try:
+            instance_text = validate_http_url(
+                instance_text, resolve_dns=False
+            ).rstrip("/")
+        except UnsafeUrlError:
+            return (
+                "",
+                0,
+                "",
+                "镜像站地址不安全或格式无效，请使用公开的 http:// 或 https:// 地址",
+            )
         extras = tokens[:instance_index] + tokens[instance_index + 1 :]
         if len(extras) > 2:
             return "", 0, "", usage
@@ -612,12 +738,14 @@ class ManualCommandMixin:
 
     @staticmethod
     def _looks_like_instance(value: str) -> bool:
-        value = str(value or "").strip().lower()
+        value = str(value or "").strip()
         if not value or value.startswith("@") or " " in value:
             return False
-        if not value.startswith(("http://", "https://")):
+        try:
+            validate_http_url(value, resolve_dns=False)
+        except UnsafeUrlError:
             return False
-        return "." in value or "localhost" in value
+        return True
 
 
     def _search_session_id(self, event: AstrMessageEvent) -> str:
