@@ -128,6 +128,8 @@ class HtmlNitterPool:
         Explicit ``instance`` (mirror probe) stays single-host. Ready hosts are
         sorted by in-memory success score (higher first); cooling hosts stay
         last as fallback. On failure the caller continues through the list.
+        Returns ``[]`` when every host is cooling so the caller fails fast
+        instead of hammering mirrors that are still rate-limited.
         """
         if instance and str(instance).strip():
             base = self._norm(str(instance).strip())
@@ -153,7 +155,9 @@ class HtmlNitterPool:
         # Prefer ready mirrors by success score; cooling only as last resort.
         if ready:
             return self.scores.order(ready) + self.scores.order(cooling)
-        return self.scores.order(list(all_hosts))
+        # 非空 all_hosts 必然全部落进 ready 或 cooling，走到这里即全部冷却中：
+        # 返回空列表让调用方快速失败，而不是继续冲击仍在限流的镜像。
+        return []
 
     @contextmanager
     def _session_transaction(self):
@@ -243,6 +247,10 @@ class HtmlNitterPool:
         # that as hard failure after rotation; scheduler empty-init depends on it.
         empty_success_base: str | None = None
         hosts = self._hosts_for_rotation(instance)
+        if not hosts:
+            raise RuntimeError(
+                "HTML user fetch unavailable: all instances in cooldown"
+            )
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)
@@ -303,6 +311,10 @@ class HtmlNitterPool:
         empty_success_base: str | None = None
         empty_success_result = HtmlSearchResult()
         hosts = self._hosts_for_rotation(instance)
+        if not hosts:
+            raise RuntimeError(
+                "HTML search unavailable: all instances in cooldown"
+            )
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)

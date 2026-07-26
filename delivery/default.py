@@ -385,9 +385,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_error = video_attempt.error
             break
         else:
-            delivery_error = video_error or image_error
+            delivery_error = image_error
+            # 视频全部送达时，图片失败不应让整批重发。但没有视频组件且图片全部
+            # 失败时 media_only 没有任何媒体送达，不能算完成，否则会推进 seen 漏推。
+            # 一个媒体组件都没有时同理：不能凭“没有失败”判定完成。
+            has_media = bool(video_components) or bool(image_components)
+            media_delivered = has_media and (bool(video_components) or not image_error)
             return SendOutcome(
-                success=not (media_only and bool(delivery_error)),
+                success=not (media_only and not media_delivered),
                 error=delivery_error,
                 warning=video_warning or image_warning or text_warning,
                 delivery_status="partial_failed" if delivery_error else "success",
@@ -510,7 +515,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
 
         video_components = sender.renderer.build_direct_video_components(tweets)
         if not video_components:
-            return not (media_only and image_failed)
+            # media_only 必须真的送出媒体：没有图片组件时不能凭“没有失败”判定完成。
+            return (bool(image_components) and not image_failed) or not media_only
 
         for offset, video_component in enumerate(video_components, start=1):
             video_attempt = await sender._send_event_chain(

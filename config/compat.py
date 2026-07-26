@@ -727,13 +727,6 @@ def resolve_tweet_group_template_key(group: dict) -> str:
 def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
     """Resolve group type and whether mixed subscription lists must be kept."""
     raw_type = str(group.get("group_type") or "").strip().lower()
-    if raw_type in {TWEET_GROUP_TEMPLATE_KEY_TAG, "search", "query", "keyword"}:
-        desired = TWEET_GROUP_TEMPLATE_KEY_TAG
-    elif raw_type in {TWEET_GROUP_TEMPLATE_KEY_BLOGGER, "user", "users"}:
-        desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-    else:
-        desired = ""
-
     raw_key = (
         str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip().lower()
     )
@@ -741,16 +734,40 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
     has_queries = not _is_empty_value(group.get("watch_queries"))
     preserve_mixed = has_users and has_queries
 
+    # Infer from data first to avoid clearing valid subscriptions.
+    inferred = ""
+    if has_queries and not has_users:
+        inferred = TWEET_GROUP_TEMPLATE_KEY_TAG
+    elif has_users and not has_queries:
+        inferred = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    elif raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
+        inferred = TWEET_GROUP_TEMPLATE_KEY_TAG
+    else:
+        # Legacy/unknown/missing template keys remain blogger-compatible.
+        inferred = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+
+    # Respect explicit group_type only if it doesn't contradict data.
+    desired = ""
+    if raw_type in {TWEET_GROUP_TEMPLATE_KEY_TAG, "search", "query", "keyword"}:
+        desired = TWEET_GROUP_TEMPLATE_KEY_TAG
+    elif raw_type in {TWEET_GROUP_TEMPLATE_KEY_BLOGGER, "user", "users"}:
+        desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+
+    # If explicit type contradicts single-sided data, trust data over label.
+    # 两个列表都为空时没有可参考的数据，保留显式声明，否则新建的空标签组会被
+    # 改判成博主组并写回 group_type。
+    if (
+        desired
+        and inferred
+        and desired != inferred
+        and not preserve_mixed
+        and (has_users or has_queries)
+    ):
+        desired = inferred
+
     if not desired:
-        if has_queries and not has_users:
-            desired = TWEET_GROUP_TEMPLATE_KEY_TAG
-        elif has_users and not has_queries:
-            desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
-        elif raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
-            desired = TWEET_GROUP_TEMPLATE_KEY_TAG
-        else:
-            # Legacy/unknown/missing template keys remain blogger-compatible.
-            desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+        desired = inferred
+
     return desired, preserve_mixed
 
 
