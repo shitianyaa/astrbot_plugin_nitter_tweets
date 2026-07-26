@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 try:
+    from ..shared import TweetItem
     from ..shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from .formatting import _format_limited_values
 except ImportError:
+    from shared import TweetItem
     from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from scheduler.formatting import _format_limited_values
+
+if TYPE_CHECKING:
+    # 只用于注解。运行时不导入，避免 scheduler.models 反向拉起 ai（ai → config，
+    # 而 config 对 scheduler 已经只保留 TYPE_CHECKING 依赖）。
+    try:
+        from ..ai import TranslationReport
+    except ImportError:
+        from ai import TranslationReport
 
 
 @dataclass(slots=True)
@@ -218,7 +229,7 @@ class ScheduledCheckResult:
     @staticmethod
     def _failure_label(user: str) -> str:
         user = str(user or "").strip()
-        if user.startswith("@"):
+        if user.startswith("@") or user.startswith("q:"):
             return user
         return f"@{user}"
 
@@ -309,3 +320,40 @@ class ScheduledCheckResult:
             lines.append("本次没有发现需要推送的新推文。")
 
         return "\n".join(lines)
+
+
+@dataclass(slots=True)
+class SchedulerTaskError:
+    message: str
+    kind: str = ""
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> "SchedulerTaskError":
+        return cls(message=str(exc), kind=type(exc).__name__)
+
+
+@dataclass(slots=True)
+class UserFetchResult:
+    index: int
+    username: str
+    instance: str = ""
+    tweets: list[TweetItem] = field(default_factory=list)
+    scanned_status_ids: list[str] = field(default_factory=list)
+    anchor_status_ids: list[str] = field(default_factory=list)
+    latest_status_id: str = ""
+    scan_complete: bool = True
+    plain_text_filtered: int = 0
+    error: SchedulerTaskError | None = None
+    # HTML search keeps these internal counters so a tag's first RT-only
+    # response can be distinguished from a genuinely empty page.
+    retweet_filtered: int = 0
+    html_raw_item_count: int = 0
+
+
+@dataclass(slots=True)
+class PreparedBatchResult:
+    batch: PendingTweetBatch
+    translation_report: TranslationReport | None = None
+    error: SchedulerTaskError | None = None
+    media_status: str = "ready"
+    media_error: str = ""
