@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import datetime as dt
 import re
 import ssl
 import time
@@ -12,6 +13,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
 from xml.etree import ElementTree as ET
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    CN_TZ = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:
+    CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 from astrbot.api import logger
 
@@ -1146,9 +1153,10 @@ class NitterClient:
             return ""
         try:
             parsed = parsedate_to_datetime(raw)
+            shanghai_time = parsed.astimezone(CN_TZ)
+            return shanghai_time.strftime("%Y-%m-%d %H:%M:%S")
         except (TypeError, ValueError):
             return raw
-        return parsed.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
 
     @staticmethod
     def _normalize_link(link: str, instance: str) -> str:

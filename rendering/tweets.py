@@ -1109,11 +1109,6 @@ class TweetMessageRenderer:
         if media_summary:
             blocks.append(media_summary)
 
-        if source:
-            blocks.append(
-                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
-            )
-
         return "\n\n".join(blocks)
 
     def telegram_link_preview(
