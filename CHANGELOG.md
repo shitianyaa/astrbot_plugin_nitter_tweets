@@ -4,11 +4,14 @@
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-07-27
+
 ### Added
 
 - 分组配置 `max_tweets_per_check`：单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。
 - 全局重试机制：`max_global_retries`（默认 2）、`retry_delay_base`（默认 5.0s）、`retry_delay_on_cooldown`（默认 10.0s）。所有实例失败后延迟重试，渐进式延迟（5s → 10s → 15s），智能跳过验证错误和 probe 模式。
 - 默认搜索实例扩展为三镜像：`tiekoetter.com`、`poast.org`、`kareem.one`（CF 验证通过，3x 冗余 + 自动门禁解算）。
+- 新增实例配置完整指南：`docs/instances-guide.md` 详细说明 RSS vs HTML 双路架构、默认实例配置、容错机制、错误提示对照表和最佳实践。
 
 ### Fixed
 
@@ -22,6 +25,8 @@
 
 - 默认实例：博主 RSS 默认 `nitter.net`（可多站）；搜索默认 `tiekoetter.com` + `poast.org` + `kareem.one` 三镜像。移除配置项 `blogger_html_instances`；博主不再做公共 HTML 回退池，避免与标签搜索抢资源。`user_html_fallback` 默认关闭且隐藏。
 - 错误提示优化：区分配置错误（`未配置 Nitter 实例`）和运行时故障（`本轮所有 Nitter 实例均不可用`），明确失败原因。
+- 重试策略升级：采用"实例轮换 + 全局重试"双层机制。第一层立即轮换所有实例（ready 按成功率排序优先，cooling 殿后），全部失败后进入第二层延迟重试（渐进式 5s/10s/15s），显著提升网络抖动下的容错能力。
+- 文档完善：README、`docs/advanced.md` 和 `docs/instances-guide.md` 补充 RSS vs HTML 架构说明、默认实例配置、`user_html_fallback` 回退机制、全局重试参数和错误提示对照表。
 - 镜像选择：按请求成功率内存记分（有结果满分成功、空结果 soft、失败降权；HTML transport 异常也记失败），博主 RSS 与搜索 HTML 分账；ready 高分优先，冷却殿后；不写盘。
 - 日志：`brief_log_enabled`（默认开）同时收敛 HTML 搜索/回退过程日志；`session load` 全抑制，gate 同类去重，try/冷却/空页过程行在简略模式下不刷屏；失败、punish、轮换成功/全空摘要仍保留。
 - 修复 HTML 搜索/用户页：全部镜像 HTTP 成功但结果为空（含整页纯转推被滤掉）时返回空列表，不再 `HTML search failed`；标签定时可正确走「首次空结果不 init seen」，避免一直记失败、永远不推。
