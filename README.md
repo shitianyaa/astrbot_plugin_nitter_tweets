@@ -101,7 +101,7 @@ tweet_groups:
 
 每个分组有 `group_type`：`blogger` 使用 `watch_users`，`tag` 使用 `watch_queries`（勿混用）。共用 `push_targets` 与检查调度。
 
-`watch_queries` 请填**纯字符串**（`#标签` 或短语）。不要在 AstrBot 配置列表里塞对象，否则会显示成 `[object Object]`。标签定时：每查询约拉一页最多 20 条 → 滤纯转推/可选纯文本 → 与 seen 差集 → 新帖全发。
+`watch_queries` 请填**纯字符串**（`#标签` 或短语）。不要在 AstrBot 配置列表里塞对象，否则会显示成 `[object Object]`。标签定时：每查询约拉一页最多 20 条 → 滤纯转推/可选纯文本 → 与 seen 差集 → 发送新帖（受 `max_tweets_per_check` 限制，默认不限）。
 
 标签组首轮真正没有搜索结果时保持未初始化；若镜像返回了原始结果，但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位，使下一轮符合条件的新帖可以正常推送。
 

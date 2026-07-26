@@ -1425,8 +1425,8 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": ["101", "100"]},
         )
         self.assertEqual(len(sender.summary_sends), 1)
-        self.assertIn("博主：1 个", sender.summary_sends[0][1])
-        self.assertIn("推文：1 条", sender.summary_sends[0][1])
+        self.assertIn("1 位博主", sender.summary_sends[0][1])
+        self.assertIn("1 条新推文", sender.summary_sends[0][1])
 
     async def test_media_only_policy_skip_advances_seen_without_sending(self):
         target = "telegram:FriendMessage:1"
@@ -1980,10 +1980,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.cleaned, 2)
         self.assertEqual(len(sender.merged_batch_summaries), 1)
         merged_summary = sender.merged_batch_summaries[0][1]
-        self.assertIn("Nitter 本次检查发现更新", merged_summary)
-        self.assertIn("博主：2 个", merged_summary)
-        self.assertIn("推文：2 条", merged_summary)
-        self.assertIn("分组：默认分组", merged_summary)
+        self.assertIn("📬", merged_summary)
+        self.assertIn("2 位博主", merged_summary)
+        self.assertIn("2 条新推文", merged_summary)
+        self.assertIn("默认分组", merged_summary)
 
     async def test_serial_prepare_cancellation_cleans_buffered_and_inflight_media(self):
         target = "aiocqhttp:GroupMessage:1"

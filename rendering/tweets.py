@@ -992,12 +992,9 @@ class TweetMessageRenderer:
         counts: dict[str, int] = {}
         for username, _, tweets in batches:
             counts[username] = counts.get(username, 0) + len(tweets)
-        lines = [f"Nitter {action_text}更新"]
-        lines.append(f"博主：{len(counts)} 个")
-        lines.append(f"推文：{total} 条")
         if group_label:
-            lines.append(f"分组：{group_label}")
-        return "\n".join(lines)
+            return f"📬 {group_label} · {len(counts)} 位博主 · {total} 条新推文"
+        return f"📬 {len(counts)} 位博主 · {total} 条新推文"
 
     @staticmethod
     def format_tweet_with_source(
@@ -1051,9 +1048,11 @@ class TweetMessageRenderer:
         else:
             author_line = author_label
 
-        blocks: list[str] = [author_line]
+        # Compact header: @user · 2024-07-26 22:30
         if tweet.published:
-            blocks.append("时间：" + str(tweet.published))
+            author_line = f"{author_line} · {tweet.published}"
+
+        blocks: list[str] = [author_line]
 
         translation = (tweet.translation or "").strip()
         if translation:
@@ -1071,20 +1070,20 @@ class TweetMessageRenderer:
 
         # Translation first when both are shown (CN-reader friendly).
         if translation:
-            blocks.append("翻译：\n" + translation)
+            blocks.append("翻译\n" + translation)
         if show_original:
-            blocks.append("原文：\n" + original_text)
+            blocks.append("原文\n" + original_text)
         elif not translation and not show_original:
             blocks.append("（无正文）")
 
         if tweet.ai_warnings:
             warns = "\n".join(f"- {w}" for w in tweet.ai_warnings if w)
             if warns:
-                blocks.append("AI提示：\n" + warns)
+                blocks.append("⚠️\n" + warns)
 
         # Footer status URL only for non-TG when omit is off (TG has header link).
         if not omit_status_url and status_url and link_style != "telegram_md":
-            blocks.append("原文链接：\n" + status_url)
+            blocks.append("🔗\n" + status_url)
 
         if tweet.media_warnings:
             processed_warns = []
@@ -1098,21 +1097,16 @@ class TweetMessageRenderer:
                     and status_for_warn not in msg
                     and "http" not in msg
                 ):
-                    msg = f"{msg} 原文链接：{status_for_warn}"
+                    msg = f"{msg} 🔗：{status_for_warn}"
                 if msg:
                     processed_warns.append(msg)
             if processed_warns:
                 warns = "\n".join(f"- {w}" for w in processed_warns)
-                blocks.append("媒体提示：\n" + warns)
+                blocks.append("⚠️\n" + warns)
 
         media_summary = TweetMessageRenderer.format_media_summary(tweet)
         if media_summary:
             blocks.append(media_summary)
-
-        if source:
-            blocks.append(
-                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
-            )
 
         return "\n\n".join(blocks)
 
@@ -1243,7 +1237,7 @@ class TweetMessageRenderer:
         if not clean_notices:
             return ""
         return "\n".join(
-            ["处理提示：", *[f"- {notice}" for notice in clean_notices]]
+            ["⚠️", *[f"- {notice}" for notice in clean_notices]]
         )
 
     @staticmethod
@@ -1257,7 +1251,7 @@ class TweetMessageRenderer:
             parts.append(f"视频/GIF {video_count} 个")
         if not parts:
             return ""
-        return "媒体：" + "，".join(parts)
+        return "📎 " + "，".join(parts)
 
     @staticmethod
     def format_instance_label(instance: str) -> str:

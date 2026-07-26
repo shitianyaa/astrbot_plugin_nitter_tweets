@@ -227,9 +227,9 @@ class ScheduledCheckResult:
             title,
             f"分组: {self.group_name} ({self.group_id})",
             f"触发原因: {self.reason}",
-            f"关注账号: {len(self.users)} 个",
+            f"订阅数量: {len(self.users)} 个",
             f"推送目标: {len(self.targets)} 个",
-            f"已记录账号索引: {self.seen_users} 个",
+            f"已记录索引: {self.seen_users} 个",
         ]
         if self.fetch_limit:
             lines.append(f"后台首屏扫描: {self.fetch_limit} 条")

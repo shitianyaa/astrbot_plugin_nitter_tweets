@@ -94,6 +94,7 @@ class ScheduleGroup:
     media_only_enabled: bool
     omit_status_url: bool
     hide_original_when_translated: bool
+    max_tweets_per_check: int
     users_info: WatchUsersInfo
     queries_info: WatchQueriesInfo
     target_info: PushTargetParseResult
@@ -161,6 +162,7 @@ class SchedulerConfigReader:
             media_only_enabled=False,
             omit_status_url=True,
             hide_original_when_translated=False,
+            max_tweets_per_check=0,
             users_info=self.parse_watch_users([]),
             queries_info=self.parse_watch_queries([]),
             target_info=self.parse_push_targets(
@@ -357,10 +359,20 @@ class SchedulerConfigReader:
             daily_check_times=daily_check_times,
             scheduled_fetch_limit=20,
             send_target_interval=clamp_float(
-                config_get(self.config, "send_target_interval", 1.5), 0.0, 60.0
+                raw_group.get(
+                    "send_target_interval",
+                    config_get(self.config, "send_target_interval", 1.5),
+                ),
+                0.0,
+                60.0,
             ),
             send_user_interval=clamp_float(
-                config_get(self.config, "send_user_interval", 2.0), 0.0, 60.0
+                raw_group.get(
+                    "send_user_interval",
+                    config_get(self.config, "send_user_interval", 2.0),
+                ),
+                0.0,
+                60.0,
             ),
             notify_no_updates=self.parse_bool(
                 config_get(self.config, "notify_no_updates", False), False
@@ -397,6 +409,11 @@ class SchedulerConfigReader:
             hide_original_when_translated=self.parse_bool(
                 raw_group.get("hide_original_when_translated", False),
                 False,
+            ),
+            max_tweets_per_check=clamp_int(
+                raw_group.get("max_tweets_per_check", 0),
+                0,
+                200,
             ),
             users_info=users_info,
             queries_info=queries_info,
