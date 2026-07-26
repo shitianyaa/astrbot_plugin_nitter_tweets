@@ -31,10 +31,10 @@
         "hint": "单次 RSS 请求等待该实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。"
       },
       "retry_attempts": {
-        "description": "Nitter RSS 单次失败重试次数",
+        "description": "Nitter RSS 重试轮数",
         "type": "int",
         "default": 2,
-        "hint": "同一镜像上单页/策略内的尝试次数，默认 2（与历史硬编码一致）。过大易增加公共实例压力。"
+        "hint": "轮换重试轮数，默认 2。插件会轮流尝试所有实例，重复指定轮数。例如 3 个实例、2 轮：A→B→C→A→B→C。"
       },
       "retry_delay_seconds": {
         "description": "Nitter RSS 重试间隔（秒）",

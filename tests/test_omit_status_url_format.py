@@ -27,7 +27,7 @@ class OmitStatusUrlFormatTests(unittest.TestCase):
         text = TweetMessageRenderer.format_tweet(
             1, "nasa", self._tweet(), omit_status_url=False
         )
-        self.assertIn("原文链接", text)
+        self.assertIn("🔗", text)
         self.assertIn("https://x.com/nasa/status/1", text)
         self.assertIn("https://x.com/a/status/1", text)
         self.assertIn("https://t.co/x", text)

@@ -492,43 +492,54 @@ class NitterClient:
         errors: list[str] = []
         empty_instances: list[str] = []
         run_instances = self._instances_for_run(instances)
-        for index, instance in enumerate(run_instances):
-            try:
-                result = await asyncio.to_thread(
-                    self._fetch_for_scheduler_from_instance,
-                    instance,
-                    username,
-                    anchor_ids,
-                    skip_plain_text,
-                    retry_attempts,
-                    total_retry_attempts_per_instance,
-                )
-            except EmptyFeedError as exc:
-                empty_instances.append(instance)
-                # Valid empty feed: host is reachable; soft success only.
-                self.host_scores.record_success(instance, soft=True)
-                errors.append(f"{instance}: {exc}")
-                self._log_instance_fetch_failure(
-                    index, instance, username, exc, run_instances
-                )
-                continue
-            except Exception as exc:
-                errors.append(f"{instance}: {exc}")
-                self.host_scores.record_failure(instance)
-                self._mark_run_host_skip(instance, exc)
-                self._log_instance_fetch_failure(
-                    index, instance, username, exc, run_instances
-                )
-                continue
-            self.host_scores.record_success(instance)
-            self._log_instance_fetch_success(index, instance, username, result)
-            return instance, result
-        # If every configured instance returned a valid but empty RSS feed,
-        # treat it as an initialized empty source. This lets a later first
-        # tweet be delivered instead of being mistaken for historical data.
-        # Empty-init only when every *configured* instance returned empty feed.
-        # If this run skipped hosts (S2=A), do not treat partial empties as
-        # "all sources empty".
+        if not run_instances:
+            raise RuntimeError("未配置 Nitter 实例")
+
+        max_rounds = self._retry_attempt_count(retry_attempts)
+        delay = max(0.0, float(self.retry_delay_seconds))
+
+        for round_num in range(max_rounds):
+            for index, instance in enumerate(run_instances):
+                attempt_label = f"轮次 {round_num + 1}/{max_rounds}"
+                try:
+                    result = await asyncio.to_thread(
+                        self._fetch_for_scheduler_from_instance,
+                        instance,
+                        username,
+                        anchor_ids,
+                        skip_plain_text,
+                        1,
+                        total_retry_attempts_per_instance,
+                    )
+                except EmptyFeedError as exc:
+                    if instance not in empty_instances:
+                        empty_instances.append(instance)
+                    self.host_scores.record_success(instance, soft=True)
+                    error_msg = f"{instance}: {exc} ({attempt_label})"
+                    if error_msg not in errors:
+                        errors.append(error_msg)
+                    self._log_instance_fetch_failure_with_round(
+                        index, instance, username, exc, run_instances, round_num, max_rounds
+                    )
+                    continue
+                except Exception as exc:
+                    error_msg = f"{instance}: {exc} ({attempt_label})"
+                    if error_msg not in errors:
+                        errors.append(error_msg)
+                    self.host_scores.record_failure(instance)
+                    self._mark_run_host_skip(instance, exc)
+                    self._log_instance_fetch_failure_with_round(
+                        index, instance, username, exc, run_instances, round_num, max_rounds
+                    )
+                    continue
+                self.host_scores.record_success(instance)
+                effective_index = round_num * len(run_instances) + index
+                self._log_instance_fetch_success(effective_index, instance, username, result)
+                return instance, result
+
+            if round_num + 1 < max_rounds and delay > 0:
+                await asyncio.sleep(delay)
+
         if (
             empty_instances
             and len(empty_instances) == len(instances)
@@ -556,69 +567,95 @@ class NitterClient:
         total_retry_attempts_per_instance: bool = False,
         filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem], int]:
-        """Try instances in order until one returns RSS items or tweets.
+        """Try instances with rotation-first retry strategy.
 
-        ``total_retry_attempts_per_instance=False`` means ``retry_attempts`` is
-        applied per page fetch, preserving the historic serial behavior.
-        ``True`` means ``retry_attempts`` is a per-instance total budget across
-        all pagination requests; this is used for concurrent dedicated pools so
-        pagination does not multiply the intended retry cost.
+        Rotates through all instances before retrying, repeating for
+        ``retry_attempts`` rounds. This finds working instances faster than
+        retrying each instance N times before moving to the next.
         """
 
         errors: list[str] = []
         run_instances = self._instances_for_run(instances)
-        for index, instance in enumerate(run_instances):
-            try:
-                result = await asyncio.to_thread(
-                    self._fetch_from_instance,
-                    instance,
-                    username,
-                    limit,
-                    skip_plain_text,
-                    retry_attempts,
-                    total_retry_attempts_per_instance,
-                    filter_reposts,
+        if not run_instances:
+            raise RuntimeError("未配置 Nitter 实例")
+
+        max_rounds = self._retry_attempt_count(retry_attempts)
+        delay = max(0.0, float(self.retry_delay_seconds))
+
+        for round_num in range(max_rounds):
+            for index, instance in enumerate(run_instances):
+                attempt_label = f"轮次 {round_num + 1}/{max_rounds}"
+                try:
+                    result = await asyncio.to_thread(
+                        self._fetch_from_instance,
+                        instance,
+                        username,
+                        limit,
+                        skip_plain_text,
+                        1,
+                        total_retry_attempts_per_instance,
+                        filter_reposts,
+                    )
+                except Exception as exc:
+                    error_msg = f"{instance}: {exc} ({attempt_label})"
+                    if error_msg not in errors:
+                        errors.append(error_msg)
+                    self.host_scores.record_failure(instance)
+                    self._mark_run_host_skip(instance, exc)
+                    self._log_instance_fetch_failure_with_round(
+                        index, instance, username, exc, run_instances, round_num, max_rounds
+                    )
+                    continue
+                if result.tweets or result.saw_items:
+                    self.host_scores.record_success(instance)
+                    effective_index = round_num * len(run_instances) + index
+                    self._log_instance_fetch_success(effective_index, instance, username, result)
+                    return instance, result.tweets, result.plain_text_filtered
+                self.host_scores.record_success(instance, soft=True)
+                error_msg = f"{instance}: empty feed ({attempt_label})"
+                if error_msg not in errors:
+                    errors.append(error_msg)
+                self._log_instance_fetch_failure_with_round(
+                    index, instance, username, "empty feed", run_instances, round_num, max_rounds
                 )
-            except Exception as exc:
-                errors.append(f"{instance}: {exc}")
-                self.host_scores.record_failure(instance)
-                self._mark_run_host_skip(instance, exc)
-                self._log_instance_fetch_failure(
-                    index, instance, username, exc, run_instances
-                )
-                continue
-            if result.tweets or result.saw_items:
-                self.host_scores.record_success(instance)
-                self._log_instance_fetch_success(index, instance, username, result)
-                return instance, result.tweets, result.plain_text_filtered
-            # Reachable empty feed: soft success, keep trying other mirrors.
-            self.host_scores.record_success(instance, soft=True)
-            errors.append(f"{instance}: empty feed")
-            self._log_instance_fetch_failure(
-                index, instance, username, "empty feed", run_instances
-            )
+
+            if round_num + 1 < max_rounds and delay > 0:
+                await asyncio.sleep(delay)
         raise RuntimeError(
             self._format_fetch_errors(errors, total_count=len(run_instances))
         )
 
-    def _log_instance_fetch_failure(
+    def _log_instance_fetch_failure_with_round(
         self,
         index: int,
         instance: str,
         username: str,
         error,
         instances: list[str] | None = None,
+        round_num: int = 0,
+        max_rounds: int = 1,
     ) -> None:
         instances = instances or self.instances
         total = len(instances)
         if total <= 1:
             return
 
-        if index + 1 < total:
+        is_last_in_round = index + 1 >= total
+        is_last_round = round_num + 1 >= max_rounds
+
+        if not is_last_in_round:
             logger.warning(
                 "[NitterTweets] RSS 实例失败，尝试下一个实例: "
                 f"instance={instance}, next_instance={instances[index + 1]}, "
-                f"username={username}, error={error}"
+                f"username={username}, round={round_num + 1}/{max_rounds}, error={error}"
+            )
+            return
+
+        if not is_last_round:
+            logger.warning(
+                "[NitterTweets] RSS 本轮最后实例失败，准备下一轮: "
+                f"instance={instance}, username={username}, "
+                f"round={round_num + 1}/{max_rounds}, error={error}"
             )
             return
 

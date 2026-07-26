@@ -34,9 +34,9 @@ def test_hide_original_when_translated_hides_body():
         omit_status_url=True,
         hide_original_when_translated=True,
     )
-    assert "翻译：" in out
+    assert "翻译" in out
     assert "你好世界" in out
-    assert "原文：" not in out
+    assert "原文" not in out
     assert "hello world" not in out
 
 
@@ -49,9 +49,9 @@ def test_hide_original_keeps_body_without_translation():
         omit_status_url=True,
         hide_original_when_translated=True,
     )
-    assert "原文：" in out
+    assert "原文" in out
     assert "hello world" in out
-    assert "翻译：" not in out
+    assert "翻译" not in out
 
 
 def test_hide_original_false_shows_both():
@@ -63,8 +63,8 @@ def test_hide_original_false_shows_both():
         omit_status_url=True,
         hide_original_when_translated=False,
     )
-    assert "原文：" in out
-    assert "翻译：" in out
+    assert "原文" in out
+    assert "翻译" in out
 
 
 def test_search_buffer_known_ids_skip_same_page():

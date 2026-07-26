@@ -750,7 +750,7 @@ class SubscriptionCommandMixin:
 
         return (
             None,
-            "当前对话不在任何已启用用户分组的 push_targets 中，"
+            "当前对话不在任何已启用推送分组的 push_targets 中，"
             "不会执行 /推文检查。\n"
             f"当前对话: {target_umo}",
         )
