@@ -221,7 +221,10 @@ class HttpSession:
                             time.time() - t0,
                         )
                 except HTTPError as exc:
-                    body = exc.read(1_000_000) if exc.fp else b""
+                    try:
+                        body = exc.read(1_000_000) if exc.fp else b""
+                    finally:
+                        exc.close()
                     return RawResponse(
                         int(exc.code),
                         url,
