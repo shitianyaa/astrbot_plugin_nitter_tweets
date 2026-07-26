@@ -1034,7 +1034,6 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
-        link_preview_max_chars: int = 40,
     ) -> str:
         status_url = (tweet.x_url or tweet.link or "").strip()
         author = TweetMessageRenderer.display_username(username, tweet)
@@ -1109,21 +1108,6 @@ class TweetMessageRenderer:
             blocks.append(media_summary)
 
         return "\n\n".join(blocks)
-
-    def telegram_link_preview(
-        tweet: TweetItem,
-        username: str,
-        *,
-        max_chars: int = 40,
-    ) -> str:
-        text = strip_external_links(tweet.text or "").replace("\n", " ").strip()
-        if not text:
-            text = f"@{username}"
-        text = re.sub(r"\s+", " ", text).strip()
-        if len(text) > max_chars:
-            text = text[: max(1, max_chars - 1)].rstrip() + "…"
-        return text or f"@{username}"
-
 
     @staticmethod
     def video_not_sent_notice(
