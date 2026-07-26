@@ -35,7 +35,12 @@ LEGACY_DEFAULT_SEARCH_INSTANCES = (
     "https://nitter.poast.org",
     "https://nitter.kareem.one",
 )
-CURRENT_DEFAULT_SEARCH_INSTANCES = ("https://nitter.tiekoetter.com",)
+# Current defaults match CF-tested instances for search stability.
+CURRENT_DEFAULT_SEARCH_INSTANCES = (
+    "https://nitter.tiekoetter.com",
+    "https://nitter.poast.org",
+    "https://nitter.kareem.one",
+)
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 # Legacy single template name used by pre-tag-group configs.
 TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"

@@ -493,7 +493,18 @@ class NitterClient:
         empty_instances: list[str] = []
         run_instances = self._instances_for_run(instances)
         if not run_instances:
-            raise RuntimeError("未配置 Nitter 实例")
+            # 区分静态配置为空 vs 运行时全部跳过
+            skip = self._active_run_host_skip()
+            if not instances:
+                raise RuntimeError("未配置 Nitter 实例")
+            elif skip and len(skip) > 0:
+                skipped_count = len(skip)
+                raise RuntimeError(
+                    f"本轮所有 Nitter 实例均不可用（已跳过 {skipped_count} 个实例，"
+                    f"原因：限流或临时故障）"
+                )
+            else:
+                raise RuntimeError("未配置 Nitter 实例")
 
         max_rounds = self._retry_attempt_count(retry_attempts)
         delay = max(0.0, float(self.retry_delay_seconds))
@@ -577,7 +588,18 @@ class NitterClient:
         errors: list[str] = []
         run_instances = self._instances_for_run(instances)
         if not run_instances:
-            raise RuntimeError("未配置 Nitter 实例")
+            # 区分静态配置为空 vs 运行时全部跳过
+            skip = self._active_run_host_skip()
+            if not instances:
+                raise RuntimeError("未配置 Nitter 实例")
+            elif skip and len(skip) > 0:
+                skipped_count = len(skip)
+                raise RuntimeError(
+                    f"本轮所有 Nitter 实例均不可用（已跳过 {skipped_count} 个实例，"
+                    f"原因：限流或临时故障）"
+                )
+            else:
+                raise RuntimeError("未配置 Nitter 实例")
 
         max_rounds = self._retry_attempt_count(retry_attempts)
         delay = max(0.0, float(self.retry_delay_seconds))

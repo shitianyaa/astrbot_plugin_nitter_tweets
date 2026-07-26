@@ -27,10 +27,17 @@ except ImportError:  # pragma: no cover
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
 
-# Public defaults (2026-07): search uses tiekoetter only. Bloggers use RSS
-# (shared.DEFAULT_INSTANCES = nitter.net) and do not ship a separate HTML pool.
+# Public defaults (2026-07): search uses verified CF-tested instances.
+# Bloggers use RSS (shared.DEFAULT_INSTANCES = nitter.net) only.
+# HTML user fallback pool stays empty (user_html_fallback defaults to False).
 DEFAULT_TIEKOETTER = "https://nitter.tiekoetter.com"
-DEFAULT_SEARCH_INSTANCES = [DEFAULT_TIEKOETTER]
+DEFAULT_POAST = "https://nitter.poast.org"
+DEFAULT_KAREEM = "https://nitter.kareem.one"
+DEFAULT_SEARCH_INSTANCES = [
+    DEFAULT_TIEKOETTER,  # Anubis PoW, stable search
+    DEFAULT_POAST,       # Poast SHA1, stable search + user HTML
+    DEFAULT_KAREEM,      # Light gate, stable search + user HTML
+]
 # Back-compat alias (older imports/tests expected a list named DEFAULT_HTML_*).
 DEFAULT_HTML_INSTANCES = list(DEFAULT_SEARCH_INSTANCES)
 

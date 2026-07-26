@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,10 @@ class PoolConfig:
     rate: RateLimitConfig = field(default_factory=RateLimitConfig)
     max_pages: int = 1
     filter_reposts: bool = False
+    # Global retry configuration
+    max_global_retries: int = 2  # Retry all instances N times before giving up
+    retry_delay_base: float = 5.0  # Base delay between global retries (seconds)
+    retry_delay_on_cooldown: float = 10.0  # Delay when all instances cooling
 
 
 class HtmlSearchResult(list[TweetItem]):
@@ -241,6 +246,47 @@ class HtmlNitterPool:
         *,
         instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
+        """Fetch user timeline with global retry on total failure."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._fetch_user_once(username, limit, instance=instance)
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._fetch_user_once(username, limit, instance=instance)
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"user global retry {attempt+1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"user global retry {attempt+1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+        # Unreachable (loop always raises on last attempt)
+        raise RuntimeError("fetch_user: exhausted retries")
+
+    def _fetch_user_once(
+        self,
+        username: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
         # At least one host answered with a parsed empty timeline. Do not treat
@@ -289,6 +335,56 @@ class HtmlNitterPool:
         raise RuntimeError("HTML user failed: " + "; ".join(errors[-4:]))
 
     def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        kind: str | None = None,
+        instance: str | None = None,
+        max_pages: int | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Search with global retry on total failure."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._search_once(
+                query, limit, kind=kind, instance=instance, max_pages=max_pages
+            )
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._search_once(
+                    query, limit, kind=kind, instance=instance, max_pages=max_pages
+                )
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"search global retry {attempt+1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"search global retry {attempt+1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+            except ValueError:
+                # "empty query" and similar validation errors should not retry
+                raise
+        # Unreachable (loop always raises on last attempt)
+        raise RuntimeError("search: exhausted retries")
+
+    def _search_once(
         self,
         query: str,
         limit: int,
