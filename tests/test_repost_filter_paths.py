@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Repost filtering: search always on; manual /推文 forced off."""
+
 from __future__ import annotations
 
 from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
@@ -8,21 +9,21 @@ from shared.utils import TweetItem
 
 
 def test_is_pure_retweet_chunk_detects_header():
-    rt = '''<div class="timeline-item">
+    rt = """<div class="timeline-item">
       <div class="retweet-header"><span>foo retweeted</span></div>
       <a href="/orig/status/1">x</a>
       <div class="tweet-content">hi</div>
-    </div>'''
+    </div>"""
     assert is_pure_retweet_chunk(rt) is True
-    normal = '''<div class="timeline-item">
+    normal = """<div class="timeline-item">
       <a href="/u/status/2">x</a>
       <div class="tweet-content">hello</div>
-    </div>'''
+    </div>"""
     assert is_pure_retweet_chunk(normal) is False
 
 
 def test_parse_timeline_marks_is_retweet():
-    html = '''
+    html = """
     <div class="timeline-item">
       <div class="retweet-header">Someone retweeted</div>
       <a class="tweet-date" href="/other/status/11" title="t"></a>
@@ -32,7 +33,7 @@ def test_parse_timeline_marks_is_retweet():
       <a class="tweet-date" href="/real/status/22" title="t"></a>
       <div class="tweet-content">orig body</div>
     </div>
-    '''
+    """
     page = parse_timeline_html(html, "https://nitter.example")
     assert len(page.tweets) == 2
     by_id = {t.status_id: t for t in page.tweets}
@@ -87,6 +88,7 @@ def test_paginate_search_drops_is_retweet():
     pool._get_html = fake_get  # type: ignore
 
     import media_support.html_backend.pool as pool_mod
+
     original = pool_mod.parse_timeline_html
 
     def fake_parse(html, instance, **kwargs):
@@ -106,10 +108,14 @@ def test_paginate_search_drops_is_retweet():
     assert out.raw_item_count == 2
     assert out.retweet_filtered == 1
 
+
 def test_retweet_header_inside_tweet_body_not_killed_by_icon():
     # Real Nitter: retweet-header is inside tweet-body, before tweet-content.
     # Footer icon-retweet alone must not mark originals.
-    from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
+    from media_support.html_backend.parser import (
+        is_pure_retweet_chunk,
+        parse_timeline_html,
+    )
 
     rt = (
         '<div class="timeline-item">'
@@ -118,7 +124,7 @@ def test_retweet_header_inside_tweet_body_not_killed_by_icon():
         '<a href="/bob/status/2">x</a>'
         '<div class="tweet-content">political long post</div>'
         '<span class="icon-retweet"></span>'
-        '</div></div>'
+        "</div></div>"
     )
     orig = (
         '<div class="timeline-item">'
@@ -126,10 +132,9 @@ def test_retweet_header_inside_tweet_body_not_killed_by_icon():
         '<a href="/alice/status/1">x</a>'
         '<div class="tweet-content">明日方舟 铃兰 cos</div>'
         '<span class="icon-retweet"></span>'
-        '</div></div>'
+        "</div></div>"
     )
     assert is_pure_retweet_chunk(rt) is True
     assert is_pure_retweet_chunk(orig) is False
     page = parse_timeline_html(rt + orig, "https://nitter.example")
     assert [t.is_retweet for t in page.tweets] == [True, False]
-

@@ -76,8 +76,7 @@ def _is_nested_media_section_start(token: str) -> bool:
     class_match = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
     if class_match:
         classes = {
-            name.lower()
-            for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
+            name.lower() for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
         }
         if any(name == "quote" or name.startswith("quote-") for name in classes):
             return True
@@ -107,8 +106,7 @@ def _is_outer_media_boundary_start(token: str) -> bool:
     if not class_match:
         return False
     classes = {
-        name.lower()
-        for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
+        name.lower() for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
     }
     return "attachments" in classes and not any(
         name == "quote" or name.startswith("quote-") for name in classes
@@ -136,11 +134,7 @@ def _without_nested_media_sections(chunk: str) -> str:
         # conservative end-of-chunk mask would hide valid author media.
         if stack and _is_outer_media_boundary_start(token):
             root_index = next(
-                (
-                    index
-                    for index, entry in enumerate(stack)
-                    if entry.get("is_root")
-                ),
+                (index for index, entry in enumerate(stack) if entry.get("is_root")),
                 None,
             )
             # An ``attachments`` wrapper nested under another quote/article
@@ -210,7 +204,7 @@ def extract_next_cursor(html: str) -> str:
     for pat in (
         r'class="show-more"[^>]*>\s*<a[^>]+href="[^"]*?cursor=([^"&#]+)',
         r'href="[^"]*?cursor=([^"&#]+)[^"]*"[^>]*>\s*Load more',
-        r'(?:[?&]|amp;)cursor=([A-Za-z0-9_\-%=]+)',
+        r"(?:[?&]|amp;)cursor=([A-Za-z0-9_\-%=]+)",
     ):
         match = re.search(pat, html, re.I)
         if match:
@@ -255,9 +249,7 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
     if 'class="attachments' in scan_chunk:
         idx = scan_chunk.find('class="attachments')
         scan = scan_chunk[idx : idx + 5000]
-        for href in re.findall(
-            r'href="(https://pbs\.twimg\.com/media/[^"]+)"', scan
-        ):
+        for href in re.findall(r'href="(https://pbs\.twimg\.com/media/[^"]+)"', scan):
             add("image", href)
     for rel in re.findall(r'(?:href|src)="(/video/[^"]+)"', scan_chunk):
         add("video", abs_url(instance, rel))
@@ -266,8 +258,6 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
     ):
         add("video", href)
     return media
-
-
 
 
 def _extract_tweet_text(chunk: str) -> str:
@@ -285,28 +275,27 @@ def _extract_tweet_text(chunk: str) -> str:
         if text:
             return text
 
-    cleaned = re.sub(r'(?is)<script[^>]*>.*?</script>', '', chunk or '')
-    cleaned = re.sub(r'(?is)<style[^>]*>.*?</style>', '', cleaned)
+    cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", "", chunk or "")
+    cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", "", cleaned)
     cleaned = re.sub(
         r'(?is)<div class="quote(?:-tweet)?[^"]*"[^>]*>.*?</div>\s*</div>',
-        '',
+        "",
         cleaned,
     )
     text = clean_html_text(cleaned)
     lines_out = [ln.strip() for ln in text.splitlines() if ln.strip()]
     kept = []
-    noise = {'retweet', 'quote', 'reply', 'load more'}
+    noise = {"retweet", "quote", "reply", "load more"}
     for ln in lines_out:
         low = ln.lower()
         if low in noise:
             continue
-        if re.fullmatch(r'[@#]?\w{1,32}', ln) and not kept:
+        if re.fullmatch(r"[@#]?\w{1,32}", ln) and not kept:
             continue
-        if re.fullmatch(r'[\d,.]+[KMBkmb]?', ln):
+        if re.fullmatch(r"[\d,.]+[KMBkmb]?", ln):
             continue
         kept.append(ln)
     return chr(10).join(kept[:12]).strip()
-
 
 
 def is_pure_retweet_chunk(chunk: str) -> bool:
@@ -366,9 +355,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
             continue
         seen.add(key)
         text = _extract_tweet_text(chunk)
-        dm = re.search(
-            r'(?s)<span class="tweet-date">\s*<a[^>]*title="([^"]+)"', chunk
-        )
+        dm = re.search(r'(?s)<span class="tweet-date">\s*<a[^>]*title="([^"]+)"', chunk)
         published = unescape(dm.group(1)) if dm else ""
         link = f"https://x.com/{user}/status/{sid}"
         tweets.append(

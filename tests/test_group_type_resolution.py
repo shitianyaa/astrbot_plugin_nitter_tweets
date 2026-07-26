@@ -4,6 +4,7 @@
 `_ensure_tweet_group_template_key` 会按解析结果清空“另一侧”的订阅列表，
 所以解析错误会直接造成订阅数据丢失或新建空分组被改判类型。
 """
+
 from __future__ import annotations
 
 from config.compat import (

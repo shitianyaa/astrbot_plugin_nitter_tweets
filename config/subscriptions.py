@@ -149,8 +149,7 @@ def set_import_group_queries(
         parsed_queries = config_reader.parse_watch_queries(queries)
         raw_group["group_type"] = "tag"
         raw_group["watch_queries"] = [
-            encode_watch_query(item.query, item.type)
-            for item in parsed_queries.queries
+            encode_watch_query(item.query, item.type) for item in parsed_queries.queries
         ]
         raw_group["watch_users"] = []
         config_set(config, "tweet_groups", raw_groups)

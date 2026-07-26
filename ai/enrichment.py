@@ -107,9 +107,7 @@ def format_ai_tweet_summary(
     )
 
 
-def _format_translation_result(
-    report: TranslationReport | None, status_id: str
-) -> str:
+def _format_translation_result(report: TranslationReport | None, status_id: str) -> str:
     if report is None or not getattr(report, "tweet_results", None):
         return "off"
     result = _find_report_item(report, status_id)
@@ -152,6 +150,7 @@ def _find_report_item(report, status_id: str):
 # 翻译
 # ──────────────────────────────────────────────────────────────────────
 
+
 class TweetTranslator:
     def __init__(self, context, config):
         self.context = context
@@ -176,7 +175,9 @@ class TweetTranslator:
         self._warned_no_provider = False
 
     async def attach_translations(
-        self, tweets: list[TweetItem], umo: str | None = None,
+        self,
+        tweets: list[TweetItem],
+        umo: str | None = None,
     ) -> TranslationReport:
         report = TranslationReport()
         if not self.enabled:
@@ -209,7 +210,9 @@ class TweetTranslator:
             ]
             return report
         if len(tweets) > 1:
-            logger.info(f"{LOG_PREFIX} 翻译开始: tweets={len(tweets)}, provider={provider_id} ({source})")
+            logger.info(
+                f"{LOG_PREFIX} 翻译开始: tweets={len(tweets)}, provider={provider_id} ({source})"
+            )
 
         translated = skipped = failed = 0
         for index, tweet in enumerate(tweets, 1):
@@ -245,7 +248,9 @@ class TweetTranslator:
         report.skipped = skipped
         report.failed = failed
         if len(tweets) > 1:
-            logger.info(f"{LOG_PREFIX} 翻译完成: translated={translated}, skipped={skipped}, failed={failed}")
+            logger.info(
+                f"{LOG_PREFIX} 翻译完成: translated={translated}, skipped={skipped}, failed={failed}"
+            )
         return report
 
     # ── 判断是否需要翻译 ──
@@ -267,7 +272,9 @@ class TweetTranslator:
         reason = f"chinese_ratio={ratio:.2f}, threshold={self.chinese_ratio_threshold:.2f}, len={len(meaningful)}"
         return ratio < self.chinese_ratio_threshold, reason
 
-    async def _translate(self, provider_id: str, tweet: TweetItem, status_id: str) -> str:
+    async def _translate(
+        self, provider_id: str, tweet: TweetItem, status_id: str
+    ) -> str:
         text = tweet.text
         prompt_text = strip_external_links(text)
         if not prompt_text:
@@ -286,8 +293,7 @@ class TweetTranslator:
         if resp is None:
             _append_ai_warning(tweet, AI_TRANSLATION_FAILED_WARNING)
             logger.warning(
-                f"{LOG_PREFIX} 翻译重试后仍失败: "
-                f"status={status_id}, error={error}"
+                f"{LOG_PREFIX} 翻译重试后仍失败: status={status_id}, error={error}"
             )
             return ""
 
@@ -357,11 +363,12 @@ class TweetTranslator:
         text = re.sub(r"\s*```$", "", text).strip()
         for prefix in ("译文：", "翻译：", "中文翻译："):
             if text.startswith(prefix):
-                return text[len(prefix):].strip()
+                return text[len(prefix) :].strip()
         return text
 
     @staticmethod
     def _same(left: str, right: str) -> bool:
         def norm(v: str) -> str:
             return SPACE_RE.sub("", v or "").casefold()
+
         return bool(left) and norm(left) == norm(right)

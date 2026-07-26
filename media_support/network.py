@@ -148,7 +148,9 @@ def validate_http_url(
     if resolve_dns and not _is_ip_literal(host):
         addresses = _resolved_addresses(host, effective_port)
         if any(not _is_public_address(address) for address in addresses):
-            raise UnsafeUrlError("URL host resolves to a private or special-use address")
+            raise UnsafeUrlError(
+                "URL host resolves to a private or special-use address"
+            )
     return text
 
 
@@ -231,9 +233,7 @@ def _validate_connected_peer(response) -> None:
         close = getattr(response, "close", None)
         if callable(close):
             close()
-        raise UnsafeUrlError(
-            "connected peer is private, special-use, or unavailable"
-        )
+        raise UnsafeUrlError("connected peer is private, special-use, or unavailable")
 
 
 def _validate_socket_peer(sock) -> None:
@@ -247,9 +247,7 @@ def _validate_socket_peer(sock) -> None:
         close = getattr(sock, "close", None)
         if callable(close):
             close()
-        raise UnsafeUrlError(
-            "connected peer is private, special-use, or unavailable"
-        )
+        raise UnsafeUrlError("connected peer is private, special-use, or unavailable")
 
 
 def _request_uses_proxy(req) -> bool:

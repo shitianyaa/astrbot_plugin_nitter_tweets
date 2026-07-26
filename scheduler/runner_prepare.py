@@ -330,8 +330,10 @@ class SchedulerPrepareMixin:
             tweet_index=tweet_index,
             tweet_total=len(discovered_batch.tweets),
             media_only=discovered_batch.media_only,
-            omit_status_url=bool(getattr(discovered_batch, 'omit_status_url', True)),
-            hide_original_when_translated=bool(getattr(discovered_batch, "hide_original_when_translated", False)),
+            omit_status_url=bool(getattr(discovered_batch, "omit_status_url", True)),
+            hide_original_when_translated=bool(
+                getattr(discovered_batch, "hide_original_when_translated", False)
+            ),
         )
 
     async def _record_prepare_failure(

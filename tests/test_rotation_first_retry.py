@@ -1,4 +1,5 @@
 """Test rotation-first retry strategy."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,11 @@ class RotationFirstRetryTest(unittest.TestCase):
         """Verify instances are tried in rotation-first order: A→B→C→A→B→C."""
         client = NitterClient(
             {
-                "instances": ["https://a.example", "https://b.example", "https://c.example"],
+                "instances": [
+                    "https://a.example",
+                    "https://b.example",
+                    "https://c.example",
+                ],
                 "retry_attempts": 2,
                 "retry_delay_seconds": 0,
             }
@@ -50,7 +55,11 @@ class RotationFirstRetryTest(unittest.TestCase):
         """Verify retry stops when an instance succeeds."""
         client = NitterClient(
             {
-                "instances": ["https://a.example", "https://b.example", "https://c.example"],
+                "instances": [
+                    "https://a.example",
+                    "https://b.example",
+                    "https://c.example",
+                ],
                 "retry_attempts": 2,
                 "retry_delay_seconds": 0,
             }

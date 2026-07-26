@@ -62,16 +62,12 @@ class EmptyFeedError(RuntimeError):
 # 当前作者上传的媒体。
 # Twitter Article（长文）的封面图虽走 /pic/media，但包在 <a href="/i/article/...">
 # 里，属于文章卡片而非作者上传的媒体附件，不算作者媒体。
-_MEDIA_SRC_RE = re.compile(
-    r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)"
-)
+_MEDIA_SRC_RE = re.compile(r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)")
 _ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
 # ElementTree blocks external entities by default but still permits DTD-defined
 # entities; reject both declarations before parsing so the plugin needs no new
 # runtime dependency just to process untrusted RSS responses.
-_UNSAFE_XML_DECLARATION_RE = re.compile(
-    br"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE
-)
+_UNSAFE_XML_DECLARATION_RE = re.compile(rb"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
 _HTML_VOID_TAGS = frozenset(
     {
         "area",
@@ -149,13 +145,8 @@ class _AuthorMediaDetector(HTMLParser):
 
     @staticmethod
     def _is_ignored_container(attrs) -> bool:
-        class_text = " ".join(
-            _AuthorMediaDetector._attr_values(attrs, "class")
-        )
-        classes = {
-            item.lower()
-            for item in class_text.replace("_", "-").split()
-        }
+        class_text = " ".join(_AuthorMediaDetector._attr_values(attrs, "class"))
+        classes = {item.lower() for item in class_text.replace("_", "-").split()}
         return any("quote" in item for item in classes)
 
     @staticmethod
@@ -256,11 +247,10 @@ class NitterClient:
         )
         self.user_agent = config_get(
             config,
-            "user_agent", "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
+            "user_agent",
+            "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
-        self.retry_attempts = clamp_int(
-            config_get(config, "retry_attempts", 2), 1, 5
-        )
+        self.retry_attempts = clamp_int(config_get(config, "retry_attempts", 2), 1, 5)
         self.retry_delay_seconds = clamp_float(
             config_get(config, "retry_delay_seconds", 5.0), 0.0, 60.0
         )
@@ -493,7 +483,18 @@ class NitterClient:
         empty_instances: list[str] = []
         run_instances = self._instances_for_run(instances)
         if not run_instances:
-            raise RuntimeError("未配置 Nitter 实例")
+            # 区分静态配置为空 vs 运行时全部跳过
+            skip = self._active_run_host_skip()
+            if not instances:
+                raise RuntimeError("未配置 Nitter 实例")
+            elif skip and len(skip) > 0:
+                skipped_count = len(skip)
+                raise RuntimeError(
+                    f"本轮所有 Nitter 实例均不可用（已跳过 {skipped_count} 个实例，"
+                    f"原因：限流或临时故障）"
+                )
+            else:
+                raise RuntimeError("未配置 Nitter 实例")
 
         max_rounds = self._retry_attempt_count(retry_attempts)
         delay = max(0.0, float(self.retry_delay_seconds))
@@ -519,7 +520,13 @@ class NitterClient:
                     if error_msg not in errors:
                         errors.append(error_msg)
                     self._log_instance_fetch_failure_with_round(
-                        index, instance, username, exc, run_instances, round_num, max_rounds
+                        index,
+                        instance,
+                        username,
+                        exc,
+                        run_instances,
+                        round_num,
+                        max_rounds,
                     )
                     continue
                 except Exception as exc:
@@ -529,12 +536,20 @@ class NitterClient:
                     self.host_scores.record_failure(instance)
                     self._mark_run_host_skip(instance, exc)
                     self._log_instance_fetch_failure_with_round(
-                        index, instance, username, exc, run_instances, round_num, max_rounds
+                        index,
+                        instance,
+                        username,
+                        exc,
+                        run_instances,
+                        round_num,
+                        max_rounds,
                     )
                     continue
                 self.host_scores.record_success(instance)
                 effective_index = round_num * len(run_instances) + index
-                self._log_instance_fetch_success(effective_index, instance, username, result)
+                self._log_instance_fetch_success(
+                    effective_index, instance, username, result
+                )
                 return instance, result
 
             if round_num + 1 < max_rounds and delay > 0:
@@ -577,7 +592,18 @@ class NitterClient:
         errors: list[str] = []
         run_instances = self._instances_for_run(instances)
         if not run_instances:
-            raise RuntimeError("未配置 Nitter 实例")
+            # 区分静态配置为空 vs 运行时全部跳过
+            skip = self._active_run_host_skip()
+            if not instances:
+                raise RuntimeError("未配置 Nitter 实例")
+            elif skip and len(skip) > 0:
+                skipped_count = len(skip)
+                raise RuntimeError(
+                    f"本轮所有 Nitter 实例均不可用（已跳过 {skipped_count} 个实例，"
+                    f"原因：限流或临时故障）"
+                )
+            else:
+                raise RuntimeError("未配置 Nitter 实例")
 
         max_rounds = self._retry_attempt_count(retry_attempts)
         delay = max(0.0, float(self.retry_delay_seconds))
@@ -603,20 +629,34 @@ class NitterClient:
                     self.host_scores.record_failure(instance)
                     self._mark_run_host_skip(instance, exc)
                     self._log_instance_fetch_failure_with_round(
-                        index, instance, username, exc, run_instances, round_num, max_rounds
+                        index,
+                        instance,
+                        username,
+                        exc,
+                        run_instances,
+                        round_num,
+                        max_rounds,
                     )
                     continue
                 if result.tweets or result.saw_items:
                     self.host_scores.record_success(instance)
                     effective_index = round_num * len(run_instances) + index
-                    self._log_instance_fetch_success(effective_index, instance, username, result)
+                    self._log_instance_fetch_success(
+                        effective_index, instance, username, result
+                    )
                     return instance, result.tweets, result.plain_text_filtered
                 self.host_scores.record_success(instance, soft=True)
                 error_msg = f"{instance}: empty feed ({attempt_label})"
                 if error_msg not in errors:
                     errors.append(error_msg)
                 self._log_instance_fetch_failure_with_round(
-                    index, instance, username, "empty feed", run_instances, round_num, max_rounds
+                    index,
+                    instance,
+                    username,
+                    "empty feed",
+                    run_instances,
+                    round_num,
+                    max_rounds,
                 )
 
             if round_num + 1 < max_rounds and delay > 0:
@@ -665,7 +705,11 @@ class NitterClient:
         )
 
     def _log_instance_fetch_success(
-        self, index: int, instance: str, username: str, result: InstanceFetchResult,
+        self,
+        index: int,
+        instance: str,
+        username: str,
+        result: InstanceFetchResult,
     ) -> None:
         if index <= 0:
             return
@@ -708,8 +752,7 @@ class NitterClient:
         summary = f"已尝试 {len(errors)}/{total_count} 个 Nitter 实例，未获得可用 RSS"
         if hidden_count > 0:
             summary += (
-                f"；仅显示最后 {len(shown_errors)} 个错误"
-                f"（已省略前 {hidden_count} 个）"
+                f"；仅显示最后 {len(shown_errors)} 个错误（已省略前 {hidden_count} 个）"
             )
         else:
             summary += "；错误"
@@ -776,9 +819,8 @@ class NitterClient:
             )
             # 本页 RSS 有 item 但全被过滤（纯文本或转发），过滤后 page_tweets 为空
             page_all_filtered = (
-                (page.plain_text_filtered > 0 or page_filtered_reposts > 0)
-                and not page_tweets
-            )
+                page.plain_text_filtered > 0 or page_filtered_reposts > 0
+            ) and not page_tweets
 
             added = 0
             for tweet in page_tweets:
@@ -858,16 +900,13 @@ class NitterClient:
                 if scanned_item_count == 0:
                     raise EmptyFeedError(f"{instance}: empty feed")
                 if boundary_ids and not reached_watermark:
-                    raise RuntimeError(
-                        "后台 RSS 扫描未完成：未找到任何已记录基准 ID"
-                    )
+                    raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
                 complete = True
                 break
             scanned_item_count += page.raw_item_count
             if scanned_item_count > self.SCHEDULER_SCAN_LIMIT:
                 raise RuntimeError(
-                    "后台 RSS 扫描未完成："
-                    f"超过安全上限 {self.SCHEDULER_SCAN_LIMIT} 条"
+                    f"后台 RSS 扫描未完成：超过安全上限 {self.SCHEDULER_SCAN_LIMIT} 条"
                 )
 
             page_status_ids = page.scanned_status_ids
@@ -936,9 +975,7 @@ class NitterClient:
                 break
             if page.raw_item_count == 0 or not page.next_cursor:
                 if boundary_ids and not reached_watermark:
-                    raise RuntimeError(
-                        "后台 RSS 扫描未完成：未找到任何已记录基准 ID"
-                    )
+                    raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
                 complete = True
                 break
             if page.next_cursor in seen_cursors:
@@ -1009,7 +1046,11 @@ class NitterClient:
                 break
             try:
                 return self._fetch_page_from_instance(
-                    instance, username, cursor, limit, skip_plain_text,
+                    instance,
+                    username,
+                    cursor,
+                    limit,
+                    skip_plain_text,
                 )
             except TransientFetchError as exc:
                 last_error = exc
@@ -1064,8 +1105,14 @@ class NitterClient:
             raise TransientFetchError(str(getattr(exc, "reason", exc))) from exc
         except (TimeoutError, ssl.SSLError) as exc:
             raise TransientFetchError(str(exc)) from exc
-        tweets, plain_text_filtered, scanned_status_ids, raw_item_count = self._parse_rss(
-            data, instance, 0, skip_plain_text, username,
+        tweets, plain_text_filtered, scanned_status_ids, raw_item_count = (
+            self._parse_rss(
+                data,
+                instance,
+                0,
+                skip_plain_text,
+                username,
+            )
         )
         return RssPageResult(
             tweets=tweets,
@@ -1134,9 +1181,7 @@ class NitterClient:
         username: str = "",
     ) -> tuple[list[TweetItem], int, list[str], int]:
         if len(data) > self.RSS_RESPONSE_LIMIT:
-            raise ValueError(
-                f"RSS 响应超过安全上限 {self.RSS_RESPONSE_LIMIT} 字节"
-            )
+            raise ValueError(f"RSS 响应超过安全上限 {self.RSS_RESPONSE_LIMIT} 字节")
         if _UNSAFE_XML_DECLARATION_RE.search(data):
             raise ValueError("RSS XML 包含禁止的 DTD 或实体声明")
         root = ET.fromstring(data)
@@ -1157,15 +1202,11 @@ class NitterClient:
                 scanned_status_ids.append(status_id)
             # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
             # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
-            #（/pic/card_img）不算作者媒体。转发先交给转发过滤，避免
+            # （/pic/card_img）不算作者媒体。转发先交给转发过滤，避免
             # 把本来就会丢弃的转发也计入纯文本过滤数。
             lacks_author_media = skip_plain_text and not _has_author_media(description)
-            if (
-                lacks_author_media
-                and not (
-                    self.filter_reposts_enabled
-                    and self._is_repost_link(link, username)
-                )
+            if lacks_author_media and not (
+                self.filter_reposts_enabled and self._is_repost_link(link, username)
             ):
                 plain_text_filtered += 1
                 continue

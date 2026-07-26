@@ -3,6 +3,7 @@
 
 Write tests first: failures prove the bug still exists; then fix production code.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,10 +30,14 @@ def _tweet(
     link: str = "https://x.com/nasa/status/1234567890",
     translation: str = "",
 ) -> TweetItem:
-    return TweetItem(text=text, link=link, published="2026-01-01", translation=translation)
+    return TweetItem(
+        text=text, link=link, published="2026-01-01", translation=translation
+    )
 
 
-def _history_record(*, record_id: int, target: str, pushed_at: int, status: str, error: str = ""):
+def _history_record(
+    *, record_id: int, target: str, pushed_at: int, status: str, error: str = ""
+):
     return SimpleNamespace(
         id=record_id,
         group_id="default",
@@ -398,8 +403,7 @@ def test_dashboard_update_preserves_inactive_mixed_legacy_watch_lists():
     assert blogger_result.get("success") is True, blogger_result
     assert tag_result.get("success") is True, tag_result
     groups = {
-        group["group_id"]: group
-        for group in config_get(config, "tweet_groups", [])
+        group["group_id"]: group for group in config_get(config, "tweet_groups", [])
     }
     assert groups["mixed_blogger"]["watch_queries"] == ["#space"]
     assert groups["mixed_tag"]["watch_users"] == ["legacy_user"]
@@ -428,9 +432,7 @@ def test_dashboard_group_serialization_preserves_hide_original_toggle():
 
 
 def test_cache_result_serializes_active_lease_skips():
-    payload = NitterWebAPI._serialize_cache_result(
-        SimpleNamespace(skipped_active=2)
-    )
+    payload = NitterWebAPI._serialize_cache_result(SimpleNamespace(skipped_active=2))
 
     assert payload["skipped_active"] == 2
 
@@ -442,9 +444,7 @@ def test_dashboard_query_editor_preserves_explicit_phrase_type():
     plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
     editor = WebUIGroupEditor(plugin)
 
-    stored = editor._normalized_watch_queries(
-        [{"query": "#literal", "type": "phrase"}]
-    )
+    stored = editor._normalized_watch_queries([{"query": "#literal", "type": "phrase"}])
 
     assert stored == ["nitter-query:phrase:#literal"]
 
@@ -455,12 +455,8 @@ def test_dashboard_query_editor_preserves_explicit_phrase_type():
 
 
 def test_p0_format_video_is_staticmethod_like_image():
-    video = inspect.getattr_static(
-        TweetMessageRenderer, "format_video_attachment_text"
-    )
-    image = inspect.getattr_static(
-        TweetMessageRenderer, "format_image_attachment_text"
-    )
+    video = inspect.getattr_static(TweetMessageRenderer, "format_video_attachment_text")
+    image = inspect.getattr_static(TweetMessageRenderer, "format_image_attachment_text")
     assert isinstance(image, staticmethod)
     assert isinstance(video, staticmethod), (
         "format_video_attachment_text must be @staticmethod; "
@@ -536,9 +532,7 @@ def test_p1_build_image_forwards_omit_status_url_false():
         omit_status_url=False,
     )
     plain_parts = [
-        getattr(c, "text", None)
-        for c in components
-        if getattr(c, "text", None)
+        getattr(c, "text", None) for c in components if getattr(c, "text", None)
     ]
     blob = "\n".join(str(p) for p in plain_parts if p)
     assert "x.com/nasa" in blob or "1234567890" in blob, blob

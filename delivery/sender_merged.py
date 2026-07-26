@@ -48,7 +48,11 @@ class SenderMergedForwardMixin:
         tweet_count = self._count_batch_tweets(batches)
         if not self._should_use_merge_for_count(tweet_count):
             return await self._send_merged_direct_to_umo(
-                context, umo, batches, group_label, batch_summary,
+                context,
+                umo,
+                batches,
+                group_label,
+                batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
@@ -57,7 +61,11 @@ class SenderMergedForwardMixin:
 
         if not adapter.supports_merged_forward:
             return await self._send_merged_direct_to_umo(
-                context, umo, batches, group_label, batch_summary,
+                context,
+                umo,
+                batches,
+                group_label,
+                batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
@@ -66,7 +74,11 @@ class SenderMergedForwardMixin:
 
         if self._should_chunk_forward_tweets(tweet_count):
             return await self._send_merged_forward_chunks_to_umo(
-                context, umo, batches, group_label, batch_summary,
+                context,
+                umo,
+                batches,
+                group_label,
+                batch_summary,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
@@ -74,7 +86,11 @@ class SenderMergedForwardMixin:
             )
 
         return await self._send_merged_forward_chunk_to_umo(
-            context, umo, batches, group_label, batch_summary,
+            context,
+            umo,
+            batches,
+            group_label,
+            batch_summary,
             media_only=media_only,
             omit_status_url=omit_status_url,
             hide_original_when_translated=hide_original_when_translated,
@@ -280,15 +296,11 @@ class SenderMergedForwardMixin:
                 retry_accepted = raw_retry_attempt.uncertain
                 return MergedSendOutcome(
                     success=retry_accepted and not media_only,
-                    mode=(
-                        "uncertain_delivery" if retry_accepted else "failed"
-                    ),
+                    mode=("uncertain_delivery" if retry_accepted else "failed"),
                     omitted_videos=omitted_videos,
                     error=raw_retry_attempt.error or attempt.error,
                     warning=raw_retry_attempt.warning,
-                    delivery_status=(
-                        "partial_failed" if retry_accepted else "failed"
-                    ),
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
                     delivery_error=raw_retry_attempt.error or attempt.error,
                 )
             nodes_nv = self.renderer.build_merged_nodes_for_uin(
@@ -326,15 +338,11 @@ class SenderMergedForwardMixin:
                 retry_accepted = retry_attempt.uncertain
                 return MergedSendOutcome(
                     success=retry_accepted and not media_only,
-                    mode=(
-                        "uncertain_delivery" if retry_accepted else "failed"
-                    ),
+                    mode=("uncertain_delivery" if retry_accepted else "failed"),
                     omitted_videos=omitted_videos,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
-                    delivery_status=(
-                        "partial_failed" if retry_accepted else "failed"
-                    ),
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
                     delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
@@ -393,12 +401,8 @@ class SenderMergedForwardMixin:
                         ) = self._batches_without_status_ids(tail, delivered)
                         remaining_start_index = index + first_remaining_offset
                         keep_leading_text = offset == 0 and not delivered
-                        remaining_group_label = (
-                            group_label if keep_leading_text else ""
-                        )
-                        remaining_summary = (
-                            batch_summary if keep_leading_text else ""
-                        )
+                        remaining_group_label = group_label if keep_leading_text else ""
+                        remaining_summary = batch_summary if keep_leading_text else ""
                         break
                     index += self._count_batch_tweets(part)
                 else:
@@ -413,7 +417,9 @@ class SenderMergedForwardMixin:
                     )
 
         if not remaining_batches:
-            error = split_error or attempt.error or "forward split produced empty remainder"
+            error = (
+                split_error or attempt.error or "forward split produced empty remainder"
+            )
             return MergedSendOutcome(
                 success=False,
                 mode="failed",

@@ -1,4 +1,5 @@
 """SQLite storage backend for Nitter Tweets plugin."""
+
 from __future__ import annotations
 
 import asyncio
@@ -49,8 +50,6 @@ except ImportError:
     from shared import TweetItem, normalize_seen_account_key
 
 ORPHAN_SEEN_RETENTION_DAYS = 30
-
-
 
 
 def _locked_sqlite_method(method):
@@ -300,29 +299,29 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """获取所有分组配置."""
         assert self.conn is not None
 
-        rows = self.conn.execute(
-            "SELECT * FROM groups ORDER BY group_id"
-        ).fetchall()
+        rows = self.conn.execute("SELECT * FROM groups ORDER BY group_id").fetchall()
 
         groups = []
         for row in rows:
-            groups.append({
-                "group_id": row["group_id"],
-                "name": row["name"],
-                "enabled": bool(row["enabled"]),
-                "check_on_startup": bool(row["check_on_startup"]),
-                "interval_check_enabled": bool(row["interval_check_enabled"]),
-                "check_interval_minutes": row["check_interval_minutes"],
-                "daily_check_enabled": bool(row["daily_check_enabled"]),
-                "daily_check_times": json.loads(row["daily_check_times"]),
-                "scheduled_fetch_limit": row["scheduled_fetch_limit"],
-                "send_target_interval": row["send_target_interval"],
-                "send_user_interval": row["send_user_interval"],
-                "notify_no_updates": bool(row["notify_no_updates"]),
-                "aliases": json.loads(row["aliases"]),
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            })
+            groups.append(
+                {
+                    "group_id": row["group_id"],
+                    "name": row["name"],
+                    "enabled": bool(row["enabled"]),
+                    "check_on_startup": bool(row["check_on_startup"]),
+                    "interval_check_enabled": bool(row["interval_check_enabled"]),
+                    "check_interval_minutes": row["check_interval_minutes"],
+                    "daily_check_enabled": bool(row["daily_check_enabled"]),
+                    "daily_check_times": json.loads(row["daily_check_times"]),
+                    "scheduled_fetch_limit": row["scheduled_fetch_limit"],
+                    "send_target_interval": row["send_target_interval"],
+                    "send_user_interval": row["send_user_interval"],
+                    "notify_no_updates": bool(row["notify_no_updates"]),
+                    "aliases": json.loads(row["aliases"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
 
         return groups
 
@@ -392,9 +391,13 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                   LIMIT ?
               )
             """,
-            (normalized_group_id, normalized_username,
-             normalized_group_id, normalized_username,
-             SEEN_LIMIT_PER_USER),
+            (
+                normalized_group_id,
+                normalized_username,
+                normalized_group_id,
+                normalized_username,
+                SEEN_LIMIT_PER_USER,
+            ),
         )
 
     def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
@@ -437,10 +440,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
             """,
             (normalized_group_id,),
         ).fetchall()
-        return {
-            str(row[0]): self._decode_scan_anchor_ids(row[1])
-            for row in rows
-        }
+        return {str(row[0]): self._decode_scan_anchor_ids(row[1]) for row in rows}
 
     def set_scan_watermark(
         self,
@@ -493,14 +493,6 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
             cursor = self.conn.execute("DELETE FROM seen_tweets")
             self.conn.execute("DELETE FROM scan_watermarks")
         return int(cursor.rowcount or 0)
-
-
-
-
-
-
-
-
 
     def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows."""
@@ -558,7 +550,6 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         )
         return summary
 
-
     def record_push_history(
         self,
         group_id: str,
@@ -574,7 +565,9 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """Record one successful or partially delivered tweet/target pair."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
-        normalized_username = normalize_seen_account_key(username) or str(username or "").strip()
+        normalized_username = (
+            normalize_seen_account_key(username) or str(username or "").strip()
+        )
         status_id = str(getattr(tweet, "status_id", "") or "").strip()
         if not normalized_group_id or not normalized_username or not status_id:
             return 0
@@ -845,8 +838,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         # 计算配置指纹
         configured_group_ids = {
-            normalize_stable_group_id(group.group_id)
-            for group in schedule_groups
+            normalize_stable_group_id(group.group_id) for group in schedule_groups
         }
         if (
             DEFAULT_GROUP_ID in configured_group_ids
@@ -857,29 +849,30 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         fingerprint_data = []
         for group in schedule_groups:
             account_keys = list(
-                getattr(group, "account_keys", None)
-                or getattr(group, "users", [])
+                getattr(group, "account_keys", None) or getattr(group, "users", [])
             )
-            fingerprint_data.append({
-                "group_id": group.group_id,
-                "name": group.name,
-                "enabled": group.enabled,
-                "check_on_startup": group.check_on_startup,
-                "interval_check_enabled": group.interval_check_enabled,
-                "check_interval_minutes": group.check_interval_minutes,
-                "daily_check_enabled": group.daily_check_enabled,
-                "daily_check_times": group.daily_check_times,
-                "scheduled_fetch_limit": group.scheduled_fetch_limit,
-                "send_target_interval": group.send_target_interval,
-                "send_user_interval": group.send_user_interval,
-                "notify_no_updates": group.notify_no_updates,
-                "aliases": sorted(group.aliases),
-                # Tag groups use q:<casefold query> as their runtime account
-                # key.  Include the effective keys so query edits refresh the
-                # active-subscription table and orphan cleanup remains safe.
-                "account_keys": sorted(account_keys),
-                "targets": sorted(group.targets),
-            })
+            fingerprint_data.append(
+                {
+                    "group_id": group.group_id,
+                    "name": group.name,
+                    "enabled": group.enabled,
+                    "check_on_startup": group.check_on_startup,
+                    "interval_check_enabled": group.interval_check_enabled,
+                    "check_interval_minutes": group.check_interval_minutes,
+                    "daily_check_enabled": group.daily_check_enabled,
+                    "daily_check_times": group.daily_check_times,
+                    "scheduled_fetch_limit": group.scheduled_fetch_limit,
+                    "send_target_interval": group.send_target_interval,
+                    "send_user_interval": group.send_user_interval,
+                    "notify_no_updates": group.notify_no_updates,
+                    "aliases": sorted(group.aliases),
+                    # Tag groups use q:<casefold query> as their runtime account
+                    # key.  Include the effective keys so query edits refresh the
+                    # active-subscription table and orphan cleanup remains safe.
+                    "account_keys": sorted(account_keys),
+                    "targets": sorted(group.targets),
+                }
+            )
 
         config_fingerprint = hashlib.sha256(
             json.dumps(fingerprint_data, sort_keys=True).encode()
@@ -895,8 +888,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         for group in schedule_groups:
             account_keys = list(
-                getattr(group, "account_keys", None)
-                or getattr(group, "users", [])
+                getattr(group, "account_keys", None) or getattr(group, "users", [])
             )
             # 同步分组配置
             self.upsert_group(
@@ -923,9 +915,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         deleted_seen = self.cleanup_orphan_seen_tweets()
         if deleted_seen:
-            logger.info(
-                f"[NitterTweets] 已清理 {deleted_seen} 条孤立 seen 推文记录"
-            )
+            logger.info(f"[NitterTweets] 已清理 {deleted_seen} 条孤立 seen 推文记录")
 
         # 更新指纹
         self.set_meta("config_groups_fingerprint", config_fingerprint)

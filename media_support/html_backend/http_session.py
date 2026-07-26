@@ -42,9 +42,7 @@ DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
-HTML_ACCEPT = (
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-)
+HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 _SAFE_COOKIE_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 _WINDOWS_RESERVED_BASENAMES = {
     "CON",

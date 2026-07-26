@@ -35,7 +35,12 @@ LEGACY_DEFAULT_SEARCH_INSTANCES = (
     "https://nitter.poast.org",
     "https://nitter.kareem.one",
 )
-CURRENT_DEFAULT_SEARCH_INSTANCES = ("https://nitter.tiekoetter.com",)
+# Current defaults match CF-tested instances for search stability.
+CURRENT_DEFAULT_SEARCH_INSTANCES = (
+    "https://nitter.tiekoetter.com",
+    "https://nitter.poast.org",
+    "https://nitter.kareem.one",
+)
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 # Legacy single template name used by pre-tag-group configs.
 TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
@@ -349,9 +354,7 @@ def migrate_legacy_grouped_config(config) -> bool:
         changed = True
     if _migrate_search_instances_default(config):
         changed = True
-    if parse_config_bool(
-        _dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False), False
-    ):
+    if parse_config_bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False), False):
         save_config = getattr(config, "save_config", None)
         if changed and callable(save_config):
             save_config()
@@ -727,9 +730,7 @@ def resolve_tweet_group_template_key(group: dict) -> str:
 def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
     """Resolve group type and whether mixed subscription lists must be kept."""
     raw_type = str(group.get("group_type") or "").strip().lower()
-    raw_key = (
-        str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip().lower()
-    )
+    raw_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip().lower()
     has_users = not _is_empty_value(group.get("watch_users"))
     has_queries = not _is_empty_value(group.get("watch_queries"))
     preserve_mixed = has_users and has_queries
@@ -809,7 +810,9 @@ def _migrate_search_instances_default(config) -> bool:
     ):
         return False
 
-    legacy = tuple(item.rstrip("/").casefold() for item in LEGACY_DEFAULT_SEARCH_INSTANCES)
+    legacy = tuple(
+        item.rstrip("/").casefold() for item in LEGACY_DEFAULT_SEARCH_INSTANCES
+    )
     current = list(CURRENT_DEFAULT_SEARCH_INSTANCES)
     basic = _dict_get(config, "basic", {})
     if isinstance(basic, dict) and "search_instances" in basic:

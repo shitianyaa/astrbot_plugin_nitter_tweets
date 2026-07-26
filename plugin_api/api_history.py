@@ -19,6 +19,7 @@ except ImportError:
     from storage import PushHistoryGroupSummary, PushHistoryRecord
     from shared.group_ids import normalize_stable_group_id
 
+
 class WebAPIHistoryMixin:
     """push history 读取与序列化。"""
 
@@ -139,7 +140,9 @@ class WebAPIHistoryMixin:
             "delivery_error": record.delivery_error,
             "published": tweet.published,
             "text_preview": WebAPISerializersMixin._text_preview(tweet.text),
-            "translation_preview": WebAPISerializersMixin._text_preview(tweet.translation),
+            "translation_preview": WebAPISerializersMixin._text_preview(
+                tweet.translation
+            ),
         }
 
     @staticmethod
@@ -174,13 +177,13 @@ class WebAPIHistoryMixin:
                 record.original_link or record.tweet.x_url,
             )
             item = grouped.get(key)
-            serialized = WebAPIHistoryMixin._serialize_history_record(record, group_names)
+            serialized = WebAPIHistoryMixin._serialize_history_record(
+                record, group_names
+            )
             if item is None:
                 group = groups_by_id.get(record.group_id)
                 current_targets = list(getattr(group, "targets", []) or [])
-                group_type = str(
-                    getattr(group, "group_type", "") or ""
-                ).strip().lower()
+                group_type = str(getattr(group, "group_type", "") or "").strip().lower()
                 if group_type not in {"blogger", "tag"}:
                     group_type = (
                         "tag"

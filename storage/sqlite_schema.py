@@ -27,8 +27,7 @@ PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
         "ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'success'"
     ),
     "delivery_error": (
-        "ALTER TABLE push_history "
-        "ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"
+        "ALTER TABLE push_history ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"
     ),
 }
 SQLITE_TABLE_NAMES = {"push_history"}
@@ -47,9 +46,7 @@ class SQLiteSchemaMixin:
             # 检查数据库完整性
             result = cursor.execute("PRAGMA integrity_check").fetchone()
             if result[0] != "ok":
-                logger.error(
-                    f"[NitterTweets] 数据库完整性检查失败: {result[0]}"
-                )
+                logger.error(f"[NitterTweets] 数据库完整性检查失败: {result[0]}")
                 raise RuntimeError("Database corruption detected")
 
             # meta 表：schema version、迁移标记、配置导入指纹
@@ -149,7 +146,6 @@ class SQLiteSchemaMixin:
             # scan_watermarks 表：每个分组账号的连续扫描水位和初始化状态
             self._create_scan_watermarks_table(cursor)
 
-
             self._create_push_history_table(cursor)
 
             self.conn.commit()
@@ -218,9 +214,7 @@ class SQLiteSchemaMixin:
 
         columns = {
             str(row[1])
-            for row in cursor.execute(
-                "PRAGMA table_info(scan_watermarks)"
-            ).fetchall()
+            for row in cursor.execute("PRAGMA table_info(scan_watermarks)").fetchall()
         }
         if "status_id" not in columns or "status_ids" in columns:
             self._create_scan_watermarks_table(cursor)
@@ -297,9 +291,7 @@ class SQLiteSchemaMixin:
                 """,
                 (group_id, username, SCAN_ANCHOR_LIMIT),
             ).fetchall()
-            seen_anchors = cls._normalize_scan_anchor_ids(
-                [row[0] for row in seen_rows]
-            )
+            seen_anchors = cls._normalize_scan_anchor_ids([row[0] for row in seen_rows])
             existing = cursor.execute(
                 """
                 SELECT initialized, status_ids, updated_at
@@ -566,7 +558,6 @@ class SQLiteSchemaMixin:
             f"UPDATE {table} SET group_id = ? WHERE group_id = ?",
             (default_id, legacy_id),
         )
-
 
     @staticmethod
     def _table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:

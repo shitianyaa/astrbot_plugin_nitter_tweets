@@ -264,9 +264,15 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             scheduler._schedule_groups(log_invalid_targets=False)
         )
 
-        first = await scheduler.run_check(reason="tag_rt_only_first", group_name="tags1")
-        watermark_after_first = await scheduler.storage.get_group_scan_watermarks("tags1")
-        second = await scheduler.run_check(reason="tag_after_rt_only", group_name="tags1")
+        first = await scheduler.run_check(
+            reason="tag_rt_only_first", group_name="tags1"
+        )
+        watermark_after_first = await scheduler.storage.get_group_scan_watermarks(
+            "tags1"
+        )
+        second = await scheduler.run_check(
+            reason="tag_after_rt_only", group_name="tags1"
+        )
 
         self.assertEqual(first.new_tweet_count, 0)
         self.assertEqual(first.initialized_users.get(key), 0)

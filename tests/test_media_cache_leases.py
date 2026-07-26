@@ -177,7 +177,10 @@ def test_concurrent_same_url_downloads_share_one_final_file(tmp_path, monkeypatc
         return service._download(TweetMedia("image", "https://example.test/same.jpg"))
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        paths = [future.result(timeout=20) for future in [executor.submit(download), executor.submit(download)]]
+        paths = [
+            future.result(timeout=20)
+            for future in [executor.submit(download), executor.submit(download)]
+        ]
 
     assert paths[0] == paths[1]
     assert paths[0].read_bytes() == b"payload"

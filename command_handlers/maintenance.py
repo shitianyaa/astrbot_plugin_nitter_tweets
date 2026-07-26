@@ -34,7 +34,9 @@ class MaintenanceCommandMixin:
 
         self.scheduler.start(reason="manual_check")
         group_label = self._check_group_label(group)
-        await event.send(event.plain_result(f"正在执行 Nitter 定时检查：{group_label}..."))
+        await event.send(
+            event.plain_result(f"正在执行 Nitter 定时检查：{group_label}...")
+        )
         result = await self.scheduler.run_check(
             reason="manual_command",
             notify_no_updates=False,
@@ -56,7 +58,9 @@ class MaintenanceCommandMixin:
             )
         )
 
-    async def _cmd_tweets_clear_seen_impl(self, event: AstrMessageEvent, args=GreedyStr):
+    async def _cmd_tweets_clear_seen_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
         """清理定时检查推送记录，并移除旧版 KV 推送记录。"""
         event.stop_event()
         tokens = self._command_tokens(event, args)

@@ -87,8 +87,7 @@ class SenderHelpersMixin:
 
     def _should_use_merge_for_count(self, tweet_count: int) -> bool:
         return (
-            self.merge_tweet_threshold > 0
-            and tweet_count >= self.merge_tweet_threshold
+            self.merge_tweet_threshold > 0 and tweet_count >= self.merge_tweet_threshold
         )
 
     def _should_chunk_forward_tweets(self, tweet_count: int) -> bool:
@@ -144,9 +143,7 @@ class SenderHelpersMixin:
         )
 
     @classmethod
-    def _status_ids_from_batches(
-        cls, batches: list[TweetBatch]
-    ) -> tuple[str, ...]:
+    def _status_ids_from_batches(cls, batches: list[TweetBatch]) -> tuple[str, ...]:
         ids: list[str] = []
         for _username, _instance, tweets in batches:
             ids.extend(cls._status_ids_from_tweets(tweets))
@@ -165,9 +162,11 @@ class SenderHelpersMixin:
 
     @staticmethod
     def _normalized_delivery_status(outcome) -> str:
-        return str(
-            getattr(outcome, "delivery_status", "success") or "success"
-        ).strip().lower()
+        return (
+            str(getattr(outcome, "delivery_status", "success") or "success")
+            .strip()
+            .lower()
+        )
 
     def _batch_chunks(self, batches: list[TweetBatch]) -> list[list[TweetBatch]]:
         chunks: list[list[TweetBatch]] = []

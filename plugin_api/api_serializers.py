@@ -14,6 +14,7 @@ except ImportError:
     from scheduler import ScheduleGroup
     from shared import TweetItem
 
+
 class WebAPISerializersMixin:
     """结果序列化与 data 取值。"""
 

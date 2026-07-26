@@ -57,9 +57,7 @@ class WebUIGroupEditor:
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         group_type = self._group_type(data.get("group_type"))
-        template_key = (
-            "tag" if group_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
-        )
+        template_key = "tag" if group_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
         groups.append(
             {
                 TWEET_GROUP_TEMPLATE_KEY_FIELD: template_key,
@@ -333,9 +331,7 @@ class WebUIGroupEditor:
             raise ValueError("搜索订阅无效：" + ", ".join(info.invalid_entries[:5]))
         # AstrBot list fields require strings. Keep explicit type reversible
         # when it cannot be inferred from the leading '#'.
-        return [
-            encode_watch_query(item.query, item.type) for item in info.queries
-        ]
+        return [encode_watch_query(item.query, item.type) for item in info.queries]
 
     @staticmethod
     def _bool(value: Any) -> bool:

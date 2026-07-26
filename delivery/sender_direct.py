@@ -242,15 +242,11 @@ class SenderDirectMixin:
                 retry_accepted = retry_attempt.uncertain
                 return MergedSendOutcome(
                     success=retry_accepted and not media_only,
-                    mode=(
-                        "uncertain_delivery" if retry_accepted else "failed"
-                    ),
+                    mode=("uncertain_delivery" if retry_accepted else "failed"),
                     omitted_videos=omitted_videos,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
-                    delivery_status=(
-                        "partial_failed" if retry_accepted else "failed"
-                    ),
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
                     delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
@@ -278,7 +274,11 @@ class SenderDirectMixin:
         )
         if fallback.success or fallback.uncertain:
             if media_only:
-                error = attempt.error or fallback.error or "media-only fallback omitted media"
+                error = (
+                    attempt.error
+                    or fallback.error
+                    or "media-only fallback omitted media"
+                )
                 return MergedSendOutcome(
                     success=False,
                     mode="plain_fallback",

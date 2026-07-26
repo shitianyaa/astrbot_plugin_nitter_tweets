@@ -69,9 +69,7 @@ def test_hide_original_false_shows_both():
 
 def test_search_buffer_known_ids_skip_same_page():
     buf = SessionSearchBuffer()
-    items = [
-        SimpleNamespace(status_id=str(i), link="", text="t") for i in range(1, 6)
-    ]
+    items = [SimpleNamespace(status_id=str(i), link="", text="t") for i in range(1, 6)]
     assert buf.add_tweets(items) == 5
     assert [x.status_id for x in buf.take(5)] == ["1", "2", "3", "4", "5"]
     assert buf.add_tweets(items) == 0
@@ -80,14 +78,10 @@ def test_search_buffer_known_ids_skip_same_page():
 
 def test_search_buffer_accepts_new_ids_after_exhaust():
     buf = SessionSearchBuffer()
-    first = [
-        SimpleNamespace(status_id=str(i), link="", text="t") for i in range(1, 4)
-    ]
+    first = [SimpleNamespace(status_id=str(i), link="", text="t") for i in range(1, 4)]
     buf.add_tweets(first)
     buf.take(3)
-    second = [
-        SimpleNamespace(status_id=str(i), link="", text="t") for i in range(3, 7)
-    ]
+    second = [SimpleNamespace(status_id=str(i), link="", text="t") for i in range(3, 7)]
     # 3 known, 4-6 new
     assert buf.add_tweets(second) == 3
     assert [x.status_id for x in buf.take(10)] == ["4", "5", "6"]

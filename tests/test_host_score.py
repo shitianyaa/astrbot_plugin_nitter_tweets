@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """HostScoreBook: success boost, failure penalty, stable order."""
+
 from __future__ import annotations
 
 from media_support.host_score import (

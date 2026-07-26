@@ -11,17 +11,24 @@ from media_support.search_session_buffer import (
 
 
 def _t(sid: str, text: str = "hi") -> SimpleNamespace:
-    return SimpleNamespace(status_id=sid, link=f"https://x.com/u/status/{sid}", text=text)
+    return SimpleNamespace(
+        status_id=sid, link=f"https://x.com/u/status/{sid}", text=text
+    )
 
 
 def test_tweet_item_key_prefers_status_id():
     assert tweet_item_key(_t("123")) == "123"
-    assert tweet_item_key(SimpleNamespace(status_id="", link="https://x.com/a")) == "https://x.com/a"
+    assert (
+        tweet_item_key(SimpleNamespace(status_id="", link="https://x.com/a"))
+        == "https://x.com/a"
+    )
 
 
 def test_buffer_stores_all_and_take_preserves_order():
     buf = SessionSearchBuffer()
-    added = buf.add_tweets([_t("1"), _t("2"), _t("3"), _t("1")], instance="https://nitter.example")
+    added = buf.add_tweets(
+        [_t("1"), _t("2"), _t("3"), _t("1")], instance="https://nitter.example"
+    )
     assert added == 3
     assert len(buf) == 3
     assert buf.instance.endswith("example")
@@ -80,9 +87,7 @@ def test_out_of_order_reservations_restore_original_order():
 
 
 def test_prepopulated_items_get_stable_fetch_order_for_rollback():
-    buf = SessionSearchBuffer(
-        items={"1": _t("1"), "2": _t("2"), "3": _t("3")}
-    )
+    buf = SessionSearchBuffer(items={"1": _t("1"), "2": _t("2"), "3": _t("3")})
     token, reserved = buf.reserve(2)
     assert [item.status_id for item in reserved] == ["1", "2"]
     buf.finalize(token, 1)

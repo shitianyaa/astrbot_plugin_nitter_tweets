@@ -5,6 +5,7 @@
 先锚定基准，否则基准为 None 会让所有已配置时刻在第一轮全部命中，绕过
 check_on_startup，并在启动后立刻触发一批检查。
 """
+
 from __future__ import annotations
 
 import datetime as dt

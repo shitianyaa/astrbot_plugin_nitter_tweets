@@ -53,14 +53,18 @@ def detect_gate(body: bytes) -> str:
         return "anubis"
     if b"verifying your browser" in low and (b"s1" in low or b"sha1" in low):
         return "poast_sha1"
-    if b"just a moment" in low or b"challenge-platform" in low or b"cf-turnstile" in low:
+    if (
+        b"just a moment" in low
+        or b"challenge-platform" in low
+        or b"cf-turnstile" in low
+    ):
         return "cf"
-    title_match = re.search(br"<title[^>]*>(.*?)</title>", low, re.S)
+    title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.S)
     title = title_match.group(1) if title_match else b""
     error_markers = (
-        b"class=\"error-panel",
+        b'class="error-panel',
         b"class='error-panel",
-        b"id=\"error-page",
+        b'id="error-page',
         b"this site is under maintenance",
         b"temporarily unavailable",
         b"service unavailable",
@@ -134,9 +138,7 @@ def solve_anubis_pow(
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid anubis pow parameters") from exc
     if difficulty < 0 or difficulty > MAX_ANUBIS_DIFFICULTY:
-        raise ValueError(
-            f"anubis difficulty out of range (0..{MAX_ANUBIS_DIFFICULTY})"
-        )
+        raise ValueError(f"anubis difficulty out of range (0..{MAX_ANUBIS_DIFFICULTY})")
     budget = min(MAX_ANUBIS_ITERATIONS, requested_iters)
     if budget <= 0:
         raise ValueError("anubis pow iteration budget must be positive")

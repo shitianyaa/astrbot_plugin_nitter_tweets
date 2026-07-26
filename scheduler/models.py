@@ -147,11 +147,11 @@ class ScheduledCheckResult:
 
         warning_part = (
             f", warnings={len(self.delivery_warnings)}"
-            if self.delivery_warnings else ""
+            if self.delivery_warnings
+            else ""
         )
         filtered_part = (
-            f", filtered={self.plain_text_filtered}"
-            if self.plain_text_filtered else ""
+            f", filtered={self.plain_text_filtered}" if self.plain_text_filtered else ""
         )
         media_part = (
             f", media_skipped={self.media_only_skipped}, "
@@ -260,8 +260,7 @@ class ScheduledCheckResult:
             lines.append(f"检查跳过: {reason_text}")
             if self.available_groups:
                 lines.append(
-                    "可用分组: "
-                    + _format_limited_values(self.available_groups)
+                    "可用分组: " + _format_limited_values(self.available_groups)
                 )
 
         if self.initialized_users:
@@ -272,10 +271,7 @@ class ScheduledCheckResult:
             lines.append("首次记录: " + _format_limited_values(items))
 
         if self.pushes and self.push_mode == "merged":
-            items = [
-                f"@{item.username} {item.new_count} 条"
-                for item in self.pushes
-            ]
+            items = [f"@{item.username} {item.new_count} 条" for item in self.pushes]
             lines.append("新推文: " + _format_limited_values(items, separator="; "))
         elif self.pushes:
             items = [
@@ -293,17 +289,13 @@ class ScheduledCheckResult:
         if self.no_new_users:
             lines.append(
                 "无新推文: "
-                + _format_limited_values(
-                    [f"@{user}" for user in self.no_new_users]
-                )
+                + _format_limited_values([f"@{user}" for user in self.no_new_users])
             )
 
         if self.empty_users:
             lines.append(
                 "RSS 无有效推文 ID: "
-                + _format_limited_values(
-                    [f"@{user}" for user in self.empty_users]
-                )
+                + _format_limited_values([f"@{user}" for user in self.empty_users])
             )
 
         if self.failed_users:
@@ -312,8 +304,7 @@ class ScheduledCheckResult:
 
         if self.invalid_targets:
             lines.append(
-                "无效推送目标: "
-                + _format_limited_values(self.invalid_targets)
+                "无效推送目标: " + _format_limited_values(self.invalid_targets)
             )
 
         if not self.skipped_reason and self.new_tweet_count == 0:

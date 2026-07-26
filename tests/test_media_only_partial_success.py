@@ -5,6 +5,7 @@
 但没有视频组件、图片又全部失败时没有任何媒体送达，不能算完成，
 否则 scheduler 会推进 seen 导致漏推。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -36,7 +37,9 @@ def _adapter(*, images, videos, attempts):
         _send_context_message=AsyncMock(side_effect=attempts),
     )
     adapter = DefaultDeliveryAdapter(sender, SimpleNamespace())
-    adapter._message_chain = MagicMock(side_effect=lambda components, **kwargs: components)
+    adapter._message_chain = MagicMock(
+        side_effect=lambda components, **kwargs: components
+    )
     return adapter, sender
 
 
@@ -145,14 +148,22 @@ async def test_event_media_only_without_any_media_component_is_not_success():
         _send_event_chain=AsyncMock(return_value=SendAttempt(success=True)),
     )
     adapter = DefaultDeliveryAdapter(sender, SimpleNamespace())
-    adapter._message_chain = MagicMock(side_effect=lambda components, **kwargs: components)
+    adapter._message_chain = MagicMock(
+        side_effect=lambda components, **kwargs: components
+    )
 
-    assert await adapter._send_split_direct_videos_event(
-        object(), "user", "instance", [_tweet("1")], media_only=True
-    ) is False
-    assert await adapter._send_split_direct_videos_event(
-        object(), "user", "instance", [_tweet("1")], media_only=False
-    ) is True
+    assert (
+        await adapter._send_split_direct_videos_event(
+            object(), "user", "instance", [_tweet("1")], media_only=True
+        )
+        is False
+    )
+    assert (
+        await adapter._send_split_direct_videos_event(
+            object(), "user", "instance", [_tweet("1")], media_only=False
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
