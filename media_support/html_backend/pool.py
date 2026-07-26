@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,10 @@ class PoolConfig:
     rate: RateLimitConfig = field(default_factory=RateLimitConfig)
     max_pages: int = 1
     filter_reposts: bool = False
+    # Global retry configuration
+    max_global_retries: int = 2  # Retry all instances N times before giving up
+    retry_delay_base: float = 5.0  # Base delay between global retries (seconds)
+    retry_delay_on_cooldown: float = 10.0  # Delay when all instances cooling
 
 
 class HtmlSearchResult(list[TweetItem]):
@@ -241,6 +246,47 @@ class HtmlNitterPool:
         *,
         instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
+        """Fetch user timeline with global retry on total failure."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._fetch_user_once(username, limit, instance=instance)
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._fetch_user_once(username, limit, instance=instance)
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"user global retry {attempt + 1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"user global retry {attempt + 1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+        # Unreachable (loop always raises on last attempt)
+        raise RuntimeError("fetch_user: exhausted retries")
+
+    def _fetch_user_once(
+        self,
+        username: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
         # At least one host answered with a parsed empty timeline. Do not treat
@@ -248,9 +294,7 @@ class HtmlNitterPool:
         empty_success_base: str | None = None
         hosts = self._hosts_for_rotation(instance)
         if not hosts:
-            raise RuntimeError(
-                "HTML user fetch unavailable: all instances in cooldown"
-            )
+            raise RuntimeError("HTML user fetch unavailable: all instances in cooldown")
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)
@@ -261,25 +305,18 @@ class HtmlNitterPool:
                     self.scores.record_success(host)
                     if index > 1:
                         self.log(
-                            f"user ok after rotate host={host} "
-                            f"tried={index}/{total}"
+                            f"user ok after rotate host={host} tried={index}/{total}"
                         )
                     return base, tweets[:limit]
                 empty_success_base = base
                 # Alive empty timeline: soft success (aligned with RSS empty feed).
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
-                self.log(
-                    f"user empty host={host}, rotate next "
-                    f"({index}/{total})"
-                )
+                self.log(f"user empty host={host}, rotate next ({index}/{total})")
             except Exception as exc:  # noqa: BLE001
                 # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
-                self.log(
-                    f"user fail host={host}, rotate next "
-                    f"({index}/{total}): {exc}"
-                )
+                self.log(f"user fail host={host}, rotate next ({index}/{total}): {exc}")
         if empty_success_base is not None:
             self.log(
                 f"user empty after rotate hosts={total}, "
@@ -289,6 +326,56 @@ class HtmlNitterPool:
         raise RuntimeError("HTML user failed: " + "; ".join(errors[-4:]))
 
     def search(
+        self,
+        query: str,
+        limit: int,
+        *,
+        kind: str | None = None,
+        instance: str | None = None,
+        max_pages: int | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Search with global retry on total failure."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._search_once(
+                query, limit, kind=kind, instance=instance, max_pages=max_pages
+            )
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._search_once(
+                    query, limit, kind=kind, instance=instance, max_pages=max_pages
+                )
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"search global retry {attempt + 1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"search global retry {attempt + 1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+            except ValueError:
+                # "empty query" and similar validation errors should not retry
+                raise
+        # Unreachable (loop always raises on last attempt)
+        raise RuntimeError("search: exhausted retries")
+
+    def _search_once(
         self,
         query: str,
         limit: int,
@@ -312,9 +399,7 @@ class HtmlNitterPool:
         empty_success_result = HtmlSearchResult()
         hosts = self._hosts_for_rotation(instance)
         if not hosts:
-            raise RuntimeError(
-                "HTML search unavailable: all instances in cooldown"
-            )
+            raise RuntimeError("HTML search unavailable: all instances in cooldown")
         total = len(hosts)
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)
@@ -332,8 +417,7 @@ class HtmlNitterPool:
                     self.scores.record_success(host)
                     if index > 1:
                         self.log(
-                            f"search ok after rotate host={host} "
-                            f"tried={index}/{total}"
+                            f"search ok after rotate host={host} tried={index}/{total}"
                         )
                     return base, tweets.limited(limit)
                 empty_success_base = base
@@ -342,16 +426,12 @@ class HtmlNitterPool:
                 # Empty after RT filter: soft success, not an outage.
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
-                self.log(
-                    f"search empty host={host}, rotate next "
-                    f"({index}/{total})"
-                )
+                self.log(f"search empty host={host}, rotate next ({index}/{total})")
             except Exception as exc:  # noqa: BLE001
                 # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
                 self.log(
-                    f"search fail host={host}, rotate next "
-                    f"({index}/{total}): {exc}"
+                    f"search fail host={host}, rotate next ({index}/{total}): {exc}"
                 )
         if empty_success_base is not None:
             self.log(
@@ -386,9 +466,7 @@ class HtmlNitterPool:
             page = parse_timeline_html(body.decode("utf-8", "replace"), base)
             batch = page.tweets
             if self.config.filter_reposts:
-                batch = [
-                    t for t in batch if (t.username or "").lower() == user.lower()
-                ]
+                batch = [t for t in batch if (t.username or "").lower() == user.lower()]
             for t in batch:
                 k = t.status_id or t.link
                 if k in seen:

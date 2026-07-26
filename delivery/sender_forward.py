@@ -82,7 +82,11 @@ class SenderForwardMixin:
         on_delivered=None,
     ) -> bool:
         nodes = self.renderer.build_nodes(
-            event, username, instance, tweets, notices=notices,
+            event,
+            username,
+            instance,
+            tweets,
+            notices=notices,
             start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
@@ -90,7 +94,11 @@ class SenderForwardMixin:
             link_style=link_style,
         )
         raw_nodes = self.renderer.build_onebot_nodes(
-            event, username, instance, tweets, notices=notices,
+            event,
+            username,
+            instance,
+            tweets,
+            notices=notices,
             start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
@@ -116,8 +124,12 @@ class SenderForwardMixin:
         ):
             try:
                 nodes_nv = self.renderer.build_nodes(
-                    event, username, instance, tweets,
-                    exclude_videos=True, notices=notices,
+                    event,
+                    username,
+                    instance,
+                    tweets,
+                    exclude_videos=True,
+                    notices=notices,
                     start_index=tweet_start_index,
                     media_only=media_only,
                     omit_status_url=omit_status_url,
@@ -135,9 +147,7 @@ class SenderForwardMixin:
                     )
                     self._notify_delivered(on_delivered, len(tweets))
                     return True
-                logger.warning(
-                    f"[NitterTweets] 发送去除视频的合并转发节点失败: {exc}"
-                )
+                logger.warning(f"[NitterTweets] 发送去除视频的合并转发节点失败: {exc}")
 
         last_exc: Exception | None = None
         try:
@@ -427,9 +437,7 @@ class SenderForwardMixin:
                     success=retry_accepted and not media_only,
                     error=attempt_nv.error or attempt.error,
                     warning=attempt_nv.warning,
-                    delivery_status=(
-                        "partial_failed" if retry_accepted else "failed"
-                    ),
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
                     delivery_error=attempt_nv.error or attempt.error,
                     delivered_status_ids=(
                         self._status_ids_from_tweets(tweets)
@@ -521,7 +529,9 @@ class SenderForwardMixin:
                     )
 
         if not remaining:
-            error = split_error or attempt.error or "forward split produced empty remainder"
+            error = (
+                split_error or attempt.error or "forward split produced empty remainder"
+            )
             return SendOutcome(
                 success=False,
                 error=error,
@@ -554,9 +564,7 @@ class SenderForwardMixin:
             hide_original_when_translated=hide_original_when_translated,
             link_style=link_style,
         )
-        fallback_delivered = tuple(
-            getattr(fallback, "delivered_status_ids", ()) or ()
-        )
+        fallback_delivered = tuple(getattr(fallback, "delivered_status_ids", ()) or ())
         if fallback.success:
             delivered.extend(
                 fallback_delivered or self._status_ids_from_tweets(remaining)
@@ -579,8 +587,7 @@ class SenderForwardMixin:
             remaining_with_offsets = [
                 (offset, tweet)
                 for offset, tweet in enumerate(remaining)
-                if not tweet.status_id
-                or str(tweet.status_id) not in delivered_set
+                if not tweet.status_id or str(tweet.status_id) not in delivered_set
             ]
             remaining = [tweet for _, tweet in remaining_with_offsets]
             if remaining_with_offsets:
@@ -682,11 +689,7 @@ class SenderForwardMixin:
                     else "success"
                 ),
                 delivery_error=(
-                    attempt.error
-                    or plain.error
-                    or fallback.error
-                    or split_error
-                    or ""
+                    attempt.error or plain.error or fallback.error or split_error or ""
                 ),
                 delivered_status_ids=self._dedupe_status_ids(delivered),
             )

@@ -229,7 +229,6 @@ class SchedulerSendMixin:
                     )
                     send_kwargs = {
                         # omit_status_url/link_style filled below
-
                         "group_label": group_label,
                         "header_text": header_text,
                         "batch_summary": "",
@@ -237,8 +236,12 @@ class SchedulerSendMixin:
                     }
                     if batch.media_only:
                         send_kwargs["media_only"] = True
-                    send_kwargs["omit_status_url"] = bool(getattr(batch, "omit_status_url", True))
-                    send_kwargs["hide_original_when_translated"] = bool(getattr(batch, "hide_original_when_translated", False))
+                    send_kwargs["omit_status_url"] = bool(
+                        getattr(batch, "omit_status_url", True)
+                    )
+                    send_kwargs["hide_original_when_translated"] = bool(
+                        getattr(batch, "hide_original_when_translated", False)
+                    )
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -464,11 +467,7 @@ class SchedulerSendMixin:
                         )
                 history_status_ids = self._delivery_history_status_ids(
                     outcome,
-                    [
-                        tweet
-                        for batch in target_batches
-                        for tweet in batch.tweets
-                    ],
+                    [tweet for batch in target_batches for tweet in batch.tweets],
                 )
                 if history_status_ids:
                     selected_status_ids = set(history_status_ids)
@@ -629,9 +628,7 @@ class SchedulerSendMixin:
         )
         if cls._delivery_is_complete(outcome):
             return available
-        status = str(
-            getattr(outcome, "delivery_status", "") or ""
-        ).strip().lower()
+        status = str(getattr(outcome, "delivery_status", "") or "").strip().lower()
         if status != "partial_failed":
             return ()
         delivered = {
@@ -644,14 +641,16 @@ class SchedulerSendMixin:
     @staticmethod
     def _delivery_is_complete(outcome) -> bool:
         """Return whether an outcome is safe to advance the shared seen key."""
-        return bool(getattr(outcome, "success", False)) and str(
-            getattr(outcome, "delivery_status", "success") or "success"
-        ).strip().lower() != "failed"
+        return (
+            bool(getattr(outcome, "success", False))
+            and str(getattr(outcome, "delivery_status", "success") or "success")
+            .strip()
+            .lower()
+            != "failed"
+        )
 
     @staticmethod
-    def _all_targets_delivered(
-        targets: list[str], batch: PendingTweetBatch
-    ) -> bool:
+    def _all_targets_delivered(targets: list[str], batch: PendingTweetBatch) -> bool:
         """Reject vacuous success when a delivery path has no targets."""
         return bool(targets) and set(targets).issubset(batch.delivered_targets)
 

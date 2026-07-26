@@ -33,6 +33,7 @@ except ImportError:
     )
     from media_support.network import UnsafeUrlError, validate_http_url
 
+
 class WebAPIProbeMixin:
     """targets / mirror 探测。"""
 
@@ -132,17 +133,13 @@ class WebAPIProbeMixin:
             # validation immediately before connecting.
             instance = validate_http_url(instance, resolve_dns=False).rstrip("/")
         except UnsafeUrlError:
-            return self._error(
-                "请填写完整 Nitter 镜像站地址，例如 https://nitter.net"
-            )
+            return self._error("请填写完整 Nitter 镜像站地址，例如 https://nitter.net")
 
         mode = self._data_text(data, "mode") or "blogger_rss"
         mode = mode.strip().lower().replace("-", "_")
         if mode not in {"blogger_rss", "search"}:
             if mode == "blogger_html":
-                return self._error(
-                    "博主 HTML 回退已移除；请用 blogger_rss 或 search"
-                )
+                return self._error("博主 HTML 回退已移除；请用 blogger_rss 或 search")
             return self._error("mode 仅支持 blogger_rss / search")
 
         limit = self._parse_int(
@@ -161,12 +158,13 @@ class WebAPIProbeMixin:
                 )
                 if not username:
                     return self._error("关注账号格式无效")
-                used_instance, tweets = (
-                    await self.plugin.nitter.fetch_tweets_from_instance(
-                        instance,
-                        username,
-                        limit,
-                    )
+                (
+                    used_instance,
+                    tweets,
+                ) = await self.plugin.nitter.fetch_tweets_from_instance(
+                    instance,
+                    username,
+                    limit,
                 )
                 subject = username
                 kind = ""
@@ -177,16 +175,18 @@ class WebAPIProbeMixin:
                     or ""
                 ).strip()
                 if len(raw_query) > MAX_QUERY_LENGTH:
-                    return self._error(
-                        f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）"
-                    )
+                    return self._error(f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）")
                 query = normalize_query(raw_query)
                 if not query:
                     return self._error("请填写搜索内容（#标签 或短语）")
                 html_backend = getattr(self.plugin, "html_backend", None)
                 if html_backend is None:
                     return self._error("HTML 后端未初始化")
-                if not bool(getattr(getattr(html_backend, "config", None), "search_enabled", True)):
+                if not bool(
+                    getattr(
+                        getattr(html_backend, "config", None), "search_enabled", True
+                    )
+                ):
                     return self._error("search_enabled 已关闭")
                 kind = query_kind(query)
                 used_instance, tweets = await asyncio.to_thread(

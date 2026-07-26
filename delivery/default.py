@@ -17,7 +17,6 @@ from .outcomes import SendOutcome
 
 
 class DefaultDeliveryAdapter(DeliveryAdapter):
-
     @staticmethod
     def _message_chain(components, *, link_style: str = "plain") -> MessageChain:
         chain = MessageChain(components)
@@ -52,8 +51,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
-            hide_original_when_translated=hide_original_when_translated,
-            link_style=link_style,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         attempt = await sender._send_event_chain(
@@ -169,8 +168,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
-            hide_original_when_translated=hide_original_when_translated,
-            link_style=link_style,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         attempt = await sender._send_context_message(
@@ -251,9 +250,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     success=retry_accepted and not media_only,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
-                    delivery_status=(
-                        "partial_failed" if retry_accepted else "failed"
-                    ),
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
                     delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
@@ -274,8 +271,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             batch_summary=batch_summary,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
-            hide_original_when_translated=hide_original_when_translated,
-            link_style=link_style,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
                 ],
@@ -288,11 +285,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             success=fallback_accepted and not media_only,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
-            delivery_status=(
-                "partial_failed"
-                if fallback_accepted
-                else "failed"
-            ),
+            delivery_status=("partial_failed" if fallback_accepted else "failed"),
             delivery_error=fallback.error or attempt.error,
         )
 
@@ -335,7 +328,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 link_style=link_style,
             ),
             "QQ direct scheduled tweet text before videos",
-            )
+        )
         text_warning = ""
         if not text_attempt.success:
             if media_only and text_attempt.uncertain:
@@ -409,7 +402,9 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 delivery_error=delivery_error,
             )
 
-        notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
+        notice_components = sender.renderer.build_video_omitted_notice_components(
+            tweets
+        )
         if not notice_components:
             delivery_error = video_error or image_error
             return SendOutcome(
@@ -431,10 +426,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             success=True,
             error=delivery_error,
             warning=(
-                notice_attempt.warning
-                or video_warning
-                or image_warning
-                or text_warning
+                notice_attempt.warning or video_warning or image_warning or text_warning
             ),
             delivery_status="partial_failed" if delivery_error else "success",
             delivery_error=delivery_error,
@@ -535,7 +527,9 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         if media_only:
             return False
 
-        notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
+        notice_components = sender.renderer.build_video_omitted_notice_components(
+            tweets
+        )
         if not notice_components:
             return True
         notice_attempt = await sender._send_event_chain(
@@ -633,8 +627,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             header_text=header_text,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
-            hide_original_when_translated=hide_original_when_translated,
-            link_style=link_style,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
                 ],

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """manual_send_interval + global show_original_when_translated."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,22 +26,24 @@ class _Cfg(dict):
 
 def test_resolve_show_original_defaults_true():
     assert resolve_show_original_when_translated(_Cfg()) is True
-    assert resolve_show_original_when_translated(
-        _Cfg({"show_original_when_translated": False})
-    ) is False
-    assert resolve_show_original_when_translated(
-        _Cfg({"ai_translation": {"show_original_when_translated": False}})
-    ) is False
+    assert (
+        resolve_show_original_when_translated(
+            _Cfg({"show_original_when_translated": False})
+        )
+        is False
+    )
+    assert (
+        resolve_show_original_when_translated(
+            _Cfg({"ai_translation": {"show_original_when_translated": False}})
+        )
+        is False
+    )
 
 
 def test_resolve_hide_combines_global_and_group():
     # Global show → only group can hide
-    assert (
-        resolve_hide_original_when_translated(_Cfg(), group_hide=False) is False
-    )
-    assert (
-        resolve_hide_original_when_translated(_Cfg(), group_hide=True) is True
-    )
+    assert resolve_hide_original_when_translated(_Cfg(), group_hide=False) is False
+    assert resolve_hide_original_when_translated(_Cfg(), group_hide=True) is True
     # Global hide forces hide even if group says show
     cfg = _Cfg({"show_original_when_translated": False})
     assert resolve_hide_original_when_translated(cfg, group_hide=False) is True
@@ -50,9 +53,10 @@ def test_resolve_hide_combines_global_and_group():
 def test_resolve_manual_send_interval_clamp():
     assert resolve_manual_send_interval(_Cfg()) == 0.0
     assert resolve_manual_send_interval(_Cfg({"manual_send_interval": 1.5})) == 1.5
-    assert resolve_manual_send_interval(
-        _Cfg({"push": {"manual_send_interval": 99}})
-    ) == 60.0
+    assert (
+        resolve_manual_send_interval(_Cfg({"push": {"manual_send_interval": 99}}))
+        == 60.0
+    )
     assert resolve_manual_send_interval(_Cfg({"manual_send_interval": -1})) == 0.0
 
 
@@ -157,9 +161,7 @@ async def test_manual_global_hide_original_passed(monkeypatch):
     )
     event = MagicMock()
     event.unified_msg_origin = "telegram:GroupMessage:1"
-    await host._send_tweets_response(
-        event, "u", "https://nitter.example", [tweet]
-    )
+    await host._send_tweets_response(event, "u", "https://nitter.example", [tweet])
     assert host.sender.send.await_args.kwargs["hide_original_when_translated"] is True
 
 
@@ -306,9 +308,7 @@ async def test_manual_sequential_returns_confirmed_prefix_on_send_failure(monkey
     event.unified_msg_origin = "telegram:GroupMessage:1"
 
     assert (
-        await host._send_tweets_response(
-            event, "u", "https://nitter.example", tweets
-        )
+        await host._send_tweets_response(event, "u", "https://nitter.example", tweets)
         == 1
     )
     assert host.media.cleanup_after_send.call_count == 2
@@ -485,8 +485,6 @@ async def test_manual_none_send_result_remains_legacy_success(monkeypatch):
     event = MagicMock()
     event.unified_msg_origin = "telegram:GroupMessage:1"
     assert (
-        await host._send_tweets_response(
-            event, "u", "https://nitter.example", [tweet]
-        )
+        await host._send_tweets_response(event, "u", "https://nitter.example", [tweet])
         == 1
     )

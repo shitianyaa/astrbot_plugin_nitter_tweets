@@ -29,7 +29,9 @@ def query_kind(query: str) -> QueryKind:
     return "tag" if text.startswith("#") else "phrase"
 
 
-def normalize_watch_query(query: str, type_hint: str | None = None) -> tuple[str, QueryKind]:
+def normalize_watch_query(
+    query: str, type_hint: str | None = None
+) -> tuple[str, QueryKind]:
     """Normalize a stored watch query + type for save/runtime.
 
     - If type_hint is tag/phrase, trust it (with tag # fixup).

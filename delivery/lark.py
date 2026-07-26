@@ -81,8 +81,8 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
-            hide_original_when_translated=hide_original_when_translated,
-            link_style=link_style,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         text = plain_text_from_components(components)
@@ -242,8 +242,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         )
         if client is None or not receive_id_type or not receive_id:
             logger.warning(
-                f"[NitterTweets] 未找到 Lark 客户端或目标: target={umo}，"
-                "改用通用发送"
+                f"[NitterTweets] 未找到 Lark 客户端或目标: target={umo}，改用通用发送"
             )
             return await sender._send_default_direct_to_umo(
                 context,
@@ -296,22 +295,10 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             has_media = bool(media_components(components))
             return SendOutcome(
                 success=(media_ok and has_media) or not media_only,
-                error=(
-                    video_attempt.error
-                    if not media_ok
-                    else ""
-                ),
+                error=(video_attempt.error if not media_ok else ""),
                 warning=warning,
-                delivery_status=(
-                    "partial_failed"
-                    if not media_ok
-                    else "success"
-                ),
-                delivery_error=(
-                    video_attempt.error
-                    if not media_ok
-                    else ""
-                ),
+                delivery_status=("partial_failed" if not media_ok else "success"),
+                delivery_error=(video_attempt.error if not media_ok else ""),
             )
 
         logger.warning(
@@ -353,14 +340,6 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             success=(media_ok and has_media) or not media_only,
             error="" if media_ok else media_attempt.error,
             warning=warning,
-            delivery_status=(
-                "partial_failed"
-                if not media_ok
-                else "success"
-            ),
-            delivery_error=(
-                media_attempt.error
-                if not media_ok
-                else ""
-            ),
+            delivery_status=("partial_failed" if not media_ok else "success"),
+            delivery_error=(media_attempt.error if not media_ok else ""),
         )

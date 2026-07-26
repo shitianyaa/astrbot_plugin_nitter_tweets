@@ -287,7 +287,9 @@ class NitterTweetScheduler(
             daily_slots = self._daily_slots.setdefault(group_id, set())
             last_check = self._last_daily_check.get(group_id)
             for hour, minute in group.daily_check_times:
-                target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                target_time = now.replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
                 if last_check is None or now >= target_time > last_check:
                     slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
                     if slot_key not in daily_slots:
@@ -435,9 +437,7 @@ class NitterTweetScheduler(
             omit_status_url=bool(getattr(group, "omit_status_url", True)),
             hide_original_when_translated=resolve_hide_original_when_translated(
                 self.config,
-                group_hide=bool(
-                    getattr(group, "hide_original_when_translated", False)
-                ),
+                group_hide=bool(getattr(group, "hide_original_when_translated", False)),
             ),
         )
         try:
@@ -628,7 +628,9 @@ class NitterTweetScheduler(
                 tweets = fetch_result.tweets
                 scanned_status_ids = list(
                     dict.fromkeys(
-                        str(item) for item in fetch_result.scanned_status_ids if str(item)
+                        str(item)
+                        for item in fetch_result.scanned_status_ids
+                        if str(item)
                     )
                 )
                 full_scanned_status_ids = (
@@ -778,13 +780,17 @@ class NitterTweetScheduler(
                             fetched_ids=scanned_status_ids,
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
-                            omit_status_url=bool(getattr(group, 'omit_status_url', True)),
-                    hide_original_when_translated=resolve_hide_original_when_translated(
-                        self.config,
-                        group_hide=bool(
-                            getattr(group, "hide_original_when_translated", False)
-                        ),
-                    ),
+                            omit_status_url=bool(
+                                getattr(group, "omit_status_url", True)
+                            ),
+                            hide_original_when_translated=resolve_hide_original_when_translated(
+                                self.config,
+                                group_hide=bool(
+                                    getattr(
+                                        group, "hide_original_when_translated", False
+                                    )
+                                ),
+                            ),
                             tweet_index=len(new_tweets),
                             tweet_total=len(new_tweets),
                         )
@@ -795,7 +801,9 @@ class NitterTweetScheduler(
                         f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
                         f"username={username}"
                     )
-                    seen_map[username] = self._merge_seen_ids(scanned_status_ids, seen_ids)
+                    seen_map[username] = self._merge_seen_ids(
+                        scanned_status_ids, seen_ids
+                    )
                     await self._put_seen_map(group.group_id, seen_map)
                     if scanned_status_ids:
                         await self._set_scan_watermark(
@@ -899,11 +907,16 @@ class NitterTweetScheduler(
                     for batch in pending_batches:
                         await self._cleanup_batch_media(batch)
 
-            for username, (anchor_status_ids, selected_ids) in watermark_candidates.items():
+            for username, (
+                anchor_status_ids,
+                selected_ids,
+            ) in watermark_candidates.items():
                 current_seen = set(seen_map.get(username, []))
                 if selected_ids and not selected_ids.issubset(current_seen):
                     continue
-                await self._set_scan_watermark(group.group_id, username, anchor_status_ids)
+                await self._set_scan_watermark(
+                    group.group_id, username, anchor_status_ids
+                )
 
             self._log_check_result(result)
             if self._should_notify_no_updates(result, notify_no_updates, group):

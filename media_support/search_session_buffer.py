@@ -77,7 +77,9 @@ class SessionSearchBuffer:
     def touch(self) -> None:
         self.updated_at = time()
 
-    def expired(self, now: float | None = None, ttl: float = BUFFER_TTL_SECONDS) -> bool:
+    def expired(
+        self, now: float | None = None, ttl: float = BUFFER_TTL_SECONDS
+    ) -> bool:
         now = time() if now is None else now
         if self.reservations:
             return False

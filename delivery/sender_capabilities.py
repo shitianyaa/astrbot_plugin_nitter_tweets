@@ -44,7 +44,9 @@ class SenderCapabilitiesMixin:
     @classmethod
     def _event_platform(cls, event) -> str:
         profile = PlatformResolver().from_event(event)
-        return profile.platform_id or (profile.platform_types[0] if profile.platform_types else "")
+        return profile.platform_id or (
+            profile.platform_types[0] if profile.platform_types else ""
+        )
 
     async def _send_onebot_forward(self, event, raw_nodes: list[dict]) -> bool:
         send_forward = getattr(

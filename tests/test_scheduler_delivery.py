@@ -162,9 +162,7 @@ sys.modules["astrbot.api.message_components"] = astrbot_api_message_components_m
 sys.modules["astrbot.api.star"] = astrbot_api_star_module
 sys.modules["astrbot.core"] = astrbot_core_module
 sys.modules["astrbot.core.message"] = astrbot_core_message_module
-sys.modules["astrbot.core.message.components"] = (
-    astrbot_core_message_components_module
-)
+sys.modules["astrbot.core.message.components"] = astrbot_core_message_components_module
 sys.modules["astrbot.core.star.filter.command"] = astrbot_core_command_module
 
 if "rendering.tweets" in sys.modules:
@@ -210,9 +208,7 @@ class _Nitter:
     async def fetch_tweets(self, username, limit, skip_plain_text=False):
         return "https://nitter.test", self.tweets[:limit]
 
-    async def fetch_tweets_with_stats(
-        self, username, limit, skip_plain_text=False
-    ):
+    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
         return "https://nitter.test", self.tweets[:limit], 0
 
 
@@ -226,9 +222,7 @@ class _MultiUserNitter:
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
 
-    async def fetch_tweets_with_stats(
-        self, username, limit, skip_plain_text=False
-    ):
+    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
@@ -245,7 +239,11 @@ class _MultiUserNitter:
             (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
         )
         self.events.append(f"concurrent_fetch:{username}")
-        return "https://concurrent.test", self.tweets_by_user.get(username, [])[:limit], 0
+        return (
+            "https://concurrent.test",
+            self.tweets_by_user.get(username, [])[:limit],
+            0,
+        )
 
 
 class _SchedulerNitter:
@@ -293,9 +291,7 @@ class _PartiallyFailingNitter(_MultiUserNitter):
             raise RuntimeError(self.failures_by_user[username])
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
 
-    async def fetch_tweets_with_stats(
-        self, username, limit, skip_plain_text=False
-    ):
+    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
         self.events.append(f"fetch:{username}")
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])
@@ -303,7 +299,9 @@ class _PartiallyFailingNitter(_MultiUserNitter):
 
 
 class _ConcurrentNitter(_MultiUserNitter):
-    def __init__(self, tweets_by_user, events=None, failures_by_user=None, filtered=None):
+    def __init__(
+        self, tweets_by_user, events=None, failures_by_user=None, filtered=None
+    ):
         super().__init__(tweets_by_user, events=events)
         self.failures_by_user = failures_by_user or {}
         self.filtered = filtered or {}
@@ -383,7 +381,13 @@ class _StatusMedia(_Media):
             status, path = self.statuses.get(str(tweet.status_id), ("ready", None))
             self.events.append(f"media:{tweet.status_id}:{status}")
             if path is not None:
-                tweet.media = [TweetMedia("image", f"https://example.test/{tweet.status_id}.jpg", path=path)]
+                tweet.media = [
+                    TweetMedia(
+                        "image",
+                        f"https://example.test/{tweet.status_id}.jpg",
+                        path=path,
+                    )
+                ]
             reports.append(types.SimpleNamespace(status=status, error=""))
         self.attached += len(tweets)
         return reports
@@ -428,9 +432,7 @@ class _RecordingTranslator(_Translator):
         self.events = events
 
     async def attach_translations(self, tweets, target):
-        self.events.append(
-            "translate:" + ",".join(tweet.status_id for tweet in tweets)
-        )
+        self.events.append("translate:" + ",".join(tweet.status_id for tweet in tweets))
         await super().attach_translations(tweets, target)
 
 
@@ -448,7 +450,6 @@ class _OutOfOrderTranslator(_Translator):
             self.release_first.set()
         self.events.append(f"translate_done:{status_id}")
         await super().attach_translations(tweets, target)
-
 
 
 class _Sender:
@@ -507,7 +508,9 @@ class _Sender:
     ):
         del omit_status_url, hide_original_when_translated, link_style, kwargs
         self.events.append(f"send:{umo}:{username}")
-        self.sent.append((umo, username, instance, [tweet.status_id for tweet in tweets]))
+        self.sent.append(
+            (umo, username, instance, [tweet.status_id for tweet in tweets])
+        )
         self.group_labels.append((umo, username, group_label))
         self.headers.append((umo, username, header_text))
         self.batch_summaries.append((umo, username, batch_summary))
@@ -635,9 +638,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task.done())
         scheduler._task = task
 
-        with patch.object(scheduler.storage, "close") as close_mock, patch.object(
-            scheduler_module.logger, "warning"
-        ) as warning_mock:
+        with (
+            patch.object(scheduler.storage, "close") as close_mock,
+            patch.object(scheduler_module.logger, "warning") as warning_mock,
+        ):
             await scheduler.stop()
 
         self.assertIsNone(scheduler._task)
@@ -1235,9 +1239,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.pushed_target_successes, 0)
         self.assertEqual(result.pushes[0].success_targets, 0)
-        self.assertNotIn(
-            "201", await scheduler.storage.get_seen_ids("global", "NASA")
-        )
+        self.assertNotIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
         history = await scheduler.storage.get_push_history("global", "NASA")
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].status_id, "201")
@@ -1310,12 +1312,8 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.pushed_target_successes, 0)
-        self.assertNotIn(
-            "201", await scheduler.storage.get_seen_ids("global", "NASA")
-        )
-        self.assertEqual(
-            await scheduler.storage.get_push_history("global", "NASA"), []
-        )
+        self.assertNotIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertEqual(await scheduler.storage.get_push_history("global", "NASA"), [])
 
     async def test_merged_partial_history_only_records_delivered_status_ids(self):
         target = "aiocqhttp:GroupMessage:1"
@@ -1409,17 +1407,24 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("media", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("media", "NASA", ["100"])
 
-        result = await scheduler.run_check(reason="test_media_only_ready", group_name="media")
+        result = await scheduler.run_check(
+            reason="test_media_only_ready", group_name="media"
+        )
 
         self.assertEqual(result.new_tweet_count, 1)
         self.assertEqual(sender.media_only_flags, [True])
-        self.assertEqual([event.split(":", 1)[0] for event in events], [
-            "media",
-            "send",
-            "cleanup",
-        ])
+        self.assertEqual(
+            [event.split(":", 1)[0] for event in events],
+            [
+                "media",
+                "send",
+                "cleanup",
+            ],
+        )
         self.assertFalse(any(event.startswith("translate:") for event in events))
-        self.assertEqual(await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
+        )
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("media"),
             {"NASA": ["101", "100"]},
@@ -1469,11 +1474,15 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("media", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("media", "NASA", ["100"])
 
-        result = await scheduler.run_check(reason="test_media_only_policy", group_name="media")
+        result = await scheduler.run_check(
+            reason="test_media_only_policy", group_name="media"
+        )
 
         self.assertEqual(result.media_only_skipped, 1)
         self.assertEqual(sender.sent, [])
-        self.assertEqual(await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
+        )
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("media"),
             {"NASA": ["101", "100"]},
@@ -1520,7 +1529,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("media", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("media", "NASA", ["100"])
 
-        first = await scheduler.run_check(reason="test_media_only_retry_first", group_name="media")
+        first = await scheduler.run_check(
+            reason="test_media_only_retry_first", group_name="media"
+        )
 
         self.assertEqual(first.media_only_retrying, 1)
         self.assertEqual(sender.sent, [])
@@ -1531,11 +1542,15 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         media.statuses["101"] = ("ready", Path("101.jpg"))
-        second = await scheduler.run_check(reason="test_media_only_retry_second", group_name="media")
+        second = await scheduler.run_check(
+            reason="test_media_only_retry_second", group_name="media"
+        )
 
         self.assertEqual(second.new_tweet_count, 1)
         self.assertEqual(sender.media_only_flags, [True])
-        self.assertEqual(await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
+        )
 
     async def test_concurrent_prepare_sends_in_completion_order(self):
         target = "telegram:FriendMessage:1"
@@ -1714,7 +1729,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         sent_ids = [status_id for item in sender.sent for status_id in item[3]]
         self.assertEqual((first.new_tweet_count, second.new_tweet_count), (10, 0))
-        self.assertEqual(sent_ids, [str(status_id) for status_id in range(110, 100, -1)])
+        self.assertEqual(
+            sent_ids, [str(status_id) for status_id in range(110, 100, -1)]
+        )
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("global"),
             {"NASA": [str(status_id) for status_id in range(110, 100, -1)]},
@@ -1902,7 +1919,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.new_tweet_count, 0)
         self.assertEqual(sender.sent, [])
-        self.assertEqual(await scheduler.storage.get_seen_ids("global", "NASA"), ["100"])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("global", "NASA"), ["100"]
+        )
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("global"),
             {"NASA": ["100"]},
@@ -2172,9 +2191,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         first = await scheduler.run_check(reason="partial_target_first")
         self.assertEqual(first.pushed_target_successes, 1)
-        self.assertNotIn(
-            "101", await scheduler.storage.get_seen_ids("global", "NASA")
-        )
+        self.assertNotIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
 
         sender.failed_targets.clear()
         second = await scheduler.run_check(reason="partial_target_retry")

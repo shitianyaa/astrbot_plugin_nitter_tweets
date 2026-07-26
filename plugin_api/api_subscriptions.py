@@ -24,6 +24,7 @@ except ImportError:
     )
     from scheduler import ScheduleGroup
 
+
 class WebAPISubscriptionsMixin:
     """subscriptions 批量维护。"""
 

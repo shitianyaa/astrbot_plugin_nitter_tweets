@@ -205,9 +205,7 @@ class SchedulerConfigReader:
             seen_group_ids.add(normalized_group_id)
             groups.append(group)
 
-        if any(
-            group.is_tag_group and group.queries_info.changed for group in groups
-        ):
+        if any(group.is_tag_group and group.queries_info.changed for group in groups):
             self._heal_watch_queries_config(groups)
         return groups
 
@@ -266,13 +264,9 @@ class SchedulerConfigReader:
         if callable(save_config):
             try:
                 save_config()
-                logger.info(
-                    "[NitterTweets] 已回写规范化后的标签订阅 watch_queries"
-                )
+                logger.info("[NitterTweets] 已回写规范化后的标签订阅 watch_queries")
             except Exception as exc:  # pragma: no cover
-                logger.warning(
-                    f"[NitterTweets] 回写 watch_queries 失败: {exc}"
-                )
+                logger.warning(f"[NitterTweets] 回写 watch_queries 失败: {exc}")
 
     def parse_schedule_group(
         self,

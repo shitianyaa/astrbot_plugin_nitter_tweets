@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 # 数据模型
 # ──────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class TweetMedia:
     kind: str
@@ -186,6 +187,7 @@ def normalize_username(value: str) -> str:
         return ""
     return value
 
+
 def normalize_seen_account_key(value: str) -> str:
     """Normalize seen/scan keys: Twitter username or tag search key ``q:...``."""
     value = (value or "").strip()
@@ -198,7 +200,6 @@ def normalize_seen_account_key(value: str) -> str:
             return ""
         return "q:" + folded
     return normalize_username(value)
-
 
 
 def safe_call(obj, method_name: str):

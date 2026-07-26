@@ -77,7 +77,9 @@
         "description": "搜索 HTML 实例列表（标签专用）",
         "type": "list",
         "default": [
-          "https://nitter.tiekoetter.com"
+          "https://nitter.tiekoetter.com",
+          "https://nitter.poast.org",
+          "https://nitter.kareem.one"
         ],
         "hint": "仅 /推文搜索 与标签定时。默认 nitter.tiekoetter.com（Anubis 搜索主源）。禁止默认使用 nitter.net（搜索空）。勿把现网不可用的公共站写进默认；自建 plain 可只填自建地址。"
       },

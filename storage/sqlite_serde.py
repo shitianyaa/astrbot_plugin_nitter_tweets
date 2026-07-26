@@ -65,14 +65,10 @@ class SQLiteSerdeMixin:
                 if isinstance(item, dict) and str(item.get("url") or "")
             ],
             media_warnings=[
-                str(item)
-                for item in data.get("media_warnings", [])
-                if str(item)
+                str(item) for item in data.get("media_warnings", []) if str(item)
             ],
             ai_warnings=[
-                str(item)
-                for item in data.get("ai_warnings", [])
-                if str(item)
+                str(item) for item in data.get("ai_warnings", []) if str(item)
             ],
             translation=str(data.get("translation") or ""),
         )

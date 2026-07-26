@@ -5,6 +5,7 @@
 都会返回 `success=True`。若直接据此判定 media_only 完成，定时路径会推进 seen，
 把这条推文永久丢掉。
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -48,14 +49,18 @@ def _patch_umo(monkeypatch, *, media, post_ok=True) -> None:
         "lark_client_and_target",
         lambda *args: (object(), "chat_id", "chat-1"),
     )
-    monkeypatch.setattr(lark_module, "plain_text_from_components", lambda value: "@user")
+    monkeypatch.setattr(
+        lark_module, "plain_text_from_components", lambda value: "@user"
+    )
     monkeypatch.setattr(lark_module, "video_components", lambda value: [])
     monkeypatch.setattr(lark_module, "media_components", lambda value: list(media))
     monkeypatch.setattr(
         lark_module,
         "send_lark_post",
         AsyncMock(
-            return_value=LarkSendAttempt(success=post_ok, error="" if post_ok else "post failed")
+            return_value=LarkSendAttempt(
+                success=post_ok, error="" if post_ok else "post failed"
+            )
         ),
     )
     monkeypatch.setattr(

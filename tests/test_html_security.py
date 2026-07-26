@@ -133,7 +133,9 @@ def test_opener_rejects_private_peer_after_dns_check(
             return ("10.0.0.7", 443)
 
     class FakeResponse:
-        fp = type("FakeFP", (), {"raw": type("FakeRaw", (), {"_sock": FakeSocket()})()})()
+        fp = type(
+            "FakeFP", (), {"raw": type("FakeRaw", (), {"_sock": FakeSocket()})()}
+        )()
         closed = False
 
         def close(self):
@@ -158,7 +160,9 @@ def test_opener_skips_origin_peer_check_for_proxy_request(monkeypatch):
             return ("127.0.0.1", 3067)
 
     class FakeResponse:
-        fp = type("FakeFP", (), {"raw": type("FakeRaw", (), {"_sock": FakeSocket()})()})()
+        fp = type(
+            "FakeFP", (), {"raw": type("FakeRaw", (), {"_sock": FakeSocket()})()}
+        )()
 
         def close(self):
             raise AssertionError("proxy response should not be rejected as origin")
@@ -379,9 +383,20 @@ def test_http_connection_rejects_private_peer_before_request(monkeypatch):
 
 
 def test_detect_gate_does_not_accept_login_or_maintenance_page():
-    assert detect_gate(b"<html><head><title>Login - Nitter</title></head></html>") == "error"
-    assert detect_gate(b"<html><body>This site is under maintenance</body></html>") == "error"
-    assert detect_gate(b'<div class="timeline-item"><div class="tweet-content">ok</div></div>') == "ok"
+    assert (
+        detect_gate(b"<html><head><title>Login - Nitter</title></head></html>")
+        == "error"
+    )
+    assert (
+        detect_gate(b"<html><body>This site is under maintenance</body></html>")
+        == "error"
+    )
+    assert (
+        detect_gate(
+            b'<div class="timeline-item"><div class="tweet-content">ok</div></div>'
+        )
+        == "ok"
+    )
 
 
 def test_anubis_pow_rejects_unreasonable_difficulty():
@@ -497,9 +512,7 @@ def test_cookie_persistence_uses_windows_safe_ipv6_filename(tmp_path):
     assert files[0].name.startswith("ipv6-")
     restored = HttpSession(session_dir=tmp_path)
     assert restored.load_cookies(host)
-    assert [(cookie.name, cookie.domain) for cookie in restored.jar] == [
-        ("auth", host)
-    ]
+    assert [(cookie.name, cookie.domain) for cookie in restored.jar] == [("auth", host)]
 
 
 def test_cookie_persistence_hashes_host_that_exceeds_windows_component_limit(
@@ -664,7 +677,9 @@ def test_rss_host_skip_is_context_local_for_overlapping_tasks():
             client.end_run_host_skip()
 
     async def run():
-        return await asyncio.gather(worker("https://a.example"), worker("https://b.example"))
+        return await asyncio.gather(
+            worker("https://a.example"), worker("https://b.example")
+        )
 
     assert asyncio.run(run()) == [
         ["https://b.example"],
@@ -729,7 +744,9 @@ def test_html_http_session_serializes_shared_opener(monkeypatch):
     opener = Opener()
     session.opener = opener
     with ThreadPoolExecutor(max_workers=4) as executor:
-        list(executor.map(lambda _: session.request("https://public.example/"), range(4)))
+        list(
+            executor.map(lambda _: session.request("https://public.example/"), range(4))
+        )
     assert opener.maximum == 1
 
 

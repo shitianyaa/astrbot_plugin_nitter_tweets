@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Delivery-layer contracts for omit / hide / link_style wiring."""
+
 from __future__ import annotations
 
 import inspect
@@ -35,9 +36,7 @@ def _lark_adapter() -> tuple[LarkDeliveryAdapter, SimpleNamespace]:
         _send_event_chain=AsyncMock(),
         _send_context_message=AsyncMock(),
         _send_default_direct_event=AsyncMock(return_value=True),
-        _send_default_direct_to_umo=AsyncMock(
-            return_value=SendOutcome(success=True)
-        ),
+        _send_default_direct_to_umo=AsyncMock(return_value=SendOutcome(success=True)),
         UNCERTAIN_DELIVERY_WARNING="uncertain",
     )
     adapter = LarkDeliveryAdapter(sender, SimpleNamespace())
@@ -203,7 +202,9 @@ async def test_default_split_media_only_uncertain_header_still_sends_video():
         ),
     )
     adapter = DefaultDeliveryAdapter(sender, SimpleNamespace())
-    adapter._message_chain = MagicMock(side_effect=lambda components, **kwargs: components)
+    adapter._message_chain = MagicMock(
+        side_effect=lambda components, **kwargs: components
+    )
 
     outcome = await adapter._send_split_direct_videos_to_umo(
         object(),
@@ -240,7 +241,9 @@ async def test_default_manual_media_only_uncertain_header_still_sends_video():
         ),
     )
     adapter = DefaultDeliveryAdapter(sender, SimpleNamespace())
-    adapter._message_chain = MagicMock(side_effect=lambda components, **kwargs: components)
+    adapter._message_chain = MagicMock(
+        side_effect=lambda components, **kwargs: components
+    )
 
     accepted = await adapter._send_split_direct_videos_event(
         object(),
@@ -266,7 +269,7 @@ def test_send_to_umo_with_outcome_uses_keyword_flags_not_positional_shift():
 
     async def fake_direct(*args, **kwargs):
         # production still passes leading positionals (context/umo/...)
-        captured["args_len"]=len(args)
+        captured["args_len"] = len(args)
         captured.update(kwargs)
         from delivery.outcomes import SendOutcome
 
@@ -491,7 +494,9 @@ async def test_lark_scheduled_media_only_failure_stays_retryable(monkeypatch):
         "lark_client_and_target",
         lambda *args: (object(), "chat_id", "chat-1"),
     )
-    monkeypatch.setattr(lark_module, "plain_text_from_components", lambda value: "@user")
+    monkeypatch.setattr(
+        lark_module, "plain_text_from_components", lambda value: "@user"
+    )
     monkeypatch.setattr(lark_module, "video_components", lambda value: ["video"])
     monkeypatch.setattr(
         lark_module,
@@ -527,7 +532,9 @@ async def test_lark_media_only_uncertain_post_still_sends_video(monkeypatch):
         "lark_client_and_target",
         lambda *args: (object(), "chat_id", "chat-1"),
     )
-    monkeypatch.setattr(lark_module, "plain_text_from_components", lambda value: "@user")
+    monkeypatch.setattr(
+        lark_module, "plain_text_from_components", lambda value: "@user"
+    )
     monkeypatch.setattr(lark_module, "video_components", lambda value: ["video"])
     monkeypatch.setattr(
         lark_module,

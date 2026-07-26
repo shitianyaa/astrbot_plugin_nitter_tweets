@@ -26,6 +26,7 @@ except ImportError:
     )
     from scheduler import ScheduleGroup
 
+
 class WebAPIOverviewMixin:
     """overview / groups 数据组装。"""
 

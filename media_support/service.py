@@ -21,7 +21,10 @@ try:
         resolve_send_video_attachments,
     )
     from ..shared import (
-        TweetItem, TweetMedia, clamp_float, clamp_int,
+        TweetItem,
+        TweetMedia,
+        clamp_float,
+        clamp_int,
         generate_file_name,
     )
     from ..shared.media_status import (
@@ -39,7 +42,10 @@ except ImportError:
         resolve_send_video_attachments,
     )
     from shared import (
-        TweetItem, TweetMedia, clamp_float, clamp_int,
+        TweetItem,
+        TweetMedia,
+        clamp_float,
+        clamp_int,
         generate_file_name,
     )
     from shared.media_status import (
@@ -101,9 +107,14 @@ class MediaService(MediaCacheMixin):
         self.max_per_tweet = clamp_int(
             config_get(config, "max_media_per_tweet", 4), 0, 12
         )
-        self.video_resolution_preference = str(
-            config_get(config, "video_resolution_preference", "highest") or "highest"
-        ).strip().lower()
+        self.video_resolution_preference = (
+            str(
+                config_get(config, "video_resolution_preference", "highest")
+                or "highest"
+            )
+            .strip()
+            .lower()
+        )
         self.max_video_duration_seconds = int(
             clamp_float(
                 config_get(
@@ -153,13 +164,9 @@ class MediaService(MediaCacheMixin):
     ) -> list[MediaPreparationResult]:
         results: list[MediaPreparationResult] = []
         if (
-            not self.send_image_attachments
-            and not self.send_video_attachments
+            not self.send_image_attachments and not self.send_video_attachments
         ) or self.max_per_tweet <= 0:
-            return [
-                MediaPreparationResult(MEDIA_STATUS_POLICY_SKIPPED)
-                for _ in tweets
-            ]
+            return [MediaPreparationResult(MEDIA_STATUS_POLICY_SKIPPED) for _ in tweets]
         for tweet in tweets:
             try:
                 media, status = await self._resolve_and_download_with_status(tweet)
@@ -262,7 +269,9 @@ class MediaService(MediaCacheMixin):
                         tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
                     )
                 transient_failure = True
-                logger.warning(f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}")
+                logger.warning(
+                    f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}"
+                )
                 continue
             downloaded.append(media)
             # Cancellation during a later media download must not strand the
@@ -306,7 +315,11 @@ class MediaService(MediaCacheMixin):
             try:
                 return self._download(media)
             except Exception as exc:
-                if str(exc) == MEDIA_SIZE_LIMIT_ERROR or not self._is_retryable_download_error(exc):
+                if str(
+                    exc
+                ) == MEDIA_SIZE_LIMIT_ERROR or not self._is_retryable_download_error(
+                    exc
+                ):
                     raise
                 last_error = exc
                 if attempt >= attempts:

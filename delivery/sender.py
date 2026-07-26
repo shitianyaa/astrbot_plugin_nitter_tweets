@@ -81,7 +81,6 @@ class TweetSender(
         self.platform_resolver = PlatformResolver()
         self.delivery_registry = PlatformDeliveryRegistry()
 
-
     @staticmethod
     def resolve_link_style(platform_name: str = "") -> str:
         name = str(platform_name or "").strip().lower()
@@ -144,7 +143,11 @@ class TweetSender(
 
         if self._should_chunk_forward_tweets(len(tweets)):
             accepted = await self._send_event_forward_chunks(
-                event, username, instance, tweets, notices=notices,
+                event,
+                username,
+                instance,
+                tweets,
+                notices=notices,
                 tweet_start_index=tweet_start_index,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
@@ -157,7 +160,11 @@ class TweetSender(
             return accepted
 
         accepted = await self._send_event_forward_chunk(
-            event, username, instance, tweets, notices=notices,
+            event,
+            username,
+            instance,
+            tweets,
+            notices=notices,
             tweet_start_index=tweet_start_index,
             media_only=media_only,
             omit_status_url=omit_status_url,
@@ -170,10 +177,9 @@ class TweetSender(
         return accepted
 
     def should_merge_for_event(self, event, tweet_count: int) -> bool:
-        return (
-            self._delivery_adapter_for_event(event).supports_merged_forward
-            and self._should_use_merge_for_count(tweet_count)
-        )
+        return self._delivery_adapter_for_event(
+            event
+        ).supports_merged_forward and self._should_use_merge_for_count(tweet_count)
 
     async def send_to_umo(
         self,
@@ -346,15 +352,16 @@ class TweetSender(
         target: str,
         exc: Exception,
     ) -> SendAttempt | None:
-        retry_after_flood_control = getattr(
-            adapter, "retry_after_flood_control", None
-        )
+        retry_after_flood_control = getattr(adapter, "retry_after_flood_control", None)
         if not callable(retry_after_flood_control):
             return None
         return await retry_after_flood_control(send_call, label, target, exc)
 
     def _send_exception_attempt(
-        self, exc: Exception, label: str, target: str = "",
+        self,
+        exc: Exception,
+        label: str,
+        target: str = "",
     ) -> SendAttempt:
         error = str(exc)
         if self._is_uncertain_delivery_error(exc):

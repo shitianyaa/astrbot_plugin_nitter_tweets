@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tweet message layout: TG author link, URL policy, empty body, block order."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace

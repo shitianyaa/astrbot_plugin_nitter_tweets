@@ -48,9 +48,7 @@ class RssRunHostSkipTest(unittest.TestCase):
         )
         client.begin_run_host_skip()
         client._run_host_skip.mark("https://a.example")
-        filtered = client._instances_for_run(
-            ["https://a.example", "https://b.example"]
-        )
+        filtered = client._instances_for_run(["https://a.example", "https://b.example"])
         self.assertEqual(filtered, ["https://b.example"])
         client.end_run_host_skip()
 

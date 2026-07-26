@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """OneBot merged-forward retcode 1200 → split retry."""
+
 from __future__ import annotations
 
 import asyncio
@@ -482,7 +483,11 @@ async def test_send_merged_to_umo_splits_and_falls_back_only_undelivered_suffix(
 
     def format_plain(batches, **_kwargs):
         fallback_payloads.append(
-            [tweet.status_id for _username, _instance, tweets in batches for tweet in tweets]
+            [
+                tweet.status_id
+                for _username, _instance, tweets in batches
+                for tweet in tweets
+            ]
         )
         return "plain"
 

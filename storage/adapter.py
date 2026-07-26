@@ -1,4 +1,5 @@
 """Storage adapter for SQLite storage and legacy KV migration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,7 +16,7 @@ try:
     )
     from .seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from .sqlite import (
-                        PushHistoryGroupSummary,
+        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -28,7 +29,7 @@ except ImportError:
     )
     from storage.seen import KV_KEY_SEEN_BY_TARGET, SeenStore
     from storage.sqlite import (
-                        PushHistoryGroupSummary,
+        PushHistoryGroupSummary,
         PushHistoryRecord,
         SQLiteStorage,
     )
@@ -59,9 +60,9 @@ class StorageAdapter:
         self.config = config
         self.context = context
 
-        configured_backend = str(
-            config_get(config, "storage_backend", "sqlite")
-        ).strip().lower()
+        configured_backend = (
+            str(config_get(config, "storage_backend", "sqlite")).strip().lower()
+        )
         if configured_backend and configured_backend != "sqlite":
             logger.info(
                 "[NitterTweets] "
@@ -89,8 +90,7 @@ class StorageAdapter:
         """Migrate legacy KV seen IDs once and sync configured groups."""
         sqlite = await self._ensure_sqlite_connected()
         configured_group_ids = {
-            normalize_stable_group_id(group.group_id)
-            for group in schedule_groups
+            normalize_stable_group_id(group.group_id) for group in schedule_groups
         }
         self._legacy_global_aliases_default = (
             DEFAULT_GROUP_ID in configured_group_ids
@@ -99,9 +99,7 @@ class StorageAdapter:
 
         grouped_seen_map = await self.seen_store.get_grouped_seen_map()
         has_legacy_seen = self._has_seen_data(grouped_seen_map.groups)
-        await asyncio.to_thread(
-            sqlite.migrate_kv_seen_data, grouped_seen_map.groups
-        )
+        await asyncio.to_thread(sqlite.migrate_kv_seen_data, grouped_seen_map.groups)
         if has_legacy_seen:
             await self.delete_legacy_seen_kv()
 
@@ -142,9 +140,7 @@ class StorageAdapter:
             sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
         )
 
-    async def get_group_scan_watermarks(
-        self, group_id: str
-    ) -> dict[str, list[str]]:
+    async def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:
         """Get initialized scan anchor windows for every user in a group."""
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(
@@ -190,14 +186,6 @@ class StorageAdapter:
             return False
         return True
 
-
-
-
-
-
-
-
-
     async def delete_group_runtime_data(self, group_id: str) -> dict[str, int]:
         """Delete one group's runtime rows from SQLite."""
         sqlite = await self._ensure_sqlite_connected()
@@ -212,7 +200,6 @@ class StorageAdapter:
             sqlite.delete_group_runtime_data,
             normalize_stable_group_id(group_id),
         )
-
 
     async def record_push_history(
         self,
@@ -293,10 +280,7 @@ class StorageAdapter:
 
     def _storage_group_id(self, group_id: str | None) -> str:
         normalized = normalize_stable_group_id(group_id or "")
-        if (
-            self._legacy_global_aliases_default
-            and normalized == LEGACY_GLOBAL_GROUP_ID
-        ):
+        if self._legacy_global_aliases_default and normalized == LEGACY_GLOBAL_GROUP_ID:
             return DEFAULT_GROUP_ID
         return normalized
 

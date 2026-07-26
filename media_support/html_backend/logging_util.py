@@ -73,7 +73,11 @@ class QuietHtmlLog:
                 return True
             self._gate_seen.add(key)
             # Successful plain gate is pure noise in brief mode.
-            if self.brief and m.group("code") == "200" and m.group("detect").lower() == "ok":
+            if (
+                self.brief
+                and m.group("code") == "200"
+                and m.group("detect").lower() == "ok"
+            ):
                 return True
             return False
 

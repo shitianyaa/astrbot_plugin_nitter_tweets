@@ -634,9 +634,9 @@ class ManualCommandMixin:
 
         instance_text = tokens[instance_index]
         try:
-            instance_text = validate_http_url(
-                instance_text, resolve_dns=False
-            ).rstrip("/")
+            instance_text = validate_http_url(instance_text, resolve_dns=False).rstrip(
+                "/"
+            )
         except UnsafeUrlError:
             return (
                 "",
@@ -747,18 +747,17 @@ class ManualCommandMixin:
             return False
         return True
 
-
     def _search_session_id(self, event: AstrMessageEvent) -> str:
         """Session id for search buffer: prefer UMO, else group/private + sender."""
-        umo = str(getattr(event, 'unified_msg_origin', '') or '').strip()
+        umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
         if umo:
             return umo
-        sender = safe_call(event, 'get_sender_id') or 'unknown'
-        group = safe_call(event, 'get_group_id') or 'private'
-        return f'{group}:{sender}'
+        sender = safe_call(event, "get_sender_id") or "unknown"
+        group = safe_call(event, "get_group_id") or "private"
+        return f"{group}:{sender}"
 
     def _search_query_key(self, query: str) -> str:
-        q = str(query or '').strip()
+        q = str(query or "").strip()
         try:
             from ..media_support.html_backend.query import normalize_query
         except ImportError:  # pragma: no cover
@@ -772,7 +771,7 @@ class ManualCommandMixin:
             return q.casefold()
 
     def _get_search_session_store(self):
-        store = getattr(self, '_search_session_store', None)
+        store = getattr(self, "_search_session_store", None)
         if store is None:
             store = SearchSessionStore()
             self._search_session_store = store

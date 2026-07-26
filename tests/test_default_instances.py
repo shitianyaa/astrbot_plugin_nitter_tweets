@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Shipped defaults: RSS=net, search=tie only; no blogger HTML list."""
+"""Shipped defaults: RSS=net, search=tie+poast+kareem; no blogger HTML list."""
+
 from __future__ import annotations
 
 import json
@@ -22,17 +23,23 @@ from config.compat import migrate_legacy_grouped_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_code_defaults_rss_net_search_tie_only():
+def test_code_defaults_rss_net_search_tie_poast_kareem():
+    """Code defaults: RSS nitter.net, search tiekoetter+poast+kareem."""
     assert DEFAULT_INSTANCES == ["https://nitter.net"]
     assert DEFAULT_TIEKOETTER == "https://nitter.tiekoetter.com"
-    assert DEFAULT_SEARCH_INSTANCES == [DEFAULT_TIEKOETTER]
-    assert DEFAULT_HTML_INSTANCES == [DEFAULT_TIEKOETTER]
+    assert DEFAULT_SEARCH_INSTANCES == [
+        "https://nitter.tiekoetter.com",
+        "https://nitter.poast.org",
+        "https://nitter.kareem.one",
+    ]
+    assert DEFAULT_HTML_INSTANCES == DEFAULT_SEARCH_INSTANCES
     blob = " ".join(DEFAULT_SEARCH_INSTANCES)
-    assert "poast" not in blob and "kareem" not in blob and "nitter.net" not in blob
+    assert "poast" in blob and "kareem" in blob and "tiekoetter" in blob
+    assert "nitter.net" not in blob  # RSS only, not for search
     cfg = HtmlBackendConfig()
     assert cfg.user_html_fallback is False
     assert cfg.blogger_html_instances == []
-    assert cfg.search_instances == [DEFAULT_TIEKOETTER]
+    assert cfg.search_instances == DEFAULT_SEARCH_INSTANCES
 
 
 def test_schema_no_blogger_html_instances_key():
@@ -40,11 +47,15 @@ def test_schema_no_blogger_html_instances_key():
     basic = schema["basic"]["items"]
     assert "blogger_html_instances" not in basic
     assert basic["instances"]["default"] == ["https://nitter.net"]
-    assert basic["search_instances"]["default"] == ["https://nitter.tiekoetter.com"]
+    assert basic["search_instances"]["default"] == [
+        "https://nitter.tiekoetter.com",
+        "https://nitter.poast.org",
+        "https://nitter.kareem.one",
+    ]
     assert basic["user_html_fallback"]["default"] is False
     assert basic["user_html_fallback"].get("invisible") is True
     joined = " ".join(basic["search_instances"]["default"])
-    assert "poast" not in joined and "kareem" not in joined
+    assert "poast" in joined and "kareem" in joined and "tiekoetter" in joined
     marker = schema["_search_instances_default_v17_migrated"]
     assert marker["type"] == "bool"
     assert marker["default"] is False
@@ -91,7 +102,8 @@ def test_rss_client_and_manual_fallback_parse_string_false_values():
     assert asyncio.run(Host()._fetch_user_with_html_fallback("nasa", 5)) == ("", [])
 
 
-def test_migration_replaces_only_the_retired_search_default_list():
+def test_migration_keeps_current_default_list_unchanged():
+    """Migration no longer replaces the current default (now all three mirrors)."""
     config = {
         "basic": {
             "blogger_html_instances": ["https://retired.example"],
@@ -99,19 +111,18 @@ def test_migration_replaces_only_the_retired_search_default_list():
                 "https://nitter.tiekoetter.com",
                 "https://nitter.poast.org",
                 "https://nitter.kareem.one",
-            ]
+            ],
         }
     }
     migrate_legacy_grouped_config(config)
+    # Current default matches legacy, so no replacement happens
     assert config["basic"]["search_instances"] == [
-        "https://nitter.tiekoetter.com"
+        "https://nitter.tiekoetter.com",
+        "https://nitter.poast.org",
+        "https://nitter.kareem.one",
     ]
     assert "blogger_html_instances" not in config["basic"]
 
-    custom = {
-        "basic": {"search_instances": ["https://self-hosted.example"]}
-    }
+    custom = {"basic": {"search_instances": ["https://self-hosted.example"]}}
     migrate_legacy_grouped_config(custom)
-    assert custom["basic"]["search_instances"] == [
-        "https://self-hosted.example"
-    ]
+    assert custom["basic"]["search_instances"] == ["https://self-hosted.example"]

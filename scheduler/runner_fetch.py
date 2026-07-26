@@ -106,9 +106,7 @@ class SchedulerFetchMixin:
                         group.concurrent_fetch_instances,
                         start_index=index,
                         skip_plain_text=skip_plain_text,
-                        retry_attempts=getattr(
-                            self.nitter, "retry_attempts", 2
-                        ),
+                        retry_attempts=getattr(self.nitter, "retry_attempts", 2),
                     )
                 else:
                     instance, scan_result = await fetch_for_scheduler(
@@ -317,9 +315,7 @@ class SchedulerFetchMixin:
                 error=SchedulerTaskError.from_exception(exc),
             )
         retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
-        html_raw_item_count = max(
-            0, int(getattr(tweets, "raw_item_count", 0) or 0)
-        )
+        html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
         tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
             list(tweets), skip_plain_text=skip_plain_text
         )

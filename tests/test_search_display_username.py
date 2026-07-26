@@ -21,7 +21,9 @@ def test_format_tweet_search_query_not_as_author():
         link="https://x.com/RealUser/status/99",
         published="",
     )
-    text = TweetMessageRenderer.format_tweet(1, "#蔚蓝档案", tweet, omit_status_url=True)
+    text = TweetMessageRenderer.format_tweet(
+        1, "#蔚蓝档案", tweet, omit_status_url=True
+    )
     assert "@RealUser" in text
     assert "#蔚蓝档案" not in text.split("原文")[0]
     assert "hello body" in text

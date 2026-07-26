@@ -146,9 +146,7 @@ class NitterTweetsPlugin(
                 search_enabled=parse_config_bool(
                     config_get(self.config, "search_enabled", True), True
                 ),
-                search_instances=_list(
-                    "search_instances", DEFAULT_SEARCH_INSTANCES
-                ),
+                search_instances=_list("search_instances", DEFAULT_SEARCH_INSTANCES),
                 proxy=None,
                 session_dir=session_dir,
                 html_timeout=clamp_float(
