@@ -190,6 +190,7 @@ class NitterTweetScheduler:
         self._task: asyncio.Task | None = None
         self._last_interval_slots: dict[str, int] = {}
         self._daily_slots: dict[str, set[str]] = {}
+        self._last_daily_check: dict[str, dt.datetime] = {}
         self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
@@ -328,10 +329,10 @@ class NitterTweetScheduler:
             )
 
     async def _tick(self) -> None:
-        now = dt.datetime.now(CN_TZ)
         for group in self._schedule_groups(log_invalid_targets=False):
             if not group.enabled:
                 continue
+            now = dt.datetime.now(CN_TZ)
             reasons = self._scheduled_reasons(group, now)
             if reasons:
                 self._log_verbose_info(
@@ -349,6 +350,9 @@ class NitterTweetScheduler:
 
         if group_id not in self._startup_schedule_seeded:
             self._startup_schedule_seeded.add(group_id)
+            # 锚定每日检查基准时间。缺少基准时 last_check 为 None，会让所有已
+            # 配置时间点在启动后第一轮全部命中，绕过 check_on_startup。
+            self._last_daily_check.setdefault(group_id, now)
             if not group.check_on_startup:
                 self._seed_schedule_slots(group, now)
                 self._log_verbose_info(
@@ -361,16 +365,16 @@ class NitterTweetScheduler:
             interval_minutes = group.check_interval_minutes
             slot = int(now.timestamp() // (interval_minutes * 60))
             if slot != self._last_interval_slots.get(group_id):
-                self._last_interval_slots[group_id] = slot
                 reasons.append(f"interval:{interval_minutes}m")
 
         if group.daily_check_enabled:
             daily_slots = self._daily_slots.setdefault(group_id, set())
+            last_check = self._last_daily_check.get(group_id)
             for hour, minute in group.daily_check_times:
-                if now.hour == hour and now.minute == minute:
+                target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if last_check is None or now >= target_time > last_check:
                     slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
                     if slot_key not in daily_slots:
-                        daily_slots.add(slot_key)
                         reasons.append(f"daily:{hour:02d}:{minute:02d}")
 
             if len(daily_slots) > 256:
@@ -394,6 +398,23 @@ class NitterTweetScheduler:
             for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
                     daily_slots.add(f"{now.date().isoformat()}:{hour:02d}:{minute:02d}")
+
+    def _consume_schedule_slots(self, group: ScheduleGroup, reason: str) -> None:
+        group_id = group.group_id
+        now = dt.datetime.now(CN_TZ)
+
+        if group.interval_check_enabled and "interval:" in reason:
+            interval_minutes = group.check_interval_minutes
+            slot = int(now.timestamp() // (interval_minutes * 60))
+            self._last_interval_slots[group_id] = slot
+
+        if group.daily_check_enabled and "daily:" in reason:
+            daily_slots = self._daily_slots.setdefault(group_id, set())
+            for hour, minute in group.daily_check_times:
+                if now.hour == hour and now.minute == minute:
+                    slot_key = f"{now.date().isoformat()}:{hour:02d}:{minute:02d}"
+                    daily_slots.add(slot_key)
+            self._last_daily_check[group_id] = now
 
     async def run_check(
         self,
@@ -611,6 +632,7 @@ class NitterTweetScheduler:
         notify_no_updates: bool | None,
         target_override: list[str] | None = None,
     ) -> ScheduledCheckResult:
+        self._consume_schedule_slots(group, reason)
         result = self._new_check_result(reason, group, target_override)
         users = result.users
         targets = result.targets
@@ -693,6 +715,11 @@ class NitterTweetScheduler:
                         str(item) for item in fetch_result.scanned_status_ids if str(item)
                     )
                 )
+                full_scanned_status_ids = (
+                    fetch_result.anchor_status_ids
+                    if fetch_result.anchor_status_ids
+                    else scanned_status_ids
+                )
                 watermark = scan_watermarks.get(username)
                 if watermark and scanned_status_ids:
                     boundary_ids = set(watermark)
@@ -770,7 +797,7 @@ class NitterTweetScheduler:
                     seen_map[username] = self.storage.initial_seen_ids(seed_ids)
                     await self._put_seen_map(group.group_id, seen_map)
                     await self._set_scan_watermark(
-                        group.group_id, username, fetch_result.anchor_status_ids
+                        group.group_id, username, full_scanned_status_ids
                     )
                     result.initialized_users[username] = len(seed_ids)
                     self._log_verbose_info(
@@ -824,7 +851,7 @@ class NitterTweetScheduler:
                         tweet.status_id for tweet in new_tweets if tweet.status_id
                     }
                     watermark_candidates[username] = (
-                        fetch_result.anchor_status_ids,
+                        full_scanned_status_ids,
                         selected_ids,
                     )
                     discovered_batches.append(
@@ -854,9 +881,9 @@ class NitterTweetScheduler:
                     )
                     seen_map[username] = self._merge_seen_ids(scanned_status_ids, seen_ids)
                     await self._put_seen_map(group.group_id, seen_map)
-                    if fetch_result.anchor_status_ids:
+                    if scanned_status_ids:
                         await self._set_scan_watermark(
-                            group.group_id, username, fetch_result.anchor_status_ids
+                            group.group_id, username, full_scanned_status_ids
                         )
 
             if skip_plain_text and group_plain_text_filtered_total > 0:
