@@ -168,20 +168,41 @@ WebUI 不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider�
 
 这里只列日常最常调整的项；完整默认值和 WebUI 文案见 [_conf_schema.json](./_conf_schema.json)。
 
+### 实例配置
+
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | 博主 RSS 列表；默认 `https://nitter.net`，可配多个。长期请改自建。 |
-| `search_instances` | 标签/搜索 HTML；默认仅 `https://nitter.tiekoetter.com`。不要放 `nitter.net`。 |
+| `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余 + 自动门禁）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
+| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`，不推荐）。开启会占用搜索资源，增加 429 风险。 |
+| `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试，提升容错能力。 |
+
+**📖 详细说明：** [Nitter 实例配置指南](./docs/instances-guide.md) - RSS vs HTML 架构、默认配置、回退机制、容错策略
+
+### 基础配置
+
+| 配置 | 说明 |
+| --- | --- |
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数。 |
 | `filter_reposts_enabled` | 是否在博主后台检查中过滤转发，默认开启；手动命令不受影响。 |
+
+### 推送配置
+
+| 配置 | 说明 |
+| --- | --- |
 | `schedule_enabled` | 后台检查总开关；关闭后不会触发分组间隔检查和每日检查。 |
 | `tweet_groups` | 用户分组列表，配置关注账号、推送目标、间隔检查和每日检查。 |
 | `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
 | `merge_tweet_threshold` | QQ/OneBot 新推文总数达到多少条时启用合并转发；`0` 关闭。 |
+
+### 媒体与 AI
+
+| 配置 | 说明 |
+| --- | --- |
 | `send_image_attachments` | 是否发送图片附件，默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
-| `max_media_per_tweet` | 单条推文最多准备和发送的媒体数量；设为 `0` 时分组“仅媒体”自动回退完整内容。 |
+| `max_media_per_tweet` | 单条推文最多准备和发送的媒体数量；设为 `0` 时分组”仅媒体”自动回退完整内容。 |
 | `translate_enabled` | 是否翻译非中文推文。 |
 
 ## 行为要点
