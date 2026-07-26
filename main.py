@@ -19,18 +19,19 @@ try:
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
+        parse_config_bool,
     )
     from .ai import TweetTranslator
     from .media_support import MediaService, NitterClient
     from .media_support.html_backend import (
-        DEFAULT_HTML_INSTANCES,
+        DEFAULT_SEARCH_INSTANCES,
         HtmlBackendConfig,
         HtmlNitterService,
     )
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
     from .delivery import TweetSender
-    from .shared import clamp_float
+    from .shared import clamp_float, clamp_int
 except ImportError:
     from command_handlers import (
         MaintenanceCommandMixin,
@@ -43,25 +44,26 @@ except ImportError:
         config_get,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
+        parse_config_bool,
     )
     from ai import TweetTranslator
     from media_support import MediaService, NitterClient
     from media_support.html_backend import (
-        DEFAULT_HTML_INSTANCES,
+        DEFAULT_SEARCH_INSTANCES,
         HtmlBackendConfig,
         HtmlNitterService,
     )
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
     from delivery import TweetSender
-    from shared import clamp_float
+    from shared import clamp_float, clamp_int
 
 
 @register(
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.16.0",
+    "0.17.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
@@ -136,14 +138,17 @@ class NitterTweetsPlugin(
 
         return HtmlNitterService(
             HtmlBackendConfig(
-                user_html_fallback=bool(
-                    config_get(self.config, "user_html_fallback", True)
+                # Blogger path is RSS-only by default; no HTML instance list.
+                user_html_fallback=parse_config_bool(
+                    config_get(self.config, "user_html_fallback", False), False
                 ),
-                blogger_html_instances=_list(
-                    "blogger_html_instances", DEFAULT_HTML_INSTANCES
+                blogger_html_instances=[],
+                search_enabled=parse_config_bool(
+                    config_get(self.config, "search_enabled", True), True
                 ),
-                search_enabled=bool(config_get(self.config, "search_enabled", True)),
-                search_instances=_list("search_instances", DEFAULT_HTML_INSTANCES),
+                search_instances=_list(
+                    "search_instances", DEFAULT_SEARCH_INSTANCES
+                ),
                 proxy=None,
                 session_dir=session_dir,
                 html_timeout=clamp_float(
@@ -152,19 +157,24 @@ class NitterTweetsPlugin(
                 html_min_interval=clamp_float(
                     config_get(self.config, "html_min_interval", 3.0), 0.0, 120.0
                 ),
-                html_max_pages=max(
-                    1,
-                    min(5, int(config_get(self.config, "html_max_pages", 1) or 1)),
+                html_max_pages=clamp_int(
+                    config_get(self.config, "html_max_pages", 1), 1, 5
                 ),
-                filter_reposts=bool(
-                    config_get(self.config, "filter_reposts_enabled", True)
+                filter_reposts=parse_config_bool(
+                    config_get(self.config, "filter_reposts_enabled", True), True
                 ),
             ),
             log=lambda msg: logger.info(f"[NitterTweets][html] {msg}"),
+            # Align HTML chatter with scheduler/RSS brief mode (default on).
+            brief_log=parse_config_bool(
+                config_get(self.config, "brief_log_enabled", True), True
+            ),
         )
 
     def _cleanup_legacy_media_cache_once(self) -> None:
-        if bool(self.config.get(MEDIA_CACHE_CLEANUP_MIGRATION_KEY, False)):
+        if parse_config_bool(
+            self.config.get(MEDIA_CACHE_CLEANUP_MIGRATION_KEY, False), False
+        ):
             return
 
         try:
@@ -232,6 +242,7 @@ class NitterTweetsPlugin(
         """搜索公开推文。标签请带 #，短语直接写。用法：/推文搜索 <query> [数量]"""
         return await self._cmd_tweet_search_impl(event, args)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("镜像测试")
     async def cmd_mirror_probe(self, event: AstrMessageEvent, args=GreedyStr):
         """用临时 Nitter 镜像站测试 RSS。用法：/镜像测试 [用户名] [数量] 镜像站URL"""

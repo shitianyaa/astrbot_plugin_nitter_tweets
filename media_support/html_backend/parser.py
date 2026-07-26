@@ -15,8 +15,10 @@ except ImportError:  # pragma: no cover
 
 try:
     from .query import normalize_query, query_kind
+    from ..network import is_safe_http_url
 except ImportError:  # pragma: no cover
     from media_support.html_backend.query import normalize_query, query_kind
+    from media_support.network import is_safe_http_url
 
 
 @dataclass(slots=True)
@@ -36,7 +38,7 @@ def clean_html_text(raw: str) -> str:
 
 
 def abs_url(instance: str, maybe_relative: str) -> str:
-    value = (maybe_relative or "").strip()
+    value = unescape(maybe_relative or "").strip()
     if not value:
         return ""
     if value.startswith("//"):
@@ -44,6 +46,155 @@ def abs_url(instance: str, maybe_relative: str) -> str:
     if value.startswith(("http://", "https://")):
         return value
     return urljoin(instance.rstrip("/") + "/", value.lstrip("/"))
+
+
+_HTML_TAG_RE = re.compile(r"<!--.*?-->|<[^>]+>", re.S)
+_HTML_VOID_TAGS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+
+
+def _is_nested_media_section_start(token: str) -> bool:
+    """Identify quote/article containers whose media is not author media."""
+    if token.startswith("<!--") or re.match(r"<\s*/", token):
+        return False
+    class_match = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    if class_match:
+        classes = {
+            name.lower()
+            for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
+        }
+        if any(name == "quote" or name.startswith("quote-") for name in classes):
+            return True
+    href_match = re.search(r"\bhref\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    if href_match:
+        href = unescape(href_match.group(2))
+        if re.search(r"(?:^|/)/?i/article(?:/|[?#]|$)", href, re.I):
+            return True
+    return False
+
+
+def _is_outer_media_boundary_start(token: str) -> bool:
+    """Recognize an outer attachment wrapper during malformed HTML recovery.
+
+    A broken quote/article block can omit its closing tag.  Treating the rest
+    of the timeline item as nested would hide a later author attachment.  In
+    normal Nitter markup the author's attachments are wrapped by a plain
+    ``attachments`` div, while quoted media uses a ``quote-*`` class, so this
+    marker gives the tolerant scanner a conservative recovery point.
+    """
+    if token.startswith("<!--") or re.match(r"<\s*/", token):
+        return False
+    opening = re.match(r"<\s*([A-Za-z][\w:-]*)", token)
+    if not opening or opening.group(1).lower() != "div":
+        return False
+    class_match = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    if not class_match:
+        return False
+    classes = {
+        name.lower()
+        for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
+    }
+    return "attachments" in classes and not any(
+        name == "quote" or name.startswith("quote-") for name in classes
+    )
+
+
+def _without_nested_media_sections(chunk: str) -> str:
+    """Mask quote/Article blocks before scanning author attachments.
+
+    Nitter renders quoted tweets as nested ``div`` trees. A flat regex over a
+    whole timeline item cannot distinguish their media links from the outer
+    tweet, so use a small tag stack to remove only those subtrees.
+    """
+    if not chunk:
+        return ""
+    stack: list[dict[str, object]] = []
+    ranges: list[tuple[int, int]] = []
+    for match in _HTML_TAG_RE.finditer(chunk):
+        token = match.group(0)
+        if token.startswith("<!--") or token.startswith("<!"):
+            continue
+
+        # Recover from a missing quote/article closing tag before scanning a
+        # subsequent outer attachment wrapper.  Without this boundary the
+        # conservative end-of-chunk mask would hide valid author media.
+        if stack and _is_outer_media_boundary_start(token):
+            root_index = next(
+                (
+                    index
+                    for index, entry in enumerate(stack)
+                    if entry.get("is_root")
+                ),
+                None,
+            )
+            # An ``attachments`` wrapper nested under another quote/article
+            # container (for example ``quote-media-container``) still belongs
+            # to the quoted content. Only recover when the malformed root is
+            # the direct open parent of the candidate outer wrapper.
+            if root_index is not None and root_index == len(stack) - 1:
+                root_start = stack[root_index].get("root_start")
+                if isinstance(root_start, int) and root_start < match.start():
+                    ranges.append((root_start, match.start()))
+                del stack[root_index:]
+
+        close = re.match(r"<\s*/\s*([A-Za-z][\w:-]*)", token)
+        if close:
+            tag = close.group(1).lower()
+            found = None
+            for index in range(len(stack) - 1, -1, -1):
+                if stack[index]["tag"] == tag:
+                    found = index
+                    break
+            if found is None:
+                continue
+            entry = stack[found]
+            del stack[found:]
+            root_start = entry.get("root_start")
+            if entry.get("is_root") and isinstance(root_start, int):
+                ranges.append((root_start, match.end()))
+            continue
+
+        opening = re.match(r"<\s*([A-Za-z][\w:-]*)", token)
+        if not opening:
+            continue
+        tag = opening.group(1).lower()
+        inherited = stack[-1].get("root_start") if stack else None
+        is_root = inherited is None and _is_nested_media_section_start(token)
+        root_start = match.start() if is_root else inherited
+        self_closing = token.rstrip().endswith("/>") or tag in _HTML_VOID_TAGS
+        entry = {"tag": tag, "root_start": root_start, "is_root": is_root}
+        if not self_closing:
+            stack.append(entry)
+        elif is_root:
+            ranges.append((match.start(), match.end()))
+
+    end = len(chunk)
+    for entry in stack:
+        root_start = entry.get("root_start")
+        if entry.get("is_root") and isinstance(root_start, int):
+            ranges.append((root_start, end))
+    if not ranges:
+        return chunk
+    masked = chunk
+    for start, stop in sorted(ranges, reverse=True):
+        masked = masked[:start] + masked[stop:]
+    return masked
 
 
 def prefer_orig_pbs(url: str) -> str:
@@ -70,10 +221,14 @@ def extract_next_cursor(html: str) -> str:
 def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
     media: list[TweetMedia] = []
     seen: set[str] = set()
+    scan_chunk = _without_nested_media_sections(chunk)
 
     def add(kind: str, url: str) -> None:
-        url = (url or "").strip()
+        url = abs_url(instance, url)
+        url = unescape(url).strip()
         if not url or url in seen:
+            return
+        if not is_safe_http_url(url, resolve_dns=False):
             return
         if "profile_images" in url or "profile_banners" in url:
             return
@@ -88,26 +243,26 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
 
     for href in re.findall(
         r'class="still-image"[^>]*href="([^"]+)"|href="([^"]+)"[^>]*class="still-image"',
-        chunk,
+        scan_chunk,
         re.I,
     ):
         add("image", href[0] or href[1])
-    for rel in re.findall(r'(?:href|src)="(/pic/orig/media[^"]+)"', chunk):
+    for rel in re.findall(r'(?:href|src)="(/pic/orig/media[^"]+)"', scan_chunk):
         add("image", abs_url(instance, rel))
     if not any(m.is_image for m in media):
-        for rel in re.findall(r'(?:href|src)="(/pic/media[^"]+)"', chunk):
+        for rel in re.findall(r'(?:href|src)="(/pic/media[^"]+)"', scan_chunk):
             add("image", abs_url(instance, rel))
-    if 'class="attachments' in chunk:
-        idx = chunk.find('class="attachments')
-        scan = chunk[idx : idx + 5000]
+    if 'class="attachments' in scan_chunk:
+        idx = scan_chunk.find('class="attachments')
+        scan = scan_chunk[idx : idx + 5000]
         for href in re.findall(
             r'href="(https://pbs\.twimg\.com/media/[^"]+)"', scan
         ):
             add("image", href)
-    for rel in re.findall(r'(?:href|src)="(/video/[^"]+)"', chunk):
+    for rel in re.findall(r'(?:href|src)="(/video/[^"]+)"', scan_chunk):
         add("video", abs_url(instance, rel))
     for href in re.findall(
-        r'(?:href|src)="(https://video\.twimg\.com/[^"]+)"', chunk
+        r'(?:href|src)="(https://video\.twimg\.com/[^"]+)"', scan_chunk
     ):
         add("video", href)
     return media

@@ -86,7 +86,7 @@
             <p id="currentTabDesc">聚合查看推送分组（博主/标签）、目标状态以及 Nitter 镜像诊断。</p>
           </div>
           <div class="topbar-actions">
-            <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换亮色/暗色">
+            <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换亮色/暗色" aria-label="切换亮色/暗色" aria-pressed="false">
               <span class="theme-toggle-slider"></span>
               <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="12" cy="12" r="5"></circle>
@@ -172,7 +172,6 @@
                   <span>测试模式</span>
                   <select id="mirrorMode">
                     <option value="blogger_rss" selected>博主 RSS</option>
-                    <option value="blogger_html">博主 HTML</option>
                     <option value="search">搜索（标签/短语）</option>
                   </select>
                 </label>

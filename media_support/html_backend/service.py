@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""HTML Nitter facade for plugin: blogger HTML + search pools."""
+"""HTML Nitter facade for search plus a disabled legacy blogger entrypoint."""
 
 from __future__ import annotations
 
@@ -13,32 +13,38 @@ except ImportError:  # pragma: no cover
     from shared.utils import TweetItem
 
 try:
+    from ..host_score import HostScoreBook
     from .http_session import DEFAULT_UA, HttpSession
+    from .logging_util import QuietHtmlLog
     from .pool import HtmlNitterPool, PoolConfig
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
+    from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import DEFAULT_UA, HttpSession
+    from media_support.html_backend.logging_util import QuietHtmlLog
     from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
 
-DEFAULT_HTML_INSTANCES = [
-    "https://nitter.tiekoetter.com",
-    "https://nitter.poast.org",
-    "https://nitter.kareem.one",
-]
+# Public defaults (2026-07): search uses tiekoetter only. Bloggers use RSS
+# (shared.DEFAULT_INSTANCES = nitter.net) and do not ship a separate HTML pool.
+DEFAULT_TIEKOETTER = "https://nitter.tiekoetter.com"
+DEFAULT_SEARCH_INSTANCES = [DEFAULT_TIEKOETTER]
+# Back-compat alias (older imports/tests expected a list named DEFAULT_HTML_*).
+DEFAULT_HTML_INSTANCES = list(DEFAULT_SEARCH_INSTANCES)
 
 
 @dataclass
 class HtmlBackendConfig:
-    user_html_fallback: bool = True
-    blogger_html_instances: list[str] = field(
-        default_factory=lambda: list(DEFAULT_HTML_INSTANCES)
-    )
+    # Off by default: public HTML competes with search and is often unusable.
+    user_html_fallback: bool = False
+    # Deprecated / unused as a user config. Pool stays empty so blogger path
+    # does not hit HTML instances. Kept for dataclass/API compatibility.
+    blogger_html_instances: list[str] = field(default_factory=list)
     search_enabled: bool = True
     search_instances: list[str] = field(
-        default_factory=lambda: list(DEFAULT_HTML_INSTANCES)
+        default_factory=lambda: list(DEFAULT_SEARCH_INSTANCES)
     )
     proxy: str | None = None
     session_dir: str | Path | None = None
@@ -56,9 +62,17 @@ class HtmlNitterService:
         config: HtmlBackendConfig | None = None,
         *,
         log: Callable[[str], None] | None = None,
+        brief_log: bool = True,
     ):
         self.config = config or HtmlBackendConfig()
-        self.log = log or (lambda _m: None)
+        raw_log = log or (lambda _m: None)
+        # Always wrap so session-load / gate-ok spam is capped even if caller
+        # passes a raw logger.info sink.
+        self.log = (
+            log
+            if isinstance(log, QuietHtmlLog)
+            else QuietHtmlLog(raw_log, brief=bool(brief_log))
+        )
         session_dir = self.config.session_dir
         rate = RateLimitConfig(global_min_interval=self.config.html_min_interval)
         self.limiter = RateLimiter(rate)
@@ -69,9 +83,11 @@ class HtmlNitterService:
             session_dir=Path(session_dir) if session_dir else None,
             log=self.log,
         )
+        # Blogger HTML pool intentionally empty: no dedicated config list and no
+        # borrowing search_instances (avoids starving tag search).
         self.blogger_html = HtmlNitterPool(
             PoolConfig(
-                instances=list(self.config.blogger_html_instances),
+                instances=[],
                 proxy=self.config.proxy,
                 timeout=self.config.html_timeout,
                 session_dir=session_dir,
@@ -82,6 +98,7 @@ class HtmlNitterService:
             log=self.log,
             shared_limiter=self.limiter,
             shared_session=self.session,
+            score_book=HostScoreBook(),
         )
         self.search_pool = HtmlNitterPool(
             PoolConfig(
@@ -96,6 +113,7 @@ class HtmlNitterService:
             log=self.log,
             shared_limiter=self.limiter,
             shared_session=self.session,
+            score_book=HostScoreBook(),
         )
 
     def fetch_user(
@@ -105,6 +123,11 @@ class HtmlNitterService:
         *,
         instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
+        # The dedicated blogger HTML pool was removed from the shipped
+        # configuration.  A stale ``user_html_fallback=true`` must degrade to
+        # an ordinary empty fallback rather than raising from an empty pool.
+        if not self.blogger_html.instances and not instance:
+            return "", []
         return self.blogger_html.fetch_user(username, limit, instance=instance)
 
     def search(

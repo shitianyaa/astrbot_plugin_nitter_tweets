@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 try:
+    from ..media_support.html_backend import encode_watch_query
     from ..shared import normalize_username
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -19,6 +20,7 @@ try:
         config_set,
     )
 except ImportError:
+    from media_support.html_backend import encode_watch_query
     from shared import normalize_username
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -119,9 +121,9 @@ def set_import_group_queries(
     config,
     config_reader,
     group: "ScheduleGroup | None",
-    queries: list[dict[str, str]],
+    queries: list[Any],
 ) -> None:
-    """Persist watch_queries for a tag group. Each item: {query, type}."""
+    """Persist tag queries using the schema-compatible reversible strings."""
     if group is None:
         raise RuntimeError("标签订阅必须指定标签分组")
 
@@ -144,14 +146,11 @@ def set_import_group_queries(
             continue
         if normalize_group_id(parsed.group_id) != target_group_id:
             continue
+        parsed_queries = config_reader.parse_watch_queries(queries)
         raw_group["group_type"] = "tag"
         raw_group["watch_queries"] = [
-            {
-                "query": str(item.get("query") or "").strip(),
-                "type": str(item.get("type") or "phrase").strip(),
-            }
-            for item in queries
-            if str(item.get("query") or "").strip()
+            encode_watch_query(item.query, item.type)
+            for item in parsed_queries.queries
         ]
         raw_group["watch_users"] = []
         config_set(config, "tweet_groups", raw_groups)

@@ -126,9 +126,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 receive_id=receive_id,
                 receive_id_type=receive_id_type,
             )
-        if post_attempt.uncertain:
+        if post_attempt.uncertain and not media_only:
             return True
-        if post_attempt.success:
+        if post_attempt.success or post_attempt.uncertain:
             video_attempt = await send_lark_event_media_with_retry(
                 event,
                 video_components(components),
@@ -140,6 +140,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     "[NitterTweets] Lark post 已发送，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
+                # Ordinary mode keeps the visible post accepted to avoid a
+                # duplicate text fallback. Media-only still needs real media.
+                return not media_only
             return True
 
         logger.warning(
@@ -191,6 +194,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 "[NitterTweets] Lark 推文文本已发送，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
+            # Ordinary mode keeps the visible text accepted to avoid a
+            # duplicate fallback. Media-only must retain its media for retry.
+            return not media_only
         return True
 
     async def send_to_umo(
@@ -264,9 +270,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
         )
-        if post_attempt.uncertain:
+        if post_attempt.uncertain and not media_only:
             return SendOutcome(success=True, warning=post_attempt.warning)
-        if post_attempt.success:
+        if post_attempt.success or post_attempt.uncertain:
             video_attempt = await send_lark_umo_media_with_retry(
                 context,
                 umo,
@@ -281,17 +287,23 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     f"[NitterTweets] Lark post 已发送到 {umo}，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
+            media_ok = video_attempt.success or video_attempt.uncertain
             return SendOutcome(
-                success=True,
+                success=media_ok or not media_only,
+                error=(
+                    video_attempt.error
+                    if not media_ok
+                    else ""
+                ),
                 warning=warning,
                 delivery_status=(
                     "partial_failed"
-                    if not (video_attempt.success or video_attempt.uncertain)
+                    if not media_ok
                     else "success"
                 ),
                 delivery_error=(
                     video_attempt.error
-                    if not (video_attempt.success or video_attempt.uncertain)
+                    if not media_ok
                     else ""
                 ),
             )
@@ -321,23 +333,25 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             sender._send_context_message,
         )
         warning = text_attempt.warning or media_attempt.warning
-        if not (media_attempt.success or media_attempt.uncertain):
+        media_ok = media_attempt.success or media_attempt.uncertain
+        if not media_ok:
             warning = media_attempt.error
             logger.warning(
                 f"[NitterTweets] Lark 推文文本已发送到 {umo}，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
         return SendOutcome(
-            success=True,
+            success=media_ok or not media_only,
+            error="" if media_ok else media_attempt.error,
             warning=warning,
             delivery_status=(
                 "partial_failed"
-                if not (media_attempt.success or media_attempt.uncertain)
+                if not media_ok
                 else "success"
             ),
             delivery_error=(
                 media_attempt.error
-                if not (media_attempt.success or media_attempt.uncertain)
+                if not media_ok
                 else ""
             ),
         )

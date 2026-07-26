@@ -4,9 +4,13 @@
 
 ## [Unreleased]
 
+- 默认实例：博主 RSS 默认 `nitter.net`（可多站）；搜索默认仅 `nitter.tiekoetter.com`。移除配置项 `blogger_html_instances`；博主不再做公共 HTML 回退池，避免与标签搜索抢资源。`user_html_fallback` 默认关闭且隐藏。
+- 镜像选择：按请求成功率内存记分（有结果满分成功、空结果 soft、失败降权；HTML transport 异常也记失败），博主 RSS 与搜索 HTML 分账；ready 高分优先，冷却殿后；不写盘。
+- 日志：`brief_log_enabled`（默认开）同时收敛 HTML 搜索/回退过程日志；`session load` 全抑制，gate 同类去重，try/冷却/空页过程行在简略模式下不刷屏；失败、punish、轮换成功/全空摘要仍保留。
+- 修复 HTML 搜索/用户页：全部镜像 HTTP 成功但结果为空（含整页纯转推被滤掉）时返回空列表，不再 `HTML search failed`；标签定时可正确走「首次空结果不 init seen」，避免一直记失败、永远不推。
 - 手动命令：新增 `manual_send_interval`，非合并转发时逐条消息间隔（默认 0）；在平台适配前 sleep，多平台生效。
 - AI 翻译：全局 `show_original_when_translated`（默认 true）；关闭后有译文时隐藏原文；分组 `hide_original_when_translated` 可在全局显示时再隐藏。
-- HTML 搜索/用户页：多镜像失败后轮换下一实例（ready 优先，冷却实例殿后）；round-robin 起始镜像，避免总打第一个。
+- HTML 搜索/用户页：多镜像失败后轮换下一实例（ready 优先按成功率排序，冷却实例殿后）。
 - `watch_queries` 落盘改为纯字符串列表，避免 AstrBot WebUI 把对象显示成 `[object Object]`；兼容读取旧 `{query,type}`，并丢弃损坏的 `[object Object]` 项。
 - 文档：标签定时获取/发送数量（固定约 20、滤 RT/seen、新帖全发）；配置示例改为字符串列表。
 - 标签分组增加风险提示：使用私人 QQ 号作为 Bot 时不建议启用标签定时。
@@ -14,7 +18,7 @@
 - OneBot 合并转发遇到 retcode 1200 / res_id 失败时，自动拆成更小段重试；仅对未送达段降级直发（再失败则纯文本），避免半成功整包重复发送。
 - 配置文案：去掉 send_video_attachments「不太成熟/还在优化」表述，改为默认关闭与能力说明。
 - 修复发送层 hide_original/link_style 接线：adapter 接受 hide；UMO 直发/合并转发关键字透传；避免 link_style 位置参数错位导致 Telegram markdown 丢失。
-- 推文布局：Telegram 首行改为 [@作者](链接)；正文/译文始终剥离内嵌 URL；空正文占位；有译文时翻译块在原文前。
+- 推文布局：Telegram 首行改为 [@作者](链接)；`omit_status_url` 开启时剥离正文/译文内嵌 URL，关闭时保留；空正文占位；有译文时翻译块在原文前。
 - 分组开关 hide_original_when_translated：有 AI 译文时只发翻译、隐藏原文；无译文仍发原文。修复搜索会话缓冲假空文案，缓存命中不消耗冷却。
 - 手动 /推文搜索：按会话缓存整页搜索结果，按请求条数发放，不足再翻页拉取；同会话同查询约 10 分钟内不重复已展示推文，每查询最多缓存 40 条（默认开启，无额外配置）。
 - 修复搜索结果作者显示为标签/查询词、正文为空，以及 Telegram 链接摘要误用查询词：渲染优先 tweet 链接作者与正文；HTML 解析增强 tweet-content 提取。

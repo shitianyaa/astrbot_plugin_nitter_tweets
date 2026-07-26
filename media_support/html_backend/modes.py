@@ -14,30 +14,38 @@ from urllib.parse import urlencode
 
 from .http_session import HTML_ACCEPT, HttpSession, RawResponse
 
-# Built-in host → mode (locked plan defaults)
+# Built-in host → mode. Defaults shipped to users are net (RSS) + tiekoetter
+# (HTML/search). Other keys remain so manually configured hosts still work.
 BUILTIN_MODES: dict[str, str] = {
-    "nitter.tiekoetter.com": "anubis",
-    "nitter.poast.org": "poast_sha1",
-    "nitter.kareem.one": "plain",
-    "nitter.catsarch.com": "anubis",
-    "nitter.net": "plain",  # HTML usually empty; still plain if tried
+    "nitter.tiekoetter.com": "anubis",  # default search instance
+    "nitter.net": "plain",  # RSS-oriented; HTML/search usually empty
+    "nitter.poast.org": "poast_sha1",  # optional manual; not a shipped default
+    "nitter.kareem.one": "auto",  # often CF now; auto/detect, not default
+    "nitter.catsarch.com": "anubis",  # optional manual; search often closed
 }
+
+MAX_ANUBIS_DIFFICULTY = 32
+MAX_ANUBIS_ITERATIONS = 2_000_000
+MAX_ANUBIS_RANDOM_DATA_BYTES = 256
+MAX_ANUBIS_CHALLENGE_ID_BYTES = 256
+MAX_POAST_ITERATIONS = 5_000_000
 
 
 def resolve_mode(host: str, override: str | None = None) -> str:
-    if override and override != "auto":
-        return override
-    host = host.lower()
+    override_text = str(override or "").strip().lower()
+    if override_text and override_text != "auto":
+        return override_text
+    host = str(host or "").strip().lower().rstrip(".")
     if host in BUILTIN_MODES:
         return BUILTIN_MODES[host]
     for key, mode in BUILTIN_MODES.items():
-        if key in host:
+        if host.endswith("." + key):
             return mode
     return "auto"
 
 
 def detect_gate(body: bytes) -> str:
-    """Return anubis | poast_sha1 | cf | ok | empty | other."""
+    """Return anubis | poast_sha1 | cf | ok | error | empty | other."""
     if not body:
         return "empty"
     low = body.lower()
@@ -47,6 +55,41 @@ def detect_gate(body: bytes) -> str:
         return "poast_sha1"
     if b"just a moment" in low or b"challenge-platform" in low or b"cf-turnstile" in low:
         return "cf"
+    title_match = re.search(br"<title[^>]*>(.*?)</title>", low, re.S)
+    title = title_match.group(1) if title_match else b""
+    error_markers = (
+        b"class=\"error-panel",
+        b"class='error-panel",
+        b"id=\"error-page",
+        b"this site is under maintenance",
+        b"temporarily unavailable",
+        b"service unavailable",
+        b"access denied",
+        b"authentication required",
+        b"unauthorized",
+        b"maintenance mode",
+        b"page not found",
+        b"you must be logged in",
+        b"please log in",
+        b"sign in to continue",
+    )
+    title_error = any(
+        marker in title
+        for marker in (
+            b"login",
+            b"log in",
+            b"sign in",
+            b"maintenance",
+            b"error",
+            b"not found",
+            b"unavailable",
+        )
+    )
+    body_error = any(marker in low for marker in error_markers)
+    if title_error or (
+        body_error and b"timeline-item" not in low and b"<rss" not in low
+    ):
+        return "error"
     if b"timeline-item" in low or b"<rss" in low or b"nitter" in low:
         return "ok"
     return "other"
@@ -61,25 +104,68 @@ def _json_id(html: str, element_id: str):
     return json.loads(m.group(1)) if m else None
 
 
+def _bounded_anubis_text(value: object, *, field: str, max_bytes: int) -> str:
+    """Validate remote Anubis fields before they enter the PoW hot loop."""
+
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"invalid anubis {field}")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"invalid anubis {field}") from exc
+    if len(encoded) > max_bytes:
+        raise ValueError(f"anubis {field} is too long")
+    return value
+
+
 def solve_anubis_pow(
-    random_data: str, difficulty: int, max_iters: int = 2_000_000
+    random_data: str,
+    difficulty: int,
+    max_iters: int = MAX_ANUBIS_ITERATIONS,
 ) -> tuple[str, int]:
+    random_data = _bounded_anubis_text(
+        random_data,
+        field="random data",
+        max_bytes=MAX_ANUBIS_RANDOM_DATA_BYTES,
+    )
+    try:
+        difficulty = int(difficulty)
+        requested_iters = int(max_iters)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid anubis pow parameters") from exc
+    if difficulty < 0 or difficulty > MAX_ANUBIS_DIFFICULTY:
+        raise ValueError(
+            f"anubis difficulty out of range (0..{MAX_ANUBIS_DIFFICULTY})"
+        )
+    budget = min(MAX_ANUBIS_ITERATIONS, requested_iters)
+    if budget <= 0:
+        raise ValueError("anubis pow iteration budget must be positive")
     zb = difficulty // 2
     odd = difficulty % 2 != 0
     n = 0
-    while n < max_iters:
+    while n < budget:
         d = hashlib.sha256(f"{random_data}{n}".encode()).digest()
         if all(d[i] == 0 for i in range(zb)) and (not odd or (d[zb] >> 4) == 0):
             return d.hex(), n
         n += 1
     raise RuntimeError(
-        f"anubis pow not found within {max_iters} iters (difficulty={difficulty})"
+        f"anubis pow not found within {budget} iters (difficulty={difficulty})"
     )
 
 
-def solve_poast_pow(challenge: str, max_iters: int = 5_000_000) -> str:
+def solve_poast_pow(challenge: str, max_iters: int = MAX_POAST_ITERATIONS) -> str:
+    if not re.fullmatch(r"[0-9A-Fa-f]{40}", str(challenge or "")):
+        raise ValueError("invalid poast pow challenge")
+    try:
+        budget = min(MAX_POAST_ITERATIONS, int(max_iters))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid poast pow iteration budget") from exc
+    if budget <= 0:
+        raise ValueError("poast pow iteration budget must be positive")
     n1 = int(challenge[0], 16)
-    for i in range(max_iters):
+    if n1 + 1 >= 20:
+        raise RuntimeError("poast pow challenge index is out of range")
+    for i in range(budget):
         digest = hashlib.sha1(f"{challenge}{i}".encode()).digest()
         if n1 + 1 < len(digest) and digest[n1] == 0xB0 and digest[n1 + 1] == 0x0B:
             return f"{challenge}{i}"
@@ -126,6 +212,7 @@ class GateKeeper:
         url = f"{base}{seed_path}"
         resp = self.session.request(url)
         gate = detect_gate(resp.body)
+        # QuietHtmlLog drops repeated gate-ok; still emit once for diagnostics.
         self.log(f"gate {host} mode={mode} http={resp.code} detect={gate}")
 
         if gate == "ok" and resp.code == 200:
@@ -134,6 +221,9 @@ class GateKeeper:
             return True
         if gate == "cf":
             self.log(f"gate {host}: cloudflare unsupported")
+            return False
+        if gate == "error":
+            self.log(f"gate {host}: login/maintenance/error page")
             return False
         if gate == "empty" and resp.code == 200:
             # nitter.net style empty — not auth, just empty capability
@@ -152,7 +242,7 @@ class GateKeeper:
 
         if mode == "plain":
             # maybe soft rate limit page
-            return resp.code == 200 and gate in {"ok", "other", "empty"}
+            return resp.code == 200 and gate in {"ok", "empty"}
 
         if mode == "anubis" or gate == "anubis":
             ok = self._pass_anubis(base, resp)
@@ -176,17 +266,43 @@ class GateKeeper:
             probe = self.session.request(f"{base}/NASA")
             return detect_gate(probe.body) == "ok" and probe.code == 200
         html = challenge_resp.text
-        payload = _json_id(html, "anubis_challenge")
-        if not payload:
+        try:
+            payload = _json_id(html, "anubis_challenge")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = None
+        if not isinstance(payload, dict):
             self.log("anubis: no challenge json")
             return False
-        ch = payload["challenge"]
-        rules = payload["rules"]
-        diff = int(rules.get("difficulty", ch.get("difficulty", 1)))
-        hx, nonce = solve_anubis_pow(ch["randomData"], diff)
-        base_prefix = _json_id(html, "anubis_base_prefix") or ""
+        ch = payload.get("challenge")
+        rules = payload.get("rules") or {}
+        if not isinstance(ch, dict) or not isinstance(rules, dict):
+            self.log("anubis: invalid challenge json")
+            return False
+        try:
+            diff = int(rules.get("difficulty", ch.get("difficulty", 1)))
+            random_data = _bounded_anubis_text(
+                ch["randomData"],
+                field="random data",
+                max_bytes=MAX_ANUBIS_RANDOM_DATA_BYTES,
+            )
+            challenge_id = _bounded_anubis_text(
+                ch["id"],
+                field="challenge id",
+                max_bytes=MAX_ANUBIS_CHALLENGE_ID_BYTES,
+            )
+            hx, nonce = solve_anubis_pow(random_data, diff)
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+            self.log(f"anubis: invalid/too-hard challenge ({type(exc).__name__})")
+            return False
+        try:
+            base_prefix = _json_id(html, "anubis_base_prefix") or ""
+        except (TypeError, ValueError, json.JSONDecodeError):
+            base_prefix = ""
+        if not isinstance(base_prefix, str) or len(base_prefix) > 200:
+            self.log("anubis: invalid base prefix")
+            return False
         params = {
-            "id": ch["id"],
+            "id": challenge_id,
             "response": hx,
             "nonce": str(nonce),
             "redir": challenge_resp.url or f"{base}/NASA",
@@ -214,13 +330,13 @@ class GateKeeper:
         if not challenge:
             self.log("poast: no challenge hex")
             return False
-        token = solve_poast_pow(challenge)
+        try:
+            token = solve_poast_pow(challenge)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            self.log(f"poast: invalid/too-hard challenge ({type(exc).__name__})")
+            return False
         host = self.session.host_of(base)
-        self.session.set_cookie("res", token, host)
-        self.session.set_cookie("res", token, "." + host.split(".", 1)[-1] if host.count(".") else host)
-        # also nitter.poast.org explicit
-        self.session.set_cookie("res", token, "nitter.poast.org")
-        self.session.set_cookie("res", token, ".poast.org")
+        self.session.set_cookie("res", token, host, host_only=True)
         self.log(f"poast: solved token_len={len(token)}")
         time_sleep_soft()
         passed = self.session.request(f"{base}/")

@@ -193,11 +193,10 @@ def normalize_seen_account_key(value: str) -> str:
         return ""
     if value[:2].casefold() == "q:":
         body = value[2:].strip()
-        if not body:
+        folded = body.casefold()
+        if not body or len(body) > 200 or len(folded) > 200:
             return ""
-        if len(body) > 200:
-            body = body[:200]
-        return "q:" + body.casefold()
+        return "q:" + folded
     return normalize_username(value)
 
 

@@ -27,6 +27,7 @@ try:
         configured_merge_tweet_threshold,
         media_only_unavailable_reason,
         migrate_default_group_config,
+        parse_config_bool,
         resolve_hide_original_when_translated,
     )
     from ..ai import (
@@ -74,6 +75,7 @@ except ImportError:
         configured_merge_tweet_threshold,
         media_only_unavailable_reason,
         migrate_default_group_config,
+        parse_config_bool,
         resolve_hide_original_when_translated,
     )
     from ai import (
@@ -147,6 +149,10 @@ class UserFetchResult:
     scan_complete: bool = True
     plain_text_filtered: int = 0
     error: SchedulerTaskError | None = None
+    # HTML search keeps these internal counters so a tag's first RT-only
+    # response can be distinguished from a genuinely empty page.
+    retweet_filtered: int = 0
+    html_raw_item_count: int = 0
 
 
 @dataclass(slots=True)
@@ -215,32 +221,43 @@ class NitterTweetScheduler:
             )
 
     async def stop(self) -> None:
-        if self._task is None or self._task.done():
-            return
-        self._task.cancel()
+        task = self._task
         try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        self.storage.close()
-        logger.info("[NitterTweets] 调度器已停止")
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        except Exception as exc:
+            # A task may have failed before unload (for example during a
+            # migration retry).  Still close storage and let unload finish.
+            logger.warning(f"[NitterTweets] 调度器停止时任务异常: {exc}")
+        finally:
+            self.storage.close()
+            self._task = None
+            logger.info("[NitterTweets] 调度器已停止")
 
     async def _loop(self) -> None:
         logger.info("[NitterTweets] 调度器循环已进入")
         await asyncio.sleep(2)
 
-        # 执行一次性迁移和配置同步
-        if not self._migration_done:
+        # 执行一次性迁移和配置同步。失败时保留当前 task 并在同一循环中
+        # 重试；直接 return 会让 task 进入 done 状态，而插件生命周期未必
+        # 再次调用 start()，从而导致调度器永久停摆。
+        while not self._migration_done:
             try:
                 schedule_groups = self._schedule_groups(log_invalid_targets=False)
                 await self.storage.migrate_and_sync(schedule_groups)
                 self._migration_done = True
                 logger.info("[NitterTweets] 数据迁移与配置同步完成")
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 logger.error(f"[NitterTweets] 数据迁移或同步失败: {exc}", exc_info=True)
                 logger.error("[NitterTweets] 调度器将在 5 分钟后重试迁移")
                 await asyncio.sleep(300)
-                return  # Exit loop, will retry on next start() call
 
         while True:
             try:
@@ -263,14 +280,18 @@ class NitterTweetScheduler:
 
     @property
     def schedule_enabled(self) -> bool:
-        config_enabled = bool(config_get(self.config, "schedule_enabled", False))
+        config_enabled = parse_config_bool(
+            config_get(self.config, "schedule_enabled", False), False
+        )
         return config_enabled and any(
             group.enabled for group in self._schedule_groups(log_invalid_targets=False)
         )
 
     @property
     def brief_log_enabled(self) -> bool:
-        return bool(config_get(self.config, "brief_log_enabled", True))
+        return parse_config_bool(
+            config_get(self.config, "brief_log_enabled", True), True
+        )
 
     def _log_verbose_info(self, message: str) -> None:
         if not self.brief_log_enabled:
@@ -471,7 +492,9 @@ class NitterTweetScheduler:
             account_total=1,
             tweet_index=1,
             tweet_total=1,
-            media_only=bool(getattr(group, "media_only_enabled", False)),
+            # History replay is an explicit recovery action and always sends
+            # the complete tweet, regardless of the current group mode.
+            media_only=False,
             omit_status_url=bool(getattr(group, "omit_status_url", True)),
             hide_original_when_translated=resolve_hide_original_when_translated(
                 self.config,
@@ -510,13 +533,17 @@ class NitterTweetScheduler:
                         group_label=group_label,
                         batch_summary="",
                         tweet_start_index=1,
-                        media_only=batch.media_only,
+                        media_only=False,
                         omit_status_url=batch.omit_status_url,
                         hide_original_when_translated=(
                             batch.hide_original_when_translated
                         ),
                     )
-                    if outcome.success:
+                    delivery_complete = self._delivery_is_complete(outcome)
+                    history_status_ids = self._delivery_history_status_ids(
+                        outcome, batch.tweets
+                    )
+                    if history_status_ids:
                         await self._record_batch_push_history(
                             group.group_id,
                             batch,
@@ -526,11 +553,15 @@ class NitterTweetScheduler:
                                 outcome, "delivery_status", "success"
                             ),
                             delivery_error=getattr(outcome, "delivery_error", ""),
+                            status_ids=history_status_ids,
                         )
+                    if delivery_complete:
                         success_targets += 1
                     else:
                         failed_targets[target] = (
-                            getattr(outcome, "error", "") or "send failed"
+                            getattr(outcome, "error", "")
+                            or getattr(outcome, "delivery_error", "")
+                            or "send failed"
                         )
                 except Exception as exc:
                     failed_targets[target] = str(exc)
@@ -702,10 +733,32 @@ class NitterTweetScheduler:
                     seed_ids = scanned_status_ids or [
                         tweet.status_id for tweet in tweets if tweet.status_id
                     ]
-                    # Tag/search HTML is single-page: empty first result is often a
-                    # glitch. Sealing empty seen would flood the next full page.
-                    # Blogger RSS keeps legacy empty-init so the next real tweet pushes.
+                    # Tag/search HTML is single-page.  A result that contained
+                    # rows but had every row filtered (pure RT/text/media-only)
+                    # must be marked initialized with an explicit empty
+                    # watermark: leaving it uninitialized would make the next
+                    # eligible tweet look like historical seed data and drop
+                    # the notification.  A genuinely empty response remains
+                    # uninitialized so a transient empty search does not seal
+                    # a whole page as history.
                     if not seed_ids and group.is_tag_group:
+                        if (
+                            fetch_result.plain_text_filtered > 0
+                            or fetch_result.retweet_filtered > 0
+                            or fetch_result.html_raw_item_count > 0
+                        ):
+                            await self._set_scan_watermark(
+                                group.group_id,
+                                username,
+                                [],
+                            )
+                            result.initialized_users[username] = 0
+                            self._log_verbose_info(
+                                "[NitterTweets] 标签订阅首轮结果全部被过滤，"
+                                "已记录空扫描水位: "
+                                f"group={group.group_id}, account={username}"
+                            )
+                            continue
                         result.failed_users[username] = (
                             "首次抓取无可用推文 ID，未初始化 seen（下轮重试）"
                         )
@@ -860,7 +913,12 @@ class NitterTweetScheduler:
                     # Buffered/merge targets are not marked as seen during prepare.
                     # Write seen only after at least one target accepted the batch.
                     for batch in pending_batches:
-                        if not batch.delivered_targets:
+                        # A group-level seen key is shared by all push
+                        # targets.  Advance it only after every target for
+                        # this batch accepted the delivery; recording after a
+                        # partial success would permanently hide the tweet
+                        # from a failed target on the next round.
+                        if not self._all_targets_delivered(targets, batch):
                             continue
                         status_ids = [
                             tweet.status_id for tweet in batch.tweets if tweet.status_id
@@ -1203,12 +1261,9 @@ class NitterTweetScheduler:
     def _user_html_fallback_enabled(self) -> bool:
         if self.html_backend is None:
             return False
-        try:
-            from ..config import config_get
-        except ImportError:  # pragma: no cover
-            from config import config_get
-
-        return bool(config_get(self.config, "user_html_fallback", True))
+        return parse_config_bool(
+            config_get(self.config, "user_html_fallback", False), False
+        )
 
     async def _fetch_user_html_fallback(
         self,
@@ -1302,6 +1357,10 @@ class NitterTweetScheduler:
                 username=account_key,
                 error=SchedulerTaskError.from_exception(exc),
             )
+        retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
+        html_raw_item_count = max(
+            0, int(getattr(tweets, "raw_item_count", 0) or 0)
+        )
         tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
             list(tweets), skip_plain_text=skip_plain_text
         )
@@ -1317,6 +1376,8 @@ class NitterTweetScheduler:
             latest_status_id=(tweets[0].status_id if tweets else ""),
             scan_complete=True,
             plain_text_filtered=plain_text_filtered,
+            retweet_filtered=retweet_filtered,
+            html_raw_item_count=html_raw_item_count,
         )
 
     @staticmethod
@@ -1711,7 +1772,7 @@ class NitterTweetScheduler:
                 if immediate_targets:
                     if immediate_batches_sent > 0 and user_interval > 0:
                         await asyncio.sleep(user_interval)
-                    success_count = await self._send_per_user_updates(
+                    await self._send_per_user_updates(
                         [batch],
                         result,
                         immediate_targets,
@@ -1723,13 +1784,6 @@ class NitterTweetScheduler:
                         history_group_id=group.group_id,
                         history_source="scheduled",
                     )
-                    if success_count and batch.tweets[0].status_id:
-                        await self._store_incremental_seen_ids(
-                            group.group_id,
-                            batch.username,
-                            [batch.tweets[0].status_id],
-                            seen_map,
-                        )
                     immediate_batches_sent += 1
                 pending_batches.append(batch)
             except BaseException:
@@ -1741,7 +1795,7 @@ class NitterTweetScheduler:
             if immediate_targets:
                 if immediate_batches_sent > 0 and user_interval > 0:
                     await asyncio.sleep(user_interval)
-                success_count = await self._send_per_user_updates(
+                await self._send_per_user_updates(
                     [batch],
                     result,
                     immediate_targets,
@@ -1753,7 +1807,10 @@ class NitterTweetScheduler:
                     history_group_id=group.group_id,
                     history_source="scheduled",
                 )
-                if success_count and batch.tweets[0].status_id:
+                if (
+                    self._all_targets_delivered(immediate_targets, batch)
+                    and batch.tweets[0].status_id
+                ):
                     await self._store_incremental_seen_ids(
                         group.group_id,
                         batch.username,
@@ -1861,10 +1918,15 @@ class NitterTweetScheduler:
                         batch.tweets,
                         **send_kwargs,
                     )
-                    if outcome.success:
+                    delivery_complete = self._delivery_is_complete(outcome)
+                    if delivery_complete:
                         await self._mark_batch_target_delivered(
                             batch, umo, on_target_delivered
                         )
+                    history_status_ids = self._delivery_history_status_ids(
+                        outcome, batch.tweets
+                    )
+                    if history_status_ids:
                         await self._record_batch_push_history(
                             history_group_id,
                             batch,
@@ -1874,7 +1936,9 @@ class NitterTweetScheduler:
                                 outcome, "delivery_status", "success"
                             ),
                             delivery_error=getattr(outcome, "delivery_error", ""),
+                            status_ids=history_status_ids,
                         )
+                    if delivery_complete:
                         success += 1
                     if outcome.warning:
                         result.delivery_warnings.append(outcome.warning)
@@ -1990,11 +2054,18 @@ class NitterTweetScheduler:
         source: str,
         delivery_status: str = "success",
         delivery_error: str = "",
+        status_ids: tuple[str, ...] | None = None,
     ) -> None:
         if not group_id:
             return
+        selected_status_ids = None if status_ids is None else set(status_ids)
         for tweet in batch.tweets:
             if not getattr(tweet, "status_id", ""):
+                continue
+            if (
+                selected_status_ids is not None
+                and str(tweet.status_id) not in selected_status_ids
+            ):
                 continue
             try:
                 await self.storage.record_push_history(
@@ -2056,11 +2127,31 @@ class NitterTweetScheduler:
                     batch_summary=batch_summary,
                     **merge_kwargs,
                 )
-                if outcome.success:
+                delivery_complete = self._delivery_is_complete(outcome)
+                if delivery_complete:
                     for batch in target_batches:
                         await self._mark_batch_target_delivered(
                             batch, umo, on_target_delivered
                         )
+                history_status_ids = self._delivery_history_status_ids(
+                    outcome,
+                    [
+                        tweet
+                        for batch in target_batches
+                        for tweet in batch.tweets
+                    ],
+                )
+                if history_status_ids:
+                    selected_status_ids = set(history_status_ids)
+                    for batch in target_batches:
+                        batch_status_ids = tuple(
+                            str(tweet.status_id)
+                            for tweet in batch.tweets
+                            if tweet.status_id
+                            and str(tweet.status_id) in selected_status_ids
+                        )
+                        if not batch_status_ids:
+                            continue
                         await self._record_batch_push_history(
                             history_group_id,
                             batch,
@@ -2070,8 +2161,11 @@ class NitterTweetScheduler:
                                 outcome, "delivery_status", "success"
                             ),
                             delivery_error=getattr(outcome, "delivery_error", ""),
+                            status_ids=batch_status_ids,
                         )
+                if delivery_complete:
                     success += 1
+                if outcome.success:
                     if outcome.warning:
                         result.delivery_warnings.append(outcome.warning)
                     if outcome.mode not in {
@@ -2195,6 +2289,42 @@ class NitterTweetScheduler:
         if inspect.isawaitable(result):
             await result
         batch.delivered_targets.add(target)
+
+    @classmethod
+    def _delivery_history_status_ids(cls, outcome, tweets) -> tuple[str, ...]:
+        """Return only tweet IDs confirmed delivered by this outcome."""
+        available = tuple(
+            str(getattr(tweet, "status_id", "") or "")
+            for tweet in tweets
+            if str(getattr(tweet, "status_id", "") or "")
+        )
+        if cls._delivery_is_complete(outcome):
+            return available
+        status = str(
+            getattr(outcome, "delivery_status", "") or ""
+        ).strip().lower()
+        if status != "partial_failed":
+            return ()
+        delivered = {
+            str(status_id or "")
+            for status_id in getattr(outcome, "delivered_status_ids", ()) or ()
+            if str(status_id or "")
+        }
+        return tuple(status_id for status_id in available if status_id in delivered)
+
+    @staticmethod
+    def _delivery_is_complete(outcome) -> bool:
+        """Return whether an outcome is safe to advance the shared seen key."""
+        return bool(getattr(outcome, "success", False)) and str(
+            getattr(outcome, "delivery_status", "success") or "success"
+        ).strip().lower() != "failed"
+
+    @staticmethod
+    def _all_targets_delivered(
+        targets: list[str], batch: PendingTweetBatch
+    ) -> bool:
+        """Reject vacuous success when a delivery path has no targets."""
+        return bool(targets) and set(targets).issubset(batch.delivered_targets)
 
     def _merge_tweet_threshold(self) -> int:
         return configured_merge_tweet_threshold(self.config)

@@ -19,7 +19,7 @@
 
 核心能力：
 
-- 通过 Nitter RSS 获取公开 X/Twitter 推文；RSS 失败时可回退 HTML 用户页。
+- 通过 Nitter RSS 获取博主公开推文，并通过 HTML 搜索获取标签或短语结果。
 - 支持手动 `/推文`、`/推文搜索`、`/镜像测试`。
 - 支持按 `tweet_groups` 分组定时检查并即时推送：`group_type=blogger` 跟用户，`group_type=tag` 跟搜索订阅。
 - 支持图片、视频/GIF、翻译。
@@ -34,13 +34,13 @@
   - `maintenance.py`: `/推文状态`、`/推文检查`、缓存、seen。
   - `subscriptions.py`: 博主/标签订阅导入、删除、导出、去重。
 - `scheduler/`: 后台检查、seen 对比、推送编排。高风险模块。
-  - `runner.py`: `NitterTweetScheduler` 主状态机（博主 RSS/HTML 回退与标签搜索分支）。
+  - `runner.py`: `NitterTweetScheduler` 主状态机（博主 RSS 与标签 HTML 搜索分支）。
   - `config.py`: 分组配置解析，生成 `ScheduleGroup`（含 `group_type`、`watch_queries`）。
   - `models.py`: 调度结果、批次模型。
   - `formatting.py`: 调度日志和消息格式。
 - `config/compat.py`: AstrBot 配置分组读取、旧配置迁移、默认分组迁移。
 - `media_support/client.py`: Nitter RSS 抓取、分页、转发过滤、纯文本过滤。
-- `media_support/html_backend/`: HTML 用户页回退与搜索（门禁、限流、解析、实例池）。
+- `media_support/html_backend/`: HTML 搜索及旧用户页兼容实现（门禁、限流、解析、实例池）。
 - `media_support/service.py`: xdown 解析、媒体候选归一化、下载、视频时长/分辨率限制。
 - `media_support/cache.py`: 普通缓存、发送后清理。
 - `media_support/extensions.py`: 媒体类型和扩展名分类。
@@ -89,7 +89,7 @@
 
 配置分层约定：
 
-- `basic`: Nitter、默认数量、冷却、平台基础项；HTML 回退/搜索实例与限流（`blogger_html_instances`、`search_instances` 等）。
+- `basic`: Nitter、默认数量、冷却、平台基础项；搜索实例与 HTML 限流（`search_instances` 等）。博主不设独立 HTML 列表。
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: AI 翻译。
 - `schedule`: 后台检查总开关、全局检查频率。
@@ -110,13 +110,12 @@
 
 ## RSS / HTML 抓取和过滤
 
-`media_support/client.py` 是 RSS 行为入口。`media_support/html_backend/` 是 HTML 用户页回退与搜索入口。
+`media_support/client.py` 是博主 RSS 行为入口。`media_support/html_backend/` 的公开运行入口仅用于 HTML 搜索；旧用户页代码保留兼容，但不配置博主实例池。
 
 三列表禁止混用：
 
-- `basic.instances`：仅博主 RSS。
-- `blogger_html_instances`：仅 `/{user}` HTML 回退。
-- `search_instances`：仅搜索 HTML（默认不要放 nitter.net）。
+- `basic.instances`：仅博主 RSS（默认 `nitter.net`，可多站）。
+- `search_instances`：仅搜索 HTML（默认仅 `nitter.tiekoetter.com`；禁止默认放 nitter.net）。**不要**再配置 `blogger_html_instances`（已移除；博主不做 HTML 回退池）。
 
 搜索 query：前导 `#` → `type=tag`，否则 `phrase`；phrase 禁止自动加 `#`；运行时优先信存盘 `type`。
 标签组定时拉取走 HTML 搜索，强制串行；首次空结果不初始化 seen。

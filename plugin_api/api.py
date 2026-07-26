@@ -33,7 +33,12 @@ try:
     from ..delivery import PlatformResolver, parse_umo
     from ..shared import TweetItem, normalize_username
     from ..shared.group_ids import normalize_stable_group_id
-    from ..media_support.html_backend.query import normalize_query, query_kind
+    from ..media_support.html_backend.query import (
+        MAX_QUERY_LENGTH,
+        normalize_query,
+        query_kind,
+    )
+    from ..media_support.network import UnsafeUrlError, validate_http_url
     from .groups import WebUIGroupEditor
 except ImportError:
     from config import (
@@ -59,7 +64,12 @@ except ImportError:
     )
     from shared import TweetItem, normalize_username
     from shared.group_ids import normalize_stable_group_id
-    from media_support.html_backend.query import normalize_query, query_kind
+    from media_support.html_backend.query import (
+        MAX_QUERY_LENGTH,
+        normalize_query,
+        query_kind,
+    )
+    from media_support.network import UnsafeUrlError, validate_http_url
     from plugin_api.groups import WebUIGroupEditor
 
 
@@ -690,17 +700,24 @@ class NitterWebAPI:
 
     async def probe_mirror(self, data: dict[str, Any]) -> dict[str, Any]:
         instance = self._data_text(data, "instance")
-        if not self.plugin._looks_like_instance(instance):
+        try:
+            # Keep the UI probe deterministic even when DNS is temporarily
+            # unavailable; the actual opener repeats strict DNS and redirect
+            # validation immediately before connecting.
+            instance = validate_http_url(instance, resolve_dns=False).rstrip("/")
+        except UnsafeUrlError:
             return self._error(
                 "请填写完整 Nitter 镜像站地址，例如 https://nitter.net"
             )
 
         mode = self._data_text(data, "mode") or "blogger_rss"
         mode = mode.strip().lower().replace("-", "_")
-        if mode not in {"blogger_rss", "blogger_html", "search"}:
-            return self._error(
-                "mode 仅支持 blogger_rss / blogger_html / search"
-            )
+        if mode not in {"blogger_rss", "search"}:
+            if mode == "blogger_html":
+                return self._error(
+                    "博主 HTML 回退已移除；请用 blogger_rss 或 search"
+                )
+            return self._error("mode 仅支持 blogger_rss / search")
 
         limit = self._parse_int(
             data.get("limit"),
@@ -727,37 +744,19 @@ class NitterWebAPI:
                 )
                 subject = username
                 kind = ""
-            elif mode == "blogger_html":
-                username = normalize_username(
-                    self._data_text(data, "username")
-                    or self._data_text(data, "query")
-                    or "nasa"
-                )
-                if not username:
-                    return self._error("关注账号格式无效")
-                html_backend = getattr(self.plugin, "html_backend", None)
-                if html_backend is None:
-                    return self._error("HTML 后端未初始化")
-                if not bool(getattr(getattr(html_backend, "config", None), "user_html_fallback", True)):
-                    return self._error("user_html_fallback 已关闭，无法测试博主 HTML")
-                used_instance, tweets = await asyncio.to_thread(
-                    html_backend.fetch_user,
-                    username,
-                    limit,
-                    instance=instance,
-                )
-                subject = username
-                kind = ""
             else:
-                query = normalize_query(
+                raw_query = (
                     self._data_text(data, "query")
                     or self._data_text(data, "username")
                     or ""
-                )
+                ).strip()
+                if len(raw_query) > MAX_QUERY_LENGTH:
+                    return self._error(
+                        f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）"
+                    )
+                query = normalize_query(raw_query)
                 if not query:
                     return self._error("请填写搜索内容（#标签 或短语）")
-                if len(query) > 200:
-                    return self._error("搜索内容过长（最多 200 字符）")
                 html_backend = getattr(self.plugin, "html_backend", None)
                 if html_backend is None:
                     return self._error("HTML 后端未初始化")
@@ -782,10 +781,6 @@ class NitterWebAPI:
                 return self._error(
                     f"通过 {instance} 搜索失败：实例不可达、被限流，或搜索门禁未通过。"
                 )
-            if mode == "blogger_html":
-                return self._error(
-                    f"通过 {instance} 获取 HTML 用户页失败：实例不可达、被限流，或门禁未通过。"
-                )
             return self._error(
                 f"通过 {instance} 获取失败：Nitter 暂时不可用，或用户没有公开 RSS。"
             )
@@ -806,24 +801,19 @@ class NitterWebAPI:
         """Three config lists for mirror probe UI (deduped, order preserved)."""
         rss = list(getattr(getattr(self.plugin, "nitter", None), "instances", []) or [])
         html_backend = getattr(self.plugin, "html_backend", None)
-        blogger_html: list[str] = []
         search: list[str] = []
         if html_backend is not None:
             cfg = getattr(html_backend, "config", None)
             if cfg is not None:
-                blogger_html = list(getattr(cfg, "blogger_html_instances", []) or [])
                 search = list(getattr(cfg, "search_instances", []) or [])
         # Do not use load_instances() here: empty config must stay empty
         # (load_instances falls back to DEFAULT_INSTANCES / nitter.net).
-        if not blogger_html:
-            blogger_html = list(
-                config_get(self.config, "blogger_html_instances", []) or []
-            )
         if not search:
             search = list(config_get(self.config, "search_instances", []) or [])
         return {
             "rss": self._dedupe_instances(rss),
-            "blogger_html": self._dedupe_instances(blogger_html),
+            # Kept for dashboard API shape; blogger HTML pool is always empty.
+            "blogger_html": [],
             "search": self._dedupe_instances(search),
         }
 
@@ -1197,6 +1187,9 @@ class NitterWebAPI:
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
             "media_only_enabled": group.media_only_enabled,
             "omit_status_url": bool(getattr(group, "omit_status_url", True)),
+            "hide_original_when_translated": bool(
+                getattr(group, "hide_original_when_translated", False)
+            ),
             "media_only_effective": self._media_only_effective(group),
             # Global media availability only; independent of saved group toggle
             # so the dashboard draft can warn before save.
@@ -1314,6 +1307,10 @@ class NitterWebAPI:
     ) -> list[dict[str, Any]]:
         grouped: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         order: list[tuple[str, str, str, str, str]] = []
+        latest_delivery_by_key: dict[
+            tuple[str, str, str, str, str],
+            dict[str, tuple[int, int, str, str]],
+        ] = {}
         for record in records:
             key = (
                 record.group_id,
@@ -1327,8 +1324,18 @@ class NitterWebAPI:
             if item is None:
                 group = groups_by_id.get(record.group_id)
                 current_targets = list(getattr(group, "targets", []) or [])
+                group_type = str(
+                    getattr(group, "group_type", "") or ""
+                ).strip().lower()
+                if group_type not in {"blogger", "tag"}:
+                    group_type = (
+                        "tag"
+                        if str(record.username or "").strip().lower().startswith("q:")
+                        else "blogger"
+                    )
                 item = {
                     **serialized,
+                    "group_type": group_type,
                     "target_umos": [],
                     "target_count": 0,
                     "replay_target_options": [
@@ -1342,14 +1349,23 @@ class NitterWebAPI:
                 }
                 grouped[key] = item
                 order.append(key)
+                latest_delivery_by_key[key] = {}
             if record.target_umo and record.target_umo not in item["target_umos"]:
                 item["target_umos"].append(record.target_umo)
             item["target_count"] = len(item["target_umos"])
             if int(record.pushed_at or 0) > int(item.get("pushed_at") or 0):
                 item.update(serialized)
-            if record.delivery_status == "partial_failed":
-                item["delivery_status"] = "partial_failed"
-                item["delivery_error"] = record.delivery_error
+            target_key = record.target_umo or f"__record__:{record.id}"
+            delivery_stamp = (int(record.pushed_at or 0), int(record.id or 0))
+            latest_delivery = latest_delivery_by_key[key]
+            previous = latest_delivery.get(target_key)
+            if previous is None or delivery_stamp > previous[:2]:
+                latest_delivery[target_key] = (
+                    delivery_stamp[0],
+                    delivery_stamp[1],
+                    record.delivery_status,
+                    record.delivery_error,
+                )
             options_by_umo = {
                 option["umo"]: option for option in item["replay_target_options"]
             }
@@ -1365,6 +1381,25 @@ class NitterWebAPI:
                     )
                 else:
                     option["historical"] = True
+        for key, item in grouped.items():
+            latest_states = list(latest_delivery_by_key[key].values())
+            has_partial = any(
+                status == "partial_failed"
+                for _pushed_at, _record_id, status, _error in latest_states
+            )
+            partial_errors = list(
+                dict.fromkeys(
+                    str(error).strip()
+                    for _pushed_at, _record_id, status, error in latest_states
+                    if status == "partial_failed" and str(error).strip()
+                )
+            )
+            if has_partial:
+                item["delivery_status"] = "partial_failed"
+                item["delivery_error"] = "; ".join(partial_errors)
+            else:
+                item["delivery_status"] = "success"
+                item["delivery_error"] = ""
         return [grouped[key] for key in order]
 
     @staticmethod
@@ -1393,6 +1428,7 @@ class NitterWebAPI:
             "removed_other": int(
                 getattr(result, "removed_other", getattr(result, "other", 0)) or 0
             ),
+            "skipped_active": int(getattr(result, "skipped_active", 0) or 0),
             "removed_empty_dirs": int(getattr(result, "removed_empty_dirs", 0) or 0),
         }
 

@@ -11,12 +11,12 @@
         "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和推送记录，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
       },
       "instances": {
-        "description": "Nitter 实例列表",
+        "description": "博主 RSS 实例列表",
         "type": "list",
         "default": [
           "https://nitter.net"
         ],
-        "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。"
+        "hint": "仅博主路径 /username/rss。默认 nitter.net。不要依赖一长串公共站；长期请自建。搜索请用 search_instances，不要把搜索站塞进这里。"
       },
       "default_limit": {
         "description": "手动查询默认条数",
@@ -58,23 +58,14 @@
         "description": "过滤博主转发",
         "type": "bool",
         "default": true,
-        "hint": "开启后会过滤订阅账号转发他人的推文；博主自己发布的引用或评论推文仍会保留。老配置缺少该项时按开启处理。"
+        "hint": "仅影响博主后台检查：开启后过滤订阅账号转发他人的推文；博主自己发布的引用或评论推文仍会保留。手动 /推文、/镜像测试 不受影响。老配置缺少该项时按开启处理。"
       },
       "user_html_fallback": {
-        "description": "博主 RSS 失败时 HTML 用户页回退",
+        "description": "博主 RSS 失败时尝试 HTML 用户页（高级）",
         "type": "bool",
-        "default": true,
-        "hint": "当 basic.instances 上的用户 RSS 全部失败或为空时，按 blogger_html_instances 顺序抓取 HTML 时间线。不影响搜索。"
-      },
-      "blogger_html_instances": {
-        "description": "博主 HTML 回退实例列表",
-        "type": "list",
-        "default": [
-          "https://nitter.tiekoetter.com",
-          "https://nitter.poast.org",
-          "https://nitter.kareem.one"
-        ],
-        "hint": "仅用于 /{user} HTML 回退，不要与 search_instances 混用。"
+        "default": false,
+        "hint": "默认关闭。博主请用 instances 配置多个 RSS。开启后仍无独立 HTML 站列表，不会占用 search_instances，实际通常无法回退；留给兼容，不建议打开。",
+        "invisible": true
       },
       "search_enabled": {
         "description": "启用 HTML 搜索",
@@ -83,14 +74,12 @@
         "hint": "关闭后 /推文搜索 与标签分组定时搜索均不可用。"
       },
       "search_instances": {
-        "description": "搜索 HTML 实例列表",
+        "description": "搜索 HTML 实例列表（标签专用）",
         "type": "list",
         "default": [
-          "https://nitter.tiekoetter.com",
-          "https://nitter.poast.org",
-          "https://nitter.kareem.one"
+          "https://nitter.tiekoetter.com"
         ],
-        "hint": "仅用于标签/短语搜索。不要放入 nitter.net（搜索常返回空）。"
+        "hint": "仅 /推文搜索 与标签定时。默认 nitter.tiekoetter.com（Anubis 搜索主源）。禁止默认使用 nitter.net（搜索空）。勿把现网不可用的公共站写进默认；自建 plain 可只填自建地址。"
       },
       "search_cooldown_seconds": {
         "description": "搜索命令冷却秒数",
@@ -377,7 +366,7 @@
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；博主 RSS 与标签 HTML 搜索均按抓取解析结果判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
               },
               "media_only_enabled": {
                 "description": "仅媒体",
@@ -389,7 +378,7 @@
                 "description": "发送时去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后定时/手动推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文/译文中的链接会保留；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
                     "hide_original_when_translated": {
                         "description": "有翻译时只发译文（隐藏原文）",
@@ -514,7 +503,7 @@
                 "description": "发送时去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后定时/手动推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文/译文中的链接会保留；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
                     "hide_original_when_translated": {
                         "description": "有翻译时只发译文（隐藏原文）",
@@ -581,7 +570,7 @@
         "description": "后台日志简略模式",
         "type": "bool",
         "default": true,
-        "hint": "开启后只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
+        "hint": "开启后只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；同时收敛 HTML 搜索/回退过程日志（session load、每次 try、冷却跳过、重复 gate ok 等）。关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
       }
     }
   },
@@ -657,6 +646,13 @@
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
   },
+  "_search_instances_default_v17_migrated": {
+    "description": "Search instances default migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
   "storage_backend": {
     "description": "存储后端",
     "type": "string",
@@ -665,12 +661,12 @@
     "invisible": true
   },
   "instances": {
-    "description": "Nitter 实例列表",
+    "description": "博主 RSS 实例列表",
     "type": "list",
     "default": [
       "https://nitter.net"
     ],
-    "hint": "按顺序尝试 /<username>/rss。公共实例不适合高频抓取，长期使用建议改为自建实例。",
+    "hint": "兼容旧扁平配置；与 basic.instances 相同。仅博主 /username/rss，默认 nitter.net。搜索请用 search_instances。",
     "invisible": true
   },
   "default_limit": {

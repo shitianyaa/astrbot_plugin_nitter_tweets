@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request
+from uuid import uuid4
 
 from astrbot.api import logger
 
@@ -237,9 +238,14 @@ class MediaService(MediaCacheMixin):
                 policy_skipped = True
                 continue
             try:
-                media.path = await asyncio.to_thread(
-                    self._download_with_retries, media
-                )
+                media.path = await self._download_media_path(media)
+            except asyncio.CancelledError:
+                # Keep both earlier downloads and the just-finished shielded
+                # worker reachable by the caller's cancellation cleanup.
+                if media.path is not None:
+                    downloaded.append(media)
+                tweet.media = list(downloaded)
+                raise
             except Exception as exc:
                 if str(exc) == MEDIA_SIZE_LIMIT_ERROR:
                     media_label = "视频/GIF" if media.is_video else "图片"
@@ -259,6 +265,9 @@ class MediaService(MediaCacheMixin):
                 logger.warning(f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}")
                 continue
             downloaded.append(media)
+            # Cancellation during a later media download must not strand the
+            # leases already acquired for this tweet in a local-only list.
+            tweet.media = list(downloaded)
         if downloaded:
             return downloaded, MEDIA_STATUS_READY
         if transient_failure:
@@ -266,6 +275,27 @@ class MediaService(MediaCacheMixin):
         if policy_skipped or candidates_found:
             return [], MEDIA_STATUS_POLICY_SKIPPED
         return [], MEDIA_STATUS_NO_CANDIDATE
+
+    async def _download_media_path(self, media: TweetMedia) -> Path:
+        """Keep a completed thread download reachable during cancellation.
+
+        Cancelling ``asyncio.to_thread`` does not stop its worker. Shield the
+        worker and, if the caller is cancelled, wait for the bounded download
+        to finish so its leased path can be attached to ``media``. The normal
+        scheduler/manual ``finally`` cleanup can then release the lease.
+        """
+        download_task = asyncio.create_task(
+            asyncio.to_thread(self._download_with_retries, media)
+        )
+        try:
+            return await asyncio.shield(download_task)
+        except asyncio.CancelledError:
+            try:
+                media.path = await asyncio.shield(download_task)
+            except Exception:
+                # _download() already discards its temp lease on failure.
+                pass
+            raise
 
     def _download_with_retries(self, media: TweetMedia) -> Path:
         attempts = max(1, int(self.download_retry_attempts))
@@ -579,11 +609,14 @@ class MediaService(MediaCacheMixin):
     def _download(self, media: TweetMedia) -> Path:
         default_suffix = ".mp4" if media.is_video else ".jpg"
         file_path = self.cache_dir / generate_file_name(media.url, default_suffix)
-        if file_path.exists() and file_path.stat().st_size > 0:
-            file_path.touch()
-            return file_path
+        existing = self.lease_existing_media_path(file_path)
+        if existing is not None:
+            return existing
 
-        temp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        # Distinct temp names prevent concurrent batches resolving the same
+        # URL from truncating one another's in-progress download.
+        temp_path = file_path.parent / f".{file_path.name}.{uuid4().hex}.tmp"
+        self.register_media_path(temp_path)
         request = Request(
             media.url,
             headers={
@@ -610,10 +643,9 @@ class MediaService(MediaCacheMixin):
 
             if temp_path.stat().st_size <= 0:
                 raise RuntimeError("empty media")
-            temp_path.replace(file_path)
-            return file_path
+            return self.commit_media_path(temp_path, file_path)
         except Exception:
-            temp_path.unlink(missing_ok=True)
+            self.discard_media_path(temp_path)
             raise
 
     @classmethod
