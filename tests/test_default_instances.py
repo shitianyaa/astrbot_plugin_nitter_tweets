@@ -53,7 +53,7 @@ def test_schema_no_blogger_html_instances_key():
         "https://nitter.kareem.one",
     ]
     assert basic["user_html_fallback"]["default"] is False
-    assert basic["user_html_fallback"].get("invisible") is True
+    # user_html_fallback is now visible (invisible removed) for user choice
     joined = " ".join(basic["search_instances"]["default"])
     assert "poast" in joined and "kareem" in joined and "tiekoetter" in joined
     marker = schema["_search_instances_default_v17_migrated"]

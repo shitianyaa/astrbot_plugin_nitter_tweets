@@ -90,11 +90,15 @@ class HtmlNitterService:
             session_dir=Path(session_dir) if session_dir else None,
             log=self.log,
         )
-        # Blogger HTML pool intentionally empty: no dedicated config list and no
-        # borrowing search_instances (avoids starving tag search).
+        # Blogger HTML pool: when user_html_fallback is enabled, share
+        # search_instances for RSS blogger fallback. Default off to avoid
+        # starving tag search.
+        blogger_instances = (
+            list(self.config.search_instances) if self.config.user_html_fallback else []
+        )
         self.blogger_html = HtmlNitterPool(
             PoolConfig(
-                instances=[],
+                instances=blogger_instances,
                 proxy=self.config.proxy,
                 timeout=self.config.html_timeout,
                 session_dir=session_dir,
@@ -130,9 +134,9 @@ class HtmlNitterService:
         *,
         instance: str | None = None,
     ) -> tuple[str, list[TweetItem]]:
-        # The dedicated blogger HTML pool was removed from the shipped
-        # configuration.  A stale ``user_html_fallback=true`` must degrade to
-        # an ordinary empty fallback rather than raising from an empty pool.
+        # When user_html_fallback is enabled, blogger_html shares
+        # search_instances. When disabled (default), pool is empty and we
+        # return early to avoid triggering an empty-pool error.
         if not self.blogger_html.instances and not instance:
             return "", []
         return self.blogger_html.fetch_user(username, limit, instance=instance)
