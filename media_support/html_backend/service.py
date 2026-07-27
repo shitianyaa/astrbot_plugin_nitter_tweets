@@ -119,7 +119,7 @@ class HtmlNitterService:
                 session_dir=session_dir,
                 rate=rate,
                 max_pages=self.config.html_max_pages,
-                filter_reposts=False,
+                filter_reposts=self.config.filter_reposts,
             ),
             log=self.log,
             shared_limiter=self.limiter,

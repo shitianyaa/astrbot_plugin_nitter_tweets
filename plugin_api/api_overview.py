@@ -38,6 +38,13 @@ class WebAPIOverviewMixin:
         total_invalid_users = sum(
             len(group.users_info.invalid_entries) for group in groups
         )
+        total_raw_lists = sum(group.lists_info.raw_count for group in groups)
+        total_duplicate_lists = sum(
+            len(group.lists_info.duplicates) for group in groups
+        )
+        total_invalid_lists = sum(
+            len(group.lists_info.invalid_entries) for group in groups
+        )
         counts = {
             "groups": len(groups),
             "enabled_groups": sum(1 for group in groups if group.enabled),
@@ -45,6 +52,10 @@ class WebAPIOverviewMixin:
             "raw_watch_users": total_raw_users,
             "duplicate_watch_users": total_duplicates,
             "invalid_watch_users": total_invalid_users,
+            "watch_lists": sum(len(group.list_ids) for group in groups),
+            "raw_watch_lists": total_raw_lists,
+            "duplicate_watch_lists": total_duplicate_lists,
+            "invalid_watch_lists": total_invalid_lists,
             "push_targets": sum(len(group.targets) for group in groups),
             "invalid_push_targets": sum(len(group.invalid_targets) for group in groups),
         }
@@ -187,6 +198,11 @@ class WebAPIOverviewMixin:
             for group in enabled_groups
             if group.is_tag_group and not group.queries
         ]
+        no_watch_lists = [
+            group
+            for group in enabled_groups
+            if group.is_list_group and not group.list_ids
+        ]
         no_push_targets = [group for group in enabled_groups if not group.targets]
         no_check_triggers = [
             group
@@ -215,6 +231,18 @@ class WebAPIOverviewMixin:
                     "detail": (
                         "这些分组不会检查任何查询："
                         + WebAPIOverviewMixin._format_group_names(no_watch_queries)
+                    ),
+                }
+            )
+        if no_watch_lists:
+            items.append(
+                {
+                    "key": "groups_without_watch_lists",
+                    "level": "warning",
+                    "title": "启用 List 分组没有 List ID",
+                    "detail": (
+                        "这些分组不会检查任何 List："
+                        + WebAPIOverviewMixin._format_group_names(no_watch_lists)
                     ),
                 }
             )
@@ -273,6 +301,11 @@ class WebAPIOverviewMixin:
             "raw_watch_query_count": group.queries_info.raw_count,
             "duplicate_watch_queries": list(group.queries_info.duplicates),
             "invalid_watch_queries": list(group.queries_info.invalid_entries),
+            "watch_lists": list(group.list_ids),
+            "watch_list_count": len(group.list_ids),
+            "raw_watch_list_count": group.lists_info.raw_count,
+            "duplicate_watch_lists": list(group.lists_info.duplicates),
+            "invalid_watch_lists": list(group.lists_info.invalid_entries),
             "push_targets": list(group.targets),
             "push_target_count": len(group.targets),
             "invalid_push_targets": list(group.invalid_targets),
@@ -321,6 +354,16 @@ class WebAPIOverviewMixin:
                         "level": "warning",
                         "title": "无搜索订阅",
                         "detail": "该标签分组没有可检查的搜索订阅。",
+                    }
+                )
+        elif group.is_list_group:
+            if not group.list_ids:
+                items.append(
+                    {
+                        "key": "no_watch_lists",
+                        "level": "warning",
+                        "title": "无 List 订阅",
+                        "detail": "该 List 分组没有可检查的 List ID。",
                     }
                 )
         elif not group.users:

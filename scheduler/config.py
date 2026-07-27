@@ -619,7 +619,7 @@ class SchedulerConfigReader:
         )
 
     def parse_watch_lists(self, raw_lists) -> WatchListsInfo:
-        """Parse Twitter List IDs (must be numeric, 15-20 digits)."""
+        """Parse positive numeric Twitter List IDs up to uint64 width."""
         if isinstance(raw_lists, str):
             raw_lists = re.split(r"[\n,，]+", raw_lists)
         elif not isinstance(raw_lists, list):
@@ -640,8 +640,11 @@ class SchedulerConfigReader:
                 continue
             raw_count += 1
 
-            # Validate: must be numeric, 15-20 digits (Twitter List ID format)
-            if not list_id_str.isdigit() or not (15 <= len(list_id_str) <= 20):
+            if (
+                not list_id_str.isdigit()
+                or len(list_id_str) > 20
+                or int(list_id_str) <= 0
+            ):
                 invalid_entries.append(list_id_str)
                 changed = True
                 continue

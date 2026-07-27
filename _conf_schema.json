@@ -307,7 +307,7 @@
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时功能。",
+        "hint": "添加时选择「博主分组」「标签分组」或「列表分组」。三类分组分别填写关注账号、搜索订阅或公开 List ID。共用推送目标与检查/过滤；group_id 自动生成。风险提示：Bot 若使用私人 QQ 号，不建议启用标签或列表分组定时功能。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -344,12 +344,6 @@
                 "type": "list",
                 "default": [],
                 "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
-              },
-              "watch_lists": {
-                "description": "Twitter List 订阅",
-                "type": "list",
-                "default": [],
-                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。首次启用只记录基线，不推送历史。建议设置 max_tweets_per_check 防刷屏。"
               },
               "push_targets": {
                 "description": "分组推送目标",
@@ -641,12 +635,6 @@
                 "type": "bool",
                 "default": false,
                 "hint": "开启后只发送图片与视频，不附带推文文字、链接、AI 翻译和文字卡片；未开启翻译或无需翻译时直接略过翻译阶段。建议配合「过滤纯文本推文」。"
-              },
-              "scheduled_fetch_limit": {
-                "description": "定时抓取条数",
-                "type": "int",
-                "default": 20,
-                "hint": "List 每次抓取页面最多解析多少条；默认 20。List 聚合多人推文可能产生大量更新，建议搭配 max_tweets_per_check 限制单次推送数。"
               },
               "omit_status_url": {
                 "description": "不附带推文 URL 明文",

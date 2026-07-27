@@ -189,7 +189,7 @@ def normalize_username(value: str) -> str:
 
 
 def normalize_seen_account_key(value: str) -> str:
-    """Normalize seen/scan keys: Twitter username or tag search key ``q:...``."""
+    """Normalize username, tag-query, and Twitter List seen/scan keys."""
     value = (value or "").strip()
     if not value:
         return ""
@@ -199,6 +199,11 @@ def normalize_seen_account_key(value: str) -> str:
         if not body or len(body) > 200 or len(folded) > 200:
             return ""
         return "q:" + folded
+    if value[:5].casefold() == "list:":
+        list_id = value[5:].strip()
+        if not list_id.isdigit() or len(list_id) > 20 or int(list_id) <= 0:
+            return ""
+        return "list:" + list_id
     return normalize_username(value)
 
 

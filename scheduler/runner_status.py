@@ -50,28 +50,13 @@ class SchedulerStatusMixin:
         enabled_groups = [item for item in groups if item.enabled]
         total_users = sum(len(item.account_keys) for item in groups)
         total_raw_users = sum(
-            (
-                item.queries_info.raw_count
-                if item.is_tag_group
-                else item.users_info.raw_count
-            )
-            for item in groups
+            self._group_subscription_info(item).raw_count for item in groups
         )
         total_duplicates = sum(
-            len(
-                item.queries_info.duplicates
-                if item.is_tag_group
-                else item.users_info.duplicates
-            )
-            for item in groups
+            len(self._group_subscription_info(item).duplicates) for item in groups
         )
         total_invalid_users = sum(
-            len(
-                item.queries_info.invalid_entries
-                if item.is_tag_group
-                else item.users_info.invalid_entries
-            )
-            for item in groups
+            len(self._group_subscription_info(item).invalid_entries) for item in groups
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
@@ -96,7 +81,7 @@ class SchedulerStatusMixin:
             f"{'已启用' if config_get(self.config, 'notify_no_updates', False) else '已关闭'}",
             f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
             f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
-            "全部分组订阅账号项: "
+            "全部分组订阅项: "
             f"{total_users} 个（配置 {total_raw_users} 项，"
             f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
@@ -182,13 +167,23 @@ class SchedulerStatusMixin:
     def _format_group_schedule(group: ScheduleGroup) -> str:
         return scheduler_format_group_schedule(group)
 
+    @staticmethod
+    def _group_subscription_info(group: ScheduleGroup):
+        if group.is_tag_group:
+            return group.queries_info
+        if group.is_list_group:
+            return group.lists_info
+        return group.users_info
+
     def _append_group_status(
         self,
         lines: list[str],
         group: ScheduleGroup,
         seen_count: int | None = None,
     ) -> None:
-        type_label = "标签" if group.is_tag_group else "博主"
+        type_label = (
+            "标签" if group.is_tag_group else "列表" if group.is_list_group else "博主"
+        )
         account_count = len(group.account_keys)
         lines.append(
             "- "
@@ -206,6 +201,13 @@ class SchedulerStatusMixin:
                 f"{len(group.queries)} 个（配置 {group.queries_info.raw_count} 项，"
                 f"重复 {len(group.queries_info.duplicates)} 项，"
                 f"无效 {len(group.queries_info.invalid_entries)} 项）"
+            )
+        elif group.is_list_group:
+            lines.append(
+                "  List 订阅: "
+                f"{len(group.list_ids)} 个（配置 {group.lists_info.raw_count} 项，"
+                f"重复 {len(group.lists_info.duplicates)} 项，"
+                f"无效 {len(group.lists_info.invalid_entries)} 项）"
             )
         else:
             lines.append(
@@ -238,6 +240,18 @@ class SchedulerStatusMixin:
                 lines.append(
                     "  无效查询: "
                     + self._format_limited_values(group.queries_info.invalid_entries)
+                )
+        elif group.is_list_group and group.list_ids:
+            lines.append("  List ID: " + self._format_limited_values(group.list_ids))
+            if group.lists_info.duplicates:
+                lines.append(
+                    "  重复 List ID: "
+                    + self._format_limited_values(group.lists_info.duplicates)
+                )
+            if group.lists_info.invalid_entries:
+                lines.append(
+                    "  无效 List ID: "
+                    + self._format_limited_values(group.lists_info.invalid_entries)
                 )
         elif group.users:
             usernames = [f"@{username}" for username in group.users]

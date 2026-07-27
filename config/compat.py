@@ -53,6 +53,7 @@ TWEET_GROUP_TEMPLATE_KEYS = frozenset(
     {
         TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
         TWEET_GROUP_TEMPLATE_KEY_TAG,
+        TWEET_GROUP_TEMPLATE_KEY_LIST,
         TWEET_GROUP_TEMPLATE_KEY_LEGACY,
     }
 )
@@ -723,7 +724,7 @@ def _clamp_int(value, minimum: int, maximum: int) -> int:
 
 
 def resolve_tweet_group_template_key(group: dict) -> str:
-    """Map stored group to AstrBot template_list key (blogger | tag)."""
+    """Map stored group to AstrBot template_list key."""
     desired, _preserve_mixed = _resolve_tweet_group_type(group)
     return desired
 
@@ -735,7 +736,11 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
     has_users = not _is_empty_value(group.get("watch_users"))
     has_queries = not _is_empty_value(group.get("watch_queries"))
     has_lists = not _is_empty_value(group.get("watch_lists"))
-    preserve_mixed = (has_users and has_queries) or (has_users and has_lists) or (has_queries and has_lists)
+    preserve_mixed = (
+        (has_users and has_queries)
+        or (has_users and has_lists)
+        or (has_queries and has_lists)
+    )
 
     # Infer from data first to avoid clearing valid subscriptions.
     inferred = ""
@@ -781,7 +786,7 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:
-    """Align __template_key + group_type for dual templates (blogger/tag).
+    """Align __template_key + group_type for blogger/tag/list templates.
 
     Migrates legacy ``__template_key=group`` (old 用户分组) to blogger.
     """
