@@ -229,3 +229,79 @@
 - List 抓取走现有 HTML 后端与 `search_instances`，共享门禁、限流和冷却。
 - 转发过滤跟随现有全局 `filter_reposts_enabled`，不新增 List 独立开关。
 - CF 可用性验证：`python -m html_nitter.cli list 2081623084780671084 --limit 100` 返回 `COUNT 91`，来源 `https://nitter.tiekoetter.com`，本次未触发 429。
+
+---
+
+## 10. 实施进度总结
+
+### 已完成阶段
+
+**Phase A — 底层抓取能力** ✅
+- `media_support/html_backend/pool.py`: 新增 `fetch_list()`, `_fetch_list_once()`, `_paginate_list()` 方法
+- `media_support/html_backend/service.py`: 暴露 `fetch_list()` 门面
+- 复用现有 `parse_timeline_html()` 解析器和 `HtmlSearchResult` 返回结构
+- 路由 `/i/lists/{list_id}` 翻页支持 `?cursor=...`
+- 已通过 CF 原型验证可用
+
+**Phase C — 后台定时推送** ✅
+- `scheduler/config.py`: 新增 `GROUP_TYPE_LIST`, `WatchListsInfo`, `is_list_group` 属性
+- `scheduler/config.py`: `account_keys` 统一返回 `list:{id}` 格式
+- `scheduler/config.py`: `_normalize_group_type()` 识别 list/lists
+- `scheduler/config.py`: 配置解析处理 `watch_lists`，List ID 校验（纯数字）→ 无效进 `invalid_entries`；去重
+- `scheduler/runner_fetch.py`: 新增 `_fetch_group_list()` 方法
+- `scheduler/runner_fetch.py`: `_fetch_group_user()` 增加 list 分支调用
+- 返回 `UserFetchResult(username="list:{id}", ...)` 复用推送/seen 链路
+- List 分组串行执行（与 tag 一致）
+- 无需修改 `runner_status.py` / `runner_seen.py`（account_key 抽象已覆盖）
+
+**Phase D — 配置 Schema** ✅
+- `_conf_schema.json`: 新增 `list` 模板（完整 130+ 行配置块）
+- 包含 `watch_lists` 字段（List ID 订阅）
+- 复用所有通用分组字段：name, group_id, enabled, push_targets, interval/daily checks
+- 支持 filter_plain_text, media_only, scheduled_fetch_limit, omit_status_url, hide_original_when_translated
+- `max_tweets_per_check` 提示强调防刷屏
+- `group_type` 默认 `list`（不可见，由模板设置）
+
+### 待完成阶段
+
+**Phase E — WebUI（可选，二级优先）**
+- 根据用户决策，本轮**不做 WebUI**
+- List 功能通过配置文件 + WebUI 现有模板选择器即可使用
+- 标注：WebUI 深度集成列为二期需求
+
+**Phase F — 文档**
+- [ ] `README.md`: 功能概览提 List 订阅
+- [ ] `docs/advanced.md` 或新建 `docs/lists.md`: 创建 List、取 ID、Public 要求、延迟生效、成员上限、推送频率控制、故障排查
+- [ ] `metadata.yaml`: 版本号 `0.17.1` → `0.18.0`
+
+**Phase G — 测试**
+- [ ] `tests/test_list_support.py`: 
+  - `fetch_list` mock HTTP → 解析/翻页
+  - List ID 校验（有效/无效/空）
+  - `group_type: list` 配置解析（正常/缺失/重复/无效）
+  - 调度器 list 分支返回 `UserFetchResult`
+- [ ] 可选：`scripts/probe_nitter_fetch.py` 加 `--list` 联网探针
+
+### 验收状态
+
+**定时推送核心能力** ✅（代码已完成，待测试验证）
+- [x] `group_type: list` + `watch_lists` 配置解析
+- [x] 后台检查按 List 抓取流程
+- [x] seen 去重键 `list:{id}` 独立
+- [x] 首次启用 List 只记录基线逻辑（复用现有 seen 机制）
+
+**回归风险检查** （待测试验证）
+- [ ] 现有 blogger/tag 分组不受影响
+- [ ] 全量 `tests/` 通过
+
+---
+
+**下一步行动**：
+1. 完成 Phase F（文档更新）
+2. 完成 Phase G（单元测试）
+3. 本地/真机验证
+4. 代码审查与合并
+
+---
+
+*Phase A/C/D 实施完成于 2026-07-27*
