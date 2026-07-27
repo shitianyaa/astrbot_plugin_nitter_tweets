@@ -379,3 +379,5 @@
 - `git diff --check`：通过。
 - 当前分支：`twitter-list-support`。
 - 远端尚无 `twitter-list-support` 同名分支，准备提交审查修复并首次推送。
+- 审查修复提交：`fc4d14d fix: 完善 Twitter List 订阅支持`。
+- 已首次推送至 `origin/twitter-list-support`，并建立上游跟踪关系。
