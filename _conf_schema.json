@@ -575,6 +575,141 @@
                 "hint": "单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
               }
             }
+          },
+          "list": {
+            "name": "列表分组",
+            "display_item": "name",
+            "hide_hint_in_list": true,
+            "items": {
+              "name": {
+                "description": "分组名称",
+                "type": "string",
+                "default": "",
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 我关注的人、科技圈。"
+              },
+              "group_id": {
+                "description": "内部稳定分组 ID",
+                "type": "string",
+                "default": "",
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录和历史记录断开。",
+                "invisible": true
+              },
+              "enabled": {
+                "description": "启用分组",
+                "type": "bool",
+                "default": true
+              },
+              "group_type": {
+                "description": "分组类型",
+                "type": "string",
+                "default": "list",
+                "invisible": true,
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
+              },
+              "watch_lists": {
+                "description": "Twitter List 订阅",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
+              },
+              "push_targets": {
+                "description": "分组推送目标",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+              },
+              "interval_check_enabled": {
+                "description": "启用间隔检查",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+              },
+              "daily_check_times": {
+                "description": "每日检查时间列表",
+                "type": "list",
+                "default": [],
+                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+              },
+              "filter_plain_text_enabled": {
+                "description": "过滤纯文本推文",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件（图片/视频/GIF）的推文。"
+              },
+              "media_only_enabled": {
+                "description": "仅媒体模式",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后只发送图片与视频，不附带推文文字、链接、AI 翻译和文字卡片；未开启翻译或无需翻译时直接略过翻译阶段。建议配合「过滤纯文本推文」。"
+              },
+              "scheduled_fetch_limit": {
+                "description": "定时抓取条数",
+                "type": "int",
+                "default": 20,
+                "hint": "List 每次抓取页面最多解析多少条；默认 20。List 聚合多人推文可能产生大量更新，建议搭配 max_tweets_per_check 限制单次推送数。"
+              },
+              "omit_status_url": {
+                "description": "不附带推文 URL 明文",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。"
+              },
+              "hide_original_when_translated": {
+                "description": "有翻译时只发译文（隐藏原文）",
+                "type": "bool",
+                "default": false,
+                "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。"
+              },
+              "aliases": {
+                "description": "分组别名",
+                "type": "list",
+                "default": [],
+                "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
+                "invisible": true
+              },
+              "check_on_startup": {
+                "description": "启动后立即检查",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "notify_no_updates": {
+                "description": "无新推文时发送检查结果提示",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "check_interval_minutes": {
+                "description": "间隔检查分钟数",
+                "type": "int",
+                "default": 30,
+                "invisible": true
+              },
+              "daily_check_enabled": {
+                "description": "启用每日定点检查",
+                "type": "bool",
+                "default": true,
+                "invisible": true
+              },
+              "send_target_interval": {
+                "description": "多目标发送间隔秒数",
+                "type": "float",
+                "default": 1.5,
+                "invisible": true
+              },
+              "send_user_interval": {
+                "description": "多账号发送间隔秒数",
+                "type": "float",
+                "default": 2.0,
+                "invisible": true
+              },
+              "max_tweets_per_check": {
+                "description": "单次检查最多推送推文数",
+                "type": "int",
+                "default": 0,
+                "hint": "单次检查最多推送的推文条数，0 表示不限制。List 聚合多人推文，强烈建议设置（如 10），避免一次推送过多消息刷屏。"
+              }
+            }
           }
         }
       }

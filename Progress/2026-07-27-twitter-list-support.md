@@ -105,8 +105,9 @@
 ### Phase D — 配置 Schema
 
 #### D1. `_conf_schema.json`（改 ~20 行）
-- [ ] `tweet_groups.items.group_type` 枚举/hint 加 `list`。
-- [ ] 新增 `watch_lists` 字段（type list，默认 []，hint 写明：纯数字 ID、从 `/i/lists/{id}` 取、必须 Public）。
+- [x] `tweet_groups.items.group_type` 枚举/hint 加 `list`。
+- [x] 新增 `list` 模板（完整配置块，包含 `watch_lists` 字段）。
+- [x] `watch_lists` 字段提示：纯数字 ID、从 `/i/lists/{id}` 取、必须 Public、建议设置 `max_tweets_per_check`。
 
 ### Phase E — WebUI（可选，二级优先）
 - [ ] `plugin_api/` 概览/分组订阅页：分组类型下拉加 list、渲染 `watch_lists`。
