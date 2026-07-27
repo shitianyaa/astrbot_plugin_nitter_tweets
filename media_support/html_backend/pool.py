@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Instance pool: ordered hosts, skip cooldowns, shared fetch+parse."""
 
 from __future__ import annotations
@@ -280,47 +280,6 @@ class HtmlNitterPool:
         # Unreachable (loop always raises on last attempt)
         raise RuntimeError("fetch_user: exhausted retries")
 
-    def fetch_list(
-        self,
-        list_id: str,
-        limit: int,
-        *,
-        instance: str | None = None,
-    ) -> tuple[str, list[TweetItem]]:
-        """Fetch Twitter List timeline with global retry on total failure."""
-        # Skip global retry when targeting a specific instance (probe mode)
-        if instance and str(instance).strip():
-            return self._fetch_list_once(list_id, limit, instance=instance)
-
-        max_retries = self.config.max_global_retries
-        for attempt in range(max_retries):
-            try:
-                return self._fetch_list_once(list_id, limit, instance=instance)
-            except RuntimeError as exc:
-                msg = str(exc)
-                is_last_attempt = attempt >= max_retries - 1
-
-                if "all instances in cooldown" in msg:
-                    if is_last_attempt:
-                        raise
-                    delay = self.config.retry_delay_on_cooldown
-                    self.log(
-                        f"list global retry {attempt + 1}/{max_retries}: "
-                        f"all cooling, wait {delay:.0f}s"
-                    )
-                    time.sleep(delay)
-                elif is_last_attempt:
-                    raise
-                else:
-                    delay = self.config.retry_delay_base * (attempt + 1)
-                    self.log(
-                        f"list global retry {attempt + 1}/{max_retries}: "
-                        f"{exc}, wait {delay:.0f}s"
-                    )
-                    time.sleep(delay)
-        # Unreachable (loop always raises on last attempt)
-        raise RuntimeError("fetch_list: exhausted retries")
-
     def _fetch_user_once(
         self,
         username: str,
@@ -549,9 +508,7 @@ class HtmlNitterPool:
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)
             try:
-                self.log(
-                    f"list try {index}/{total} host={host} list_id={list_id_str}"
-                )
+                self.log(f"list try {index}/{total} host={host} list_id={list_id_str}")
                 tweets = self._as_search_result(
                     self._paginate_list(base, list_id_str, limit)
                 )
@@ -571,9 +528,7 @@ class HtmlNitterPool:
                 self.log(f"list empty host={host}, rotate next ({index}/{total})")
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{base}: {exc}")
-                self.log(
-                    f"list fail host={host}, rotate next ({index}/{total}): {exc}"
-                )
+                self.log(f"list fail host={host}, rotate next ({index}/{total}): {exc}")
 
         if empty_success_base is not None:
             self.log(
@@ -592,8 +547,8 @@ class HtmlNitterPool:
         raw_count = 0
         retweet_filtered = 0
 
-        max_pages = self.config.max_pages
-        for page_num in range(max(1, max_pages)):
+        page_count = self._page_count(self.config.max_pages)
+        for _ in range(page_count):
             # Nitter List path: /i/lists/{list_id}
             path = f"/i/lists/{quote(list_id)}"
             if cursor:
@@ -604,7 +559,7 @@ class HtmlNitterPool:
                 body.decode("utf-8", "replace"), base, source=f"list:{base}"
             )
 
-            raw_count += len(page.tweets)
+            raw_count += int(getattr(page, "raw_item_count", len(page.tweets)) or 0)
 
             for t in page.tweets:
                 k = t.status_id or t.link
@@ -673,78 +628,6 @@ class HtmlNitterPool:
             cursor = page.next_cursor
         return tweets
 
-    def _fetch_list_once(
-        self,
-        list_id: str,
-        limit: int,
-        *,
-        instance: str | None = None,
-    ) -> tuple[str, list[TweetItem]]:
-        """One round of List fetch across instance rotation."""
-        errors: list[str] = []
-        hosts = self._hosts_for_rotation(instance)
-        if not hosts:
-            raise RuntimeError("HTML List unavailable: all instances in cooldown")
-
-        total = len(hosts)
-        for index, base in enumerate(hosts, 1):
-            host = self.session.host_of(base)
-            try:
-                self.log(
-                    f"list try {index}/{total} host={host} list_id={list_id}"
-                )
-                tweets = self._paginate_list(base, list_id, limit)
-                self.log(f"list OK: {host} got {len(tweets)} tweets")
-                return (base, tweets)
-            except Exception as exc:
-                err = f"{host}: {exc}"
-                errors.append(err)
-                self.log(f"list failed: {err}")
-                continue
-        raise RuntimeError("HTML List failed: " + "; ".join(errors[-4:]))
-
-    def _paginate_list(
-        self,
-        base: str,
-        list_id: str,
-        limit: int,
-    ) -> list[TweetItem]:
-        """Paginate Twitter List timeline (same HTML structure as user timeline)."""
-        tweets: list[TweetItem] = []
-        seen: set[str] = set()
-        cursor = ""
-        max_pages = max(1, self.config.max_pages)
-
-        for page_num in range(max_pages):
-            # Nitter List path: /i/lists/{list_id}
-            from urllib.parse import quote, urlencode
-            path = f"/i/lists/{quote(list_id)}"
-            if cursor:
-                path += "?" + urlencode({"cursor": cursor})
-
-            self.log(f"list paginate: page {page_num + 1}/{max_pages} cursor={cursor[:20] if cursor else 'none'}")
-            body = self._get_html(base, path)
-
-            from .parser import parse_timeline_html
-            page = parse_timeline_html(
-                body.decode("utf-8", "replace"), base, source=f"list:{base}"
-            )
-
-            for t in page.tweets:
-                k = t.status_id or t.link
-                if k in seen:
-                    continue
-                seen.add(k)
-                tweets.append(t)
-                if len(tweets) >= limit:
-                    return tweets
-
-            if not page.next_cursor or page.next_cursor == cursor:
-                break
-            cursor = page.next_cursor
-
-        return tweets
-
     def _paginate_search(
         self,
         base: str,
@@ -811,4 +694,3 @@ class HtmlNitterPool:
         tweets.raw_item_count = raw_item_count
         tweets.retweet_filtered = retweet_filtered
         return tweets
-

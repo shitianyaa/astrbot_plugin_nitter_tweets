@@ -23,7 +23,7 @@ Nitter 无法访问需要登录的 Private List，订阅的 List 必须设置为
 
 ### 2. 获取 List ID
 
-List ID 是一串纯数字（15-20 位），从 List 的 URL 中获取：
+List ID 是一串正整数数字，从 List 的 URL 中获取。新建 List 通常是 18-20 位，早期 List 的 ID 可能更短：
 
 ```
 https://x.com/i/lists/1553232306718257152
@@ -65,7 +65,6 @@ tweet_groups:
     push_targets:
       - "aiocqhttp:GroupMessage:123456"
     max_tweets_per_check: 10  # 强烈建议设置
-    scheduled_fetch_limit: 20  # 每次抓取最多解析 20 条
 ```
 
 ## 重要配置项说明
@@ -78,12 +77,13 @@ List 聚合多人推文，可能在短时间内产生大量更新。**强烈建�
 max_tweets_per_check: 10  # 每个 List 单次检查最多推送 10 条
 ```
 
-### `scheduled_fetch_limit`
+### `html_max_pages`
 
-每次从 Nitter 抓取页面最多解析多少条，默认 20。
+这是全局 HTML 配置，控制一次 List 抓取最多请求多少页。每翻一页通常会增加一次页面 GET，不包含门禁请求。默认 `1`，建议公共实例保持 `1-3`；后台每个 List 单次扫描仍最多保留 20 条候选。
 
 ```yaml
-scheduled_fetch_limit: 20  # 适中即可，不建议设太大
+basic:
+  html_max_pages: 1
 ```
 
 ### `filter_plain_text_enabled`
@@ -179,7 +179,9 @@ List 成员的增删改会有缓存延迟，Nitter 通常需要 5-10 分钟才�
 List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`：
 
 - `filter_reposts_enabled: true`：List 推送会过滤转发
-- `filter_reposts_enabled: false`（默认）：List 推送包含转发
+- `filter_reposts_enabled: false`：List 推送包含转发
+
+该配置默认开启。
 
 这与博主订阅行为一致，便于统一管理。
 
@@ -190,7 +192,7 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 **现象**：后台日志显示 `list {id} failed on all hosts`
 
 **排查步骤**：
-1. 确认 List ID 是否正确（纯数字，15-20 位）
+1. 确认 List ID 是否正确（正整数纯数字，不要填写完整 URL）
 2. 确认 List 是否设置为 **Public**
 3. 检查 `search_instances`（List 走 HTML 搜索实例）是否可用
 4. 使用 `/镜像测试` 验证实例可达性
@@ -226,7 +228,7 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 | 配置字段 | `watch_queries` | `watch_lists` |
 | 内容来源 | 全平台公开推文 | List 成员的推文 |
 | 首次订阅 | 记录基线，不推历史 | 记录基线，不推历史 |
-| 转发过滤 | 跟随全局配置 | 跟随全局配置 |
+| 转发过滤 | 固定过滤纯转推 | 跟随全局配置 |
 | 抓取实例 | `search_instances` | `search_instances` |
 | 风险提示 | 私人 QQ 号不建议 | 私人 QQ 号不建议 |
 
@@ -312,7 +314,6 @@ tweet_groups:
     
     # 推送控制
     max_tweets_per_check: 10
-    scheduled_fetch_limit: 20
     
     # 链接与翻译
     omit_status_url: true

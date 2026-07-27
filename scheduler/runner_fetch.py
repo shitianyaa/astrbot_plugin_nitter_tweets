@@ -34,7 +34,11 @@ class SchedulerFetchMixin:
     ) -> list[UserFetchResult]:
         accounts = list(group.account_keys)
         # Tag/List groups always serial to protect shared HTML instances.
-        if group.is_tag_group or group.is_list_group or not self._should_use_concurrent_fetch(group):
+        if (
+            group.is_tag_group
+            or group.is_list_group
+            or not self._should_use_concurrent_fetch(group)
+        ):
             results = []
             for index, username in enumerate(accounts):
                 # Add delay between queries (except before the first one)

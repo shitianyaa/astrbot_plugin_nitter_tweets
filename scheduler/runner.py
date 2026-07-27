@@ -560,9 +560,12 @@ class NitterTweetScheduler(
         )
         immediate_batches_sent = 0
         if not users:
-            result.skipped_reason = (
-                "no_watch_queries" if group.is_tag_group else "no_watch_users"
-            )
+            if group.is_tag_group:
+                result.skipped_reason = "no_watch_queries"
+            elif group.is_list_group:
+                result.skipped_reason = "no_watch_lists"
+            else:
+                result.skipped_reason = "no_watch_users"
             self._log_check_result(result)
             return result
         if not targets:
@@ -572,7 +575,7 @@ class NitterTweetScheduler(
 
         # S2=A: RSS host skip only for this blogger check; end only if we began.
         run_host_skip_started = False
-        if not group.is_tag_group and hasattr(self.nitter, "begin_run_host_skip"):
+        if group.is_blogger_group and hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
             run_host_skip_started = True
         try:
@@ -686,7 +689,8 @@ class NitterTweetScheduler(
                     # the notification.  A genuinely empty response remains
                     # uninitialized so a transient empty search does not seal
                     # a whole page as history.
-                    if not seed_ids and group.is_tag_group:
+                    if not seed_ids and (group.is_tag_group or group.is_list_group):
+                        source_label = "标签订阅" if group.is_tag_group else "List 订阅"
                         if (
                             fetch_result.plain_text_filtered > 0
                             or fetch_result.retweet_filtered > 0
@@ -699,7 +703,7 @@ class NitterTweetScheduler(
                             )
                             result.initialized_users[username] = 0
                             self._log_verbose_info(
-                                "[NitterTweets] 标签订阅首轮结果全部被过滤，"
+                                f"[NitterTweets] {source_label}首轮结果全部被过滤，"
                                 "已记录空扫描水位: "
                                 f"group={group.group_id}, account={username}"
                             )
@@ -708,7 +712,7 @@ class NitterTweetScheduler(
                             "首次抓取无可用推文 ID，未初始化 seen（下轮重试）"
                         )
                         logger.warning(
-                            "[NitterTweets] 标签订阅首次抓取为空，跳过初始化: "
+                            f"[NitterTweets] {source_label}首次抓取为空，跳过初始化: "
                             f"group={group.group_id}, account={username}"
                         )
                         continue

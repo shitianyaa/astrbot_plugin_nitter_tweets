@@ -262,25 +262,30 @@
 - `max_tweets_per_check` 提示强调防刷屏
 - `group_type` 默认 `list`（不可见，由模板设置）
 
+**Phase F — 文档更新** ✅
+- `README.md`: 功能概览增加 list 分组说明
+- `README.md`: 后台推送配置示例增加列表分组
+- `README.md`: 风险提示增加列表分组
+- `metadata.yaml`: 版本升级到 `0.18.0`
+- `metadata.yaml`: 描述增加 List/列表支持
+- `docs/twitter-lists.md`: 新增完整 List 订阅使用指南（前置要求、配置方式、重要配置项、工作流程、已知限制、故障排查、最佳实践）
+
 ### 待完成阶段
 
 **Phase E — WebUI（可选，二级优先）**
-- 根据用户决策，本轮**不做 WebUI**
+- 根据用户决策，本轮**不做 WebUI**（配置模板已完成，用户可通过 WebUI 添加列表分组）
 - List 功能通过配置文件 + WebUI 现有模板选择器即可使用
 - 标注：WebUI 深度集成列为二期需求
 
-**Phase F — 文档**
-- [ ] `README.md`: 功能概览提 List 订阅
-- [ ] `docs/advanced.md` 或新建 `docs/lists.md`: 创建 List、取 ID、Public 要求、延迟生效、成员上限、推送频率控制、故障排查
-- [ ] `metadata.yaml`: 版本号 `0.17.1` → `0.18.0`
-
-**Phase G — 测试**
-- [ ] `tests/test_list_support.py`: 
+**Phase G — 测试与审查** 🔄 进行中
+- [ ] 代码审查：使用 `/code-review` 检查实现质量
+- [ ] 单元测试（可选）：`tests/test_list_support.py`
   - `fetch_list` mock HTTP → 解析/翻页
   - List ID 校验（有效/无效/空）
   - `group_type: list` 配置解析（正常/缺失/重复/无效）
   - 调度器 list 分支返回 `UserFetchResult`
-- [ ] 可选：`scripts/probe_nitter_fetch.py` 加 `--list` 联网探针
+- [ ] 探针脚本（可选）：`scripts/probe_nitter_fetch.py` 加 `--list` 联网探针
+- [ ] 本地验证：配置测试 List 分组，验证定时推送、seen 去重、媒体下载、翻译流程
 
 ### 验收状态
 
@@ -290,18 +295,87 @@
 - [x] seen 去重键 `list:{id}` 独立
 - [x] 首次启用 List 只记录基线逻辑（复用现有 seen 机制）
 
-**回归风险检查** （待测试验证）
-- [ ] 现有 blogger/tag 分组不受影响
-- [ ] 全量 `tests/` 通过
+**回归风险检查** ✅
+- [x] 现有 blogger/tag 分组不受影响
+- [x] 全量 `tests/` 通过
 
 ---
 
-**下一步行动**：
-1. 完成 Phase F（文档更新）
-2. 完成 Phase G（单元测试）
-3. 本地/真机验证
-4. 代码审查与合并
+## 11. 实施总结
+
+### ✅ 已完成工作
+
+**代码实现**（4 个 commit）：
+1. **feat(html_backend): 新增 Twitter List 抓取支持**
+   - `pool.py`: `fetch_list()` / `_fetch_list_once()` / `_paginate_list()`
+   - `service.py`: 暴露门面方法
+2. **feat(scheduler): 新增 list 分组类型支持**
+   - `config.py`: `GROUP_TYPE_LIST` / `WatchListsInfo` / 配置解析
+   - `runner_fetch.py`: `_fetch_group_list()` / list 分支调用
+3. **feat(config): 新增列表分组配置模板**
+   - `_conf_schema.json`: 完整 list 模板（130+ 行）
+4. **docs: 添加 Twitter List 订阅功能文档**
+   - `README.md`: 功能概览、配置示例
+   - `metadata.yaml`: 版本 `0.18.0`
+   - `docs/twitter-lists.md`: 完整使用指南
+
+**CF 交叉验证**：
+- ✅ 翻页逻辑一致（cursor + seen 去重）
+- ✅ 路由解析一致（`/i/lists/{id}` + `parse_timeline_html()`）
+- ✅ 架构增强（多轮重试、空结果处理、完整统计）
+- ✅ 转发过滤符合决策（跟随全局 `filter_reposts_enabled`）
+
+### ✅ Phase G（测试与审查）
+
+**已完成**：
+- 代码审查与问题修复
+- 单元测试（`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`）
+- 全量测试、lint、格式、编译与 schema 校验
+
+**未执行的可选验证**：
+- 探针脚本扩展（`probe_nitter_fetch.py --list`）
+- 本地验证（配置真实 List 分组测试）
 
 ---
+
+**下一步行动**：在真实 AstrBot 会话中验证 List 定时推送。
 
 *Phase A/C/D 实施完成于 2026-07-27*
+
+---
+
+## 12. 代码审查修复（2026-07-27）
+
+### 修复要求
+
+- [x] 删除 HTML List 抓取的重复方法定义，保留唯一实现。
+- [x] List 转发过滤真实跟随全局 `filter_reposts_enabled`。
+- [x] List 首次真正空结果不初始化 seen，避免恢复后推送历史。
+- [x] 插件 WebUI 正确创建和编辑 `group_type=list` / `watch_lists`。
+- [x] `/推文状态` 与订阅导出正确显示 List 分组。
+- [x] 文档移除无效 `scheduled_fetch_limit`，改为说明全局 `html_max_pages`。
+- [x] List ID 校验兼容旧的短数字 ID。
+- [x] 补充 HTML 分页、调度空结果、转发过滤、WebUI 和状态测试。
+
+### 审查验证基线
+
+- `python -m pytest -q`：327 passed，3 warnings。
+- `ruff check .`：失败，包含 `pool.py` 重复 `fetch_list` 定义和新增测试未使用导入。
+
+### 修复结果与验证
+
+- `python -m pytest -q`：335 passed，3 warnings。
+- `ruff check .`：通过。
+- `ruff format --check .`：112 files already formatted。
+- `python -m py_compile ...`：通过。
+- `python -m json.tool _conf_schema.json NUL`：通过。
+- `git diff --check`：通过。
+- 未执行真实 AstrBot 会话定时推送；剩余风险为公共 Nitter 实例实时状态和平台实际发送链路。
+
+## 13. 推送前检查（2026-07-27）
+
+- `ruff check .`：通过（All checks passed）。
+- `ruff format --check .`：通过（112 files already formatted）。
+- `git diff --check`：通过。
+- 当前分支：`twitter-list-support`。
+- 远端尚无 `twitter-list-support` 同名分支，准备提交审查修复并首次推送。

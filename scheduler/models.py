@@ -253,6 +253,7 @@ class ScheduledCheckResult:
             reason_text = {
                 "no_watch_users": "未配置 watch_users",
                 "no_watch_queries": "未配置 watch_queries",
+                "no_watch_lists": "未配置 watch_lists",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
                 "unknown_group": "未找到指定分组",
