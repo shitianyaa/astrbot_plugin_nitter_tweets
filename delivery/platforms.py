@@ -89,11 +89,15 @@ class PlatformProfile:
 
     @property
     def should_split_qq_direct_videos(self) -> bool:
-        return self.is_onebot or bool(self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES)
+        return self.is_onebot or bool(
+            self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES
+        )
 
     @property
     def should_split_qq_direct_images(self) -> bool:
-        return self.is_onebot or bool(self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES)
+        return self.is_onebot or bool(
+            self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES
+        )
 
 
 class PlatformResolver:
@@ -121,7 +125,9 @@ class PlatformResolver:
                 str(getattr(event, "unified_msg_origin", "") or "")
             )
 
-        platform = getattr(event, "platform", None) or getattr(event, "platform_inst", None)
+        platform = getattr(event, "platform", None) or getattr(
+            event, "platform_inst", None
+        )
         platform_types = self._platform_type_candidates(platform, platform_id)
         bot = getattr(event, "bot", None)
         call_action = self.call_action_from_platform(

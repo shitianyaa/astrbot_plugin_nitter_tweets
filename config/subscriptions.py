@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 try:
+    from ..media_support.html_backend import encode_watch_query
     from ..shared import normalize_username
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -19,6 +20,7 @@ try:
         config_set,
     )
 except ImportError:
+    from media_support.html_backend import encode_watch_query
     from shared import normalize_username
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -109,6 +111,47 @@ def set_import_group_users(
         if normalize_group_id(parsed.group_id) != target_group_id:
             continue
         raw_group["watch_users"] = users
+        config_set(config, "tweet_groups", raw_groups)
+        return
+
+    raise RuntimeError(f"未找到分组配置：{group.name} ({group.group_id})")
+
+
+def set_import_group_queries(
+    config,
+    config_reader,
+    group: "ScheduleGroup | None",
+    queries: list[Any],
+) -> None:
+    """Persist tag queries using the schema-compatible reversible strings."""
+    if group is None:
+        raise RuntimeError("标签订阅必须指定标签分组")
+
+    raw_groups = config_get(config, "tweet_groups", []) or []
+    if isinstance(raw_groups, dict):
+        group_items = [raw_groups]
+    elif isinstance(raw_groups, list):
+        group_items = raw_groups
+    else:
+        group_items = []
+
+    target_group_id = normalize_group_id(group.group_id)
+    for index, raw_group in enumerate(group_items, 1):
+        parsed = config_reader.parse_schedule_group(
+            raw_group,
+            index,
+            log_invalid_targets=False,
+        )
+        if parsed is None:
+            continue
+        if normalize_group_id(parsed.group_id) != target_group_id:
+            continue
+        parsed_queries = config_reader.parse_watch_queries(queries)
+        raw_group["group_type"] = "tag"
+        raw_group["watch_queries"] = [
+            encode_watch_query(item.query, item.type) for item in parsed_queries.queries
+        ]
+        raw_group["watch_users"] = []
         config_set(config, "tweet_groups", raw_groups)
         return
 

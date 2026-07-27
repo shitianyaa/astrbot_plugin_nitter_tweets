@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 # 数据模型
 # ──────────────────────────────────────────────────────────────────────
 
+
 @dataclass(slots=True)
 class TweetMedia:
     kind: str
@@ -37,8 +38,7 @@ class TweetItem:
     media_warnings: list[str] = field(default_factory=list)
     ai_warnings: list[str] = field(default_factory=list)
     translation: str = ""
-    image_caption: str = ""
-    ai_comment: str = ""
+    is_retweet: bool = False
 
     @property
     def status_id(self) -> str:
@@ -186,6 +186,20 @@ def normalize_username(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", value):
         return ""
     return value
+
+
+def normalize_seen_account_key(value: str) -> str:
+    """Normalize seen/scan keys: Twitter username or tag search key ``q:...``."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value[:2].casefold() == "q:":
+        body = value[2:].strip()
+        folded = body.casefold()
+        if not body or len(body) > 200 or len(folded) > 200:
+            return ""
+        return "q:" + folded
+    return normalize_username(value)
 
 
 def safe_call(obj, method_name: str):

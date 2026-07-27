@@ -50,6 +50,10 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -59,6 +63,10 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             start_index=tweet_start_index,
             notices=notices,
             header_text=header_text,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         client = lark_client_from_event(event, sender._platform_inst_from_context)
         if client is None:
@@ -71,14 +79,23 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         text = plain_text_from_components(components)
+        post_title = (
+            f"@{username}"
+            if media_only
+            else lark_tweet_post_title(username, len(tweets), header_text)
+        )
         reply_message_id = lark_reply_message_id(event)
         receive_id_type, receive_id = lark_event_target(event)
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets), header_text),
+            post_title,
             components,
             "manual Lark tweet post",
             is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
@@ -100,7 +117,7 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             )
             post_attempt = await send_lark_post(
                 client,
-                lark_tweet_post_title(username, len(tweets), header_text),
+                post_title,
                 components,
                 "manual Lark tweet post fallback",
                 is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
@@ -109,9 +126,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 receive_id=receive_id,
                 receive_id_type=receive_id_type,
             )
-        if post_attempt.uncertain:
+        if post_attempt.uncertain and not media_only:
             return True
-        if post_attempt.success:
+        if post_attempt.success or post_attempt.uncertain:
             video_attempt = await send_lark_event_media_with_retry(
                 event,
                 video_components(components),
@@ -123,7 +140,11 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     "[NitterTweets] Lark post 已发送，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
-            return True
+                # Ordinary mode keeps the visible post accepted to avoid a
+                # duplicate text fallback. Media-only still needs real media.
+                return not media_only
+            # 空组件时 post 与媒体重试都会返回 success；media_only 不能据此判定完成。
+            return bool(media_components(components)) or not media_only
 
         logger.warning(
             "[NitterTweets] Lark post 发送失败，降级为文本/媒体发送: "
@@ -174,7 +195,11 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 "[NitterTweets] Lark 推文文本已发送，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
-        return True
+            # Ordinary mode keeps the visible text accepted to avoid a
+            # duplicate fallback. Media-only must retain its media for retry.
+            return not media_only
+        # 同上：媒体列表为空时的 success 不能让 media_only 判定完成。
+        return bool(media_components(components)) or not media_only
 
     async def send_to_umo(
         self,
@@ -187,6 +212,10 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
         components = sender.renderer.build_direct_components(
@@ -197,15 +226,23 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             group_label=group_label,
             header_text=header_text,
             batch_summary=batch_summary,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         text = plain_text_from_components(components)
+        post_title = (
+            f"@{username}"
+            if media_only
+            else lark_tweet_post_title(username, len(tweets), header_text)
+        )
         client, receive_id_type, receive_id = lark_client_and_target(
             context, umo, sender._platform_inst_from_context
         )
         if client is None or not receive_id_type or not receive_id:
             logger.warning(
-                f"[NitterTweets] 未找到 Lark 客户端或目标: target={umo}，"
-                "改用通用发送"
+                f"[NitterTweets] 未找到 Lark 客户端或目标: target={umo}，改用通用发送"
             )
             return await sender._send_default_direct_to_umo(
                 context,
@@ -217,11 +254,15 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                 header_text,
                 batch_summary,
                 tweet_start_index,
+                media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         post_attempt = await send_lark_post(
             client,
-            lark_tweet_post_title(username, len(tweets), header_text),
+            post_title,
             components,
             "scheduled Lark tweet post",
             is_uncertain_delivery_error=sender._is_uncertain_delivery_error,
@@ -230,9 +271,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             receive_id=receive_id,
             receive_id_type=receive_id_type,
         )
-        if post_attempt.uncertain:
+        if post_attempt.uncertain and not media_only:
             return SendOutcome(success=True, warning=post_attempt.warning)
-        if post_attempt.success:
+        if post_attempt.success or post_attempt.uncertain:
             video_attempt = await send_lark_umo_media_with_retry(
                 context,
                 umo,
@@ -247,19 +288,17 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
                     f"[NitterTweets] Lark post 已发送到 {umo}，但视频媒体发送失败: "
                     f"{video_attempt.error}"
                 )
+            media_ok = video_attempt.success or video_attempt.uncertain
+            # 图片随 post 一起送达，视频单独发。但空组件时 send_lark_post 和
+            # send_media_with_video_retry 都会返回 success，media_only 下会出现
+            # 一条媒体都没发却判定完成、进而推进 seen 的情况。
+            has_media = bool(media_components(components))
             return SendOutcome(
-                success=True,
+                success=(media_ok and has_media) or not media_only,
+                error=(video_attempt.error if not media_ok else ""),
                 warning=warning,
-                delivery_status=(
-                    "partial_failed"
-                    if not (video_attempt.success or video_attempt.uncertain)
-                    else "success"
-                ),
-                delivery_error=(
-                    video_attempt.error
-                    if not (video_attempt.success or video_attempt.uncertain)
-                    else ""
-                ),
+                delivery_status=("partial_failed" if not media_ok else "success"),
+                delivery_error=(video_attempt.error if not media_ok else ""),
             )
 
         logger.warning(
@@ -287,23 +326,20 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             sender._send_context_message,
         )
         warning = text_attempt.warning or media_attempt.warning
-        if not (media_attempt.success or media_attempt.uncertain):
+        media_ok = media_attempt.success or media_attempt.uncertain
+        if not media_ok:
             warning = media_attempt.error
             logger.warning(
                 f"[NitterTweets] Lark 推文文本已发送到 {umo}，但媒体发送失败: "
                 f"{media_attempt.error}"
             )
+        # 降级路径的文本不含媒体；空媒体列表会让 send_media_with_video_retry
+        # 直接返回 success，media_only 下不能据此判定完成。
+        has_media = bool(media_components(components))
         return SendOutcome(
-            success=True,
+            success=(media_ok and has_media) or not media_only,
+            error="" if media_ok else media_attempt.error,
             warning=warning,
-            delivery_status=(
-                "partial_failed"
-                if not (media_attempt.success or media_attempt.uncertain)
-                else "success"
-            ),
-            delivery_error=(
-                media_attempt.error
-                if not (media_attempt.success or media_attempt.uncertain)
-                else ""
-            ),
+            delivery_status=("partial_failed" if not media_ok else "success"),
+            delivery_error=(media_attempt.error if not media_ok else ""),
         )

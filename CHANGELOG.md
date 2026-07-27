@@ -4,7 +4,89 @@
 
 ## [Unreleased]
 
-暂无。
+## [0.17.1] - 2026-07-27
+
+### Added
+
+- 分组配置 `max_tweets_per_check`：单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。
+- 全局重试机制：`max_global_retries`（默认 2）、`retry_delay_base`（默认 5.0s）、`retry_delay_on_cooldown`（默认 10.0s）。所有实例失败后延迟重试，渐进式延迟（5s → 10s → 15s），智能跳过验证错误和 probe 模式。
+- 默认搜索实例扩展为三镜像：`tiekoetter.com`、`poast.org`、`kareem.one`（CF 验证通过，3x 冗余 + 自动门禁解算）。
+- 新增实例配置完整指南：`docs/instances-guide.md` 详细说明 RSS vs HTML 双路架构、默认实例配置、容错机制、错误提示对照表和最佳实践。
+
+### Fixed
+
+- 标签查询间隔：Tag 分组查询现在应用 `send_user_interval` 配置，避免连续快速请求导致 429。
+- 标签查询日志：增强 `_fetch_group_query` 方法的日志输出，显示查询开始、成功（实例、推文数）和失败（错误类型、详情）。
+- Tag 分组推送间隔：`send_target_interval` 和 `send_user_interval` 现在支持分组级别配置覆盖。
+- 推文检查文案：统一改为"已记录索引"，适用于博主分组和标签分组。
+- 重试机制：改为"轮换优先"策略——轮流尝试所有实例，重复 N 轮，而非在单个实例上重试 N 次后才换下一个。例如 3 个实例、2 轮：A→B→C→A→B→C，而非 A×2→B×2→C×2。更快找到可用实例。
+
+### Changed
+
+- 默认实例：博主 RSS 默认 `nitter.net`（可多站）；搜索默认 `tiekoetter.com` + `poast.org` + `kareem.one` 三镜像。移除配置项 `blogger_html_instances`；博主不再做公共 HTML 回退池，避免与标签搜索抢资源。`user_html_fallback` 默认关闭且隐藏。
+- 错误提示优化：区分配置错误（`未配置 Nitter 实例`）和运行时故障（`本轮所有 Nitter 实例均不可用`），明确失败原因。
+- 重试策略升级：采用"实例轮换 + 全局重试"双层机制。第一层立即轮换所有实例（ready 按成功率排序优先，cooling 殿后），全部失败后进入第二层延迟重试（渐进式 5s/10s/15s），显著提升网络抖动下的容错能力。
+- 文档完善：README、`docs/advanced.md` 和 `docs/instances-guide.md` 补充 RSS vs HTML 架构说明、默认实例配置、`user_html_fallback` 回退机制、全局重试参数和错误提示对照表。
+- 镜像选择：按请求成功率内存记分（有结果满分成功、空结果 soft、失败降权；HTML transport 异常也记失败），博主 RSS 与搜索 HTML 分账；ready 高分优先，冷却殿后；不写盘。
+- 日志：`brief_log_enabled`（默认开）同时收敛 HTML 搜索/回退过程日志；`session load` 全抑制，gate 同类去重，try/冷却/空页过程行在简略模式下不刷屏；失败、punish、轮换成功/全空摘要仍保留。
+- 修复 HTML 搜索/用户页：全部镜像 HTTP 成功但结果为空（含整页纯转推被滤掉）时返回空列表，不再 `HTML search failed`；标签定时可正确走「首次空结果不 init seen」，避免一直记失败、永远不推。
+- 手动命令：新增 `manual_send_interval`，非合并转发时逐条消息间隔（默认 0）；在平台适配前 sleep，多平台生效。
+- AI 翻译：全局 `show_original_when_translated`（默认 true）；关闭后有译文时隐藏原文；分组 `hide_original_when_translated` 可在全局显示时再隐藏。
+- HTML 搜索/用户页：多镜像失败后轮换下一实例（ready 优先按成功率排序，冷却实例殿后）。
+- `watch_queries` 落盘改为纯字符串列表，避免 AstrBot WebUI 把对象显示成 `[object Object]`；兼容读取旧 `{query,type}`，并丢弃损坏的 `[object Object]` 项。
+- 文档：标签定时获取/发送数量（固定约 20、滤 RT/seen、新帖全发）；配置示例改为字符串列表。
+- 标签分组增加风险提示：使用私人 QQ 号作为 Bot 时不建议启用标签定时。
+- 转推过滤：`/推文`/`/镜像测试` 固定不过滤；`/推文搜索` 与标签分组定时固定过滤纯转推（无配置项）；博主分组仍用 filter_reposts_enabled。
+- OneBot 合并转发遇到 retcode 1200 / res_id 失败时，自动拆成更小段重试；仅对未送达段降级直发（再失败则纯文本），避免半成功整包重复发送。
+- 配置文案：去掉 send_video_attachments「不太成熟/还在优化」表述，改为默认关闭与能力说明。
+- 修复发送层 hide_original/link_style 接线：adapter 接受 hide；UMO 直发/合并转发关键字透传；避免 link_style 位置参数错位导致 Telegram markdown 丢失。
+- 推文布局：Telegram 首行改为 [@作者](链接)；`omit_status_url` 开启时剥离正文/译文内嵌 URL，关闭时保留；空正文占位；有译文时翻译块在原文前。
+- 分组开关 hide_original_when_translated：有 AI 译文时只发翻译、隐藏原文；无译文仍发原文。修复搜索会话缓冲假空文案，缓存命中不消耗冷却。
+- 手动 /推文搜索：按会话缓存整页搜索结果，按请求条数发放，不足再翻页拉取；同会话同查询约 10 分钟内不重复已展示推文，每查询最多缓存 40 条（默认开启，无额外配置）。
+- 修复搜索结果作者显示为标签/查询词、正文为空，以及 Telegram 链接摘要误用查询词：渲染优先 tweet 链接作者与正文；HTML 解析增强 tweet-content 提取。
+### Added
+
+- 分组开关 `omit_status_url`（默认开启）：发送时去掉推文 URL 明文，并剥离正文/译文中的 http(s)；Telegram 使用摘要 Markdown 链到原文（`MessageChain.use_markdown`）。仅媒体模式仍不调用 AI 翻译。
+
+## [0.17.0] - 2026-07-23
+
+### Added
+
+- Dashboard 镜像连通诊断支持博主 RSS / 博主 HTML / 搜索三种模式，并从配置同步实例列表；创建/保存分组后可正确选中与切换。
+- Dashboard 文案按博主/标签分组区分（推送分组、无效搜索查询等）。
+- AstrBot 配置 `tweet_groups` 拆成模板「博主分组 / 标签分组」；添加时先选类型。旧 `__template_key=group`（用户分组）启动迁移为 blogger。
+- 新增 HTML 后端：`blogger_html_instances` / `search_instances`、博主 RSS 失败后的 HTML 用户页回退，以及非管理员命令 `/推文搜索`（标签带 `#`，短语不自动加 `#`）。
+- 分组类型 `group_type`：`blogger`（`watch_users`）与 `tag`（`watch_queries`，`type=tag|phrase`）对位；标签分组定时搜索，seen 键为 `q:<casefold query>`；Dashboard 支持创建/编辑类型与查询列表。
+- 管理命令 `/标签导入`、`/标签删除` 维护标签分组查询；`/订阅导入` `/订阅删除` 拒绝标签组以免写错字段。
+- `/订阅导出 [分组]` 同时导出博主 `watch_users` 与标签 `watch_queries`，可按分组名过滤。
+- 调度：首次抓取空结果不初始化 seen；HTML 路径支持按作者媒体过滤纯文本；状态汇总改用 `account_keys`。
+
+### Fixed
+
+- 第二刀：RSS 本轮检查/命令内跳过已失败镜像（不写盘）；`retry_attempts` / `retry_delay_seconds` 进 basic 配置（默认 2 / 5s）；HTML RateLimiter 线程锁；标签 watch_queries 规范化后回写配置。
+- 修复标签分组 seen/watermark 无法落库：账号键 `q:...` 不再被用户名规范化丢弃（`normalize_seen_account_key`）。
+
+- 修复后台检查只截取少量 RSS 结果导致更新较多时漏推的问题：固定扫描首屏约 20 条，首屏未出现上次基准时按 `Min-Id` 翻页到该基准，并在本轮发送全部未 seen 推文；移除不再生效的 `scheduled_fetch_limit` 配置。
+
+### Changed
+
+- 后台推送按 RSS 返回顺序发送；并发准备按完成顺序发送；聊天消息移除推文序号和账号进度，并在每个目标本轮第一条消息显示博主数、推文数和分组概括。
+- 分组新增 `media_only_enabled`（WebUI 名称“仅媒体”）。有效时只发送作者和成功准备的附件；临时媒体失败下轮重试，明确策略跳过允许扫描基准推进。全局媒体不可用时仅在 WebUI 和日志提示并回退完整内容。
+
+## [0.16.0] - 2026-07-21
+
+### Removed
+
+- 移除暂存定时发布：配置项、`/推文队列` / `/推文发布` 命令、WebUI 暂存队列页、SQLite `pending_tweets` / `pending_media` 表与 `cache/staged/` 暂存媒体流程。
+- 移除非翻译 AI 能力：AI 摘要、智能过滤、改写、识图、AI 评论及相关配置、渲染与 WebUI 展示。
+- 升级时删除旧 pending 表和 `cache/staged/` 媒体；独立的 0.16 缓存迁移标记确保清理不会被旧 marker 跳过，相关旧配置会被清理。
+
+### Changed
+
+- 后台检查发现新推文后统一即时推送；QQ/aiocqhttp 仍可按 `merge_tweet_threshold` 合并转发。
+- AI 处理仅保留翻译；`metadata.yaml`、运维面板文案与 agent/项目文档同步为当前能力边界。
+- 回补最小调度与平台发送回归：seen watermark、发送失败不写 seen、QQ 合并顺序、Telegram flood control。
+- 清理删除后的死字段与兼容别名：`queued_tweets` / `pending_ids` / `image_caption` / `ai_comment`、`clear_non_staged_cache` 与 enrichment 日志参数。
 
 ## [0.15.0] - 2026-07-10
 
@@ -111,7 +193,7 @@
 - 媒体缓存目录从插件源码目录迁移到 AstrBot 插件数据目录，避免本地图片/视频缓存导致 Windows 重装或删除插件目录时提示文件夹被占用。
 - `/推文缓存清理` 现在会同时尝试清理当前插件数据目录缓存和旧版源码目录 `cache/` 根目录下的普通缓存文件；暂存队列媒体目录仍会保留。
 - 旧版 KV seen 数据迁移到 SQLite 后会自动删除，避免卸载时勾选删除持久化数据后，重装又从旧 KV 恢复旧的“已记录账号”。
-- 定时检查结果会在 seen 写入后刷新“已记录账号索引”数量，并调整状态文案，避免误解为订阅账号数或推文数量。
+- 定时检查结果会在 seen 写入后刷新”已记录索引”数量，并调整状态文案，避免误解为订阅账号数或推文数量。
 - 手动 `/推文检查` 对全局分组改为按顶层 `push_targets` 判断当前对话归属；当前对话在全局推送目标中时，即使后台定时总开关关闭也可手动检查，未配置到任何目标时不再兜底执行。
 
 ### Added

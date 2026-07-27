@@ -19,6 +19,7 @@ class SendOutcome:
     warning: str = ""
     delivery_status: str = "success"
     delivery_error: str = ""
+    delivered_status_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -30,3 +31,4 @@ class MergedSendOutcome:
     warning: str = ""
     delivery_status: str = "success"
     delivery_error: str = ""
+    delivered_status_ids: tuple[str, ...] = ()

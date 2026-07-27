@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 try:
+    from ..shared import TweetItem
     from ..shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from .formatting import _format_limited_values
 except ImportError:
+    from shared import TweetItem
     from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from scheduler.formatting import _format_limited_values
+
+if TYPE_CHECKING:
+    # 只用于注解。运行时不导入，避免 scheduler.models 反向拉起 ai（ai → config，
+    # 而 config 对 scheduler 已经只保留 TYPE_CHECKING 依赖）。
+    try:
+        from ..ai import TranslationReport
+    except ImportError:
+        from ai import TranslationReport
 
 
 @dataclass(slots=True)
@@ -26,12 +37,16 @@ class PendingTweetBatch:
     tweets: list
     fetched_ids: list[str]
     seen_ids: list[str]
-    pending_ids: list[int] = field(default_factory=list)
     delivered_targets: set[str] = field(default_factory=set)
     account_index: int = 0
     account_total: int = 0
     tweet_index: int = 0
     tweet_total: int = 0
+    media_only: bool = False
+    omit_status_url: bool = True
+    hide_original_when_translated: bool = False
+    media_status: str = "ready"
+    media_cleaned: bool = field(default=False, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -59,6 +74,7 @@ class ScheduledCheckResult:
     invalid_targets: list[str] = field(default_factory=list)
     available_groups: list[str] = field(default_factory=list)
     seen_users: int = 0
+    # Fixed RSS first-page size used by the background scanner.
     fetch_limit: int = 0
     skipped_reason: str = ""
     initialized_users: dict[str, int] = field(default_factory=dict)
@@ -71,18 +87,13 @@ class ScheduledCheckResult:
     merged_push_success_targets: int = 0
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
-    queued_tweets: dict[str, int] = field(default_factory=dict)
     plain_text_filtered: int = 0
+    media_only_skipped: int = 0
+    media_only_retrying: int = 0
 
     @property
     def new_tweet_count(self) -> int:
-        if self.push_mode == "deferred":
-            return self.queued_tweet_count
         return sum(push.new_count for push in self.pushes)
-
-    @property
-    def queued_tweet_count(self) -> int:
-        return sum(self.queued_tweets.values())
 
     @property
     def pushed_target_successes(self) -> int:
@@ -110,7 +121,6 @@ class ScheduledCheckResult:
             + len(self.empty_users)
             + len(self.failed_users)
             + len(self.pushes)
-            + len(self.queued_tweets)
         )
 
     def has_visible_no_update(self) -> bool:
@@ -137,11 +147,17 @@ class ScheduledCheckResult:
 
         warning_part = (
             f", warnings={len(self.delivery_warnings)}"
-            if self.delivery_warnings else ""
+            if self.delivery_warnings
+            else ""
         )
         filtered_part = (
-            f", filtered={self.plain_text_filtered}"
-            if self.plain_text_filtered else ""
+            f", filtered={self.plain_text_filtered}" if self.plain_text_filtered else ""
+        )
+        media_part = (
+            f", media_skipped={self.media_only_skipped}, "
+            f"media_retrying={self.media_only_retrying}"
+            if self.media_only_skipped or self.media_only_retrying
+            else ""
         )
         return (
             "[NitterTweets] 定时检查完成: "
@@ -153,7 +169,8 @@ class ScheduledCheckResult:
             f"push_mode={self.push_mode}, "
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
-            f"invalid_targets={len(self.invalid_targets)}{warning_part}{filtered_part}"
+            f"invalid_targets={len(self.invalid_targets)}{warning_part}"
+            f"{filtered_part}{media_part}"
         )
 
     def format_brief_log_lines(self) -> list[str]:
@@ -167,7 +184,6 @@ class ScheduledCheckResult:
             f"mode={self.push_mode}, "
             f"checked={self.checked_user_count}, "
             f"new={self.new_tweet_count}, "
-            f"queued={self.queued_tweet_count}, "
             f"push_success={self.pushed_target_successes}/"
             f"{self.pushed_target_attempts}, "
             f"failed={len(self.failed_users)}, "
@@ -176,6 +192,11 @@ class ScheduledCheckResult:
         ]
         if self.plain_text_filtered:
             lines[0] += f", filtered={self.plain_text_filtered}"
+        if self.media_only_skipped or self.media_only_retrying:
+            lines[0] += (
+                f", media_skipped={self.media_only_skipped},"
+                f" media_retrying={self.media_only_retrying}"
+            )
         if self.failed_users:
             failed_items = [
                 f"{self._failure_label(user)}: {error}"
@@ -208,9 +229,7 @@ class ScheduledCheckResult:
     @staticmethod
     def _failure_label(user: str) -> str:
         user = str(user or "").strip()
-        if user == "publish":
-            return user
-        if user.startswith("@"):
+        if user.startswith("@") or user.startswith("q:"):
             return user
         return f"@{user}"
 
@@ -219,12 +238,12 @@ class ScheduledCheckResult:
             title,
             f"分组: {self.group_name} ({self.group_id})",
             f"触发原因: {self.reason}",
-            f"关注账号: {len(self.users)} 个",
+            f"订阅数量: {len(self.users)} 个",
             f"推送目标: {len(self.targets)} 个",
-            f"已记录账号索引: {self.seen_users} 个",
+            f"已记录索引: {self.seen_users} 个",
         ]
         if self.fetch_limit:
-            lines.append(f"每账号拉取: {self.fetch_limit} 条")
+            lines.append(f"后台首屏扫描: {self.fetch_limit} 条")
         if self.merge_tweet_threshold > 0:
             lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:
@@ -233,16 +252,15 @@ class ScheduledCheckResult:
         if self.skipped_reason:
             reason_text = {
                 "no_watch_users": "未配置 watch_users",
+                "no_watch_queries": "未配置 watch_queries",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
                 "unknown_group": "未找到指定分组",
-                "no_pending_tweets": "没有待发布推文",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
             if self.available_groups:
                 lines.append(
-                    "可用分组: "
-                    + _format_limited_values(self.available_groups)
+                    "可用分组: " + _format_limited_values(self.available_groups)
                 )
 
         if self.initialized_users:
@@ -252,18 +270,8 @@ class ScheduledCheckResult:
             ]
             lines.append("首次记录: " + _format_limited_values(items))
 
-        if self.queued_tweets:
-            items = [
-                f"@{username} {count} 条"
-                for username, count in self.queued_tweets.items()
-            ]
-            lines.append("已暂存: " + _format_limited_values(items, separator="; "))
-
         if self.pushes and self.push_mode == "merged":
-            items = [
-                f"@{item.username} {item.new_count} 条"
-                for item in self.pushes
-            ]
+            items = [f"@{item.username} {item.new_count} 条" for item in self.pushes]
             lines.append("新推文: " + _format_limited_values(items, separator="; "))
         elif self.pushes:
             items = [
@@ -281,17 +289,13 @@ class ScheduledCheckResult:
         if self.no_new_users:
             lines.append(
                 "无新推文: "
-                + _format_limited_values(
-                    [f"@{user}" for user in self.no_new_users]
-                )
+                + _format_limited_values([f"@{user}" for user in self.no_new_users])
             )
 
         if self.empty_users:
             lines.append(
                 "RSS 无有效推文 ID: "
-                + _format_limited_values(
-                    [f"@{user}" for user in self.empty_users]
-                )
+                + _format_limited_values([f"@{user}" for user in self.empty_users])
             )
 
         if self.failed_users:
@@ -300,11 +304,47 @@ class ScheduledCheckResult:
 
         if self.invalid_targets:
             lines.append(
-                "无效推送目标: "
-                + _format_limited_values(self.invalid_targets)
+                "无效推送目标: " + _format_limited_values(self.invalid_targets)
             )
 
         if not self.skipped_reason and self.new_tweet_count == 0:
             lines.append("本次没有发现需要推送的新推文。")
 
         return "\n".join(lines)
+
+
+@dataclass(slots=True)
+class SchedulerTaskError:
+    message: str
+    kind: str = ""
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> "SchedulerTaskError":
+        return cls(message=str(exc), kind=type(exc).__name__)
+
+
+@dataclass(slots=True)
+class UserFetchResult:
+    index: int
+    username: str
+    instance: str = ""
+    tweets: list[TweetItem] = field(default_factory=list)
+    scanned_status_ids: list[str] = field(default_factory=list)
+    anchor_status_ids: list[str] = field(default_factory=list)
+    latest_status_id: str = ""
+    scan_complete: bool = True
+    plain_text_filtered: int = 0
+    error: SchedulerTaskError | None = None
+    # HTML search keeps these internal counters so a tag's first RT-only
+    # response can be distinguished from a genuinely empty page.
+    retweet_filtered: int = 0
+    html_raw_item_count: int = 0
+
+
+@dataclass(slots=True)
+class PreparedBatchResult:
+    batch: PendingTweetBatch
+    translation_report: TranslationReport | None = None
+    error: SchedulerTaskError | None = None
+    media_status: str = "ready"
+    media_error: str = ""

@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.15.0-blue" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.17.0-blue" />
   <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
   <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
   <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
@@ -12,7 +12,7 @@
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
-通过 Nitter RSS 获取指定 X/Twitter 用户公开推文，支持手动查询、镜像测试、图片附件、翻译、AI 评论、AI 识图、定时推送、暂存发布和 SQLite 推送记录/暂存队列存储。
+通过 Nitter RSS / HTML 搜索获取指定 X/Twitter 公开推文，支持手动查询与搜索、镜像测试、图片附件、翻译、按博主/标签分组定时推送和 SQLite 推送记录存储。
 
 兼容 AstrBot `>=4.16.0`。
 
@@ -38,11 +38,11 @@
 
 | 场景 | 能力 |
 | --- | --- |
-| 手动查询 | `/推文` 查询公开推文，`/镜像测试` 临时验证 Nitter 实例。 |
-| 后台推送 | 按 `tweet_groups` 分组订阅、定时检查、即时推送或暂存发布。 |
+| 手动查询 | `/推文` 查询公开博主推文，`/推文搜索`（固定过滤纯转推） 搜索标签/短语，`/镜像测试` 临时验证 Nitter 实例。 |
+| 后台推送 | 按 `tweet_groups` 分组：`blogger` 跟用户，`tag` 跟搜索订阅；定时检查并即时推送。 |
 | 平台发送 | QQ/OneBot 支持合并转发；Lark、Telegram、微信 OC 和其他平台走普通发送。 |
-| 媒体与 AI | 支持图片附件；可选开启视频/GIF、翻译、AI 识图和 AI 评论。 |
-| 运维存储 | 提供 WebUI 面板、缓存清理、推送记录清理和 SQLite 暂存队列。 |
+| 媒体与 AI | 支持图片附件；可选开启视频/GIF、翻译和分组“仅媒体；可按组开启「发送时去除推文链接」（默认开）”推送。 |
+| 运维存储 | 提供 WebUI 面板、缓存清理和推送记录清理。 |
 
 ## 快速开始
 
@@ -54,7 +54,18 @@
 /推文 https://twitter.com/nasa 5
 ```
 
-省略数量时使用 `default_limit`；填写数量时按用户输入获取，不额外截断。开启转发过滤、Nitter RSS 返回不足或部分内容解析失败时，最终发送数量可能少于请求数量。
+省略数量时使用 `default_limit`；填写数量时按用户输入获取，不额外截断。Nitter RSS 返回不足或部分内容解析失败时，最终发送数量可能少于请求数量；手动查询会保留转发。博主路径仅 RSS：可在 `instances` 配置多个 RSS 镜像；**不再提供博主 HTML 回退站列表**，避免与搜索抢公共 HTML。
+
+### 搜索
+
+同会话同查询会缓存搜索结果，按你要的条数依次发放，不够再向镜像翻页（约 10 分钟内有效）。
+
+```text
+/推文搜索 #圣娅
+/推文搜索 python programming 5
+```
+
+标签请带 `#`；普通词/短语直接写，不会自动加 `#`。走 `search_instances` HTML 搜索（默认 `https://nitter.tiekoetter.com`，Anubis），与 `/推文` 冷却分离（`search_cooldown_seconds`）。非合并转发时可用 `manual_send_interval` 控制逐条发送间隔（默认 0）。有译文时是否显示原文由全局 `show_original_when_translated` 控制（默认显示）。
 
 ### 镜像测试
 
@@ -65,7 +76,7 @@
 /镜像测试 nasa 3 https://nitter.net
 ```
 
-`/镜像测试` 默认测试 `nasa`，默认获取 `default_limit` 条。镜像站必须填写完整 `http://` 或 `https://` 地址，只影响本次测试，不会写入 `instances` 配置。
+`/镜像测试` 仅管理员可用，默认测试 `nasa`，默认获取 `default_limit` 条。镜像站必须填写完整、公开可访问的 `http://` 或 `https://` 地址；回环、私网、userinfo 和不安全重定向会被拒绝。该命令只影响本次测试，不会写入 `instances` 配置。
 
 ### 后台推送
 
@@ -76,11 +87,30 @@ schedule_enabled = true
 tweet_groups:
   - name: 默认分组
     group_id: default
+    group_type: blogger
     watch_users: NASA, BBCWorld
+    push_targets: aiocqhttp:GroupMessage:123456
+  - name: 标签示例
+    group_id: tags1
+    group_type: tag
+    watch_queries:
+      - "#圣娅"
+      - "python programming"
     push_targets: aiocqhttp:GroupMessage:123456
 ```
 
-每个用户分组都有自己的 `watch_users` 和 `push_targets`。手动 `/推文检查` 会按当前会话 UMO 匹配已启用分组；当前会话必须写在该分组 `push_targets` 中才会执行。
+每个分组有 `group_type`：`blogger` 使用 `watch_users`，`tag` 使用 `watch_queries`（勿混用）。共用 `push_targets` 与检查调度。
+
+`watch_queries` 请填**纯字符串**（`#标签` 或短语）。不要在 AstrBot 配置列表里塞对象，否则会显示成 `[object Object]`。标签定时：每查询约拉一页最多 20 条 → 滤纯转推/可选纯文本 → 与 seen 差集 → 发送新帖（受 `max_tweets_per_check` 限制，默认不限）。
+
+标签组首轮真正没有搜索结果时保持未初始化；若镜像返回了原始结果，但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位，使下一轮符合条件的新帖可以正常推送。
+
+**风险提示：** Bot 使用**私人 QQ 号**时，不建议启用标签分组定时功能。
+
+- 博主组：`/订阅导入` `/订阅删除`
+- 标签组：`/标签导入` `/标签删除`（须指定标签分组名；`#标签,短语 分组名`）
+
+手动 `/推文检查` 会按当前会话 UMO 匹配已启用分组；当前会话必须写在该分组 `push_targets` 中才会执行。
 
 ### 本地诊断脚本
 
@@ -110,10 +140,9 @@ telegram:FriendMessage:123456789
 
 AstrBot 插件页面中会显示 `Nitter 推文面板`，用于日常查看和维护：
 
-- `概览`：查看调度器、后台检查、关注账号、推送目标、暂存队列、功能开关和关键配置摘要。
-- `分组订阅`：维护分组名称、启停、每日检查、暂存开关、纯文本过滤、关注账号和推送目标。
-- `暂存队列`：查看待发布推文、失败次数、已送达目标和媒体数量，并支持按分组发布。
-- `最近推送`：查看成功送达历史，按分组和博主筛选，并使用当前推送目标重新推送。
+- `概览`：查看调度器、后台检查、关注账号、推送目标、功能开关和关键配置摘要。
+- `分组订阅`：维护分组名称、启停、每日检查、纯文本过滤、“仅媒体”、关注账号和推送目标；“仅媒体”受全局媒体开关和单条媒体数量上限控制。
+- `最近推送`：查看成功或部分送达的推送历史，按分组和账号/查询筛选，并使用当前推送目标重新推送。
 - `镜像测试` / `缓存清理`：临时测试 Nitter 镜像连通性，或清理普通媒体缓存和推送记录。
 
 WebUI 不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider、提示词、并发与限流等复杂配置仍在 `_conf_schema.json` 对应的 AstrBot 配置界面维护。完整页面行为见 [进阶说明](./docs/advanced.md#webui-运维面板)。
@@ -123,54 +152,74 @@ WebUI 不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider�
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
 | `/推文 用户名 [数量]` | 普通用户 | 查询指定公开 X/Twitter 用户最近推文。 |
-| `/镜像测试 [用户名] [数量] 镜像站URL` | 普通用户 | 用临时 Nitter 镜像站测试获取推文。 |
+| `/推文搜索 关键词 [数量]` | 普通用户 | 用 HTML 搜索标签/短语；标签请带 `#`，短语不自动加 `#`。 |
+| `/镜像测试 [用户名] [数量] 镜像站URL` | 管理员 | 用临时 Nitter 镜像站测试获取推文。 |
 | `/推文状态` | 管理员 | 查看调度器状态、分组、目标、无效项和推送记录索引数。 |
 | `/推文检查 [分组名]` | 管理员 | 立即执行一次当前会话有权限的分组检查。 |
-| `/推文缓存清理` | 管理员 | 清理普通图片/视频缓存，不删除暂存队列媒体。 |
+| `/推文缓存清理` | 管理员 | 清理普通图片/视频缓存。 |
 | `/推文记录清理 确认` | 管理员 | 清理全部分组推送记录；也支持指定分组。 |
-| `/推文队列 [分组名]` | 管理员 | 查看暂存队列数量、失败重试数量和发布时间。 |
-| `/推文发布 [分组名]` | 管理员 | 立即发布暂存队列中的推文。 |
 | `/订阅列表` | 管理员 | 查看默认分组有效账号、重复项和无效项。 |
 | `/订阅导入 账号1,账号2 [分组名]` | 管理员 | 批量追加订阅账号。 |
 | `/订阅删除 账号1,账号2 [分组名]` | 管理员 | 批量删除订阅账号。 |
-| `/订阅导出` | 管理员 | 按分组导出订阅账号。 |
+| `/订阅导出 [分组]` | 管理员 | 导出博主/标签订阅；可指定分组名。 |
 | `/订阅去重` | 管理员 | 规范化并去重默认分组关注账号。 |
 
 ## 常用配置
 
 这里只列日常最常调整的项；完整默认值和 WebUI 文案见 [_conf_schema.json](./_conf_schema.json)。
 
+### 实例配置
+
 | 配置 | 说明 |
 | --- | --- |
-| `instances` | Nitter 实例列表，按顺序尝试，建议把自建实例放在第一位。 |
+| `instances` | 博主 RSS 列表；默认 `https://nitter.net`，可配多个。长期请改自建。 |
+| `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余 + 自动门禁）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
+| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后会使用 `search_instances` 获取博主推文。⚠️ 占用搜索资源，增加 429 风险。推荐：配置多个 RSS 镜像。 |
+| `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试，提升容错能力。 |
+
+**📖 详细说明：** [Nitter 实例配置指南](./docs/instances-guide.md) - RSS vs HTML 架构、默认配置、回退机制、容错策略
+
+### 基础配置
+
+| 配置 | 说明 |
+| --- | --- |
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数。 |
-| `filter_reposts_enabled` | 是否过滤博主转发他人的推文，默认开启。 |
+| `filter_reposts_enabled` | 是否在博主后台检查中过滤转发，默认开启；手动命令不受影响。 |
+
+### 推送配置
+
+| 配置 | 说明 |
+| --- | --- |
 | `schedule_enabled` | 后台检查总开关；关闭后不会触发分组间隔检查和每日检查。 |
-| `tweet_groups` | 用户分组列表，配置关注账号、推送目标、间隔检查、每日检查和暂存开关。 |
-| `scheduled_fetch_limit` | 后台检查时每个账号拉取最近多少条用于对比。 |
+| `tweet_groups` | 用户分组列表，配置关注账号、推送目标、间隔检查和每日检查。 |
 | `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
 | `merge_tweet_threshold` | QQ/OneBot 新推文总数达到多少条时启用合并转发；`0` 关闭。 |
-| `deferred_publish_times` | 暂存队列发布时间列表，格式 `HH:MM`。 |
+
+### 媒体与 AI
+
+| 配置 | 说明 |
+| --- | --- |
 | `send_image_attachments` | 是否发送图片附件，默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
+| `max_media_per_tweet` | 单条推文最多准备和发送的媒体数量；设为 `0` 时分组”仅媒体”自动回退完整内容。 |
 | `translate_enabled` | 是否翻译非中文推文。 |
-| `comment_enabled` | 是否按概率追加 AI 评论。 |
-| `vision_enabled` | 是否启用 AI 识图；结果主要作为 AI 评论上下文。 |
 
 ## 行为要点
 
 - 首次启用某个账号时，只记录当前 RSS 中已有推文 ID，不推送历史内容。
-- `filter_reposts_enabled` 开启时，会比较 RSS item 主链接作者和订阅账号；作者不同则视为转发并过滤，无法解析作者时保留。
-- 推送记录按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。
-- 手动 `/推文 用户名 数量` 不写入推送记录；后台检查和暂存发布会写入推送记录。
+- 标签组首轮真正空结果不初始化；首轮有原始结果但全部被过滤时记录空扫描水位，下一轮符合条件的新帖会直接进入推送流程。
+- 博主后台检查启用 `filter_reposts_enabled` 时，会比较 RSS item 主链接作者和订阅账号；作者不同则视为转发并过滤，无法解析作者时保留。手动 `/推文`、`/镜像测试` 始终保留转发。
+- seen 去重 ID 按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。push history 是独立的成功/部分失败发送快照，供 WebUI 历史查看和重推。
+- 手动 `/推文 用户名 数量` 不写入 seen、扫描基准或 push history；后台检查会比较当前 RSS 首屏约 20 条与该账号的 seen 记录，首屏未命中上次最多 20 个基准 ID 时按 `Min-Id` 翻页直到命中任意基准，并发送所有差集。
 - QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
-- 附件失败不会阻止推文文本和原文链接发送；普通媒体发送后会自动清理，暂存媒体会保留到发布流程处理。
-- `scheduled_fetch_limit` 是每个账号本轮最多保留的有效推文数；Nitter RSS 会按 `Min-Id` 游标翻页，不是固定只拉一页。
+- 附件失败不会阻止推文文本和原文链接发送；普通媒体发送后会自动清理。
+- 后台新推文按 RSS 返回顺序发送；每条消息只标注 `@作者`，不显示推文序号或账号进度。每个目标本轮第一条消息会显示博主数、推文数和分组概括。
+- 分组开启“仅媒体”后，只有抓取结果确认有当前作者媒体且至少一个附件准备成功的推文会发送；博主 RSS 与标签 HTML 搜索使用各自解析出的作者媒体标记。媒体临时失败会在下轮重试，明确被全局类型、数量、时长、大小或分辨率策略排除的推文会跳过。全局媒体不可用时只在 WebUI 和日志提示并回退完整内容。
 
 ## 更多说明
 
-- [进阶说明](./docs/advanced.md)：平台差异、流程图、完整配置参考、缓存/推送记录/暂存发布细节。
+- [进阶说明](./docs/advanced.md)：平台差异、流程图、完整配置参考、缓存和推送记录细节。
 - [_conf_schema.json](./_conf_schema.json)：插件配置默认值和 AstrBot WebUI 文案。
 - [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
 

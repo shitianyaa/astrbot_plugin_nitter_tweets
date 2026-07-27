@@ -8,14 +8,14 @@ try:
         GLOBAL_GROUP_ID,
         normalize_stable_group_id,
     )
-    from ..shared import normalize_username
+    from ..shared import normalize_seen_account_key
 except ImportError:
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         GLOBAL_GROUP_ID,
         normalize_stable_group_id,
     )
-    from shared import normalize_username
+    from shared import normalize_seen_account_key
 
 
 KV_KEY_SEEN = "nitter_seen_status_ids"
@@ -109,7 +109,7 @@ class SeenStore:
     def normalize_seen_map(value: dict) -> dict[str, list[str]]:
         result: dict[str, list[str]] = {}
         for key, ids in value.items():
-            username = normalize_username(str(key))
+            username = normalize_seen_account_key(str(key))
             if not username or not isinstance(ids, list):
                 continue
             result[username] = [str(item) for item in ids if item]

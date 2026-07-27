@@ -10,7 +10,6 @@ except ZoneInfoNotFoundError:
     CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 
-
 def _format_limited_values(
     values: list[str],
     limit: int = 10,
@@ -27,6 +26,7 @@ def format_merge_threshold(threshold: int) -> str:
         return "已关闭"
     return f"{threshold} 条及以上"
 
+
 def format_group_schedule(group: Any) -> str:
     parts = []
     if group.interval_check_enabled:
@@ -34,25 +34,19 @@ def format_group_schedule(group: Any) -> str:
     if group.daily_check_enabled:
         if group.daily_check_times:
             times = ", ".join(
-                f"{hour:02d}:{minute:02d}"
-                for hour, minute in group.daily_check_times
+                f"{hour:02d}:{minute:02d}" for hour, minute in group.daily_check_times
             )
             parts.append(f"每日 {times}")
         else:
             parts.append("每日定点未配置时间")
     return " / ".join(parts) if parts else "未配置定时规则"
 
-def format_pending_user_counts(user_counts: list[tuple[str, int]]) -> str:
-    values = [
-        f"@{username} {count} 条"
-        for username, count in user_counts
-    ]
-    return _format_limited_values(values, separator="; ")
 
 def format_daily_times(times: list[tuple[int, int]]) -> str:
     if not times:
         return "未配置"
     return ", ".join(f"{hour:02d}:{minute:02d}" for hour, minute in times)
+
 
 def format_next_daily_time(times: list[tuple[int, int]]) -> str:
     if not times:
@@ -78,7 +72,6 @@ def format_next_daily_time(times: list[tuple[int, int]]) -> str:
         prefix = next_time.strftime("%Y-%m-%d")
     return f"{prefix} {next_time:%H:%M}"
 
+
 def format_timestamp(timestamp: int) -> str:
-    return dt.datetime.fromtimestamp(timestamp, CN_TZ).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    return dt.datetime.fromtimestamp(timestamp, CN_TZ).strftime("%Y-%m-%d %H:%M:%S")

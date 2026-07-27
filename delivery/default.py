@@ -17,6 +17,14 @@ from .outcomes import SendOutcome
 
 
 class DefaultDeliveryAdapter(DeliveryAdapter):
+    @staticmethod
+    def _message_chain(components, *, link_style: str = "plain") -> MessageChain:
+        chain = MessageChain(components)
+        # Only enable markdown when caller asked for telegram_md; never override plain.
+        if link_style == "telegram_md" and hasattr(chain, "use_markdown"):
+            chain.use_markdown(True)
+        return chain
+
     async def send_event(
         self,
         event,
@@ -26,11 +34,13 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
-        if (
-            self._should_split_direct_media(sender, tweets)
-        ):
+        if self._should_split_direct_media(sender, tweets):
             return await self._send_split_direct_videos_event(
                 event,
                 username,
@@ -39,11 +49,15 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 notices=notices,
                 header_text=header_text,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         attempt = await sender._send_event_chain(
             event,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -51,7 +65,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     start_index=tweet_start_index,
                     notices=notices,
                     header_text=header_text,
-                )
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                ),
+                link_style=link_style,
             ),
             "manual direct tweets",
         )
@@ -63,7 +82,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         if sender._has_attached_videos(tweets):
             retry_attempt = await sender._send_event_chain(
                 event,
-                MessageChain(
+                self._message_chain(
                     sender.renderer.build_direct_components(
                         username,
                         instance,
@@ -72,7 +91,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         exclude_videos=True,
                         notices=notices,
                         header_text=header_text,
-                    )
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    ),
+                    link_style=link_style,
                 ),
                 "manual direct tweets without videos",
             )
@@ -92,6 +116,10 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             notices=notices,
             header_text=header_text,
             tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
 
     async def send_summary_to_umo(self, context, umo: str, summary: str) -> SendOutcome:
@@ -101,7 +129,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         attempt = await self.sender._send_context_message(
             context,
             umo,
-            MessageChain([Plain(text)]),
+            self._message_chain([Plain(text)]),
             "scheduled summary",
         )
         return SendOutcome(
@@ -121,11 +149,13 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
-        if (
-            self._should_split_direct_media(sender, tweets)
-        ):
+        if self._should_split_direct_media(sender, tweets):
             return await self._send_split_direct_videos_to_umo(
                 context,
                 umo,
@@ -136,12 +166,16 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 header_text=header_text,
                 batch_summary=batch_summary,
                 tweet_start_index=tweet_start_index,
+                media_only=media_only,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+                link_style=link_style,
             )
 
         attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -150,7 +184,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     group_label=group_label,
                     header_text=header_text,
                     batch_summary=batch_summary,
-                )
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                ),
+                link_style=link_style,
             ),
             "direct scheduled tweets",
         )
@@ -163,11 +202,20 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 warning=attempt.warning,
             )
 
+        if media_only:
+            return SendOutcome(
+                success=False,
+                error=attempt.error,
+                warning=attempt.warning,
+                delivery_status="failed",
+                delivery_error=attempt.error,
+            )
+
         if sender._has_attached_videos(tweets):
             retry_attempt = await sender._send_context_message(
                 context,
                 umo,
-                MessageChain(
+                self._message_chain(
                     sender.renderer.build_direct_components(
                         username,
                         instance,
@@ -177,7 +225,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                         group_label=group_label,
                         header_text=header_text,
                         batch_summary=batch_summary,
-                    )
+                        media_only=media_only,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
+                    ),
+                    link_style=link_style,
                 ),
                 "direct scheduled tweets without videos",
             )
@@ -186,23 +239,26 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     f"[NitterTweets] 初次失败后已向 {umo} 发送去除视频的定时直发推文"
                 )
                 return SendOutcome(
-                    success=True,
+                    success=not media_only,
                     error=attempt.error,
                     delivery_status="partial_failed",
                     delivery_error=attempt.error,
                 )
             if not retry_attempt.retryable:
+                retry_accepted = retry_attempt.uncertain
                 return SendOutcome(
-                    success=retry_attempt.uncertain,
+                    success=retry_accepted and not media_only,
                     error=retry_attempt.error or attempt.error,
                     warning=retry_attempt.warning,
+                    delivery_status=("partial_failed" if retry_accepted else "failed"),
+                    delivery_error=retry_attempt.error or attempt.error,
                 )
             attempt = retry_attempt
 
         fallback = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 [
                     Plain(
                         sender.renderer.format_plain(
@@ -213,24 +269,24 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             group_label=group_label,
                             header_text=header_text,
                             batch_summary=batch_summary,
+                            media_only=media_only,
+                            omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
-                ]
+                ],
+                link_style=link_style,
             ),
             "direct scheduled fallback",
         )
+        fallback_accepted = fallback.success or fallback.uncertain
         return SendOutcome(
-            success=fallback.success or fallback.uncertain,
+            success=fallback_accepted and not media_only,
             error=fallback.error or attempt.error,
             warning=fallback.warning,
-            delivery_status=(
-                "partial_failed"
-                if (fallback.success or fallback.uncertain) and (attempt.error or fallback.error)
-                else "success"
-            ),
-            delivery_error=(attempt.error or fallback.error)
-            if (fallback.success or fallback.uncertain)
-            else "",
+            delivery_status=("partial_failed" if fallback_accepted else "failed"),
+            delivery_error=fallback.error or attempt.error,
         )
 
     async def _send_split_direct_videos_to_umo(
@@ -244,12 +300,16 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         header_text: str = "",
         batch_summary: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> SendOutcome:
         sender = self.sender
         text_attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain(
+            self._message_chain(
                 sender.renderer.build_direct_components(
                     username,
                     instance,
@@ -260,16 +320,25 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     group_label=group_label,
                     header_text=header_text,
                     batch_summary=batch_summary,
-                )
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                ),
+                link_style=link_style,
             ),
             "QQ direct scheduled tweet text before videos",
-            )
+        )
+        text_warning = ""
         if not text_attempt.success:
-            return SendOutcome(
-                success=text_attempt.uncertain,
-                error=text_attempt.error,
-                warning=text_attempt.warning,
-            )
+            if media_only and text_attempt.uncertain:
+                text_warning = text_attempt.warning
+            else:
+                return SendOutcome(
+                    success=text_attempt.uncertain,
+                    error=text_attempt.error,
+                    warning=text_attempt.warning,
+                )
 
         image_components = sender.renderer.build_direct_image_components(tweets)
         image_error = ""
@@ -287,7 +356,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 continue
             image_error = image_attempt.error
             logger.warning(
-                "[NitterTweets] QQ 直发图片附件失败，正文已发送: "
+                "[NitterTweets] QQ 直发图片附件失败，主体文本已发送: "
                 f"target={umo}, image={offset}/{len(image_components)}, "
                 f"error={image_error}"
             )
@@ -300,7 +369,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_attempt = await sender._send_context_message(
                 context,
                 umo,
-                MessageChain([video_component]),
+                self._message_chain([video_component], link_style=link_style),
                 f"QQ direct scheduled tweet video {offset}/{len(video_components)}",
             )
             if video_attempt.success or video_attempt.uncertain:
@@ -309,22 +378,39 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             video_error = video_attempt.error
             break
         else:
-            delivery_error = video_error or image_error
+            delivery_error = image_error
+            # 视频全部送达时，图片失败不应让整批重发。但没有视频组件且图片全部
+            # 失败时 media_only 没有任何媒体送达，不能算完成，否则会推进 seen 漏推。
+            # 一个媒体组件都没有时同理：不能凭“没有失败”判定完成。
+            has_media = bool(video_components) or bool(image_components)
+            media_delivered = has_media and (bool(video_components) or not image_error)
             return SendOutcome(
-                success=True,
+                success=not (media_only and not media_delivered),
                 error=delivery_error,
-                warning=video_warning or image_warning,
+                warning=video_warning or image_warning or text_warning,
                 delivery_status="partial_failed" if delivery_error else "success",
                 delivery_error=delivery_error,
             )
 
-        notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
+        if media_only:
+            delivery_error = video_error or image_error
+            return SendOutcome(
+                success=False,
+                error=delivery_error,
+                warning=video_warning or image_warning or text_warning,
+                delivery_status="partial_failed" if delivery_error else "success",
+                delivery_error=delivery_error,
+            )
+
+        notice_components = sender.renderer.build_video_omitted_notice_components(
+            tweets
+        )
         if not notice_components:
             delivery_error = video_error or image_error
             return SendOutcome(
                 success=True,
                 error=delivery_error,
-                warning=video_warning or image_warning,
+                warning=video_warning or image_warning or text_warning,
                 delivery_status="partial_failed" if delivery_error else "success",
                 delivery_error=delivery_error,
             )
@@ -332,14 +418,16 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notice_attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain(notice_components),
+            self._message_chain(notice_components, link_style=link_style),
             "QQ direct scheduled video omitted notice",
         )
         delivery_error = video_error or image_error
         return SendOutcome(
             success=True,
             error=delivery_error,
-            warning=notice_attempt.warning or video_warning or image_warning,
+            warning=(
+                notice_attempt.warning or video_warning or image_warning or text_warning
+            ),
             delivery_status="partial_failed" if delivery_error else "success",
             delivery_error=delivery_error,
         )
@@ -353,6 +441,10 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         text_components = sender.renderer.build_direct_components(
@@ -364,28 +456,39 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             include_images=False,
             notices=notices,
             header_text=header_text,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
         )
         text_attempt = await sender._send_event_chain(
             event,
-            MessageChain(text_components),
+            self._message_chain(text_components, link_style=link_style),
             "manual QQ direct text before videos",
         )
         if not text_attempt.success:
             if text_attempt.uncertain:
-                return True
-            if not text_attempt.retryable:
+                if not media_only:
+                    return True
+            elif not text_attempt.retryable:
                 return False
-            return await self._send_event_fallback(
-                event,
-                username,
-                instance,
-                tweets,
-                notices=notices,
-                header_text=header_text,
-                tweet_start_index=tweet_start_index,
-            )
+            elif not media_only:
+                return await self._send_event_fallback(
+                    event,
+                    username,
+                    instance,
+                    tweets,
+                    notices=notices,
+                    header_text=header_text,
+                    tweet_start_index=tweet_start_index,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                )
 
         image_components = sender.renderer.build_direct_image_components(tweets)
+        image_failed = False
         for offset, image_component in enumerate(image_components, start=1):
             image_attempt = await self._send_event_component_with_retry(
                 sender,
@@ -399,16 +502,18 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 "[NitterTweets] QQ 手动直发图片附件失败，正文已发送: "
                 f"image={offset}/{len(image_components)}, error={image_attempt.error}"
             )
+            image_failed = True
             break
 
         video_components = sender.renderer.build_direct_video_components(tweets)
         if not video_components:
-            return True
+            # media_only 必须真的送出媒体：没有图片组件时不能凭“没有失败”判定完成。
+            return (bool(image_components) and not image_failed) or not media_only
 
         for offset, video_component in enumerate(video_components, start=1):
             video_attempt = await sender._send_event_chain(
                 event,
-                MessageChain([video_component]),
+                self._message_chain([video_component], link_style=link_style),
                 f"manual QQ direct video {offset}/{len(video_components)}",
             )
             if video_attempt.success or video_attempt.uncertain:
@@ -417,14 +522,19 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 return False
             break
         else:
-            return True
+            return not (media_only and image_failed)
 
-        notice_components = sender.renderer.build_video_omitted_notice_components(tweets)
+        if media_only:
+            return False
+
+        notice_components = sender.renderer.build_video_omitted_notice_components(
+            tweets
+        )
         if not notice_components:
             return True
         notice_attempt = await sender._send_event_chain(
             event,
-            MessageChain(notice_components),
+            self._message_chain(notice_components, link_style=link_style),
             "manual QQ direct video omitted notice",
         )
         return notice_attempt.success or notice_attempt.uncertain
@@ -436,11 +546,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         umo: str,
         component,
         label: str,
+        link_style: str = "plain",
     ):
         attempt = await sender._send_context_message(
             context,
             umo,
-            MessageChain([component]),
+            self._message_chain([component], link_style=link_style),
             label,
         )
         if attempt.success or attempt.uncertain or not attempt.retryable:
@@ -448,7 +559,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         return await sender._send_context_message(
             context,
             umo,
-            MessageChain([component]),
+            self._message_chain([component], link_style=link_style),
             label,
         )
 
@@ -458,17 +569,18 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         event,
         component,
         label: str,
+        link_style: str = "plain",
     ):
         attempt = await sender._send_event_chain(
             event,
-            MessageChain([component]),
+            self._message_chain([component], link_style=link_style),
             label,
         )
         if attempt.success or attempt.uncertain or not attempt.retryable:
             return attempt
         return await sender._send_event_chain(
             event,
-            MessageChain([component]),
+            self._message_chain([component], link_style=link_style),
             label,
         )
 
@@ -495,11 +607,15 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         notices: list[str] | None = None,
         header_text: str = "",
         tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
     ) -> bool:
         sender = self.sender
         attempt = await sender._send_event_chain(
             event,
-            MessageChain(
+            self._message_chain(
                 [
                     Plain(
                         sender.renderer.format_plain(
@@ -509,9 +625,14 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                             start_index=tweet_start_index,
                             notices=notices,
                             header_text=header_text,
+                            media_only=media_only,
+                            omit_status_url=omit_status_url,
+                            hide_original_when_translated=hide_original_when_translated,
+                            link_style=link_style,
                         )
                     )
-                ]
+                ],
+                link_style=link_style,
             ),
             "manual direct tweet fallback",
         )

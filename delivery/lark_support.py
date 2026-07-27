@@ -136,9 +136,7 @@ def plain_text_from_components(components) -> str:
 
 def media_components(components) -> list:
     return [
-        component
-        for component in components
-        if isinstance(component, (Image, Video))
+        component for component in components if isinstance(component, (Image, Video))
     ]
 
 
@@ -179,7 +177,7 @@ def lark_tweet_post_title(
     title = str(header_text or "").strip()
     if title:
         return _lark_post_title(title)
-    return _lark_post_title(f"@{username} 最近 {tweet_count} 条推文")
+    return _lark_post_title(f"@{username}")
 
 
 def _lark_post_append_text_line(content: list[list[dict]], line: str) -> None:
@@ -285,10 +283,10 @@ async def send_lark_post(
                 image_path = _local_image_path(component)
                 if image_path is None:
                     error = "Lark post 图片不是本地文件"
-                    logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
-                    return LarkSendAttempt(
-                        success=False, retryable=True, error=error
+                    logger.warning(
+                        f"[NitterTweets] 发送失败: label={label}, error={error}"
                     )
+                    return LarkSendAttempt(success=False, retryable=True, error=error)
                 image_key = await _upload_lark_image(client, image_path, label)
                 content_lines.append([{"tag": "img", "image_key": image_key}])
 
@@ -489,10 +487,10 @@ async def send_lark_text(
             else:
                 if not receive_id or not receive_id_type:
                     error = "Lark receive_id 或 receive_id_type 缺失"
-                    logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
-                    return LarkSendAttempt(
-                        success=False, retryable=True, error=error
+                    logger.warning(
+                        f"[NitterTweets] 发送失败: label={label}, error={error}"
                     )
+                    return LarkSendAttempt(success=False, retryable=True, error=error)
                 request = (
                     CreateMessageRequest.builder()
                     .receive_id_type(receive_id_type)
