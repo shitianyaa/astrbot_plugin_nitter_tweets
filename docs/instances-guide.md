@@ -103,7 +103,7 @@
 
 ### 配置项
 
-**`user_html_fallback`**（默认 `false`，WebUI 不可见）
+**`user_html_fallback`**（默认 `false`，WebUI 可见）
 
 ### 行为说明
 
@@ -118,15 +118,15 @@
 5. ✅ 不会自动切换到 search_instances
 ```
 
-**回退行为（`user_html_fallback: true`，不推荐）：**
+**回退行为（`user_html_fallback: true`）：**
 ```
-1. 尝试所有 instances → 全部失败
-2. ⚠️ 回退到 search_instances
-3. 尝试 HTML /username 路径
+1. 尝试所有 instances（RSS）→ 全部失败
+2. ⚠️ 自动回退到 search_instances（HTML /username 路径）
+3. 尝试 HTML 搜索实例的用户页
 4. 成功则返回结果
 ```
 
-### 为什么不推荐开启回退？
+### 为什么默认关闭？
 
 | 问题 | 影响 |
 |------|------|
@@ -135,7 +135,7 @@
 | **降低搜索成功率** | 博主回退占用可能导致真正的搜索失败 |
 | **错误信息混淆** | 难以区分是 RSS 问题还是搜索问题 |
 
-### 何时可以临时开启？
+### 何时可以开启？
 
 **仅在以下情况下考虑：**
 1. ✅ 你的 `instances` 完全不可用（所有 RSS 镜像都挂了）
@@ -143,10 +143,15 @@
 3. ✅ 你的 `search_instances` 有足够的配额（自建或低频使用）
 4. ✅ 你理解这只是临时应急方案
 
-**开启后尽快：**
-1. 修复或更换 `instances` 中的 RSS 镜像
-2. 关闭 `user_html_fallback`
-3. 监控 `search_instances` 的 429 限流情况
+**推荐长期方案：**
+1. 在 `instances` 中配置多个 RSS 镜像（推荐 2-3 个）
+2. 或者自建 Nitter 实例
+3. 定期检查实例健康度
+
+**开启后需要监控：**
+1. `search_instances` 的 429 限流情况
+2. 搜索命令的成功率变化
+3. 博主订阅的响应延迟
 
 ---
 

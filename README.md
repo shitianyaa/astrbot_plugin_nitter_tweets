@@ -174,7 +174,7 @@ WebUI 不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider�
 | --- | --- |
 | `instances` | 博主 RSS 列表；默认 `https://nitter.net`，可配多个。长期请改自建。 |
 | `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余 + 自动门禁）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
-| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`，不推荐）。开启会占用搜索资源，增加 429 风险。 |
+| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后会使用 `search_instances` 获取博主推文。⚠️ 占用搜索资源，增加 429 风险。推荐：配置多个 RSS 镜像。 |
 | `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试，提升容错能力。 |
 
 **📖 详细说明：** [Nitter 实例配置指南](./docs/instances-guide.md) - RSS vs HTML 架构、默认配置、回退机制、容错策略

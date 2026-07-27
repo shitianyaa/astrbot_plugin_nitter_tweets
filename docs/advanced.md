@@ -110,7 +110,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | --- | --- |
 | `instances` | 博主 RSS 实例列表；默认 `https://nitter.net`，可配多个。建议自建。 |
 | `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
-| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`，WebUI 不可见，不推荐开启）。开启会占用搜索资源，增加 429 风险。详见 [实例配置指南](./instances-guide.md)。 |
+| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后 RSS 全部失败时会尝试使用 `search_instances` 的 HTML 用户页获取博主推文。⚠️ 会占用搜索资源，增加 429 风险，降低搜索成功率。推荐方案：在 `instances` 中配置多个 RSS 镜像。详见 [实例配置指南](./instances-guide.md)。 |
 | `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试（5s → 10s → 15s 渐进式），提升容错能力。 |
 | `retry_delay_base` | 全局重试基础延迟秒数（默认 `5.0`）。第 N 轮延迟 = N × retry_delay_base。 |
 | `retry_delay_on_cooldown` | 全部实例冷却时的重试延迟秒数（默认 `10.0`）。 |

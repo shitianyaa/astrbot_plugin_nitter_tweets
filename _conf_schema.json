@@ -61,11 +61,10 @@
         "hint": "仅影响博主后台检查：开启后过滤订阅账号转发他人的推文；博主自己发布的引用或评论推文仍会保留。手动 /推文、/镜像测试 不受影响。老配置缺少该项时按开启处理。"
       },
       "user_html_fallback": {
-        "description": "博主 RSS 失败时尝试 HTML 用户页（高级）",
+        "description": "博主 RSS 失败时回退到 HTML",
         "type": "bool",
         "default": false,
-        "hint": "默认关闭。博主请用 instances 配置多个 RSS。开启后仍无独立 HTML 站列表，不会占用 search_instances，实际通常无法回退；留给兼容，不建议打开。",
-        "invisible": true
+        "hint": "默认关闭。RSS 全部失败时会尝试用 search_instances 的 HTML 用户页获取博主推文。⚠️ 开启后博主订阅会占用搜索实例资源，增加 429 限流风险，降低搜索成功率。推荐方案：在 instances 中配置多个 RSS 镜像。详见实例配置指南。"
       },
       "search_enabled": {
         "description": "启用 HTML 搜索",
