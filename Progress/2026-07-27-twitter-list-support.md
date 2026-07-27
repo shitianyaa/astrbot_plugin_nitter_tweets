@@ -95,12 +95,12 @@
 - [x] **额外完成**: `config/compat.py` 迁移逻辑识别 `list` 类型（`TWEET_GROUP_TEMPLATE_KEY_LIST`、`_resolve_tweet_group_type` 支持 `watch_lists`、`_ensure_tweet_group_template_key` 清理冲突字段）。
 
 #### C2. `scheduler/runner_fetch.py`（新增 ~55 行 / 改 ~5 行）
-- [ ] `_fetch_group_user()` 增 list 分支 → `_fetch_group_list()`。
-- [ ] `_fetch_group_list(group, index, list_id, fetch_limit, *, skip_plain_text)`：
+- [x] `_fetch_group_user()` 增 list 分支 → `_fetch_group_list()`。
+- [x] `_fetch_group_list(group, index, account_key, fetch_limit, *, skip_plain_text)`：
   - 调 `html_backend.fetch_list()`。
-  - 返回 `UserFetchResult(username=f"list:{list_id}", ...)` 复用推送/seen 链路。
+  - 返回 `UserFetchResult(username=account_key, ...)` 复用推送/seen 链路。
   - **串行执行**（`is_list_group` 时禁并发，同 tag）。
-- [ ] 核对 `runner_status.py` / `runner_seen.py` 是否需要感知 list 键（大概率复用 tag 路径即可，实施时确认）。
+- [x] 核对 `runner_status.py` / `runner_seen.py` 是否需要感知 list 键：**无需改动**（复用现有 account_key 机制）。
 
 ### Phase D — 配置 Schema
 
