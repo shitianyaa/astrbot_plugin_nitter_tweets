@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from media_support.html_backend.service import HtmlBackendConfig, HtmlNitterService
 
 
