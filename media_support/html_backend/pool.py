@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Instance pool: ordered hosts, skip cooldowns, shared fetch+parse."""
 
 from __future__ import annotations
@@ -280,6 +280,47 @@ class HtmlNitterPool:
         # Unreachable (loop always raises on last attempt)
         raise RuntimeError("fetch_user: exhausted retries")
 
+    def fetch_list(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline with global retry on total failure."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._fetch_list_once(list_id, limit, instance=instance)
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._fetch_list_once(list_id, limit, instance=instance)
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+        # Unreachable (loop always raises on last attempt)
+        raise RuntimeError("fetch_list: exhausted retries")
+
     def _fetch_user_once(
         self,
         username: str,
@@ -442,6 +483,158 @@ class HtmlNitterPool:
             return empty_success_base, empty_success_result
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
 
+    def fetch_list(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline with global retry."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._fetch_list_once(list_id, limit, instance=instance)
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._fetch_list_once(list_id, limit, instance=instance)
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+            except ValueError:
+                # Validation errors should not retry
+                raise
+        raise RuntimeError("fetch_list: exhausted retries")
+
+    def _fetch_list_once(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
+        list_id_str = str(list_id).strip()
+        if not list_id_str:
+            raise ValueError("empty list_id")
+
+        errors: list[str] = []
+        empty_success_base: str | None = None
+        empty_success_result = HtmlSearchResult()
+        hosts = self._hosts_for_rotation(instance)
+        if not hosts:
+            raise RuntimeError("HTML list fetch unavailable: all instances in cooldown")
+
+        total = len(hosts)
+        for index, base in enumerate(hosts, 1):
+            host = self.session.host_of(base)
+            try:
+                self.log(
+                    f"list try {index}/{total} host={host} list_id={list_id_str}"
+                )
+                tweets = self._as_search_result(
+                    self._paginate_list(base, list_id_str, limit)
+                )
+                if tweets:
+                    self.scores.record_success(host)
+                    if index > 1:
+                        self.log(
+                            f"list ok after rotate host={host} tried={index}/{total}"
+                        )
+                    return base, tweets.limited(limit)
+                empty_success_base = base
+                empty_success_result.raw_item_count += tweets.raw_item_count
+                empty_success_result.retweet_filtered += tweets.retweet_filtered
+                # Empty list: soft success (valid but no content)
+                self.scores.record_success(host, soft=True)
+                errors.append(f"{base}: empty")
+                self.log(f"list empty host={host}, rotate next ({index}/{total})")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{base}: {exc}")
+                self.log(
+                    f"list fail host={host}, rotate next ({index}/{total}): {exc}"
+                )
+
+        if empty_success_base is not None:
+            self.log(
+                f"list empty after rotate hosts={total}, "
+                f"list_id={list_id_str}, "
+                f"last_empty={self.session.host_of(empty_success_base)}"
+            )
+            return empty_success_base, empty_success_result
+        raise RuntimeError("HTML list failed: " + "; ".join(errors[-4:]))
+
+    def _paginate_list(self, base: str, list_id: str, limit: int) -> HtmlSearchResult:
+        """Paginate Twitter List timeline (same HTML structure as user timeline)."""
+        tweets: list[TweetItem] = []
+        seen: set[str] = set()
+        cursor = ""
+        raw_count = 0
+        retweet_filtered = 0
+
+        max_pages = self.config.max_pages
+        for page_num in range(max(1, max_pages)):
+            # Nitter List path: /i/lists/{list_id}
+            path = f"/i/lists/{quote(list_id)}"
+            if cursor:
+                path += "?" + urlencode({"cursor": cursor})
+
+            body = self._get_html(base, path)
+            page = parse_timeline_html(
+                body.decode("utf-8", "replace"), base, source=f"list:{base}"
+            )
+
+            raw_count += len(page.tweets)
+
+            for t in page.tweets:
+                k = t.status_id or t.link
+                if k in seen:
+                    continue
+
+                # Filter reposts if enabled
+                if self.config.filter_reposts and t.is_retweet:
+                    retweet_filtered += 1
+                    continue
+
+                seen.add(k)
+                tweets.append(t)
+                if len(tweets) >= limit:
+                    return HtmlSearchResult(
+                        tweets[:limit],
+                        raw_item_count=raw_count,
+                        retweet_filtered=retweet_filtered,
+                    )
+
+            if not page.next_cursor or page.next_cursor == cursor:
+                break
+            cursor = page.next_cursor
+
+        return HtmlSearchResult(
+            tweets,
+            raw_item_count=raw_count,
+            retweet_filtered=retweet_filtered,
+        )
+
     @staticmethod
     def _as_search_result(value) -> HtmlSearchResult:
         """Normalize legacy or mocked list results without changing the API."""
@@ -478,6 +671,78 @@ class HtmlNitterPool:
             if not page.next_cursor or page.next_cursor == cursor:
                 break
             cursor = page.next_cursor
+        return tweets
+
+    def _fetch_list_once(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """One round of List fetch across instance rotation."""
+        errors: list[str] = []
+        hosts = self._hosts_for_rotation(instance)
+        if not hosts:
+            raise RuntimeError("HTML List unavailable: all instances in cooldown")
+
+        total = len(hosts)
+        for index, base in enumerate(hosts, 1):
+            host = self.session.host_of(base)
+            try:
+                self.log(
+                    f"list try {index}/{total} host={host} list_id={list_id}"
+                )
+                tweets = self._paginate_list(base, list_id, limit)
+                self.log(f"list OK: {host} got {len(tweets)} tweets")
+                return (base, tweets)
+            except Exception as exc:
+                err = f"{host}: {exc}"
+                errors.append(err)
+                self.log(f"list failed: {err}")
+                continue
+        raise RuntimeError("HTML List failed: " + "; ".join(errors[-4:]))
+
+    def _paginate_list(
+        self,
+        base: str,
+        list_id: str,
+        limit: int,
+    ) -> list[TweetItem]:
+        """Paginate Twitter List timeline (same HTML structure as user timeline)."""
+        tweets: list[TweetItem] = []
+        seen: set[str] = set()
+        cursor = ""
+        max_pages = max(1, self.config.max_pages)
+
+        for page_num in range(max_pages):
+            # Nitter List path: /i/lists/{list_id}
+            from urllib.parse import quote, urlencode
+            path = f"/i/lists/{quote(list_id)}"
+            if cursor:
+                path += "?" + urlencode({"cursor": cursor})
+
+            self.log(f"list paginate: page {page_num + 1}/{max_pages} cursor={cursor[:20] if cursor else 'none'}")
+            body = self._get_html(base, path)
+
+            from .parser import parse_timeline_html
+            page = parse_timeline_html(
+                body.decode("utf-8", "replace"), base, source=f"list:{base}"
+            )
+
+            for t in page.tweets:
+                k = t.status_id or t.link
+                if k in seen:
+                    continue
+                seen.add(k)
+                tweets.append(t)
+                if len(tweets) >= limit:
+                    return tweets
+
+            if not page.next_cursor or page.next_cursor == cursor:
+                break
+            cursor = page.next_cursor
+
         return tweets
 
     def _paginate_search(
@@ -546,3 +811,4 @@ class HtmlNitterPool:
         tweets.raw_item_count = raw_item_count
         tweets.retweet_filtered = retweet_filtered
         return tweets
+

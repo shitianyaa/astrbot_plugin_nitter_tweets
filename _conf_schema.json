@@ -337,13 +337,19 @@
                 "type": "string",
                 "default": "blogger",
                 "invisible": true,
-                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_users": {
                 "description": "关注账号",
                 "type": "list",
                 "default": [],
                 "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+              },
+              "watch_lists": {
+                "description": "Twitter List 订阅",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。首次启用只记录基线，不推送历史。建议设置 max_tweets_per_check 防刷屏。"
               },
               "push_targets": {
                 "description": "分组推送目标",
@@ -468,7 +474,7 @@
                 "type": "string",
                 "default": "tag",
                 "invisible": true,
-                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_queries": {
                 "description": "搜索订阅",
