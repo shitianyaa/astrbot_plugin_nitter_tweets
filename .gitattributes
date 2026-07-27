@@ -1,0 +1,38 @@
+# Git attributes for astrbot_plugin_nitter_tweets
+
+# Exclude test files and development artifacts from GitHub release archives
+tests/ export-ignore
+test/ export-ignore
+.github/ export-ignore
+.pytest_cache/ export-ignore
+.ruff_cache/ export-ignore
+.codegraph/ export-ignore
+.pi/ export-ignore
+.pi-subagents/ export-ignore
+Progress/ export-ignore
+*.pyc export-ignore
+__pycache__/ export-ignore
+
+# Exclude development and diagnostic files
+diagnose_config.py export-ignore
+fix_config_structure.py export-ignore
+setup_proxy_guide.py export-ignore
+test_*.py export-ignore
+*_review.diff export-ignore
+*.log export-ignore
+CODE_REVIEW_REPORT.md export-ignore
+FIXES_REVIEW_*.md export-ignore
+
+# Normalize line endings
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+
+# Windows-specific files
+*.bat text eol=crlf
+*.ps1 text eol=crlf
