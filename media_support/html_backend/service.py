@@ -161,3 +161,15 @@ class HtmlNitterService:
             instance=instance,
             max_pages=max_pages,
         )
+
+    def fetch_list(
+        self,
+        list_id: str,
+        limit: int = 5,
+        *,
+        instance: str | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline (shares search pool)."""
+        if not self.config.search_enabled:
+            raise RuntimeError("search_enabled is false")
+        return self.search_pool.fetch_list(list_id, limit, instance=instance)
