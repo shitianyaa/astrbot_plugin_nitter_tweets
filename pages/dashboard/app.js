@@ -781,7 +781,7 @@ function buildWatchListSection(group, draft) {
     el("div", { className: "section-head" }, [el("h3", { text: "List 订阅" })]),
     el("p", {
       className: "helper-text",
-      text: "只接受正整数 List ID；可一次输入多个，重复或非法 ID 会直接提示。",
+      text: "只接受正整数 List ID；可一次输入多个，重复或非法 ID 会直接提示。刚创建不久的 List 往往要过一段时间才会被 Nitter 收录，空结果时先等再查。",
     }),
     el("p", {
       className: "helper-text",

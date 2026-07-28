@@ -79,7 +79,7 @@ tweet_groups:
 2. `group_type` 与字段对应：`blogger`→`watch_users`，`tag`→`watch_queries`，`list`→`watch_lists`（勿混用）
 3. **首次只记 seen，不推历史**
 
-标签 / List 示例、风险与调度细节：[进阶说明](./docs/advanced.md) · [List 指南](./docs/twitter-lists.md)。
+标签 / List 示例、风险与调度细节：[进阶说明](./docs/advanced.md) · [List 指南](./docs/twitter-lists.md)。**新建不久的 List 要过段时间才会被 Nitter 收录**，空结果先等再查。
 
 ### 3. 可选
 

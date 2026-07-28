@@ -622,7 +622,7 @@
                 "description": "Twitter List 订阅",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
+                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。刚创建不久的 List 往往要过一段时间才会被 Nitter 镜像收录/搜到，空结果时先等再查，不必立刻当配置错误。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
               },
               "push_targets": {
                 "description": "分组推送目标",
