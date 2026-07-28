@@ -646,11 +646,13 @@ class SchedulerConfigReader:
                 continue
             raw_count += 1
 
-            if (
-                not list_id_str.isdigit()
-                or len(list_id_str) > 20
-                or int(list_id_str) <= 0
-            ):
+            if not list_id_str.isdigit():
+                invalid_entries.append(list_id_str)
+                changed = True
+                continue
+
+            list_id = int(list_id_str)
+            if list_id <= 0 or list_id > (1 << 64) - 1:
                 invalid_entries.append(list_id_str)
                 changed = True
                 continue

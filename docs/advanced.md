@@ -166,7 +166,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
 | `send_target_interval` | 该分组多个目标之间的发送间隔（秒）；不设置则使用全局 `send_target_interval` 值。 |
 | `send_user_interval` | 该分组多个订阅源之间的发送间隔（秒）；不设置则使用全局 `send_user_interval` 值。Tag/List 查询抓取之间也按该间隔等待。 |
-| `max_tweets_per_check` | 单个订阅源单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的推文不写 seen，下轮继续推送。 |
+| `max_tweets_per_check` | 单个订阅源单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的较旧推文会标记 seen，不会在下轮重新推送。 |
 | `filter_reposts_enabled` | 分组级转发过滤子开关，默认开启；仅在全局同名总开关开启时生效。旧分组缺少该字段时按开启处理。 |
 | `filter_plain_text_enabled` | 是否过滤没有当前作者上传图片、视频或 GIF 的纯文本推文；只影响该分组的后台检查，手动 `/推文`、`/镜像测试` 不受影响。 |
 | `media_only_enabled` | 是否只发送作者和成功准备的图片/视频/GIF；受全局媒体类型开关和 `max_media_per_tweet` 控制。全局媒体不可用时只在 WebUI 和日志提示，并自动回退完整内容。仅媒体有效时：`policy_skipped` 允许扫描基准推进，`transient_failure` / `no_candidate` 下轮重试且不写 seen；手动命令和历史重推不受影响。 |

@@ -129,7 +129,9 @@ class PlatformResolver:
         platform = getattr(event, "platform", None) or getattr(
             event, "platform_inst", None
         )
-        platform_types = self._platform_type_candidates(platform, platform_id)
+        platform_types = self._event_platform_type_candidates(
+            event, platform, platform_id
+        )
         bot = getattr(event, "bot", None)
         call_action = self.call_action_from_platform(
             platform
@@ -224,6 +226,30 @@ class PlatformResolver:
                 return str(value)
 
         return ""
+
+    def _event_platform_type_candidates(
+        self, event: Any, platform: Any, platform_id: str
+    ) -> tuple[str, ...]:
+        values = list(self._platform_type_candidates(platform, platform_id))
+
+        method = getattr(event, "get_platform_name", None)
+        if callable(method):
+            try:
+                self._append_candidate(values, method())
+            except Exception:
+                pass
+
+        meta = getattr(event, "platform_meta", None)
+        for attr in ("type", "name", "id"):
+            self._append_candidate(values, getattr(meta, attr, None))
+        if isinstance(meta, dict):
+            for key in ("type", "name", "id"):
+                self._append_candidate(values, meta.get(key))
+
+        for attr in ("platform_type", "platform_name"):
+            self._append_candidate(values, getattr(event, attr, None))
+
+        return tuple(dict.fromkeys(values))
 
     def _platform_type_candidates(
         self, platform: Any, platform_id: str = ""

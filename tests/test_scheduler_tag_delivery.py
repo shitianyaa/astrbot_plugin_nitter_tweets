@@ -16,15 +16,15 @@ if str(_ROOT) not in sys.path:
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-import test_scheduler_delivery as base
+import test_scheduler_delivery as base  # noqa: E402
 
-from media_support.html_backend import (
+from media_support.html_backend import (  # noqa: E402
     normalize_watch_query,
     seen_account_key_for_query,
 )
-from media_support.html_backend.pool import HtmlSearchResult
-from shared.utils import TweetItem, TweetMedia
-from storage import SQLiteStorage, StorageAdapter
+from media_support.html_backend.pool import HtmlSearchResult  # noqa: E402
+from shared.utils import TweetItem, TweetMedia  # noqa: E402
+from storage import SQLiteStorage, StorageAdapter  # noqa: E402
 
 
 class _HtmlBackend:

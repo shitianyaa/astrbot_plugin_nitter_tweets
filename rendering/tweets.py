@@ -1186,9 +1186,7 @@ class TweetMessageRenderer:
         body = str(text or "")
         if not body:
             return ">"
-        return "\n".join(
-            ("> " + line) if line else ">" for line in body.split("\n")
-        )
+        return "\n".join(("> " + line) if line else ">" for line in body.split("\n"))
 
     @staticmethod
     def telegram_markdown_text(text: str) -> str:

@@ -75,8 +75,8 @@ def test_renderer_respects_hide_flag_with_translation():
     out = TweetMessageRenderer.format_tweet(
         0, "u", t, hide_original_when_translated=True
     )
-    assert "翻译" in out
-    assert "原文" not in out
+    assert "你好" in out
+    assert "hello" not in out
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# ruff: noqa: E402
 from media_support.html_backend.service import (
     DEFAULT_KAREEM,
     DEFAULT_POAST,

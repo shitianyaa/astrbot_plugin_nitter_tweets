@@ -57,10 +57,12 @@ class HtmlSearchResult(list[TweetItem]):
         *,
         raw_item_count: int = 0,
         retweet_filtered: int = 0,
+        scan_complete: bool = True,
     ):
         super().__init__(tweets or ())
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
+        self.scan_complete = bool(scan_complete)
 
     def limited(self, limit: int) -> HtmlSearchResult:
         """Return a bounded result while retaining parser statistics."""
@@ -68,6 +70,7 @@ class HtmlSearchResult(list[TweetItem]):
             self[:limit],
             raw_item_count=self.raw_item_count,
             retweet_filtered=self.retweet_filtered,
+            scan_complete=self.scan_complete,
         )
 
 
@@ -488,6 +491,7 @@ class HtmlNitterPool:
         *,
         instance: str | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline with global retry."""
         # Skip global retry when targeting a specific instance (probe mode)
@@ -497,6 +501,7 @@ class HtmlNitterPool:
                 limit,
                 instance=instance,
                 **self._repost_filter_kwargs(filter_reposts),
+                anchor_ids=anchor_ids,
             )
 
         max_retries = self.config.max_global_retries
@@ -507,6 +512,7 @@ class HtmlNitterPool:
                     limit,
                     instance=instance,
                     **self._repost_filter_kwargs(filter_reposts),
+                    anchor_ids=anchor_ids,
                 )
             except RuntimeError as exc:
                 msg = str(exc)
@@ -542,6 +548,7 @@ class HtmlNitterPool:
         *,
         instance: str | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
         list_id_str = str(list_id).strip()
@@ -550,7 +557,7 @@ class HtmlNitterPool:
 
         errors: list[str] = []
         empty_success_base: str | None = None
-        empty_success_result = HtmlSearchResult()
+        empty_success_result = HtmlSearchResult(scan_complete=False)
         hosts = self._hosts_for_rotation(instance)
         if not hosts:
             raise RuntimeError("HTML list fetch unavailable: all instances in cooldown")
@@ -560,12 +567,15 @@ class HtmlNitterPool:
             host = self.session.host_of(base)
             try:
                 self.log(f"list try {index}/{total} host={host} list_id={list_id_str}")
+                paginate_kwargs = self._repost_filter_kwargs(filter_reposts)
+                if anchor_ids is not None:
+                    paginate_kwargs["anchor_ids"] = anchor_ids
                 tweets = self._as_search_result(
                     self._paginate_list(
                         base,
                         list_id_str,
                         limit,
-                        **self._repost_filter_kwargs(filter_reposts),
+                        **paginate_kwargs,
                     )
                 )
                 if tweets:
@@ -574,10 +584,16 @@ class HtmlNitterPool:
                         self.log(
                             f"list ok after rotate host={host} tried={index}/{total}"
                         )
-                    return base, tweets.limited(limit)
+                    return (
+                        base,
+                        tweets.limited(limit) if anchor_ids is None else tweets,
+                    )
                 empty_success_base = base
                 empty_success_result.raw_item_count += tweets.raw_item_count
                 empty_success_result.retweet_filtered += tweets.retweet_filtered
+                empty_success_result.scan_complete = (
+                    empty_success_result.scan_complete or tweets.scan_complete
+                )
                 # Empty list: soft success (valid but no content)
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
@@ -602,13 +618,24 @@ class HtmlNitterPool:
         limit: int,
         *,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ) -> HtmlSearchResult:
         """Paginate Twitter List timeline (same HTML structure as user timeline)."""
+        initial_scan = anchor_ids is None
+        normalized_anchor_ids = (
+            [anchor_ids] if isinstance(anchor_ids, str) else (anchor_ids or [])
+        )
+        boundary_ids = {
+            str(status_id).strip()
+            for status_id in normalized_anchor_ids
+            if str(status_id or "").strip()
+        }
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
         raw_count = 0
         retweet_filtered = 0
+        scan_complete = initial_scan
         use_filter_reposts = (
             bool(self.config.filter_reposts)
             if filter_reposts is None
@@ -631,30 +658,41 @@ class HtmlNitterPool:
 
             for t in page.tweets:
                 k = t.status_id or t.link
+                reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
                 if k in seen:
+                    if reached_boundary:
+                        scan_complete = True
+                        break
                     continue
 
                 if use_filter_reposts and t.is_retweet:
                     retweet_filtered += 1
+                    if reached_boundary:
+                        scan_complete = True
+                        break
                     continue
 
                 seen.add(k)
                 tweets.append(t)
-                if len(tweets) >= limit:
-                    return HtmlSearchResult(
-                        tweets[:limit],
-                        raw_item_count=raw_count,
-                        retweet_filtered=retweet_filtered,
-                    )
+                if reached_boundary:
+                    scan_complete = True
+                    break
+
+            if scan_complete and not initial_scan:
+                break
+            if initial_scan and len(tweets) >= limit:
+                break
 
             if not page.next_cursor or page.next_cursor == cursor:
+                scan_complete = True
                 break
             cursor = page.next_cursor
 
         return HtmlSearchResult(
-            tweets,
+            tweets[:limit] if initial_scan else tweets,
             raw_item_count=raw_count,
             retweet_filtered=retweet_filtered,
+            scan_complete=scan_complete,
         )
 
     @staticmethod

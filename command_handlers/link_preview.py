@@ -65,6 +65,24 @@ class LinkPreviewMixin:
     def _record_link_preview_debounce(self, umo: str, status_id: str) -> None:
         self._link_preview_debounce_store()[f"{umo}|{status_id}"] = time.monotonic()
 
+    def _link_preview_inflight_store(self) -> set[str]:
+        store = getattr(self, "_link_preview_inflight", None)
+        if store is None:
+            store = set()
+            self._link_preview_inflight = store
+        return store
+
+    def _claim_link_preview(self, umo: str, status_id: str) -> bool:
+        key = f"{umo}|{status_id}"
+        store = self._link_preview_inflight_store()
+        if key in store:
+            return False
+        store.add(key)
+        return True
+
+    def _release_link_preview(self, umo: str, status_id: str) -> None:
+        self._link_preview_inflight_store().discard(f"{umo}|{status_id}")
+
     def _is_bot_self_message(self, event: AstrMessageEvent) -> bool:
         try:
             sender = str(event.get_sender_id() or "").strip()
@@ -104,95 +122,115 @@ class LinkPreviewMixin:
                 )
                 continue
 
-            tweet = None
-            try:
-                tweet = await resolve_status_tweet_async(link)
-            except StatusResolveError as exc:
-                logger.warning(
-                    "[NitterTweets] link preview resolve failed: status_id=%s error=%s",
+            if not self._claim_link_preview(umo, link.status_id):
+                logger.debug(
+                    "[NitterTweets] link preview already in flight: "
+                    "status_id=%s umo=%s",
                     link.status_id,
-                    exc,
+                    umo,
                 )
-                try:
-                    await event.send(
-                        event.plain_result(f"推文链接解析失败：{link.canonical_url}")
-                    )
-                except Exception as send_exc:
-                    logger.debug(
-                        "[NitterTweets] link preview failure notice send failed: %s",
-                        send_exc,
-                    )
-                continue
-            except Exception as exc:
-                logger.warning(
-                    "[NitterTweets] link preview resolve error: status_id=%s error=%s",
-                    link.status_id,
-                    exc,
-                    exc_info=True,
-                )
-                try:
-                    await event.send(
-                        event.plain_result(f"推文链接解析失败：{link.canonical_url}")
-                    )
-                except Exception as send_exc:
-                    logger.debug(
-                        "[NitterTweets] link preview failure notice send failed: %s",
-                        send_exc,
-                    )
                 continue
 
             try:
+                tweet = None
                 try:
-                    await self.translator.attach_translations([tweet], umo)
-                except Exception as exc:
+                    tweet = await resolve_status_tweet_async(link)
+                except StatusResolveError as exc:
                     logger.warning(
-                        "[NitterTweets] link preview translate failed: status_id=%s error=%s",
+                        "[NitterTweets] link preview resolve failed: "
+                        "status_id=%s error=%s",
                         link.status_id,
                         exc,
-                    )
-
-                try:
-                    await self.media.attach_media_with_results(
-                        [tweet], force_all_media=True
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "[NitterTweets] link preview media failed: status_id=%s error=%s",
-                        link.status_id,
-                        exc,
-                    )
-
-                username = tweet.username or link.username or "unknown"
-                sent = await self.sender.send(
-                    event,
-                    username,
-                    LINK_PREVIEW_SOURCE,
-                    [tweet],
-                    omit_status_url=True,
-                    hide_original_when_translated=hide_original,
-                    force_media=True,
-                )
-                if sent:
-                    self._record_link_preview_debounce(umo, link.status_id)
-                else:
-                    logger.warning(
-                        "[NitterTweets] link preview send failed; debounce not recorded: "
-                        "status_id=%s umo=%s",
-                        link.status_id,
-                        umo,
-                    )
-            finally:
-                try:
-                    await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
-                except Exception as cleanup_exc:
-                    logger.debug(
-                        "[NitterTweets] link preview async cleanup failed: %s",
-                        cleanup_exc,
                     )
                     try:
-                        self.media.cleanup_after_send([tweet])
-                    except Exception as cleanup_exc2:
-                        logger.debug(
-                            "[NitterTweets] link preview sync cleanup failed: %s",
-                            cleanup_exc2,
+                        await event.send(
+                            event.plain_result(
+                                f"推文链接解析失败：{link.canonical_url}"
+                            )
                         )
+                    except Exception as send_exc:
+                        logger.debug(
+                            "[NitterTweets] link preview failure notice send failed: %s",
+                            send_exc,
+                        )
+                    continue
+                except Exception as exc:
+                    logger.warning(
+                        "[NitterTweets] link preview resolve error: "
+                        "status_id=%s error=%s",
+                        link.status_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    try:
+                        await event.send(
+                            event.plain_result(
+                                f"推文链接解析失败：{link.canonical_url}"
+                            )
+                        )
+                    except Exception as send_exc:
+                        logger.debug(
+                            "[NitterTweets] link preview failure notice send failed: %s",
+                            send_exc,
+                        )
+                    continue
+
+                try:
+                    try:
+                        await self.translator.attach_translations([tweet], umo)
+                    except Exception as exc:
+                        logger.warning(
+                            "[NitterTweets] link preview translate failed: "
+                            "status_id=%s error=%s",
+                            link.status_id,
+                            exc,
+                        )
+
+                    try:
+                        await self.media.attach_media_with_results(
+                            [tweet], force_all_media=True
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[NitterTweets] link preview media failed: "
+                            "status_id=%s error=%s",
+                            link.status_id,
+                            exc,
+                        )
+
+                    username = tweet.username or link.username or "unknown"
+                    sent = await self.sender.send(
+                        event,
+                        username,
+                        LINK_PREVIEW_SOURCE,
+                        [tweet],
+                        omit_status_url=True,
+                        hide_original_when_translated=hide_original,
+                        force_media=True,
+                    )
+                    if sent:
+                        self._record_link_preview_debounce(umo, link.status_id)
+                    else:
+                        logger.warning(
+                            "[NitterTweets] link preview send failed; "
+                            "debounce not recorded: status_id=%s umo=%s",
+                            link.status_id,
+                            umo,
+                        )
+                finally:
+                    try:
+                        await asyncio.to_thread(self.media.cleanup_after_send, [tweet])
+                    except Exception as cleanup_exc:
+                        logger.debug(
+                            "[NitterTweets] link preview async cleanup failed: %s",
+                            cleanup_exc,
+                        )
+                        try:
+                            self.media.cleanup_after_send([tweet])
+                        except Exception as cleanup_exc2:
+                            logger.debug(
+                                "[NitterTweets] link preview sync cleanup failed: %s",
+                                cleanup_exc2,
+                            )
+            finally:
+                self._release_link_preview(umo, link.status_id)

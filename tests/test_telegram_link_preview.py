@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
 from types import SimpleNamespace
 
 import pytest
-from astrbot.api.all import MessageChain
-from astrbot.api.message_components import Plain
 
 from delivery.telegram import (
     TelegramDeliveryAdapter,
@@ -58,7 +58,18 @@ async def test_telegram_adapter_event_chain_uses_preview_disabled_client():
 
 
 @pytest.mark.asyncio
-async def test_telegram_adapter_context_chain_uses_platform_client():
+async def test_telegram_adapter_context_chain_uses_platform_client(monkeypatch):
+    class TelegramPlatformEvent:
+        send_with_client = staticmethod(_Event.send_with_client)
+
+    tg_event_module = ModuleType("astrbot.core.platform.sources.telegram.tg_event")
+    tg_event_module.TelegramPlatformEvent = TelegramPlatformEvent
+    monkeypatch.setitem(
+        sys.modules,
+        "astrbot.core.platform.sources.telegram.tg_event",
+        tg_event_module,
+    )
+
     client = _Client()
     sender = SimpleNamespace(
         _adapter_flood_control_attempt=lambda *args, **kwargs: None,
@@ -69,11 +80,9 @@ async def test_telegram_adapter_context_chain_uses_platform_client():
         session_id="chat-1",
     )
     adapter = TelegramDeliveryAdapter(sender, profile)
-    chain = MessageChain([Plain("[tweet](https://x.com/status)")])
-    chain.use_markdown(True)
 
     result = await adapter.send_context_chain(
-        SimpleNamespace(), "telegram:GroupMessage:chat-1", chain, "test"
+        SimpleNamespace(), "telegram:GroupMessage:chat-1", object(), "test"
     )
 
     assert result.success is True

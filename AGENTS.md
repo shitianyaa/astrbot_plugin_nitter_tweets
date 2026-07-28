@@ -108,7 +108,7 @@ ruff check .
 ruff format --check .
 ```
 
-- Ruff：**0.16+**；根目录 `ruff.toml` 忽略 `BLE001`（边界宽捕获有意保留）。
+- Ruff：**0.15.22**；与 `.pre-commit-config.yaml` 保持一致。
 - 链接解析：`tests/test_status_link_preview.py`
 - List：`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`
 - 标签调度：`tests/test_scheduler_tag_delivery.py`

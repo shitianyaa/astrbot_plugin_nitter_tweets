@@ -15,11 +15,11 @@ if str(_ROOT) not in sys.path:
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-import test_scheduler_delivery as base
+import test_scheduler_delivery as base  # noqa: E402
 
-from media_support.html_backend.pool import HtmlSearchResult
-from shared.utils import TweetItem
-from storage import SQLiteStorage, StorageAdapter
+from media_support.html_backend.pool import HtmlSearchResult  # noqa: E402
+from shared.utils import TweetItem  # noqa: E402
+from storage import SQLiteStorage, StorageAdapter  # noqa: E402
 
 
 class _ListBackend:
@@ -27,20 +27,27 @@ class _ListBackend:
         self.responses = list(responses)
         self.calls = []
         self.filter_reposts_calls = []
+        self.anchor_ids_calls = []
 
     def fetch_list(
         self,
         list_id: str,
         limit: int = 5,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ):
         self.calls.append((list_id, limit))
         self.filter_reposts_calls.append(filter_reposts)
+        self.anchor_ids_calls.append(None if anchor_ids is None else list(anchor_ids))
         item = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
         instance, tweets = item
         if isinstance(tweets, HtmlSearchResult):
-            return instance, tweets.limited(limit)
-        return instance, list(tweets)[:limit]
+            return (
+                instance,
+                tweets.limited(limit) if anchor_ids is None else tweets,
+            )
+        values = list(tweets)
+        return instance, values[:limit] if anchor_ids is None else values
 
 
 class _HostSkipNitter(base._Nitter):
@@ -182,3 +189,61 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(backend.filter_reposts_calls, [False])
         self.assertEqual([tweet.status_id for tweet in result.tweets], ["100"])
+
+    async def test_existing_list_scan_delivers_items_beyond_first_page_limit(self):
+        new_ids = [str(status_id) for status_id in range(121, 100, -1)]
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet(status_id) for status_id in [*new_ids, "100"]],
+                        raw_item_count=22,
+                    ),
+                ),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, sender=sender)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        result = await scheduler.run_check(reason="list_new", group_name="lists1")
+
+        self.assertEqual(backend.anchor_ids_calls, [None, ["100"]])
+        self.assertEqual(result.new_tweet_count, 21)
+        sent_ids = [status_id for item in sender.sent for status_id in item[3]]
+        self.assertEqual(len(sent_ids), 21)
+        self.assertEqual(set(sent_ids), set(new_ids))
+
+    async def test_incomplete_list_scan_does_not_advance_seen_or_watermark(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet("101"), self._tweet("100")],
+                        raw_item_count=2,
+                        scan_complete=False,
+                    ),
+                ),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, sender=sender)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        before = await scheduler.storage.get_group_scan_watermarks("lists1")
+        result = await scheduler.run_check(
+            reason="list_incomplete", group_name="lists1"
+        )
+        after = await scheduler.storage.get_group_scan_watermarks("lists1")
+
+        self.assertIn(key, result.failed_users)
+        self.assertEqual(before, after)
+        self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))
+        self.assertEqual(sender.sent, [])

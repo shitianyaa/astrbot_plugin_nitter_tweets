@@ -176,6 +176,7 @@ class HtmlNitterService:
         *,
         instance: str | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline (shares search pool)."""
         if not self.config.search_enabled:
@@ -185,4 +186,5 @@ class HtmlNitterService:
             limit,
             instance=instance,
             filter_reposts=filter_reposts,
+            anchor_ids=anchor_ids,
         )

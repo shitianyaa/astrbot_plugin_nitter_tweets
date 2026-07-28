@@ -62,15 +62,17 @@ class TestListConfigParsing:
                 "1553232306718257152",  # 19 digits (valid CF test list)
                 "123456789012345",  # 15 digits (min)
                 "12345678901234567890",  # 20 digits (max)
+                "18446744073709551615",  # uint64 max
             ]
         )
-        assert len(result.list_ids) == 3
+        assert len(result.list_ids) == 4
         assert result.list_ids == [
             "1553232306718257152",
             "123456789012345",
             "12345678901234567890",
+            "18446744073709551615",
         ]
-        assert result.raw_count == 3
+        assert result.raw_count == 4
         assert len(result.invalid_entries) == 0
 
     def test_invalid_list_ids(self):
@@ -80,16 +82,18 @@ class TestListConfigParsing:
             [
                 "abc123",  # non-numeric
                 "0",  # zero is not a valid ID
+                "18446744073709551616",  # uint64 overflow
                 "123456789012345678901",  # too long (> 20 digits)
                 "",  # empty
                 "   ",  # whitespace only
             ]
         )
         assert len(result.list_ids) == 0
-        assert result.raw_count == 3  # empty/whitespace not counted
-        assert len(result.invalid_entries) == 3
+        assert result.raw_count == 4  # empty/whitespace not counted
+        assert len(result.invalid_entries) == 4
         assert "abc123" in result.invalid_entries
         assert "0" in result.invalid_entries
+        assert "18446744073709551616" in result.invalid_entries
         assert "123456789012345678901" in result.invalid_entries
 
     def test_duplicate_list_ids(self):
@@ -310,6 +314,72 @@ def test_list_pagination_uses_cursor_and_global_repost_filter(monkeypatch):
     )
     assert [tweet.status_id for tweet in unfiltered] == ["10", "9", "8"]
     assert unfiltered.retweet_filtered == 0
+
+
+def test_list_pagination_scans_past_limit_until_watermark(monkeypatch):
+    pool = _pool(filter_reposts=False, max_pages=3)
+    pool._get_html = MagicMock(side_effect=[b"page-1", b"page-2"])
+    pages = {
+        "page-1": SimpleNamespace(
+            tweets=[_tweet("10"), _tweet("9")],
+            next_cursor="cursor-2",
+            raw_item_count=2,
+        ),
+        "page-2": SimpleNamespace(
+            tweets=[_tweet("8"), _tweet("7"), _tweet("6")],
+            next_cursor="cursor-3",
+            raw_item_count=3,
+        ),
+    }
+    monkeypatch.setattr(
+        pool_module,
+        "parse_timeline_html",
+        lambda body, _base, source="": pages[body],
+    )
+
+    tweets = pool._paginate_list(
+        "https://a.example",
+        "12345",
+        2,
+        anchor_ids=["7"],
+    )
+
+    assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
+    assert tweets.scan_complete is True
+    assert pool._get_html.call_count == 2
+
+
+def test_list_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
+    pool = _pool(filter_reposts=False, max_pages=2)
+    pool._get_html = MagicMock(side_effect=[b"page-1", b"page-2"])
+    pages = {
+        "page-1": SimpleNamespace(
+            tweets=[_tweet("10"), _tweet("9")],
+            next_cursor="cursor-2",
+            raw_item_count=2,
+        ),
+        "page-2": SimpleNamespace(
+            tweets=[_tweet("8"), _tweet("7")],
+            next_cursor="cursor-3",
+            raw_item_count=2,
+        ),
+    }
+    monkeypatch.setattr(
+        pool_module,
+        "parse_timeline_html",
+        lambda body, _base, source="": pages[body],
+    )
+
+    tweets = pool._paginate_list(
+        "https://a.example",
+        "12345",
+        2,
+        anchor_ids=["1"],
+    )
+
+    assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
+    assert tweets.scan_complete is False
+    assert tweets.limited(2).scan_complete is False
 
 
 def test_list_empty_host_rotates_to_later_hit():

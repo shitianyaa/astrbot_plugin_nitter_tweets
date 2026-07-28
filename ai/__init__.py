@@ -1,1 +1,1 @@
-from .enrichment import *
+from .enrichment import *  # noqa: F403

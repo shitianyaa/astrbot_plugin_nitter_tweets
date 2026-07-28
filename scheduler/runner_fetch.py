@@ -103,6 +103,7 @@ class SchedulerFetchMixin:
                 index,
                 username,
                 fetch_limit,
+                scan_watermark,
                 skip_plain_text=skip_plain_text,
                 filter_reposts=filter_reposts,
             )
@@ -383,6 +384,7 @@ class SchedulerFetchMixin:
         index: int,
         account_key: str,
         fetch_limit: int,
+        scan_watermark: list[str] | None,
         *,
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
@@ -421,10 +423,12 @@ class SchedulerFetchMixin:
                     list_id,
                     fetch_limit,
                     filter_reposts=filter_reposts,
+                    anchor_ids=scan_watermark,
                 )
             )
             retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
             html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
+            scan_complete = bool(getattr(tweets, "scan_complete", True))
             tweets = list(tweets)
             self._log_verbose_info(
                 f"[NitterTweets] List 抓取成功: group={group.group_id}, "
@@ -456,7 +460,7 @@ class SchedulerFetchMixin:
                 tweet.status_id for tweet in tweets[:20] if tweet.status_id
             ],
             latest_status_id=(tweets[0].status_id if tweets else ""),
-            scan_complete=True,
+            scan_complete=scan_complete,
             plain_text_filtered=plain_text_filtered,
             retweet_filtered=retweet_filtered,
             html_raw_item_count=html_raw_item_count,

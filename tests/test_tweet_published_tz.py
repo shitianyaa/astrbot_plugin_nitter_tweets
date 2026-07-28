@@ -24,9 +24,7 @@ def test_already_display_form_not_double_shifted():
 
 
 def test_nitter_list_title_with_utc():
-    assert (
-        format_tweet_published("Jul 28, 2026 · 5:15 AM UTC") == "2026-07-28 13:15:00"
-    )
+    assert format_tweet_published("Jul 28, 2026 · 5:15 AM UTC") == "2026-07-28 13:15:00"
 
 
 def test_nitter_date_only_assumes_utc_midnight():

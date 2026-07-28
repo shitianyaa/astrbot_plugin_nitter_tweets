@@ -445,6 +445,40 @@ async def test_handler_caps_links_and_debounces(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handler_deduplicates_concurrent_same_link(monkeypatch):
+    plugin = _FakePlugin(enabled=True)
+    link_text = "https://x.com/u/status/9"
+    resolve_started = asyncio.Event()
+    release_resolve = asyncio.Event()
+    calls = 0
+
+    async def resolve(link, *, timeout=20.0):
+        nonlocal calls
+        calls += 1
+        resolve_started.set()
+        await release_resolve.wait()
+        return TweetItem(text="ok", link=link.canonical_url, published="t", media=[])
+
+    monkeypatch.setattr(
+        "command_handlers.link_preview.resolve_status_tweet_async",
+        resolve,
+    )
+    first = asyncio.create_task(
+        plugin._cmd_link_preview_impl(_make_event(text=link_text))
+    )
+    await resolve_started.wait()
+    second = asyncio.create_task(
+        plugin._cmd_link_preview_impl(_make_event(text=link_text))
+    )
+    await asyncio.sleep(0)
+    release_resolve.set()
+    await asyncio.gather(first, second)
+
+    assert calls == 1
+    plugin.sender.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_handler_can_retry_after_resolve_failure(monkeypatch):
     plugin = _FakePlugin(enabled=True)
     link_text = "https://x.com/u/status/9"
