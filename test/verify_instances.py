@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """验证插件实例配置：RSS vs HTML 搜索分离"""
 
 import sys
@@ -9,14 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# ruff: noqa: E402
-from shared.utils import DEFAULT_INSTANCES
 from media_support.html_backend.service import (
+    DEFAULT_KAREEM,
+    DEFAULT_POAST,
     DEFAULT_SEARCH_INSTANCES,
     DEFAULT_TIEKOETTER,
-    DEFAULT_POAST,
-    DEFAULT_KAREEM,
 )
+from shared.utils import DEFAULT_INSTANCES
 
 
 def main():

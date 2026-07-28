@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """HTML search/user multi-mirror rotation retry."""
 
 from __future__ import annotations

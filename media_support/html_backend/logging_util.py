@@ -1,17 +1,16 @@
-# -*- coding: utf-8 -*-
 """HTML backend log filtering to avoid AstrBot info spam."""
 
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
-_SESSION_LOAD_RE = re.compile(r"^session load\s+(\S+)", re.I)
+_SESSION_LOAD_RE = re.compile(r"^session load\s+(\S+)", re.IGNORECASE)
 _GATE_LINE_RE = re.compile(
     r"^gate\s+(?P<host>\S+)\s+mode=\S+\s+http=(?P<code>\d+)\s+detect=(?P<detect>\S+)",
-    re.I,
+    re.IGNORECASE,
 )
-_COOLING_RE = re.compile(r"^(?:skip|defer)\s+cooling\s+(\S+)", re.I)
+_COOLING_RE = re.compile(r"^(?:skip|defer)\s+cooling\s+(\S+)", re.IGNORECASE)
 
 # Brief mode: drop routine per-attempt chatter; keep failures / summaries.
 _BRIEF_DROP_PREFIXES = (
@@ -73,13 +72,11 @@ class QuietHtmlLog:
                 return True
             self._gate_seen.add(key)
             # Successful plain gate is pure noise in brief mode.
-            if (
+            return bool(
                 self.brief
                 and m.group("code") == "200"
                 and m.group("detect").lower() == "ok"
-            ):
-                return True
-            return False
+            )
 
         m = _COOLING_RE.match(text)
         if m:
@@ -91,12 +88,9 @@ class QuietHtmlLog:
             self._cooling_hosts.add(host)
             return False
 
-        if self.brief and text.startswith(_BRIEF_DROP_PREFIXES):
-            return True
-
         # Keep: punish, fail rotate, ok after rotate, empty after rotate,
         # cloudflare unsupported, anubis/poast missing challenge, etc.
-        return False
+        return bool(self.brief and text.startswith(_BRIEF_DROP_PREFIXES))
 
 
 __all__ = ["QuietHtmlLog"]

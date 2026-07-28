@@ -56,6 +56,7 @@ except ImportError:
         MEDIA_STATUS_TRANSIENT_FAILURE,
     )
 
+from . import video_probe
 from .cache import MediaCacheMixin
 from .extensions import (
     MEDIA_IMAGE_SUFFIXES,
@@ -63,10 +64,8 @@ from .extensions import (
     MEDIA_TYPE_IMAGE,
     MEDIA_TYPE_VIDEO,
 )
-from . import video_probe
 from .network import compat_urlopen
 from .xdown import XdownMediaCandidate, XdownMediaParser
-
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
 
@@ -160,16 +159,19 @@ class MediaService(MediaCacheMixin):
         await self.attach_media_with_results(tweets)
 
     async def attach_media_with_results(
-        self, tweets: list[TweetItem]
+        self, tweets: list[TweetItem], *, force_all_media: bool = False
     ) -> list[MediaPreparationResult]:
         results: list[MediaPreparationResult] = []
-        if (
-            not self.send_image_attachments and not self.send_video_attachments
-        ) or self.max_per_tweet <= 0:
+        if not force_all_media and (
+            (not self.send_image_attachments and not self.send_video_attachments)
+            or self.max_per_tweet <= 0
+        ):
             return [MediaPreparationResult(MEDIA_STATUS_POLICY_SKIPPED) for _ in tweets]
         for tweet in tweets:
             try:
-                media, status = await self._resolve_and_download_with_status(tweet)
+                media, status = await self._resolve_and_download_with_status(
+                    tweet, force_all_media=force_all_media
+                )
                 tweet.media = media
                 results.append(
                     MediaPreparationResult(status, prepared_count=len(media))
@@ -184,12 +186,16 @@ class MediaService(MediaCacheMixin):
                 )
         return results
 
-    async def resolve_and_download(self, tweet: TweetItem) -> list[TweetMedia]:
-        media, _ = await self._resolve_and_download_with_status(tweet)
+    async def resolve_and_download(
+        self, tweet: TweetItem, *, force_all_media: bool = False
+    ) -> list[TweetMedia]:
+        media, _ = await self._resolve_and_download_with_status(
+            tweet, force_all_media=force_all_media
+        )
         return media
 
     async def _resolve_and_download_with_status(
-        self, tweet: TweetItem
+        self, tweet: TweetItem, *, force_all_media: bool = False
     ) -> tuple[list[TweetMedia], str]:
         media_urls = [
             TweetMedia(
@@ -214,6 +220,11 @@ class MediaService(MediaCacheMixin):
                 else MEDIA_STATUS_NO_CANDIDATE
             )
 
+        # Link preview ignores configured per-tweet caps; keep a hard safety bound.
+        max_allowed = 20 if force_all_media else self.max_per_tweet
+        allow_image = force_all_media or self.send_image_attachments
+        allow_video = force_all_media or self.send_video_attachments
+
         downloaded: list[TweetMedia] = []
         seen: set[str] = set()
         video_disabled_warned = False
@@ -223,18 +234,18 @@ class MediaService(MediaCacheMixin):
             if media.url in seen:
                 continue
             seen.add(media.url)
-            if len(downloaded) >= self.max_per_tweet:
+            if len(downloaded) >= max_allowed:
                 if any(item.is_video for item in media_urls[index:]):
                     self._add_media_warning(
                         tweet,
-                        f"视频/GIF 超过单条媒体上限 {self.max_per_tweet}，已保留原文链接",
+                        f"视频/GIF 超过单条媒体上限 {max_allowed}，已保留原文链接",
                     )
                     policy_skipped = True
                 break
-            if media.is_image and not self.send_image_attachments:
+            if media.is_image and not allow_image:
                 policy_skipped = True
                 continue
-            if media.is_video and not self.send_video_attachments:
+            if media.is_video and not allow_video:
                 if not video_disabled_warned:
                     self._add_media_warning(
                         tweet,
@@ -303,7 +314,9 @@ class MediaService(MediaCacheMixin):
                 media.path = await asyncio.shield(download_task)
             except Exception:
                 # _download() already discards its temp lease on failure.
-                pass
+                logger.debug(
+                    "[NitterTweets] shielded download ended without path after cancel"
+                )
             raise
 
     def _download_with_retries(self, media: TweetMedia) -> Path:
@@ -580,8 +593,8 @@ class MediaService(MediaCacheMixin):
         return self._probe_mp4_duration(data)
 
     @staticmethod
-    def _format_duration(seconds: float | int) -> str:
-        total = max(0, int(round(float(seconds))))
+    def _format_duration(seconds: float) -> str:
+        total = max(0, round(float(seconds)))
         minutes, seconds = divmod(total, 60)
         if minutes:
             return f"{minutes}分{seconds:02d}秒"
@@ -607,9 +620,12 @@ class MediaService(MediaCacheMixin):
 
         left_parsed = urlparse(left)
         right_parsed = urlparse(right)
-        if left_parsed.netloc and right_parsed.netloc:
-            if left_parsed.netloc.lower() != right_parsed.netloc.lower():
-                return False
+        if (
+            left_parsed.netloc
+            and right_parsed.netloc
+            and left_parsed.netloc.lower() != right_parsed.netloc.lower()
+        ):
+            return False
 
         left_path = left_parsed.path.rstrip("/")
         right_path = right_parsed.path.rstrip("/")
@@ -665,9 +681,9 @@ class MediaService(MediaCacheMixin):
     def _is_retryable_download_error(cls, exc: Exception) -> bool:
         if isinstance(exc, HTTPError):
             return cls._is_retryable_http_status(exc.code)
-        if isinstance(exc, (URLError, TimeoutError, ssl.SSLError, ConnectionError)):
-            return True
-        return False
+        return bool(
+            isinstance(exc, (URLError, TimeoutError, ssl.SSLError, ConnectionError))
+        )
 
     @staticmethod
     def _is_retryable_http_status(status_code: int) -> bool:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-
 from urllib.parse import urlparse
 
 try:
@@ -14,6 +13,8 @@ try:
         TweetItem,
         TweetMedia,
         file_uri,
+        format_subscription_count,
+        format_subscription_source,
         node_uin,
         normalize_external_links,
         strip_external_links,
@@ -23,6 +24,8 @@ except ImportError:
         TweetItem,
         TweetMedia,
         file_uri,
+        format_subscription_count,
+        format_subscription_source,
         node_uin,
         normalize_external_links,
         strip_external_links,
@@ -40,6 +43,14 @@ class TweetMessageRenderer:
     ):
         self.send_image_attachments = send_image_attachments
         self.send_video_attachments = send_video_attachments
+
+    @staticmethod
+    def _source_node_name(username: str) -> str:
+        """Render internal tag/List keys without exposing their storage prefix."""
+        raw = str(username or "").strip()
+        if raw.lower().startswith(("q:", "list:")):
+            return format_subscription_source(raw)
+        return f"@{raw.lstrip('@')}" if raw else "@unknown"
 
     def build_nodes(
         self,
@@ -111,7 +122,7 @@ class TweetMessageRenderer:
             nodes.nodes.append(
                 Node(
                     uin=uin,
-                    name=f"@{username}",
+                    name=self._source_node_name(username),
                     content=self.build_components(
                         index,
                         username,
@@ -131,7 +142,7 @@ class TweetMessageRenderer:
                     nodes.nodes.append(
                         Node(
                             uin=uin,
-                            name=f"@{username}",
+                            name=self._source_node_name(username),
                             content=self.build_image_node_components(
                                 index,
                                 username,
@@ -151,7 +162,7 @@ class TweetMessageRenderer:
                         nodes.nodes.append(
                             Node(
                                 uin=uin,
-                                name=f"@{username}",
+                                name=self._source_node_name(username),
                                 content=self.build_video_node_components(
                                     index,
                                     username,
@@ -191,7 +202,7 @@ class TweetMessageRenderer:
                 nodes.nodes.append(
                     Node(
                         uin=uin,
-                        name=f"@{username}",
+                        name=self._source_node_name(username),
                         content=self.build_components(
                             index,
                             username,
@@ -212,7 +223,7 @@ class TweetMessageRenderer:
                         nodes.nodes.append(
                             Node(
                                 uin=uin,
-                                name=f"@{username}",
+                                name=self._source_node_name(username),
                                 content=self.build_image_node_components(
                                     index,
                                     username,
@@ -232,7 +243,7 @@ class TweetMessageRenderer:
                             nodes.nodes.append(
                                 Node(
                                     uin=uin,
-                                    name=f"@{username}",
+                                    name=self._source_node_name(username),
                                     content=self.build_video_node_components(
                                         index,
                                         username,
@@ -291,7 +302,7 @@ class TweetMessageRenderer:
                 )
                 items.append(
                     {
-                        "name": f"@{username}",
+                        "name": self._source_node_name(username),
                         "uin": str(uin),
                         "content": content,
                     }
@@ -300,7 +311,7 @@ class TweetMessageRenderer:
                     if media.path and media.is_image and self.send_image_attachments:
                         items.append(
                             {
-                                "name": f"@{username}",
+                                "name": self._source_node_name(username),
                                 "uin": str(uin),
                                 "content": self._build_onebot_image_content(
                                     index,
@@ -320,7 +331,7 @@ class TweetMessageRenderer:
                         if media.path and media.is_video:
                             items.append(
                                 {
-                                    "name": f"@{username}",
+                                    "name": self._source_node_name(username),
                                     "uin": str(uin),
                                     "content": self._build_onebot_video_content(
                                         index,
@@ -415,7 +426,7 @@ class TweetMessageRenderer:
         author = f"@{author_name}" if author_name else "@unknown"
         status_url = (tweet.x_url or tweet.link or "").strip()
         if link_style == "telegram_md" and status_url:
-            author = TweetMessageRenderer.telegram_markdown_link(author, status_url)
+            author = TweetMessageRenderer.telegram_tweet_header(author, status_url)
         components = [Plain(author)]
         for media in tweet.media:
             if not media.path:
@@ -717,12 +728,18 @@ class TweetMessageRenderer:
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
             )
-            items.append({"name": f"@{username}", "uin": uin, "content": content})
+            items.append(
+                {
+                    "name": self._source_node_name(username),
+                    "uin": uin,
+                    "content": content,
+                }
+            )
             for media in tweet.media:
                 if media.path and media.is_image and self.send_image_attachments:
                     items.append(
                         {
-                            "name": f"@{username}",
+                            "name": self._source_node_name(username),
                             "uin": uin,
                             "content": self._build_onebot_image_content(
                                 index,
@@ -742,7 +759,7 @@ class TweetMessageRenderer:
                     if media.path and media.is_video:
                         items.append(
                             {
-                                "name": f"@{username}",
+                                "name": self._source_node_name(username),
                                 "uin": uin,
                                 "content": self._build_onebot_video_content(
                                     index,
@@ -893,13 +910,16 @@ class TweetMessageRenderer:
                     )
                     video_notice_added = True
                 continue
-            if media.is_image and self.send_image_attachments and include_images:
-                content.append(self.raw_media(media))
-            elif (
-                media.is_video
-                and self.send_video_attachments
-                and not exclude_videos
-                and include_videos
+            if (
+                media.is_image
+                and self.send_image_attachments
+                and include_images
+                or (
+                    media.is_video
+                    and self.send_video_attachments
+                    and not exclude_videos
+                    and include_videos
+                )
             ):
                 content.append(self.raw_media(media))
         return content
@@ -935,7 +955,7 @@ class TweetMessageRenderer:
             blocks.append(header)
         blocks.extend(
             (
-                f"@{username}"
+                self._source_node_name(username)
                 if media_only
                 else self.format_tweet_with_source(
                     start_index + offset,
@@ -967,18 +987,16 @@ class TweetMessageRenderer:
         for username, instance, tweets in batches:
             for tweet in tweets:
                 blocks.append(
-                    (
-                        f"@{username}"
-                        if media_only
-                        else self.format_tweet_with_source(
-                            index,
-                            username,
-                            tweet,
-                            instance,
-                            omit_status_url=omit_status_url,
-                            hide_original_when_translated=hide_original_when_translated,
-                            link_style=link_style,
-                        )
+                    self._source_node_name(username)
+                    if media_only
+                    else self.format_tweet_with_source(
+                        index,
+                        username,
+                        tweet,
+                        instance,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                        link_style=link_style,
                     )
                 )
                 index += 1
@@ -992,21 +1010,31 @@ class TweetMessageRenderer:
     ) -> str:
         if batch_summary.strip():
             return batch_summary.strip()
-        return TweetMessageRenderer.format_batch_summary(batches, group_label)
+        group_type = "blogger"
+        keys = [str(username or "").strip().lower() for username, _, _ in batches]
+        if any(key.startswith("q:") for key in keys):
+            group_type = "tag"
+        elif any(key.startswith("list:") for key in keys):
+            group_type = "list"
+        return TweetMessageRenderer.format_batch_summary(
+            batches, group_label, group_type=group_type
+        )
 
     @staticmethod
     def format_batch_summary(
         batches: list[TweetBatch],
         group_label: str = "",
         action_text: str = "本次检查发现",
+        group_type: str = "blogger",
     ) -> str:
         total = sum(len(tweets) for _, _, tweets in batches)
         counts: dict[str, int] = {}
         for username, _, tweets in batches:
             counts[username] = counts.get(username, 0) + len(tweets)
+        subscription_count = format_subscription_count(len(counts), group_type)
         if group_label:
-            return f"📬 {group_label} · {len(counts)} 位博主 · {total} 条新推文"
-        return f"📬 {len(counts)} 位博主 · {total} 条新推文"
+            return f"📬 {group_label} · {subscription_count} · {total} 条新推文"
+        return f"📬 {subscription_count} · {total} 条新推文"
 
     @staticmethod
     def format_tweet_with_source(
@@ -1054,9 +1082,9 @@ class TweetMessageRenderer:
         author = TweetMessageRenderer.display_username(username, tweet)
         author_label = f"@{author}" if author else "@unknown"
 
-        # Telegram: [@author](status_url) only — body lives in 原文/翻译 blocks.
+        # Telegram: keep the author plain and make the status link an explicit action.
         if link_style == "telegram_md" and status_url:
-            author_line = TweetMessageRenderer.telegram_markdown_link(
+            author_line = TweetMessageRenderer.telegram_tweet_header(
                 author_label, status_url
             )
         else:
@@ -1137,15 +1165,29 @@ class TweetMessageRenderer:
         return f"{base} 原文链接：{url}"
 
     @staticmethod
-    def telegram_markdown_link(label: str, url: str) -> str:
-        safe_label = str(label or "")
+    def telegram_markdown_text(text: str) -> str:
+        safe_text = str(text or "")
         for ch in ("\\", "`", "*", "_", "[", "]", "(", ")"):
-            safe_label = safe_label.replace(ch, "\\" + ch)
+            safe_text = safe_text.replace(ch, "\\" + ch)
+        return safe_text
+
+    @staticmethod
+    def telegram_markdown_link(label: str, url: str) -> str:
+        safe_label = TweetMessageRenderer.telegram_markdown_text(label)
         safe_url = str(url or "").strip()
         if safe_url and not safe_url.startswith(("http://", "https://")):
             safe_url = "https://" + safe_url.lstrip("/")
         safe_url = safe_url.replace("(", "%28").replace(")", "%29")
         return "[" + safe_label + "](" + safe_url + ")"
+
+    @staticmethod
+    def telegram_tweet_header(author_label: str, status_url: str) -> str:
+        author_name = str(author_label or "").strip().lstrip("@") or "unknown"
+        safe_author_name = TweetMessageRenderer.telegram_markdown_text(author_name)
+        status_link = TweetMessageRenderer.telegram_markdown_link(
+            "🔗 查看推文", status_url
+        )
+        return f"𝕏 · {safe_author_name} · {status_link}"
 
     @staticmethod
     def format_video_attachment_text(
@@ -1159,7 +1201,7 @@ class TweetMessageRenderer:
         link_style: str = "plain",
     ) -> str:
         if media_only:
-            return f"@{username}"
+            return TweetMessageRenderer._source_node_name(username)
         text = TweetMessageRenderer.format_tweet(
             index,
             username,
@@ -1171,7 +1213,7 @@ class TweetMessageRenderer:
         )
         if text:
             return f"{text}\n\n视频/GIF 附件"
-        return f"@{username}\n视频/GIF 附件"
+        return f"{TweetMessageRenderer._source_node_name(username)}\n视频/GIF 附件"
 
     @staticmethod
     def format_image_attachment_text(

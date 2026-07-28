@@ -12,14 +12,14 @@ from astrbot.api import logger
 
 try:
     from ..config import config_get, parse_config_bool
-    from ..shared import TweetItem
+    from ..shared import TweetItem, format_subscription_source
     from .config import ScheduleGroup
     from .models import SchedulerTaskError, UserFetchResult
 except ImportError:
     from config import config_get, parse_config_bool
-    from shared import TweetItem
     from scheduler.config import ScheduleGroup
     from scheduler.models import SchedulerTaskError, UserFetchResult
+    from shared import TweetItem, format_subscription_source
 
 
 class SchedulerFetchMixin:
@@ -87,6 +87,7 @@ class SchedulerFetchMixin:
         *,
         concurrent: bool,
     ) -> UserFetchResult:
+        filter_reposts = self._effective_filter_reposts(group)
         if group.is_tag_group:
             return await self._fetch_group_query(
                 group,
@@ -94,6 +95,7 @@ class SchedulerFetchMixin:
                 username,
                 fetch_limit,
                 skip_plain_text=skip_plain_text,
+                filter_reposts=filter_reposts,
             )
         if group.is_list_group:
             return await self._fetch_group_list(
@@ -102,6 +104,7 @@ class SchedulerFetchMixin:
                 username,
                 fetch_limit,
                 skip_plain_text=skip_plain_text,
+                filter_reposts=filter_reposts,
             )
         try:
             scheduler_method = (
@@ -119,12 +122,14 @@ class SchedulerFetchMixin:
                         start_index=index,
                         skip_plain_text=skip_plain_text,
                         retry_attempts=getattr(self.nitter, "retry_attempts", 2),
+                        filter_reposts=filter_reposts,
                     )
                 else:
                     instance, scan_result = await fetch_for_scheduler(
                         username,
                         scan_watermark,
                         skip_plain_text=skip_plain_text,
+                        filter_reposts=filter_reposts,
                     )
                 raw_anchor_status_ids = getattr(scan_result, "anchor_status_ids", None)
                 anchor_status_ids = (
@@ -139,6 +144,7 @@ class SchedulerFetchMixin:
                         username,
                         fetch_limit,
                         skip_plain_text=skip_plain_text,
+                        filter_reposts=filter_reposts,
                     )
                     if html_result is not None:
                         return html_result
@@ -166,6 +172,7 @@ class SchedulerFetchMixin:
                     start_index=index,
                     skip_plain_text=skip_plain_text,
                     retry_attempts=getattr(self.nitter, "retry_attempts", 2),
+                    filter_reposts=filter_reposts,
                 )
             else:
                 (
@@ -173,7 +180,10 @@ class SchedulerFetchMixin:
                     tweets,
                     plain_text_filtered,
                 ) = await self.nitter.fetch_tweets_with_stats(
-                    username, fetch_limit, skip_plain_text=skip_plain_text
+                    username,
+                    fetch_limit,
+                    skip_plain_text=skip_plain_text,
+                    filter_reposts=filter_reposts,
                 )
             if not tweets and self._user_html_fallback_enabled():
                 html_result = await self._fetch_user_html_fallback(
@@ -181,6 +191,7 @@ class SchedulerFetchMixin:
                     username,
                     fetch_limit,
                     skip_plain_text=skip_plain_text,
+                    filter_reposts=filter_reposts,
                 )
                 if html_result is not None:
                     return html_result
@@ -191,6 +202,7 @@ class SchedulerFetchMixin:
                     username,
                     fetch_limit,
                     skip_plain_text=skip_plain_text,
+                    filter_reposts=filter_reposts,
                 )
                 if html_result is not None:
                     return html_result
@@ -219,6 +231,13 @@ class SchedulerFetchMixin:
             config_get(self.config, "user_html_fallback", False), False
         )
 
+    def _effective_filter_reposts(self, group: ScheduleGroup) -> bool:
+        global_enabled = parse_config_bool(
+            config_get(self.config, "filter_reposts_enabled", True),
+            True,
+        )
+        return global_enabled and bool(getattr(group, "filter_reposts_enabled", True))
+
     async def _fetch_user_html_fallback(
         self,
         index: int,
@@ -226,12 +245,17 @@ class SchedulerFetchMixin:
         fetch_limit: int,
         *,
         skip_plain_text: bool = False,
+        filter_reposts: bool = True,
     ) -> UserFetchResult | None:
         if self.html_backend is None:
             return None
         try:
             instance, tweets = await asyncio.to_thread(
-                self.html_backend.fetch_user, username, fetch_limit
+                lambda: self.html_backend.fetch_user(
+                    username,
+                    fetch_limit,
+                    filter_reposts=filter_reposts,
+                )
             )
         except Exception as exc:
             logger.warning(
@@ -277,6 +301,7 @@ class SchedulerFetchMixin:
         fetch_limit: int,
         *,
         skip_plain_text: bool = False,
+        filter_reposts: bool = True,
     ) -> UserFetchResult:
         query_item = next(
             (item for item in group.queries if item.account_key == account_key),
@@ -299,37 +324,42 @@ class SchedulerFetchMixin:
                 ),
             )
         html_backend = self.html_backend
+        source_label = format_subscription_source(account_key, group.group_type)
 
-        logger.info(
-            f"[NitterTweets] 标签查询开始: group={group.group_id}, "
-            f"query={query_item.query}, type={query_item.type}, limit={fetch_limit}"
+        self._log_verbose_info(
+            f"[NitterTweets] 搜索订阅抓取开始: group={group.group_id}, "
+            f"source={source_label}, type={query_item.type}, limit={fetch_limit}"
         )
 
         try:
             instance, tweets = await asyncio.to_thread(
                 lambda: html_backend.search(
-                    query_item.query, fetch_limit, kind=query_item.type
+                    query_item.query,
+                    fetch_limit,
+                    kind=query_item.type,
+                    filter_reposts=filter_reposts,
                 )
             )
-            logger.info(
-                f"[NitterTweets] 标签查询成功: group={group.group_id}, "
-                f"query={query_item.query}, instance={instance}, "
-                f"tweets={len(list(tweets))}"
+            retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
+            html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
+            tweets = list(tweets)
+            self._log_verbose_info(
+                f"[NitterTweets] 搜索订阅抓取成功: group={group.group_id}, "
+                f"source={source_label}, instance={instance}, "
+                f"tweets={len(tweets)}"
             )
         except Exception as exc:
             logger.warning(
-                f"[NitterTweets] 标签查询失败: group={group.group_id}, "
-                f"query={query_item.query}, error={type(exc).__name__}: {exc}"
+                f"[NitterTweets] 搜索订阅抓取失败: group={group.group_id}, "
+                f"source={source_label}, error={type(exc).__name__}: {exc}"
             )
             return UserFetchResult(
                 index=index,
                 username=account_key,
                 error=SchedulerTaskError.from_exception(exc),
             )
-        retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
-        html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
         tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
-            list(tweets), skip_plain_text=skip_plain_text
+            tweets, skip_plain_text=skip_plain_text
         )
         return UserFetchResult(
             index=index,
@@ -355,6 +385,7 @@ class SchedulerFetchMixin:
         fetch_limit: int,
         *,
         skip_plain_text: bool = False,
+        filter_reposts: bool = True,
     ) -> UserFetchResult:
         """Fetch Twitter List timeline (serial, HTML backend)."""
         # account_key format: "list:1234567890"
@@ -368,6 +399,7 @@ class SchedulerFetchMixin:
             )
 
         list_id = account_key[5:]  # strip "list:" prefix
+        source_label = format_subscription_source(account_key, group.group_type)
 
         if self.html_backend is None:
             return UserFetchResult(
@@ -378,24 +410,31 @@ class SchedulerFetchMixin:
                 ),
             )
 
-        logger.info(
+        self._log_verbose_info(
             f"[NitterTweets] List 抓取开始: group={group.group_id}, "
-            f"list_id={list_id}, limit={fetch_limit}"
+            f"source={source_label}, limit={fetch_limit}"
         )
 
         try:
             instance, tweets = await asyncio.to_thread(
-                lambda: self.html_backend.fetch_list(list_id, fetch_limit)
+                lambda: self.html_backend.fetch_list(
+                    list_id,
+                    fetch_limit,
+                    filter_reposts=filter_reposts,
+                )
             )
-            logger.info(
+            retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
+            html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
+            tweets = list(tweets)
+            self._log_verbose_info(
                 f"[NitterTweets] List 抓取成功: group={group.group_id}, "
-                f"list_id={list_id}, instance={instance}, "
-                f"tweets={len(list(tweets))}"
+                f"source={source_label}, instance={instance}, "
+                f"tweets={len(tweets)}"
             )
         except Exception as exc:
             logger.warning(
                 f"[NitterTweets] List 抓取失败: group={group.group_id}, "
-                f"list_id={list_id}, error={type(exc).__name__}: {exc}"
+                f"source={source_label}, error={type(exc).__name__}: {exc}"
             )
             return UserFetchResult(
                 index=index,
@@ -403,10 +442,8 @@ class SchedulerFetchMixin:
                 error=SchedulerTaskError.from_exception(exc),
             )
 
-        retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
-        html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
         tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
-            list(tweets), skip_plain_text=skip_plain_text
+            tweets, skip_plain_text=skip_plain_text
         )
 
         return UserFetchResult(

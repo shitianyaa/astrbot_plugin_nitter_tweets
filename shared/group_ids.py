@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 DEFAULT_GROUP_ID = "default"
 LEGACY_GLOBAL_GROUP_ID = "global"
 SAFE_LEGACY_GROUP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")

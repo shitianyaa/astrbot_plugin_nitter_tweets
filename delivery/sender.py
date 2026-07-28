@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import copy
 
 from astrbot.api import logger
 
@@ -10,7 +11,8 @@ except ImportError:  # pragma: no cover - optional dependency in some AstrBot en
     httpx = None
 
 try:
-    from aiocqhttp.exceptions import ActionFailed, NetworkError as OneBotNetworkError
+    from aiocqhttp.exceptions import ActionFailed
+    from aiocqhttp.exceptions import NetworkError as OneBotNetworkError
 except ImportError:  # pragma: no cover - non-OneBot envs
     ActionFailed = None
     OneBotNetworkError = None
@@ -26,22 +28,21 @@ try:
         resolve_send_image_attachments,
         resolve_send_video_attachments,
     )
+    from ..rendering import TweetMessageRenderer
     from ..shared import TweetItem
     from .outcomes import SendAttempt, SendOutcome
     from .platforms import PlatformDeliveryRegistry, PlatformResolver
     from .sender_capabilities import SenderCapabilitiesMixin
     from .sender_direct import SenderDirectMixin
     from .sender_forward import SenderForwardMixin
-    from .sender_merged import SenderMergedForwardMixin
     from .sender_helpers import SenderHelpersMixin
-    from ..rendering import TweetMessageRenderer
+    from .sender_merged import SenderMergedForwardMixin
 except ImportError:
     from config import (
         configured_merge_tweet_threshold,
         resolve_send_image_attachments,
         resolve_send_video_attachments,
     )
-    from shared import TweetItem
     from delivery import (
         PlatformDeliveryRegistry,
         PlatformResolver,
@@ -51,9 +52,10 @@ except ImportError:
     from delivery.sender_capabilities import SenderCapabilitiesMixin
     from delivery.sender_direct import SenderDirectMixin
     from delivery.sender_forward import SenderForwardMixin
-    from delivery.sender_merged import SenderMergedForwardMixin
     from delivery.sender_helpers import SenderHelpersMixin
+    from delivery.sender_merged import SenderMergedForwardMixin
     from rendering import TweetMessageRenderer
+    from shared import TweetItem
 
 
 class TweetSender(
@@ -88,7 +90,52 @@ class TweetSender(
             return "telegram_md"
         return "plain"
 
+    def _sender_for_media(self, force_media: bool) -> TweetSender:
+        """Return a sender with per-call media flags without mutating shared state."""
+        if not force_media:
+            return self
+        sender = copy(self)
+        sender.send_image_attachments = True
+        sender.send_video_attachments = True
+        sender.renderer = TweetMessageRenderer(
+            send_image_attachments=True,
+            send_video_attachments=True,
+        )
+        return sender
+
     async def send(
+        self,
+        event,
+        username: str,
+        instance: str,
+        tweets: list[TweetItem],
+        notices: list[str] | None = None,
+        header_text: str = "",
+        tweet_start_index: int = 1,
+        media_only: bool = False,
+        omit_status_url: bool = True,
+        hide_original_when_translated: bool = False,
+        link_style: str = "plain",
+        on_sent_progress=None,
+        force_media: bool = False,
+    ) -> bool:
+        sender = self._sender_for_media(force_media)
+        return await sender._send_with_current_media_flags(
+            event,
+            username,
+            instance,
+            tweets,
+            notices=notices,
+            header_text=header_text,
+            tweet_start_index=tweet_start_index,
+            media_only=media_only,
+            omit_status_url=omit_status_url,
+            hide_original_when_translated=hide_original_when_translated,
+            link_style=link_style,
+            on_sent_progress=on_sent_progress,
+        )
+
+    async def _send_with_current_media_flags(
         self,
         event,
         username: str,
@@ -449,6 +496,4 @@ class TweetSender(
             return True
         if "res_id" in lowered and ("失败" in text or "fail" in lowered):
             return True
-        if "发送转发消息" in text and "失败" in text:
-            return True
-        return False
+        return bool("发送转发消息" in text and "失败" in text)

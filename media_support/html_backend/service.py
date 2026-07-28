@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """HTML Nitter facade for search plus a disabled legacy blogger entrypoint."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 try:
     from ...shared.utils import TweetItem
@@ -133,13 +132,19 @@ class HtmlNitterService:
         limit: int = 5,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         # When user_html_fallback is enabled, blogger_html shares
         # search_instances. When disabled (default), pool is empty and we
         # return early to avoid triggering an empty-pool error.
         if not self.blogger_html.instances and not instance:
             return "", []
-        return self.blogger_html.fetch_user(username, limit, instance=instance)
+        return self.blogger_html.fetch_user(
+            username,
+            limit,
+            instance=instance,
+            filter_reposts=filter_reposts,
+        )
 
     def search(
         self,
@@ -149,6 +154,7 @@ class HtmlNitterService:
         kind: str | None = None,
         instance: str | None = None,
         max_pages: int | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
@@ -160,6 +166,7 @@ class HtmlNitterService:
             kind=resolved,
             instance=instance,
             max_pages=max_pages,
+            filter_reposts=filter_reposts,
         )
 
     def fetch_list(
@@ -168,8 +175,14 @@ class HtmlNitterService:
         limit: int = 5,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline (shares search pool)."""
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
-        return self.search_pool.fetch_list(list_id, limit, instance=instance)
+        return self.search_pool.fetch_list(
+            list_id,
+            limit,
+            instance=instance,
+            filter_reposts=filter_reposts,
+        )

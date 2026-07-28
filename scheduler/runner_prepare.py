@@ -13,7 +13,7 @@ from astrbot.api import logger
 
 try:
     from ..config import media_only_unavailable_reason
-    from ..shared import TweetItem
+    from ..shared import TweetItem, format_subscription_source
     from ..shared.media_status import (
         MEDIA_STATUS_NO_CANDIDATE,
         MEDIA_STATUS_POLICY_SKIPPED,
@@ -29,12 +29,6 @@ try:
     )
 except ImportError:
     from config import media_only_unavailable_reason
-    from shared import TweetItem
-    from shared.media_status import (
-        MEDIA_STATUS_NO_CANDIDATE,
-        MEDIA_STATUS_POLICY_SKIPPED,
-        MEDIA_STATUS_READY,
-    )
     from scheduler.config import ScheduleGroup
     from scheduler.models import (
         BatchSummaryTracker,
@@ -42,6 +36,12 @@ except ImportError:
         PreparedBatchResult,
         ScheduledCheckResult,
         SchedulerTaskError,
+    )
+    from shared import TweetItem, format_subscription_source
+    from shared.media_status import (
+        MEDIA_STATUS_NO_CANDIDATE,
+        MEDIA_STATUS_POLICY_SKIPPED,
+        MEDIA_STATUS_READY,
     )
 
 
@@ -134,7 +134,12 @@ class SchedulerPrepareMixin:
                         batch_progress=(tweet_index, len(new_tweets)),
                     )
                     current_batch = None
-                self._log_prepare_progress(username, prepared_count, len(new_tweets))
+                self._log_prepare_progress(
+                    username,
+                    prepared_count,
+                    len(new_tweets),
+                    group.group_type,
+                )
         except BaseException:
             batches_to_clean = list(pending_batches)
             if current_batch is not None:
@@ -271,6 +276,7 @@ class SchedulerPrepareMixin:
                 discovered_batch.username,
                 prepared_count,
                 total_by_user.get(discovered_batch.username, 0),
+                group.group_type,
             )
         return pending_batches, immediate_batches_sent
 
@@ -354,9 +360,10 @@ class SchedulerPrepareMixin:
         result.failed_users[f"{username}:{status_id}"] = (
             f"推文准备失败: {error_message}"
         )
+        source_label = format_subscription_source(username, result.group_type)
         logger.warning(
             "[NitterTweets] 定时推送准备失败: "
-            f"username={username}, status={status_id}, error={error_message}"
+            f"source={source_label}, status={status_id}, error={error_message}"
         )
 
     async def _handle_immediate_prepare_success(
@@ -369,7 +376,7 @@ class SchedulerPrepareMixin:
         if batch.media_only:
             return
         self._log_ai_process_results(
-            batch.username,
+            format_subscription_source(batch.username, group.group_type),
             batch.tweets,
             prepared.translation_report,
             progress_index=batch.tweet_index,
@@ -381,9 +388,11 @@ class SchedulerPrepareMixin:
         username: str,
         prepared_count: int,
         total_count: int,
+        group_type: str = "blogger",
     ) -> None:
+        source_label = format_subscription_source(username, group_type)
         self._log_verbose_info(
-            f"[NitterTweets] prepared @{username} {prepared_count}/"
+            f"[NitterTweets] 订阅源准备完成: source={source_label}, {prepared_count}/"
             f"{total_count} new tweets for scheduled push"
         )
 
@@ -404,6 +413,7 @@ class SchedulerPrepareMixin:
         batch.media_status = status
         await self._cleanup_batch_media(batch)
         status_id = str(batch.tweets[0].status_id or "") if batch.tweets else ""
+        source_label = format_subscription_source(batch.username, result.group_type)
         if status == MEDIA_STATUS_POLICY_SKIPPED:
             result.media_only_skipped += 1
             if status_id:
@@ -415,14 +425,14 @@ class SchedulerPrepareMixin:
                 )
             self._log_verbose_info(
                 "[NitterTweets] 仅媒体推文按全局媒体策略跳过: "
-                f"username={batch.username}, status={status_id}"
+                f"source={source_label}, status={status_id}"
             )
             return
 
         result.media_only_retrying += 1
         logger.warning(
             "[NitterTweets] 仅媒体推文暂未准备好，下轮重试: "
-            f"username={batch.username}, status={status_id}, "
+            f"source={source_label}, status={status_id}, "
             f"status={status}, error={error or 'no media'}"
         )
 

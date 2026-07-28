@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-
 # ──────────────────────────────────────────────────────────────────────
 # 数据模型
 # ──────────────────────────────────────────────────────────────────────
@@ -63,6 +62,42 @@ class TweetItem:
 DEFAULT_INSTANCES = [
     "https://nitter.net",
 ]
+
+
+def format_subscription_count(count: int, group_type: str = "blogger") -> str:
+    """Return the user-facing quantity phrase for a subscription group."""
+    kind = str(group_type or "blogger").strip().lower()
+    if kind == "tag":
+        noun = "个搜索订阅"
+    elif kind == "list":
+        noun = "个 List"
+    else:
+        noun = "位博主"
+    return f"{int(count)} {noun}"
+
+
+def format_subscription_source(source: str, group_type: str = "blogger") -> str:
+    """Render a stored account/query/List key without internal prefixes."""
+    raw = str(source or "").strip()
+    if raw.startswith("@"):
+        raw = raw[1:].strip()
+    lowered = raw.lower()
+    kind = str(group_type or "blogger").strip().lower()
+    if lowered.startswith("q:"):
+        kind = "tag"
+        raw = raw[2:].strip()
+    elif lowered.startswith("list:"):
+        kind = "list"
+        raw = raw[5:].strip()
+
+    if not raw:
+        return "-"
+    if kind == "tag":
+        return f"搜索「{raw}」"
+    if kind == "list":
+        return f"List {raw}"
+    return f"@{raw}"
+
 
 URL_LIKE_RE = re.compile(
     r"(?i)(?<![@\w])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}"

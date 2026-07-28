@@ -7,6 +7,7 @@ from astrbot.api import logger
 
 try:
     from ..config import config_get, migrate_default_group_config
+    from ..shared import clamp_float, clamp_int, load_instances, normalize_username
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
@@ -17,9 +18,9 @@ try:
         normalize_group_id,
         normalize_stable_group_id,
     )
-    from ..shared import clamp_float, clamp_int, load_instances, normalize_username
 except ImportError:
     from config import config_get, migrate_default_group_config
+    from shared import clamp_float, clamp_int, load_instances, normalize_username
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
         DEFAULT_GROUP_ID,
@@ -30,7 +31,6 @@ except ImportError:
         normalize_group_id,
         normalize_stable_group_id,
     )
-    from shared import clamp_float, clamp_int, load_instances, normalize_username
 
 
 @dataclass(slots=True)
@@ -110,6 +110,7 @@ class ScheduleGroup:
     lists_info: WatchListsInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
+    filter_reposts_enabled: bool = True
 
     @property
     def is_tag_group(self) -> bool:
@@ -191,6 +192,7 @@ class SchedulerConfigReader:
                 [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
             ),
             aliases=list(DEFAULT_GROUP_ALIASES),
+            filter_reposts_enabled=True,
         )
 
     def schedule_groups(self, log_invalid_targets: bool = True) -> list[ScheduleGroup]:
@@ -448,6 +450,10 @@ class SchedulerConfigReader:
                 group_id=group_id,
             ),
             aliases=aliases,
+            filter_reposts_enabled=self.parse_bool(
+                raw_group.get("filter_reposts_enabled", True),
+                True,
+            ),
         )
 
     def default_group_legacy_config(self, group_id: str, key: str, default=None):

@@ -15,13 +15,13 @@ try:
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
+    from ..media_support.html_backend.query import MAX_QUERY_LENGTH
+    from ..media_support.network import UnsafeUrlError, validate_http_url
     from ..media_support.search_session_buffer import (
         MAX_FETCH_CAP,
         MAX_PAGES_PER_FILL,
         SearchSessionStore,
     )
-    from ..media_support.html_backend.query import MAX_QUERY_LENGTH
-    from ..media_support.network import UnsafeUrlError, validate_http_url
     from ..shared import normalize_username, safe_call
 except ImportError:
     from ai import format_ai_tweet_summary
@@ -30,13 +30,13 @@ except ImportError:
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
+    from media_support.html_backend.query import MAX_QUERY_LENGTH
+    from media_support.network import UnsafeUrlError, validate_http_url
     from media_support.search_session_buffer import (
         MAX_FETCH_CAP,
         MAX_PAGES_PER_FILL,
         SearchSessionStore,
     )
-    from media_support.html_backend.query import MAX_QUERY_LENGTH
-    from media_support.network import UnsafeUrlError, validate_http_url
     from shared import normalize_username, safe_call
 
 
@@ -302,9 +302,11 @@ class ManualCommandMixin:
             return (
                 "",
                 0,
-                "用法：/推文搜索 <query> [数量]\n"
-                "标签请带 #，例如：#圣娅\n"
-                "普通词/短语直接写：python programming",
+                (
+                    "用法：/推文搜索 <query> [数量]\n"
+                    "标签请带 #，例如：#圣娅\n"
+                    "普通词/短语直接写：python programming"
+                ),
             )
         parts = text.rsplit(None, 1)
         limit = int(getattr(self, "search_default_limit", self.default_limit))
@@ -315,8 +317,7 @@ class ManualCommandMixin:
         max_limit = int(getattr(self, "search_max_limit", 10))
         if limit < 1:
             return "", 0, "数量至少为 1。"
-        if limit > max_limit:
-            limit = max_limit
+        limit = min(limit, max_limit)
         if not query:
             return "", 0, "查询内容不能为空。"
         if len(query) > MAX_QUERY_LENGTH:

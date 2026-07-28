@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tweet message layout: TG author link, URL policy, empty body, block order."""
 
 from __future__ import annotations
@@ -9,24 +8,24 @@ from rendering.tweets import TweetMessageRenderer as R
 
 
 def _tw(**kw):
-    base = dict(
-        status_id="1",
-        username="nasa",
-        text="Hello #space https://t.co/abc world",
-        x_url="https://x.com/nasa/status/1",
-        link="https://x.com/nasa/status/1",
-        published="2026-07-23 12:00:00",
-        media=[],
-        translation="",
-        ai_warnings=[],
-        media_warnings=[],
-        is_repost=False,
-    )
+    base = {
+        "status_id": "1",
+        "username": "nasa",
+        "text": "Hello #space https://t.co/abc world",
+        "x_url": "https://x.com/nasa/status/1",
+        "link": "https://x.com/nasa/status/1",
+        "published": "2026-07-23 12:00:00",
+        "media": [],
+        "translation": "",
+        "ai_warnings": [],
+        "media_warnings": [],
+        "is_repost": False,
+    }
     base.update(kw)
     return SimpleNamespace(**base)
 
 
-def test_telegram_header_is_author_link_not_body_preview():
+def test_telegram_header_has_explicit_status_link_not_body_preview():
     out = R.format_tweet(
         0,
         "nasa",
@@ -35,10 +34,27 @@ def test_telegram_header_is_author_link_not_body_preview():
         link_style="telegram_md",
     )
     first = out.split("\n\n", 1)[0]
-    assert first.startswith("[@nasa](https://x.com/nasa/status/1)")
+    assert first.startswith("𝕏 · nasa · [🔗 查看推文](https://x.com/nasa/status/1)")
     assert "Hello #space" not in first
     assert "原文" in out
     assert "Hello #space world" in out  # body still present, URL stripped
+
+
+def test_telegram_header_escapes_author_markdown():
+    out = R.format_tweet(
+        0,
+        "ignored",
+        _tw(
+            username="real_user",
+            x_url="https://x.com/real_user/status/1",
+            link="https://x.com/real_user/status/1",
+        ),
+        omit_status_url=True,
+        link_style="telegram_md",
+    )
+    assert out.startswith(
+        "𝕏 · real\\_user · [🔗 查看推文](https://x.com/real_user/status/1)"
+    )
 
 
 def test_plain_header_is_at_author():
@@ -105,7 +121,7 @@ def test_time_on_author_line_compact_header():
     assert "时间：" not in out
 
 
-def test_media_only_telegram_author_link():
+def test_media_only_telegram_header_has_explicit_status_link():
     # build_media_only returns components; check author plain text content
     class M:
         path = ""
@@ -122,5 +138,5 @@ def test_media_only_telegram_author_link():
     )
     assert comps
     text = getattr(comps[0], "text", None) or str(comps[0])
-    assert "[@nasa](https://x.com/nasa/status/1)" in text
+    assert "𝕏 · nasa · [🔗 查看推文](https://x.com/nasa/status/1)" in text
     assert "Hello" not in text

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime as dt
+import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger
@@ -14,27 +15,28 @@ try:
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
+    from ..shared import format_subscription_source
     from ..shared.group_ids import GLOBAL_GROUP_ID
-    from .models import (
-        BatchSummaryTracker,
-        PendingTweetBatch,
-        PreparedBatchResult,  # noqa: F401  拆分前定义于此，保留再导出
-        ScheduledCheckResult,
-        SchedulerTaskError,  # noqa: F401  拆分前定义于此，保留再导出
-        UserFetchResult,  # noqa: F401  拆分前定义于此，保留再导出
-    )
+    from ..storage import StorageAdapter
     from .config import (
         PushTargetParseResult,
         ScheduleGroup,
         SchedulerConfigReader,
         WatchUsersInfo,
     )
+    from .models import (
+        BatchSummaryTracker,
+        PendingTweetBatch,
+        PreparedBatchResult,
+        ScheduledCheckResult,
+        SchedulerTaskError,
+        UserFetchResult,
+    )
     from .runner_fetch import SchedulerFetchMixin
     from .runner_prepare import SchedulerPrepareMixin
     from .runner_seen import SchedulerSeenMixin
     from .runner_send import SchedulerSendMixin
     from .runner_status import SchedulerStatusMixin
-    from ..storage import StorageAdapter
 except ImportError:
     from config import (
         config_get,
@@ -42,7 +44,12 @@ except ImportError:
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
-    from shared.group_ids import GLOBAL_GROUP_ID
+    from scheduler.config import (
+        PushTargetParseResult,
+        ScheduleGroup,
+        SchedulerConfigReader,
+        WatchUsersInfo,
+    )
     from scheduler.models import (
         BatchSummaryTracker,
         PendingTweetBatch,
@@ -51,17 +58,13 @@ except ImportError:
         SchedulerTaskError,  # noqa: F401  拆分前定义于此，保留再导出
         UserFetchResult,  # noqa: F401  拆分前定义于此，保留再导出
     )
-    from scheduler.config import (
-        PushTargetParseResult,
-        ScheduleGroup,
-        SchedulerConfigReader,
-        WatchUsersInfo,
-    )
     from scheduler.runner_fetch import SchedulerFetchMixin
     from scheduler.runner_prepare import SchedulerPrepareMixin
     from scheduler.runner_seen import SchedulerSeenMixin
     from scheduler.runner_send import SchedulerSendMixin
     from scheduler.runner_status import SchedulerStatusMixin
+    from shared import format_subscription_source
+    from shared.group_ids import GLOBAL_GROUP_ID
     from storage import StorageAdapter
 
 
@@ -110,7 +113,11 @@ class NitterTweetScheduler(
         self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
+        self._storage_init_lock = asyncio.Lock()
+        self._storage_ready = asyncio.Event()
+        self._storage_init_error = ""
         self._migration_done = False
+        self._startup_checks_done = False
 
     def start(self, reason: str = "") -> None:
         if self._task is not None and not self._task.done():
@@ -158,27 +165,22 @@ class NitterTweetScheduler(
 
     async def _loop(self) -> None:
         logger.info("[NitterTweets] 调度器循环已进入")
-        await asyncio.sleep(2)
 
-        # 执行一次性迁移和配置同步。失败时保留当前 task 并在同一循环中
-        # 重试；直接 return 会让 task 进入 done 状态，而插件生命周期未必
-        # 再次调用 start()，从而导致调度器永久停摆。
-        while not self._migration_done:
+        # 存储迁移由后台循环和手动检查共享。失败时保留当前 task，并允许
+        # 手动检查成功完成同一初始化后唤醒这里，避免固定等待或并行迁移。
+        while not await self._ensure_storage_ready():
+            logger.error("[NitterTweets] 调度器将在 5 分钟后重试存储初始化")
             try:
-                schedule_groups = self._schedule_groups(log_invalid_targets=False)
-                await self.storage.migrate_and_sync(schedule_groups)
-                self._migration_done = True
-                logger.info("[NitterTweets] 数据迁移与配置同步完成")
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.error(f"[NitterTweets] 数据迁移或同步失败: {exc}", exc_info=True)
-                logger.error("[NitterTweets] 调度器将在 5 分钟后重试迁移")
-                await asyncio.sleep(300)
+                await asyncio.wait_for(self._storage_ready.wait(), timeout=300)
+            except asyncio.TimeoutError:
+                continue
 
         while True:
             try:
                 if self.schedule_enabled:
+                    if not self._startup_checks_done:
+                        await self._run_startup_checks()
+                        self._startup_checks_done = True
                     self._log_enabled_state(True)
                     await self._tick()
                 else:
@@ -213,6 +215,41 @@ class NitterTweetScheduler(
     def _log_verbose_info(self, message: str) -> None:
         if not self.brief_log_enabled:
             logger.info(message)
+
+    async def _ensure_storage_ready(self) -> bool:
+        """Serialize storage migration for the scheduler and manual checks."""
+        if self._migration_done:
+            return True
+
+        async with self._storage_init_lock:
+            if self._migration_done:
+                return True
+            started = time.perf_counter()
+            logger.info("[NitterTweets] 调度存储初始化开始")
+            try:
+                schedule_groups = self._schedule_groups(log_invalid_targets=False)
+                await self.storage.migrate_and_sync(schedule_groups)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                duration_ms = (time.perf_counter() - started) * 1000
+                self._storage_init_error = str(exc)
+                logger.error(
+                    "[NitterTweets] 调度存储初始化失败: "
+                    f"duration_ms={duration_ms:.1f}, error={exc}",
+                    exc_info=True,
+                )
+                return False
+
+            self._migration_done = True
+            self._storage_init_error = ""
+            self._storage_ready.set()
+            duration_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "[NitterTweets] 调度存储初始化完成: "
+                f"groups={len(schedule_groups)}, duration_ms={duration_ms:.1f}"
+            )
+            return True
 
     def _log_check_result(self, result: ScheduledCheckResult) -> None:
         if self.brief_log_enabled and not result.skipped_reason:
@@ -260,22 +297,61 @@ class NitterTweetScheduler(
                     group_name=group.group_id,
                 )
 
+    async def _run_startup_checks(self, now: dt.datetime | None = None) -> None:
+        """Run one serialized startup check for each eligible enabled group."""
+        groups = self._schedule_groups(log_invalid_targets=False)
+        anchor_now = now if now is not None else dt.datetime.now(CN_TZ)
+        for group in groups:
+            if not group.enabled:
+                continue
+
+            group_now = anchor_now
+            self._startup_schedule_seeded.add(group.group_id)
+            if not group.check_on_startup:
+                self._seed_schedule_slots(group, group_now)
+                continue
+
+            source_count = len(group.account_keys)
+            target_count = len(group.targets)
+            if not source_count or not target_count:
+                missing = "订阅源" if not source_count else "有效推送目标"
+                logger.info(
+                    "[NitterTweets] 启动首检跳过: "
+                    f"group_id={group.group_id}, group_type={group.group_type}, "
+                    f"sources={source_count}, targets={target_count}, "
+                    f"reason=startup, missing={missing}"
+                )
+                self._seed_schedule_slots(group, group_now)
+                continue
+
+            try:
+                await self.run_check(reason="startup", group_name=group.group_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "[NitterTweets] 启动首检异常: "
+                    f"group_id={group.group_id}, group_type={group.group_type}, "
+                    f"sources={source_count}, targets={target_count}, "
+                    f"reason=startup, error={exc}",
+                    exc_info=True,
+                )
+            finally:
+                # Anchor after the check so a long startup fetch cannot cause the
+                # same interval/daily slot to fire again on the first tick.
+                self._seed_schedule_slots(
+                    group,
+                    anchor_now if now is not None else dt.datetime.now(CN_TZ),
+                )
+
     def _scheduled_reasons(self, group: ScheduleGroup, now: dt.datetime) -> list[str]:
         reasons: list[str] = []
         group_id = group.group_id
 
         if group_id not in self._startup_schedule_seeded:
             self._startup_schedule_seeded.add(group_id)
-            # 锚定每日检查基准时间。缺少基准时 last_check 为 None，会让所有已
-            # 配置时间点在启动后第一轮全部命中，绕过 check_on_startup。
-            self._last_daily_check.setdefault(group_id, now)
-            if not group.check_on_startup:
-                self._seed_schedule_slots(group, now)
-                self._log_verbose_info(
-                    "[NitterTweets] 启动时跳过定时检查: "
-                    f"group={group_id}, check_on_startup=false"
-                )
-                return reasons
+            self._seed_schedule_slots(group, now)
+            return reasons
 
         if group.interval_check_enabled:
             interval_minutes = group.check_interval_minutes
@@ -312,6 +388,7 @@ class NitterTweetScheduler(
             )
 
         if group.daily_check_enabled:
+            self._last_daily_check[group_id] = now
             daily_slots = self._daily_slots.setdefault(group_id, set())
             for hour, minute in group.daily_check_times:
                 if now.hour == hour and now.minute == minute:
@@ -347,19 +424,76 @@ class NitterTweetScheduler(
             logger.warning(result.format_log_summary())
             return result
 
-        if self._check_lock.locked():
-            result = self._new_check_result(reason, group, target_override)
-            result.skipped_reason = "check_already_running"
-            logger.warning(result.format_log_summary())
-            return result
-
-        async with self._check_lock:
-            return await self._run_check_unlocked(
-                group,
-                reason,
-                notify_no_updates,
-                target_override,
+        observable = self._is_observable_check_reason(reason)
+        effective_targets = (
+            list(target_override) if target_override is not None else group.targets
+        )
+        started = time.perf_counter() if observable else 0.0
+        if observable:
+            logger.info(
+                "[NitterTweets] 检查开始: "
+                f"group_id={group.group_id}, group_type={group.group_type}, "
+                f"sources={len(group.account_keys)}, targets={len(effective_targets)}, "
+                f"reason={reason}"
             )
+
+        try:
+            if not await self._ensure_storage_ready():
+                result = self._new_check_result(reason, group, target_override)
+                result.skipped_reason = "storage_not_ready"
+                logger.warning(
+                    "[NitterTweets] 检查因存储未就绪跳过: "
+                    f"group_id={group.group_id}, group_type={group.group_type}, "
+                    f"reason={reason}, error={self._storage_init_error or 'unknown'}"
+                )
+            elif not observable and self._check_lock.locked():
+                result = self._new_check_result(reason, group, target_override)
+                result.skipped_reason = "check_already_running"
+                logger.warning(result.format_log_summary())
+            else:
+                async with self._check_lock:
+                    result = await self._run_check_unlocked(
+                        group,
+                        reason,
+                        notify_no_updates,
+                        target_override,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if observable:
+                duration_ms = (time.perf_counter() - started) * 1000
+                logger.error(
+                    "[NitterTweets] 检查异常: "
+                    f"group_id={group.group_id}, group_type={group.group_type}, "
+                    f"sources={len(group.account_keys)}, targets={len(group.targets)}, "
+                    f"reason={reason}, duration_ms={duration_ms:.1f}, error={exc}",
+                    exc_info=True,
+                )
+            raise
+
+        if observable:
+            duration_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "[NitterTweets] 检查结束: "
+                f"group_id={result.group_id}, group_type={result.group_type}, "
+                f"sources={len(result.users)}, targets={len(result.targets)}, "
+                f"reason={result.reason}, duration_ms={duration_ms:.1f}, "
+                f"new={result.new_tweet_count}, failed={len(result.failed_users)}, "
+                f"skipped={result.skipped_reason or 'none'}, "
+                f"push_success={result.pushed_target_successes}/"
+                f"{result.pushed_target_attempts}"
+            )
+        return result
+
+    @staticmethod
+    def _is_observable_check_reason(reason: str) -> bool:
+        normalized = str(reason or "").strip().lower()
+        return (
+            normalized == "startup"
+            or normalized == "webui"
+            or normalized.startswith("manual")
+        )
 
     async def replay_push_history(
         self,
@@ -536,6 +670,7 @@ class NitterTweetScheduler(
             reason=reason,
             group_id=group.group_id,
             group_name=group.name,
+            group_type=group.group_type,
             users=list(group.account_keys),
             targets=targets,
             invalid_targets=invalid_targets,
@@ -581,7 +716,6 @@ class NitterTweetScheduler(
         try:
             seen_map = await self._get_seen_map(group.group_id)
             scan_watermarks = await self._get_scan_watermarks(group.group_id, seen_map)
-            result.seen_users = len(seen_map)
             fetch_limit = 20
             result.fetch_limit = fetch_limit
             target_interval = group.send_target_interval
@@ -619,10 +753,11 @@ class NitterTweetScheduler(
             watermark_candidates: dict[str, tuple[list[str], set[str]]] = {}
             for fetch_result in fetch_results:
                 username = fetch_result.username
+                source_label = format_subscription_source(username, group.group_type)
                 if fetch_result.error:
                     result.failed_users[username] = fetch_result.error.message
                     logger.warning(
-                        f"[NitterTweets] 定时抓取 @{username} 失败: "
+                        f"[NitterTweets] 定时抓取 {source_label} 失败: "
                         f"{fetch_result.error.message}"
                     )
                     continue
@@ -663,14 +798,14 @@ class NitterTweetScheduler(
                 if not fetch_result.scan_complete:
                     result.failed_users[username] = "分页未完整扫描，已跳过本轮"
                     logger.warning(
-                        f"[NitterTweets] 定时抓取 {username} 未完整扫描，跳过本轮"
+                        f"[NitterTweets] 定时抓取 {source_label} 未完整扫描，跳过本轮"
                     )
                     continue
                 plain_text_filtered = fetch_result.plain_text_filtered
                 if skip_plain_text and plain_text_filtered > 0:
                     group_plain_text_filtered_total += plain_text_filtered
                     self._log_verbose_info(
-                        f"[NitterTweets] 定时检查 {username}: "
+                        f"[NitterTweets] 定时检查 {source_label}: "
                         f"已过滤 {plain_text_filtered} 条纯文本推文（无作者上传媒体）"
                     )
 
@@ -690,7 +825,9 @@ class NitterTweetScheduler(
                     # uninitialized so a transient empty search does not seal
                     # a whole page as history.
                     if not seed_ids and (group.is_tag_group or group.is_list_group):
-                        source_label = "标签订阅" if group.is_tag_group else "List 订阅"
+                        source_kind_label = (
+                            "搜索订阅" if group.is_tag_group else "List 订阅"
+                        )
                         if (
                             fetch_result.plain_text_filtered > 0
                             or fetch_result.retweet_filtered > 0
@@ -703,17 +840,17 @@ class NitterTweetScheduler(
                             )
                             result.initialized_users[username] = 0
                             self._log_verbose_info(
-                                f"[NitterTweets] {source_label}首轮结果全部被过滤，"
+                                f"[NitterTweets] {source_kind_label}首轮结果全部被过滤，"
                                 "已记录空扫描水位: "
-                                f"group={group.group_id}, account={username}"
+                                f"group={group.group_id}, source={source_label}"
                             )
                             continue
                         result.failed_users[username] = (
-                            "首次抓取无可用推文 ID，未初始化 seen（下轮重试）"
+                            "首次抓取无有效推文 ID，未建立订阅源基线（下轮重试）"
                         )
                         logger.warning(
-                            f"[NitterTweets] {source_label}首次抓取为空，跳过初始化: "
-                            f"group={group.group_id}, account={username}"
+                            f"[NitterTweets] {source_kind_label}首次抓取为空，跳过初始化: "
+                            f"group={group.group_id}, source={source_label}"
                         )
                         continue
                     seen_map[username] = self.storage.initial_seen_ids(seed_ids)
@@ -723,8 +860,8 @@ class NitterTweetScheduler(
                     )
                     result.initialized_users[username] = len(seed_ids)
                     self._log_verbose_info(
-                        "[NitterTweets] 首次记录已初始化: "
-                        f"group={group.group_id}, username={username}, "
+                        "[NitterTweets] 首次订阅源已初始化: "
+                        f"group={group.group_id}, source={source_label}, "
                         f"seen={len(seed_ids)}"
                     )
                     continue
@@ -742,7 +879,7 @@ class NitterTweetScheduler(
                     await self._put_seen_map(group.group_id, seen_map)
                     self._log_verbose_info(
                         "[NitterTweets] 定时检查忽略基准前历史推文: "
-                        f"group={group.group_id}, username={username}, "
+                        f"group={group.group_id}, source={source_label}, "
                         f"ignored={len(historical_unseen_ids)}"
                     )
 
@@ -765,7 +902,7 @@ class NitterTweetScheduler(
                             await self._put_seen_map(group.group_id, seen_map)
                         self._log_verbose_info(
                             "[NitterTweets] 定时检查超出单次推送上限，已跳过较旧推文: "
-                            f"group={group.group_id}, username={username}, "
+                            f"group={group.group_id}, source={source_label}, "
                             f"max={max_tweets}, skipped={len(dropped_tweets)}"
                         )
 
@@ -803,7 +940,7 @@ class NitterTweetScheduler(
                     result.no_new_users.append(username)
                     self._log_verbose_info(
                         f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
-                        f"username={username}"
+                        f"source={source_label}"
                     )
                     seen_map[username] = self._merge_seen_ids(
                         scanned_status_ids, seen_ids
@@ -827,10 +964,12 @@ class NitterTweetScheduler(
                 discovered_batches,
                 group_label,
                 action_text="本次检查发现",
+                group_type=group.group_type,
             )
             check_batch_summary = self._append_fetch_failure_summary(
                 check_batch_summary,
                 fetch_failures,
+                group_type=group.group_type,
             )
             immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
             self._set_discovered_batch_progress(discovered_batches)
@@ -871,7 +1010,6 @@ class NitterTweetScheduler(
                     immediate_batches_sent,
                 )
 
-            result.seen_users = len(seen_map)
             if pending_batches:
                 try:
                     await self._send_prepared_batches(
@@ -968,6 +1106,7 @@ class NitterTweetScheduler(
             reason=reason,
             group_id=requested,
             group_name=requested,
+            group_type="blogger",
             skipped_reason="unknown_group",
             available_groups=[
                 f"{group.name} ({group.group_id})"

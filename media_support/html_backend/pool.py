@@ -1,13 +1,12 @@
-# -*- coding: utf-8 -*-
 """Instance pool: ordered hosts, skip cooldowns, shared fetch+parse."""
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 from urllib.parse import quote, urlencode
 
 try:
@@ -17,9 +16,9 @@ except ImportError:  # pragma: no cover
 
 try:
     from ..host_score import HostScoreBook
+    from ..network import UnsafeUrlError, validate_http_url
     from .http_session import HTML_ACCEPT, HttpSession
     from .modes import GateKeeper, detect_gate
-    from ..network import UnsafeUrlError, validate_http_url
     from .parser import parse_timeline_html
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
@@ -27,10 +26,10 @@ except ImportError:  # pragma: no cover
     from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import HTML_ACCEPT, HttpSession
     from media_support.html_backend.modes import GateKeeper, detect_gate
-    from media_support.network import UnsafeUrlError, validate_http_url
     from media_support.html_backend.parser import parse_timeline_html
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
+    from media_support.network import UnsafeUrlError, validate_http_url
 
 
 @dataclass
@@ -63,7 +62,7 @@ class HtmlSearchResult(list[TweetItem]):
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
 
-    def limited(self, limit: int) -> "HtmlSearchResult":
+    def limited(self, limit: int) -> HtmlSearchResult:
         """Return a bounded result while retaining parser statistics."""
         return HtmlSearchResult(
             self[:limit],
@@ -126,6 +125,12 @@ class HtmlNitterPool:
         except (TypeError, ValueError):
             number = 1
         return max(1, min(5, number))
+
+    @staticmethod
+    def _repost_filter_kwargs(filter_reposts: bool | None) -> dict[str, bool]:
+        if filter_reposts is None:
+            return {}
+        return {"filter_reposts": bool(filter_reposts)}
 
     def _hosts_for_rotation(self, instance: str | None = None) -> list[str]:
         """Ordered hosts for multi-mirror retry (ready first, then cooling).
@@ -245,16 +250,27 @@ class HtmlNitterPool:
         limit: int,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch user timeline with global retry on total failure."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
-            return self._fetch_user_once(username, limit, instance=instance)
+            return self._fetch_user_once(
+                username,
+                limit,
+                instance=instance,
+                **self._repost_filter_kwargs(filter_reposts),
+            )
 
         max_retries = self.config.max_global_retries
         for attempt in range(max_retries):
             try:
-                return self._fetch_user_once(username, limit, instance=instance)
+                return self._fetch_user_once(
+                    username,
+                    limit,
+                    instance=instance,
+                    **self._repost_filter_kwargs(filter_reposts),
+                )
             except RuntimeError as exc:
                 msg = str(exc)
                 is_last_attempt = attempt >= max_retries - 1
@@ -286,6 +302,7 @@ class HtmlNitterPool:
         limit: int,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         user = username.strip().lstrip("@")
         errors: list[str] = []
@@ -300,7 +317,12 @@ class HtmlNitterPool:
             host = self.session.host_of(base)
             try:
                 self.log(f"user try {index}/{total} host={host} user={user}")
-                tweets = self._paginate_user(base, user, limit)
+                tweets = self._paginate_user(
+                    base,
+                    user,
+                    limit,
+                    **self._repost_filter_kwargs(filter_reposts),
+                )
                 if tweets:
                     self.scores.record_success(host)
                     if index > 1:
@@ -313,7 +335,7 @@ class HtmlNitterPool:
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
                 self.log(f"user empty host={host}, rotate next ({index}/{total})")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
                 self.log(f"user fail host={host}, rotate next ({index}/{total}): {exc}")
@@ -333,19 +355,30 @@ class HtmlNitterPool:
         kind: str | None = None,
         instance: str | None = None,
         max_pages: int | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Search with global retry on total failure."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
             return self._search_once(
-                query, limit, kind=kind, instance=instance, max_pages=max_pages
+                query,
+                limit,
+                kind=kind,
+                instance=instance,
+                max_pages=max_pages,
+                **self._repost_filter_kwargs(filter_reposts),
             )
 
         max_retries = self.config.max_global_retries
         for attempt in range(max_retries):
             try:
                 return self._search_once(
-                    query, limit, kind=kind, instance=instance, max_pages=max_pages
+                    query,
+                    limit,
+                    kind=kind,
+                    instance=instance,
+                    max_pages=max_pages,
+                    **self._repost_filter_kwargs(filter_reposts),
                 )
             except RuntimeError as exc:
                 msg = str(exc)
@@ -383,6 +416,7 @@ class HtmlNitterPool:
         kind: str | None = None,
         instance: str | None = None,
         max_pages: int | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         q = normalize_query(query)
         if not q:
@@ -410,7 +444,12 @@ class HtmlNitterPool:
                 )
                 tweets = self._as_search_result(
                     self._paginate_search(
-                        base, q, limit, kind=resolved, max_pages=max_pages
+                        base,
+                        q,
+                        limit,
+                        kind=resolved,
+                        max_pages=max_pages,
+                        **self._repost_filter_kwargs(filter_reposts),
                     )
                 )
                 if tweets:
@@ -427,7 +466,7 @@ class HtmlNitterPool:
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
                 self.log(f"search empty host={host}, rotate next ({index}/{total})")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
                 self.log(
@@ -448,16 +487,27 @@ class HtmlNitterPool:
         limit: int,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline with global retry."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
-            return self._fetch_list_once(list_id, limit, instance=instance)
+            return self._fetch_list_once(
+                list_id,
+                limit,
+                instance=instance,
+                **self._repost_filter_kwargs(filter_reposts),
+            )
 
         max_retries = self.config.max_global_retries
         for attempt in range(max_retries):
             try:
-                return self._fetch_list_once(list_id, limit, instance=instance)
+                return self._fetch_list_once(
+                    list_id,
+                    limit,
+                    instance=instance,
+                    **self._repost_filter_kwargs(filter_reposts),
+                )
             except RuntimeError as exc:
                 msg = str(exc)
                 is_last_attempt = attempt >= max_retries - 1
@@ -491,6 +541,7 @@ class HtmlNitterPool:
         limit: int,
         *,
         instance: str | None = None,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem]]:
         """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
         list_id_str = str(list_id).strip()
@@ -510,7 +561,12 @@ class HtmlNitterPool:
             try:
                 self.log(f"list try {index}/{total} host={host} list_id={list_id_str}")
                 tweets = self._as_search_result(
-                    self._paginate_list(base, list_id_str, limit)
+                    self._paginate_list(
+                        base,
+                        list_id_str,
+                        limit,
+                        **self._repost_filter_kwargs(filter_reposts),
+                    )
                 )
                 if tweets:
                     self.scores.record_success(host)
@@ -526,7 +582,7 @@ class HtmlNitterPool:
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
                 self.log(f"list empty host={host}, rotate next ({index}/{total})")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"{base}: {exc}")
                 self.log(f"list fail host={host}, rotate next ({index}/{total}): {exc}")
 
@@ -539,13 +595,25 @@ class HtmlNitterPool:
             return empty_success_base, empty_success_result
         raise RuntimeError("HTML list failed: " + "; ".join(errors[-4:]))
 
-    def _paginate_list(self, base: str, list_id: str, limit: int) -> HtmlSearchResult:
+    def _paginate_list(
+        self,
+        base: str,
+        list_id: str,
+        limit: int,
+        *,
+        filter_reposts: bool | None = None,
+    ) -> HtmlSearchResult:
         """Paginate Twitter List timeline (same HTML structure as user timeline)."""
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
         raw_count = 0
         retweet_filtered = 0
+        use_filter_reposts = (
+            bool(self.config.filter_reposts)
+            if filter_reposts is None
+            else bool(filter_reposts)
+        )
 
         page_count = self._page_count(self.config.max_pages)
         for _ in range(page_count):
@@ -566,8 +634,7 @@ class HtmlNitterPool:
                 if k in seen:
                     continue
 
-                # Filter reposts if enabled
-                if self.config.filter_reposts and t.is_retweet:
+                if use_filter_reposts and t.is_retweet:
                     retweet_filtered += 1
                     continue
 
@@ -601,10 +668,22 @@ class HtmlNitterPool:
         """Backward-compatible alias for mirror probe / single-host selection."""
         return self._hosts_for_rotation(instance)
 
-    def _paginate_user(self, base: str, user: str, limit: int) -> list[TweetItem]:
+    def _paginate_user(
+        self,
+        base: str,
+        user: str,
+        limit: int,
+        *,
+        filter_reposts: bool | None = None,
+    ) -> list[TweetItem]:
         tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
+        use_filter_reposts = (
+            bool(self.config.filter_reposts)
+            if filter_reposts is None
+            else bool(filter_reposts)
+        )
         page_count = self._page_count(self.config.max_pages)
         for _ in range(page_count):
             path = f"/{quote(user)}"
@@ -613,7 +692,7 @@ class HtmlNitterPool:
             body = self._get_html(base, path)
             page = parse_timeline_html(body.decode("utf-8", "replace"), base)
             batch = page.tweets
-            if self.config.filter_reposts:
+            if use_filter_reposts:
                 batch = [t for t in batch if (t.username or "").lower() == user.lower()]
             for t in batch:
                 k = t.status_id or t.link
@@ -636,12 +715,14 @@ class HtmlNitterPool:
         *,
         kind: str,
         max_pages: int | None = None,
+        filter_reposts: bool | None = None,
     ) -> HtmlSearchResult:
         tweets = HtmlSearchResult()
         seen: set[str] = set()
         cursor = ""
         raw_item_count = 0
         retweet_filtered = 0
+        use_filter_reposts = True if filter_reposts is None else bool(filter_reposts)
         allow_hashtag = kind == "tag"
         pages = self.config.max_pages if max_pages is None else max_pages
         page_count = self._page_count(pages)
@@ -675,8 +756,7 @@ class HtmlNitterPool:
                     getattr(page, "raw_item_count", len(page.tweets)) or 0
                 )
             for t in page.tweets:
-                # /推文搜索 + tag schedule: always drop pure retweets (no user toggle).
-                if getattr(t, "is_retweet", False):
+                if use_filter_reposts and getattr(t, "is_retweet", False):
                     retweet_filtered += 1
                     continue
                 k = t.status_id or t.link

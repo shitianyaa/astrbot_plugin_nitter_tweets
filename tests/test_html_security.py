@@ -7,15 +7,19 @@ import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import ClassVar
 from urllib.error import HTTPError
 from urllib.request import HTTPHandler, HTTPSHandler, Request
 
 import pytest
 
+from command_handlers.manual import ManualCommandMixin
+from media_support.client import NitterClient, TransientFetchError
+from media_support.html_backend.http_session import HttpSession, RawResponse
 from media_support.html_backend.modes import (
-    GateKeeper,
     MAX_ANUBIS_CHALLENGE_ID_BYTES,
     MAX_ANUBIS_RANDOM_DATA_BYTES,
+    GateKeeper,
     detect_gate,
     solve_anubis_pow,
     solve_poast_pow,
@@ -26,14 +30,11 @@ from media_support.network import (
     SafeHTTPSHandler,
     SafeRedirectHandler,
     UnsafeUrlError,
+    _request_uses_proxy,
     _SafeHTTPConnection,
     _SafeHTTPSConnection,
-    _request_uses_proxy,
     validate_http_url,
 )
-from media_support.client import NitterClient, TransientFetchError
-from media_support.html_backend.http_session import HttpSession, RawResponse
-from command_handlers.manual import ManualCommandMixin
 
 
 @pytest.mark.parametrize(
@@ -706,7 +707,7 @@ def test_html_http_session_serializes_shared_opener(monkeypatch):
 
     class Response:
         status = 200
-        headers = {}
+        headers: ClassVar[dict] = {}
 
         def __enter__(self):
             return self

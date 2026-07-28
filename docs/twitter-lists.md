@@ -35,6 +35,19 @@ https://x.com/i/lists/1553232306718257152
 - 网页版：打开 List 页面，从浏览器地址栏复制数字部分
 - App：分享 List → 复制链接 → 提取数字部分
 
+### 3. 把关注批量加入 List（可选工具）
+
+本插件**只订阅**已有 Public List 的 ID，不会在 X 上创建 List 或批量加成员。
+
+若需要把 Following 里的账号快速装进某个 List，可使用第三方浏览器扩展 [X Follow to List](https://github.com/DrErwin/X-Follow-to-List)（Chrome / Edge 等 Chromium；本地运行，无需 X API Key）：
+
+1. 从 [GitHub Release](https://github.com/DrErwin/X-Follow-to-List/releases/latest) 下载 ZIP，解压后在浏览器扩展页开启开发者模式并「加载已解压的扩展程序」。
+2. 登录 X，打开 `https://x.com/你的用户名/following`，滚动加载需要的账号。
+3. 在扩展中筛选、勾选账号，填入目标 List 分享链接后开始任务（建议先小批量、拉长间隔）。
+4. 确认 List 为 Public，再把 List ID 填入本插件的 `watch_lists` 或 Dashboard 列表分组。
+
+**速率限制：** X 对「将用户加入 List」有官方限制。实践中 **约 24 小时内大约只能成功约 100 次量级**（随账号与平台策略变化，非固定承诺）。请分批、分多天导入；触发限制后暂停，不要高频重试。该扩展与本插件相互独立，使用风险自负。
+
 ## 配置 List 分组
 
 ### 方式一：WebUI 配置（推荐）
@@ -48,6 +61,8 @@ https://x.com/i/lists/1553232306718257152
    - **分组推送目标**：填写 UMO（在目标会话中发送 `/sid` 获取）
    - **单次检查最多推送推文数**：**强烈建议设置**（如 10-20），防止刷屏
 5. 保存配置
+
+Dashboard 会在保存前检查 List ID 是否为 1-20 位正整数，并检查当前草稿和已有配置中的重复值；服务端保存时会再次校验。概览会单独统计 List 数量和无效 List ID，历史记录的订阅源显示为 `List {id}`，不会显示内部存储前缀。
 
 ### 方式二：配置文件
 
@@ -64,6 +79,7 @@ tweet_groups:
       - "2081623084780671084"
     push_targets:
       - "aiocqhttp:GroupMessage:123456"
+    filter_reposts_enabled: true  # 分组子开关，默认开启
     max_tweets_per_check: 10  # 强烈建议设置
 ```
 
@@ -86,6 +102,14 @@ basic:
   html_max_pages: 1
 ```
 
+### `filter_reposts_enabled`
+
+List 分组内的同名配置是子开关，默认开启。只有全局 `basic.filter_reposts_enabled` 总开关与当前 List 分组子开关都开启时才过滤转发；任一关闭都会保留转发。
+
+```yaml
+filter_reposts_enabled: true
+```
+
 ### `filter_plain_text_enabled`
 
 开启后只推送包含媒体（图片/视频/GIF）的推文，跳过纯文本推文。
@@ -105,6 +129,9 @@ media_only_enabled: true  # 打造纯图片/视频推送频道
 ## 检查调度
 
 List 分组与博主/标签分组共享相同的检查调度机制：
+
+- `check_on_startup=true` 时，调度存储初始化完成后会按分组顺序首检所有启用且配置了 List 和有效推送目标的分组，即使该分组只有每日检查或没有定时槽位；首检后会锚定当前槽位，避免重复检查。
+- 首检、手动 `/推文检查` 和 WebUI 检查都会等待存储初始化完成；初始化失败时不会抓取或发送，并记录 `storage_not_ready`。
 
 ### 间隔检查
 
@@ -131,7 +158,7 @@ daily_check_times:
   ↓
 解析推文（复用 parse_timeline_html）
   ↓
-过滤转发（跟随全局 filter_reposts_enabled）
+按全局与分组双层开关过滤转发
   ↓
 过滤纯文本（如果分组启用）
   ↓
@@ -176,12 +203,12 @@ List 成员的增删改会有缓存延迟，Nitter 通常需要 5-10 分钟才�
 
 ## 转发过滤行为
 
-List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`：
+List 订阅使用全局与分组双层开关：
 
-- `filter_reposts_enabled: true`：List 推送会过滤转发
-- `filter_reposts_enabled: false`：List 推送包含转发
+- 全局 `basic.filter_reposts_enabled: true` 且分组 `filter_reposts_enabled: true`：过滤转发
+- 任一开关为 `false`：保留转发
 
-该配置默认开启。
+两个开关默认都开启；旧 List 分组缺少子开关时按开启处理。全局关闭时，分组不能单独强制开启过滤。
 
 这与博主订阅行为一致，便于统一管理。
 
@@ -209,6 +236,8 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 4. 查看后台日志中的 `raw_item_count` / `retweet_filtered` 统计
 5. 使用 `/推文状态` 查看分组检查状态
 
+Dashboard 的“镜像测试”选择搜索模式即可验证 List 使用的 `search_instances`；镜像 URL 留空会按配置顺序串行测试全部搜索实例，返回每站推文数、耗时和错误。填写 URL 时只测试指定站点。
+
 ### List ID 无效
 
 **现象**：配置保存后分组显示 `invalid_entries`
@@ -228,7 +257,7 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 | 配置字段 | `watch_queries` | `watch_lists` |
 | 内容来源 | 全平台公开推文 | List 成员的推文 |
 | 首次订阅 | 记录基线，不推历史 | 记录基线，不推历史 |
-| 转发过滤 | 固定过滤纯转推 | 跟随全局配置 |
+| 转发过滤 | 全局总开关 + 分组子开关 | 全局总开关 + 分组子开关 |
 | 抓取实例 | `search_instances` | `search_instances` |
 | 风险提示 | 私人 QQ 号不建议 | 私人 QQ 号不建议 |
 
@@ -244,7 +273,7 @@ tweet_groups:
     group_type: list
     watch_lists: ["1553232306718257152"]
     max_tweets_per_check: 15
-    
+
   - name: 开源项目
     group_type: list
     watch_lists: ["2081623084780671084"]
@@ -294,27 +323,28 @@ tweet_groups:
     group_id: dev_follows
     group_type: list
     enabled: true
-    
+
     # List 订阅
     watch_lists:
       - "1553232306718257152"
       - "2081623084780671084"
-    
+
     # 推送目标
     push_targets:
       - "aiocqhttp:GroupMessage:123456"
-    
+
     # 检查调度
     interval_check_enabled: true
     daily_check_times: []
-    
+
     # 内容过滤
+    filter_reposts_enabled: true
     filter_plain_text_enabled: false
     media_only_enabled: false
-    
+
     # 推送控制
     max_tweets_per_check: 10
-    
+
     # 链接与翻译
     omit_status_url: true
     hide_original_when_translated: false
