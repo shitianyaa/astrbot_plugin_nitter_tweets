@@ -7,6 +7,7 @@
 ### Changed
 
 - README 精简为上手与定位（约减半篇幅）；细则、行为边界与诊断统一指向 `docs/advanced.md` 等专题文档。
+- Telegram 推文消息保留可点击的 X 链接，但关闭网页预览，避免视频推文卡片重复显示作者和 HLS 播放文案。
 - 推文正文布局（R1，含 QQ plain 与 Telegram）：有译文时译文作主文、原文用 `>` 引用块；去掉「翻译」「原文」小标题。Telegram 仍保留 `𝕏 · 作者 · 🔗 查看推文` 头。
 - 纯媒体/空正文：Fx `text=""` 不再误用 `raw_text` dict；只保留头/作者行 + 媒体摘要，不显示「（无正文）」。
 - 推文展示时间统一为 **Asia/Shanghai（UTC+8）** `YYYY-MM-DD HH:MM:SS`：覆盖 RSS、链接解析（Fx/Vx/Syn）、HTML 搜索/List（Nitter tweet-date），渲染层再兜底一次。

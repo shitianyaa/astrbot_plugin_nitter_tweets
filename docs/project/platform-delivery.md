@@ -43,7 +43,7 @@ weixin_oc:FriendMessage:wxid_xxx
 | --- | --- | --- | --- |
 | OneBot/QQ | `OneBotDeliveryAdapter` | `delivery/onebot.py` | 支持 Node/Nodes 合并转发、raw forward、图片拆分、视频降级 |
 | Lark/Feishu | `LarkDeliveryAdapter` | `delivery/lark.py` | 优先 native post，同框发送正文和图片，失败降级 |
-| Telegram | `TelegramDeliveryAdapter` | `delivery/telegram.py` | 使用默认发送链路，额外处理 flood control retry |
+| Telegram | `TelegramDeliveryAdapter` | `delivery/telegram.py` | 使用专用发送链路关闭文本中的网页预览，保留可点击链接；额外处理 flood control retry |
 | 其他平台 | `DefaultDeliveryAdapter` | `delivery/default.py` | 使用 AstrBot `MessageChain` 普通发送 |
 
 平台识别逻辑在 `delivery/platforms.py`：
@@ -90,7 +90,7 @@ sender._should_use_merge_for_count(tweet_count)
 ## Telegram
 
 规则：
-- 使用默认 MessageChain 发送。
+- 通过 AstrBot Telegram 发送器发送 MessageChain，并为文本中的 X/Twitter 链接关闭网页预览，避免视频推文卡片重复显示作者和播放器文案；链接仍可点击。
 - flood control 错误由 `TelegramDeliveryAdapter.retry_after_flood_control()` 处理。
 - retry 成功不再走 fallback。
 - retry 失败返回失败结果，避免重复发送不可控。
