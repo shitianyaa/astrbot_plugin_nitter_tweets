@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """验证插件实例配置：RSS vs HTML 搜索分离"""
 
 import sys
