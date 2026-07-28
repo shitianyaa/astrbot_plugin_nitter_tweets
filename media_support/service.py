@@ -576,14 +576,9 @@ class MediaService(MediaCacheMixin):
         return video_probe.parse_mvhd_duration(payload)
 
     def _probe_remote_video_duration(self, url: str) -> float | None:
-        request = Request(
-            url,
-            headers={
-                "User-Agent": self.user_agent,
-                "Referer": "https://xdown.app/",
-                "Range": "bytes=0-1048575",
-            },
-        )
+        headers = self._media_request_headers(url)
+        headers["Range"] = "bytes=0-1048575"
+        request = Request(url, headers=headers)
         try:
             with compat_urlopen(request, min(self.timeout, 10.0)) as response:
                 data = response.read(1_048_576)
@@ -648,10 +643,7 @@ class MediaService(MediaCacheMixin):
         self.register_media_path(temp_path)
         request = Request(
             media.url,
-            headers={
-                "User-Agent": self.user_agent,
-                "Referer": "https://xdown.app/",
-            },
+            headers=self._media_request_headers(media.url),
         )
         try:
             with compat_urlopen(request, self.timeout) as response:
@@ -676,6 +668,20 @@ class MediaService(MediaCacheMixin):
         except Exception:
             self.discard_media_path(temp_path)
             raise
+
+    def _media_request_headers(self, url: str) -> dict[str, str]:
+        """Headers for media bytes. Twitter CDN 403s Referer xdown.app on twimg hosts."""
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": "*/*",
+        }
+        host = (urlparse(str(url or "")).hostname or "").lower()
+        if host.endswith("xdown.app"):
+            headers["Referer"] = "https://xdown.app/"
+        else:
+            # video.twimg.com / pbs.twimg.com accept x.com (or empty), not xdown.app
+            headers["Referer"] = "https://x.com/"
+        return headers
 
     @classmethod
     def _is_retryable_download_error(cls, exc: Exception) -> bool:

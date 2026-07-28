@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 媒体直链下载/时长探测不再对 `video.twimg.com`、`pbs.twimg.com` 等使用 `Referer: https://xdown.app/`（会触发 CDN HTTP 403）；改为 `https://x.com/`。xdown API 请求仍使用 xdown 站点头。
+
 ### Changed
 
 - README 精简为上手与定位（约减半篇幅）；细则、行为边界与诊断统一指向 `docs/advanced.md` 等专题文档。
