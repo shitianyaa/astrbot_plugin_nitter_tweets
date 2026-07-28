@@ -9,13 +9,13 @@ from typing import Any
 from urllib.request import Request
 
 try:
-    from ..shared.utils import TweetItem, TweetMedia
+    from ..shared.utils import TweetItem, TweetMedia, format_tweet_published
     from .network import safe_urlopen
     from .status_link import StatusLink
 except ImportError:
     from media_support.network import safe_urlopen
     from media_support.status_link import StatusLink
-    from shared.utils import TweetItem, TweetMedia
+    from shared.utils import TweetItem, TweetMedia, format_tweet_published
 
 logger = logging.getLogger("astrbot")
 
@@ -45,6 +45,49 @@ def _append_media(bucket: list[TweetMedia], *, kind: str, url: str) -> None:
     if any(item.url == link for item in bucket):
         return
     bucket.append(TweetMedia(kind=kind, url=link))
+
+
+def _text_from_structured_raw(value: Any) -> str:
+    """Normalize Fx/Vx raw_text blobs; empty display_text_range => no body."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        rng = value.get("display_text_range")
+        if isinstance(rng, (list, tuple)) and len(rng) >= 2:
+            try:
+                start = int(rng[0])
+                end = int(rng[1])
+            except (TypeError, ValueError):
+                start = end = 0
+            else:
+                if end <= start:
+                    return ""
+                inner = value.get("text")
+                if isinstance(inner, str) and inner:
+                    return inner[start:end].strip() or inner.strip()
+        inner = value.get("text")
+        if isinstance(inner, str):
+            return inner.strip()
+        return ""
+    return str(value).strip()
+
+
+def _extract_status_text(payload: dict[str, Any]) -> str:
+    """Prefer explicit ``text`` (even when empty); never str() a raw_text dict."""
+    if "text" in payload:
+        primary = payload.get("text")
+        if isinstance(primary, str):
+            # Empty string is a real media-only body; do not fall back to raw_text.
+            return primary.strip()
+        if isinstance(primary, dict):
+            return _text_from_structured_raw(primary)
+        if primary is not None:
+            return str(primary).strip()
+    if "raw_text" in payload:
+        return _text_from_structured_raw(payload.get("raw_text"))
+    return ""
 
 
 def _media_from_fxtwitter(payload: dict[str, Any]) -> list[TweetMedia]:
@@ -187,9 +230,9 @@ def _tweet_from_fx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
     username = str(
         author.get("screen_name") or author.get("username") or link.username or ""
     ).lstrip("@")
-    text = str(tw.get("text") or tw.get("raw_text") or "").strip()
+    text = _extract_status_text(tw)
     status_url = str(tw.get("url") or link.canonical_url).strip()
-    published = str(tw.get("created_at") or "").strip()
+    published = format_tweet_published(str(tw.get("created_at") or "").strip())
     media = _media_from_fxtwitter(tw)
     if not text and not media:
         return None
@@ -199,7 +242,7 @@ def _tweet_from_fx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
         # Prefer canonical with real author when present.
         status_url = f"https://x.com/{username}/status/{link.status_id}"
     return TweetItem(
-        text=text or "(无正文)",
+        text=text,
         link=status_url,
         published=published,
         media=media,
@@ -207,21 +250,23 @@ def _tweet_from_fx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
 
 
 def _tweet_from_vx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
-    text = str(data.get("text") or "").strip()
+    text = _extract_status_text(data)
     username = str(
         data.get("user_screen_name") or data.get("user_name") or link.username or ""
     ).lstrip("@")
     status_url = str(
         data.get("tweetURL") or data.get("url") or link.canonical_url
     ).strip()
-    published = str(data.get("date") or data.get("created_at") or "").strip()
+    published = format_tweet_published(
+        str(data.get("date") or data.get("created_at") or "").strip()
+    )
     media = _media_from_vxtwitter(data)
     if not text and not media:
         return None
     if username:
         status_url = f"https://x.com/{username}/status/{link.status_id}"
     return TweetItem(
-        text=text or "(无正文)",
+        text=text,
         link=status_url,
         published=published,
         media=media,
@@ -229,10 +274,10 @@ def _tweet_from_vx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
 
 
 def _tweet_from_syndication(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
-    text = str(data.get("text") or "").strip()
+    text = _extract_status_text(data)
     user = data.get("user") if isinstance(data.get("user"), dict) else {}
     username = str(user.get("screen_name") or link.username or "").lstrip("@")
-    published = str(data.get("created_at") or "").strip()
+    published = format_tweet_published(str(data.get("created_at") or "").strip())
     media = _media_from_syndication(data)
     if not text and not media:
         return None
@@ -242,7 +287,7 @@ def _tweet_from_syndication(link: StatusLink, data: dict[str, Any]) -> TweetItem
         else link.canonical_url
     )
     return TweetItem(
-        text=text or "(无正文)",
+        text=text,
         link=status_url,
         published=published,
         media=media,

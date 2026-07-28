@@ -74,6 +74,42 @@ def test_status_link_regex_matches_message():
     )
 
 
+def test_fx_media_only_empty_text_not_raw_dict():
+    """Fx often sets text='' and puts media URL blob in raw_text — do not str(dict)."""
+    link = StatusLink(
+        "xxiaoyi0721",
+        "2081477182787092643",
+        "https://x.com/xxiaoyi0721/status/2081477182787092643",
+    )
+    payload = {
+        "tweet": {
+            "text": "",
+            "raw_text": {
+                "text": "https://t.co/kGl5sBFerM",
+                "display_text_range": [0, 0],
+                "facets": [{"type": "media", "indices": [0, 23]}],
+            },
+            "url": link.canonical_url,
+            "created_at": "Sun Jul 26 20:30:07 +0000 2026",
+            "author": {"screen_name": "xxiaoyi0721"},
+            "media": {
+                "all": [
+                    {
+                        "type": "photo",
+                        "url": "https://pbs.twimg.com/media/HOLkdg8bsAAIBz-.jpg?name=orig",
+                    }
+                ]
+            },
+        }
+    }
+    tweet = _tweet_from_fx(link, payload)
+    assert tweet is not None
+    assert tweet.text == ""
+    assert "raw_text" not in tweet.text
+    assert "facets" not in tweet.text
+    assert len(tweet.media) == 1
+
+
 def test_fx_payload_maps_photo_tweet():
     link = StatusLink(
         "ErroR_eroi",
@@ -206,7 +242,8 @@ def test_renderer_force_flags_emit_image_component(tmp_path):
     assert any(_is_image(c) for c in comps_on[1:])
     text = comps_on[0].text
     assert text.startswith("@ErroR_eroi")
-    assert "原文" in text
+    assert "#tag" in text
+    assert "原文" not in text  # plain R1: no section title
     assert "📎" in text
 
 

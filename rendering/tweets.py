@@ -15,6 +15,7 @@ try:
         file_uri,
         format_subscription_count,
         format_subscription_source,
+        format_tweet_published,
         node_uin,
         normalize_external_links,
         strip_external_links,
@@ -26,6 +27,7 @@ except ImportError:
         file_uri,
         format_subscription_count,
         format_subscription_source,
+        format_tweet_published,
         node_uin,
         normalize_external_links,
         strip_external_links,
@@ -1090,9 +1092,11 @@ class TweetMessageRenderer:
         else:
             author_line = author_label
 
-        # Compact header: @user · 2024-07-26 22:30
+        # Compact header: @user · 2024-07-26 22:30 (Asia/Shanghai)
         if tweet.published:
-            author_line = f"{author_line} · {tweet.published}"
+            published = format_tweet_published(str(tweet.published))
+            if published:
+                author_line = f"{author_line} · {published}"
 
         blocks: list[str] = [author_line]
 
@@ -1105,18 +1109,25 @@ class TweetMessageRenderer:
         original_text = normalize_external_links(tweet.text).strip()
         if omit_status_url:
             original_text = strip_external_links(original_text)
+        if TweetMessageRenderer._is_blank_tweet_body(original_text):
+            original_text = ""
 
         show_original = bool(original_text)
         if hide_original_when_translated and translation and show_original:
             show_original = False
 
-        # Translation first when both are shown (CN-reader friendly).
-        if translation:
-            blocks.append("翻译\n" + translation)
-        if show_original:
-            blocks.append("原文\n" + original_text)
-        elif not translation and not show_original:
-            blocks.append("（无正文）")
+        # Body layout (R1, all platforms including Telegram):
+        # translation as main text; original as '>' quoted block; no "翻译"/"原文"
+        # section titles. Media-only / empty body: header only (+ media summary).
+        # Telegram still uses its own author header (𝕏 · name · link).
+        if translation and show_original:
+            blocks.append(translation)
+            blocks.append(TweetMessageRenderer._quote_plain_block(original_text))
+        elif translation:
+            blocks.append(translation)
+        elif show_original:
+            blocks.append(original_text)
+        # else: media-only / empty — omit body placeholder
 
         if tweet.ai_warnings:
             warns = "\n".join(f"- {w}" for w in tweet.ai_warnings if w)
@@ -1163,6 +1174,21 @@ class TweetMessageRenderer:
         if omit_status_url or not url:
             return base
         return f"{base} 原文链接：{url}"
+
+    @staticmethod
+    def _is_blank_tweet_body(text: str) -> bool:
+        value = str(text or "").strip()
+        return value in {"", "(无正文)", "（无正文）"}
+
+    @staticmethod
+    def _quote_plain_block(text: str) -> str:
+        """Prefix each line with '> ' for a lightweight quote look on plain platforms."""
+        body = str(text or "")
+        if not body:
+            return ">"
+        return "\n".join(
+            ("> " + line) if line else ">" for line in body.split("\n")
+        )
 
     @staticmethod
     def telegram_markdown_text(text: str) -> str:

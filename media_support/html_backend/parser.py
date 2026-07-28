@@ -8,9 +8,9 @@ from html import unescape
 from urllib.parse import unquote, urljoin
 
 try:
-    from ...shared.utils import TweetItem, TweetMedia
+    from ...shared.utils import TweetItem, TweetMedia, format_tweet_published
 except ImportError:  # pragma: no cover
-    from shared.utils import TweetItem, TweetMedia
+    from shared.utils import TweetItem, TweetMedia, format_tweet_published
 
 try:
     from ..network import is_safe_http_url
@@ -359,7 +359,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
         seen.add(key)
         text = _extract_tweet_text(chunk)
         dm = re.search(r'(?s)<span class="tweet-date">\s*<a[^>]*title="([^"]+)"', chunk)
-        published = unescape(dm.group(1)) if dm else ""
+        published = format_tweet_published(unescape(dm.group(1)) if dm else "")
         link = f"https://x.com/{user}/status/{sid}"
         tweets.append(
             TweetItem(
