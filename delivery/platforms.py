@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api import logger
+
 from .base import DeliveryAdapter
 from .default import DefaultDeliveryAdapter
 from .lark import LarkDeliveryAdapter
 from .onebot import OneBotDeliveryAdapter
 from .telegram import TelegramDeliveryAdapter
-
 
 ONEBOT_PLATFORM_TYPES = {
     "aiocqhttp",
@@ -154,7 +155,10 @@ class PlatformResolver:
                 if platform is not None:
                     return platform
             except Exception:
-                pass
+                logger.debug(
+                    "[NitterTweets] get_platform_inst failed for id=%s",
+                    platform_id,
+                )
 
         manager = getattr(context, "platform_manager", None)
         candidates = []
@@ -165,7 +169,7 @@ class PlatformResolver:
                 if isinstance(raw, (list, tuple)):
                     candidates.extend(raw)
             except Exception:
-                pass
+                logger.debug("[NitterTweets] platform_manager.get_insts failed")
         candidates.extend(getattr(manager, "platform_insts", []) or [])
 
         for candidate in candidates:

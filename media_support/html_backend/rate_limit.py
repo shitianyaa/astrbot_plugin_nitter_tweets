@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Global + per-host rate limiting and cooldown (shared by all modes)."""
 
 from __future__ import annotations

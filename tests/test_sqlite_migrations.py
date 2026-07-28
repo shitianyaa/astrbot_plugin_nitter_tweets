@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-
 if "astrbot.api" not in sys.modules:
     astrbot_module = types.ModuleType("astrbot")
     astrbot_api_module = types.ModuleType("astrbot.api")
@@ -31,9 +30,9 @@ if "astrbot.api" not in sys.modules:
     sys.modules["astrbot.api"] = astrbot_api_module
 
 
+from shared.utils import TweetItem
 from storage import SQLiteStorage
 from storage.seen import SeenStore
-from shared.utils import TweetItem
 
 
 class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):

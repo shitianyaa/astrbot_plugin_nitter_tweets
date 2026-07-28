@@ -9,15 +9,17 @@ import math
 from typing import Any
 
 try:
-    from .api_serializers import WebAPISerializersMixin
     from ..scheduler import ScheduleGroup
-    from ..storage import PushHistoryGroupSummary, PushHistoryRecord
+    from ..shared import format_subscription_source
     from ..shared.group_ids import normalize_stable_group_id
+    from ..storage import PushHistoryGroupSummary, PushHistoryRecord
+    from .api_serializers import WebAPISerializersMixin
 except ImportError:
     from plugin_api.api_serializers import WebAPISerializersMixin
     from scheduler import ScheduleGroup
-    from storage import PushHistoryGroupSummary, PushHistoryRecord
+    from shared import format_subscription_source
     from shared.group_ids import normalize_stable_group_id
+    from storage import PushHistoryGroupSummary, PushHistoryRecord
 
 
 class WebAPIHistoryMixin:
@@ -123,6 +125,7 @@ class WebAPIHistoryMixin:
     def _serialize_history_record(
         record: PushHistoryRecord,
         group_names: dict[str, str],
+        group_type: str = "blogger",
     ) -> dict[str, Any]:
         tweet = record.tweet
         return {
@@ -130,6 +133,9 @@ class WebAPIHistoryMixin:
             "group_id": record.group_id,
             "group_name": group_names.get(record.group_id, record.group_id),
             "username": record.username,
+            "subscription_source": format_subscription_source(
+                record.username, group_type
+            ),
             "status_id": record.status_id,
             "original_link": record.original_link or tweet.x_url,
             "target_umo": record.target_umo,
@@ -176,25 +182,28 @@ class WebAPIHistoryMixin:
                 record.source,
                 record.original_link or record.tweet.x_url,
             )
-            item = grouped.get(key)
+            group = groups_by_id.get(record.group_id)
+            group_type = str(getattr(group, "group_type", "") or "").strip().lower()
+            if group_type not in {"blogger", "tag", "list"}:
+                account_key = str(record.username or "").strip().lower()
+                if account_key.startswith("q:"):
+                    group_type = "tag"
+                elif account_key.startswith("list:"):
+                    group_type = "list"
+                else:
+                    group_type = "blogger"
             serialized = WebAPIHistoryMixin._serialize_history_record(
-                record, group_names
+                record, group_names, group_type
             )
+            item = grouped.get(key)
             if item is None:
-                group = groups_by_id.get(record.group_id)
                 current_targets = list(getattr(group, "targets", []) or [])
-                group_type = str(getattr(group, "group_type", "") or "").strip().lower()
-                if group_type not in {"blogger", "tag", "list"}:
-                    account_key = str(record.username or "").strip().lower()
-                    if account_key.startswith("q:"):
-                        group_type = "tag"
-                    elif account_key.startswith("list:"):
-                        group_type = "list"
-                    else:
-                        group_type = "blogger"
                 item = {
                     **serialized,
                     "group_type": group_type,
+                    "subscription_source": format_subscription_source(
+                        record.username, group_type
+                    ),
                     "target_umos": [],
                     "target_count": 0,
                     "replay_target_options": [

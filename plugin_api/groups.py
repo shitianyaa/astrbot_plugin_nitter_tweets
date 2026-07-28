@@ -73,6 +73,7 @@ class WebUIGroupEditor:
                 "push_targets": [],
                 "interval_check_enabled": True,
                 "daily_check_times": [],
+                "filter_reposts_enabled": True,
                 "filter_plain_text_enabled": False,
                 "media_only_enabled": False,
                 "omit_status_url": True,
@@ -139,6 +140,12 @@ class WebUIGroupEditor:
         )
         raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
+        raw_group["filter_reposts_enabled"] = self._bool(
+            data.get(
+                "filter_reposts_enabled",
+                raw_group.get("filter_reposts_enabled", True),
+            )
+        )
         raw_group["filter_plain_text_enabled"] = self._bool(
             data.get(
                 "filter_plain_text_enabled",
@@ -351,6 +358,8 @@ class WebUIGroupEditor:
         info = self.scheduler.config_reader.parse_watch_lists(raw_values)
         if info.invalid_entries:
             raise ValueError("List ID 无效：" + ", ".join(info.invalid_entries[:5]))
+        if info.duplicates:
+            raise ValueError("List ID 重复：" + ", ".join(info.duplicates[:5]))
         return list(info.list_ids)
 
     @staticmethod

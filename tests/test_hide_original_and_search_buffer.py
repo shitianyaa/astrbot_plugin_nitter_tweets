@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -8,19 +7,19 @@ from rendering.tweets import TweetMessageRenderer
 
 
 def _tweet(**kw):
-    base = dict(
-        status_id="1",
-        username="realuser",
-        text="hello world https://example.com/x",
-        x_url="https://x.com/realuser/status/1",
-        link="https://x.com/realuser/status/1",
-        published="",
-        media=[],
-        translation="",
-        ai_warnings=[],
-        media_warnings=[],
-        is_repost=False,
-    )
+    base = {
+        "status_id": "1",
+        "username": "realuser",
+        "text": "hello world https://example.com/x",
+        "x_url": "https://x.com/realuser/status/1",
+        "link": "https://x.com/realuser/status/1",
+        "published": "",
+        "media": [],
+        "translation": "",
+        "ai_warnings": [],
+        "media_warnings": [],
+        "is_repost": False,
+    }
     base.update(kw)
     return SimpleNamespace(**base)
 

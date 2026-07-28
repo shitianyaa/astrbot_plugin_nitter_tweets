@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from typing import ClassVar
 
 from astrbot.api import logger
 
@@ -29,7 +30,7 @@ class MediaCacheCleanupResult:
 class MediaCacheMixin:
     _protected_cache_dirs = frozenset({"staged"})
     _lease_lock = Lock()
-    _active_leases: dict[Path, int] = {}
+    _active_leases: ClassVar[dict[Path, int]] = {}
 
     @classmethod
     def register_media_path(cls, path: Path | str) -> None:

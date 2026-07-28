@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 MEDIA_TYPE_IMAGE = "image"
 MEDIA_TYPE_VIDEO = "video"
 MEDIA_TYPE_DYNAMIC = "dynamic"

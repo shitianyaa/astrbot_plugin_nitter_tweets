@@ -1,6 +1,6 @@
-# -*- coding: utf-8 -*-
 """Twitter List config, HTML backend, WebUI, and status regressions."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -10,6 +10,7 @@ from config import config_get
 from media_support.host_score import HostScoreBook
 from media_support.html_backend.pool import HtmlNitterPool, HtmlSearchResult, PoolConfig
 from media_support.html_backend.service import HtmlBackendConfig, HtmlNitterService
+from plugin_api.api import NitterWebAPI
 from plugin_api.groups import WebUIGroupEditor
 from scheduler.config import (
     GROUP_TYPE_BLOGGER,
@@ -19,6 +20,8 @@ from scheduler.config import (
 )
 from scheduler.runner_status import SchedulerStatusMixin
 from shared.utils import TweetItem
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _tweet(status_id: str, *, retweet: bool = False) -> TweetItem:
@@ -298,6 +301,16 @@ def test_list_pagination_uses_cursor_and_global_repost_filter(monkeypatch):
     assert pool._get_html.call_args_list[0].args[1] == "/i/lists/12345"
     assert "cursor=cursor-2" in pool._get_html.call_args_list[1].args[1]
 
+    pool._get_html = MagicMock(side_effect=[b"page-1", b"page-2"])
+    unfiltered = pool._paginate_list(
+        "https://a.example",
+        "12345",
+        20,
+        filter_reposts=False,
+    )
+    assert [tweet.status_id for tweet in unfiltered] == ["10", "9", "8"]
+    assert unfiltered.retweet_filtered == 0
+
 
 def test_list_empty_host_rotates_to_later_hit():
     pool = _pool()
@@ -345,11 +358,13 @@ def test_webui_creates_and_updates_list_group():
     created = editor.create_group({"name": "列表", "group_type": "list"})
     assert created["success"] is True
     group_id = created["group_id"]
+    assert config_get(config, "tweet_groups", [])[0]["filter_reposts_enabled"] is True
     updated = editor.update_group(
         {
             "group_id": group_id,
             "name": "列表",
             "watch_lists": ["12345", "2081623084780671084"],
+            "filter_reposts_enabled": False,
         }
     )
 
@@ -358,6 +373,68 @@ def test_webui_creates_and_updates_list_group():
     assert saved["group_type"] == "list"
     assert saved["__template_key"] == "list"
     assert saved["watch_lists"] == ["12345", "2081623084780671084"]
+    assert saved["filter_reposts_enabled"] is False
+
+    reloaded = SchedulerConfigReader(config, context=None).schedule_groups()[0]
+    payload = NitterWebAPI(plugin)._serialize_group(reloaded)
+    assert payload["group_type"] == "list"
+    assert payload["watch_lists"] == ["12345", "2081623084780671084"]
+    assert payload["subscription_label"] == "2 个 List"
+    assert payload["filter_reposts_enabled"] is False
+    assert payload["global_filter_reposts_enabled"] is True
+    assert payload["effective_filter_reposts_enabled"] is False
+
+
+def test_webui_list_update_rejects_invalid_and_duplicate_ids():
+    config = _Config({"tweet_groups": []})
+    plugin = MagicMock()
+    plugin.config = config
+    plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+    editor = WebUIGroupEditor(plugin)
+    group_id = editor.create_group({"name": "列表", "group_type": "list"})["group_id"]
+
+    invalid = editor.update_group(
+        {
+            "group_id": group_id,
+            "name": "列表",
+            "watch_lists": ["not-a-list"],
+        }
+    )
+    duplicate = editor.update_group(
+        {
+            "group_id": group_id,
+            "name": "列表",
+            "watch_lists": ["12345", "12345"],
+        }
+    )
+
+    assert invalid["success"] is False
+    assert "List ID 无效" in invalid["error"]
+    assert duplicate["success"] is False
+    assert "List ID 重复" in duplicate["error"]
+
+
+def test_dashboard_source_contains_list_editor_and_probe_all_payload():
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+
+    assert 'value: "list"' in source
+    assert 'name: "createGroupType"' in source
+    assert 'type: "radio"' in source
+    assert 'attrs: { id: "createGroupType" }' not in source
+    assert 'label: "List 分组"' in source
+    assert "不建议创建或启用标签分组和 List 分组" in source
+    assert source.count("text: PRIVATE_QQ_GROUP_WARNING") >= 2
+    assert ".group-type-options" in style
+    assert ".group-type-radio:checked + .group-type-option-body" in style
+    assert "function addWatchList(groupId)" in source
+    assert "watch_lists: [...(group.watch_lists || [])]" in source
+    assert "filter_reposts_enabled: group.filter_reposts_enabled !== false" in source
+    assert '"filter_reposts_enabled"' in source
+    assert "全局转发过滤总开关" in source
+    assert "List ID 必须是 1-20 位正整数" in source
+    assert "List ID 已存在" in source
+    assert "probe_all: !instance" in source
 
 
 def test_status_and_export_render_list_group():
@@ -382,4 +459,5 @@ def test_status_and_export_render_list_group():
     rendered = "\n".join(lines)
     assert "类型 列表" in rendered
     assert "List ID: 12345" in rendered
+    assert "转发过滤: 开启（全局 开，分组 开）" in rendered
     assert "(lists1, List, 1 个): 12345" in exported

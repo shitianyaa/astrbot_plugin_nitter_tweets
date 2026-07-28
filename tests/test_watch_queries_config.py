@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from scheduler.config import GROUP_TYPE_TAG, SchedulerConfigReader
+from scheduler.config import (
+    GROUP_TYPE_BLOGGER,
+    GROUP_TYPE_LIST,
+    GROUP_TYPE_TAG,
+    SchedulerConfigReader,
+)
 
 
 class _DummyConfig(dict):
@@ -57,6 +62,41 @@ def test_parse_schedule_group_tag_ignores_users():
     assert group.users == []
     assert [q.query for q in group.queries] == ["#foo", "bar"]
     assert group.account_keys[0].startswith("q:")
+
+
+def test_group_repost_filter_defaults_true_and_accepts_explicit_false():
+    reader = SchedulerConfigReader(_DummyConfig({"tweet_groups": []}), context=None)
+    group_inputs = (
+        (GROUP_TYPE_BLOGGER, {"watch_users": ["NASA"]}),
+        (GROUP_TYPE_TAG, {"watch_queries": ["#foo"]}),
+        (GROUP_TYPE_LIST, {"watch_lists": ["12345"]}),
+    )
+
+    for index, (group_type, subscriptions) in enumerate(group_inputs, 1):
+        base = {
+            "name": f"group-{index}",
+            "group_id": f"group_{index}",
+            "group_type": group_type,
+            "push_targets": [],
+            **subscriptions,
+        }
+        default_group = reader.parse_schedule_group(
+            base,
+            index=index,
+            log_invalid_targets=False,
+        )
+        disabled_group = reader.parse_schedule_group(
+            {**base, "filter_reposts_enabled": False},
+            index=index,
+            log_invalid_targets=False,
+        )
+
+        assert default_group is not None
+        assert default_group.filter_reposts_enabled is True
+        assert disabled_group is not None
+        assert disabled_group.filter_reposts_enabled is False
+
+    assert reader.global_group(log_invalid_targets=False).filter_reposts_enabled is True
 
 
 def test_query_only_legacy_group_without_type_stays_tag():

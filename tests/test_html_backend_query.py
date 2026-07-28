@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from command_handlers.manual import ManualCommandMixin
 from media_support.html_backend.parser import parse_timeline_html
@@ -17,6 +17,7 @@ from media_support.html_backend.query import (
 )
 from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
 from plugin_api.api import NitterWebAPI
+from shared.utils import TweetItem
 
 
 def test_query_kind_leading_hash_is_tag():
@@ -102,6 +103,126 @@ def test_web_probe_reports_query_length_before_backend_call():
     assert result["success"] is False
     assert str(MAX_QUERY_LENGTH) in result["error"]
     plugin.html_backend.search.assert_not_called()
+
+
+def _probe_tweet(status_id: str = "1") -> TweetItem:
+    return TweetItem(
+        text=f"tweet {status_id}",
+        link=f"https://x.com/nasa/status/{status_id}",
+        published="",
+    )
+
+
+def test_web_probe_all_rss_instances_is_serial_and_keeps_partial_failures():
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=SimpleNamespace(
+            instances=[
+                "https://rss-a.example",
+                "https://rss-b.example",
+                "https://rss-a.example",
+            ],
+            fetch_tweets_from_instance=AsyncMock(
+                side_effect=[
+                    ("https://rss-a.example", [_probe_tweet("1")]),
+                    RuntimeError("temporarily unavailable"),
+                ]
+            ),
+        ),
+        html_backend=None,
+    )
+
+    result = asyncio.run(
+        NitterWebAPI(plugin).probe_mirror(
+            {
+                "mode": "blogger_rss",
+                "username": "nasa",
+                "probe_all": True,
+                "instance": "",
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert [item["instance"] for item in result["results"]] == [
+        "https://rss-a.example",
+        "https://rss-b.example",
+    ]
+    assert result["summary"] == {"total": 2, "succeeded": 1, "failed": 1}
+    assert result["results"][0]["tweet_count"] == 1
+    assert result["results"][1]["success"] is False
+    calls = plugin.nitter.fetch_tweets_from_instance.await_args_list
+    assert [call.args[0] for call in calls] == [
+        "https://rss-a.example",
+        "https://rss-b.example",
+    ]
+
+
+def test_web_probe_all_search_instances_returns_all_failed_rows():
+    html_backend = SimpleNamespace(
+        config=SimpleNamespace(search_instances=["https://search-a.example"]),
+        search=MagicMock(side_effect=RuntimeError("429")),
+    )
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=SimpleNamespace(instances=[]),
+        html_backend=html_backend,
+    )
+
+    result = asyncio.run(
+        NitterWebAPI(plugin).probe_mirror(
+            {
+                "mode": "search",
+                "query": "#AI",
+                "probe_all": True,
+                "instance": "",
+            }
+        )
+    )
+
+    assert result["success"] is True
+    assert result["summary"] == {"total": 1, "succeeded": 0, "failed": 1}
+    assert result["results"][0]["success"] is False
+    html_backend.search.assert_called_once_with(
+        "#AI",
+        5,
+        kind="tag",
+        instance="https://search-a.example",
+    )
+
+
+def test_web_probe_all_requires_configured_instances_but_single_url_stays_compatible():
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=SimpleNamespace(instances=[]),
+        html_backend=None,
+    )
+    api = NitterWebAPI(plugin)
+
+    empty = asyncio.run(
+        api.probe_mirror({"mode": "blogger_rss", "username": "nasa", "probe_all": True})
+    )
+    assert empty["success"] is False
+    assert "没有配置实例" in empty["error"]
+
+    plugin.nitter.fetch_tweets_from_instance = AsyncMock(
+        return_value=("https://single.example", [_probe_tweet("2")])
+    )
+    single = asyncio.run(
+        api.probe_mirror(
+            {
+                "mode": "blogger_rss",
+                "username": "nasa",
+                "instance": "https://single.example",
+            }
+        )
+    )
+    assert single["success"] is True
+    assert "results" not in single
+    assert single["instance"] == "https://single.example"
 
 
 def test_tag_prefix_is_included_in_length_limit():

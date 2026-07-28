@@ -20,6 +20,12 @@ try:
         config_set,
     )
 except ImportError:
+    from config.compat import (
+        TWEET_GROUP_TEMPLATE_KEY,
+        TWEET_GROUP_TEMPLATE_KEY_FIELD,
+        config_get,
+        config_set,
+    )
     from media_support.html_backend import encode_watch_query
     from shared import normalize_username
     from shared.group_ids import (
@@ -27,12 +33,6 @@ except ImportError:
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
         normalize_group_id,
-    )
-    from config.compat import (
-        TWEET_GROUP_TEMPLATE_KEY,
-        TWEET_GROUP_TEMPLATE_KEY_FIELD,
-        config_get,
-        config_set,
     )
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ def normalize_import_username(value: str) -> str:
     return normalize_username(value)
 
 
-def ensure_default_import_group(config, config_reader) -> "ScheduleGroup":
+def ensure_default_import_group(config, config_reader) -> ScheduleGroup:
     group = config_reader.schedule_group(DEFAULT_GROUP_ID, log_invalid_targets=False)
     if group is not None:
         return group
@@ -85,7 +85,7 @@ def ensure_default_import_group(config, config_reader) -> "ScheduleGroup":
 def set_import_group_users(
     config,
     config_reader,
-    group: "ScheduleGroup | None",
+    group: ScheduleGroup | None,
     users: list[str],
 ) -> None:
     if group is None:
@@ -120,7 +120,7 @@ def set_import_group_users(
 def set_import_group_queries(
     config,
     config_reader,
-    group: "ScheduleGroup | None",
+    group: ScheduleGroup | None,
     queries: list[Any],
 ) -> None:
     """Persist tag queries using the schema-compatible reversible strings."""

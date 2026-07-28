@@ -9,7 +9,6 @@ import types
 from datetime import datetime
 from pathlib import Path
 
-
 DEFAULT_URL = "https://nitter.net/JuanEgg18/status/2064692617242448015#m"
 
 

@@ -315,7 +315,7 @@ class TweetTranslator:
                 if pid:
                     return pid, "current_chat"
             except Exception:
-                pass
+                logger.debug("[NitterTweets] resolve current chat provider failed")
 
         # 第一个可用 provider
         try:
@@ -330,7 +330,7 @@ class TweetTranslator:
                         if val:
                             return str(val).strip(), "first_provider"
         except Exception:
-            pass
+            logger.debug("[NitterTweets] resolve first provider failed")
 
         return "", "none"
 

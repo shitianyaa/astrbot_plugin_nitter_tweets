@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared Nitter HTML timeline parser (all hosts)."""
 
 from __future__ import annotations
@@ -14,8 +13,8 @@ except ImportError:  # pragma: no cover
     from shared.utils import TweetItem, TweetMedia
 
 try:
-    from .query import normalize_query, query_kind
     from ..network import is_safe_http_url
+    from .query import normalize_query, query_kind
 except ImportError:  # pragma: no cover
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.network import is_safe_http_url
@@ -48,7 +47,7 @@ def abs_url(instance: str, maybe_relative: str) -> str:
     return urljoin(instance.rstrip("/") + "/", value.lstrip("/"))
 
 
-_HTML_TAG_RE = re.compile(r"<!--.*?-->|<[^>]+>", re.S)
+_HTML_TAG_RE = re.compile(r"<!--.*?-->|<[^>]+>", re.DOTALL)
 _HTML_VOID_TAGS = frozenset(
     {
         "area",
@@ -73,17 +72,21 @@ def _is_nested_media_section_start(token: str) -> bool:
     """Identify quote/article containers whose media is not author media."""
     if token.startswith("<!--") or re.match(r"<\s*/", token):
         return False
-    class_match = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    class_match = re.search(
+        r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.IGNORECASE | re.DOTALL
+    )
     if class_match:
         classes = {
             name.lower() for name in re.findall(r"[A-Za-z0-9_-]+", class_match.group(2))
         }
         if any(name == "quote" or name.startswith("quote-") for name in classes):
             return True
-    href_match = re.search(r"\bhref\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    href_match = re.search(
+        r"\bhref\s*=\s*([\"'])(.*?)\1", token, re.IGNORECASE | re.DOTALL
+    )
     if href_match:
         href = unescape(href_match.group(2))
-        if re.search(r"(?:^|/)/?i/article(?:/|[?#]|$)", href, re.I):
+        if re.search(r"(?:^|/)/?i/article(?:/|[?#]|$)", href, re.IGNORECASE):
             return True
     return False
 
@@ -102,7 +105,9 @@ def _is_outer_media_boundary_start(token: str) -> bool:
     opening = re.match(r"<\s*([A-Za-z][\w:-]*)", token)
     if not opening or opening.group(1).lower() != "div":
         return False
-    class_match = re.search(r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.I | re.S)
+    class_match = re.search(
+        r"\bclass\s*=\s*([\"'])(.*?)\1", token, re.IGNORECASE | re.DOTALL
+    )
     if not class_match:
         return False
     classes = {
@@ -126,7 +131,7 @@ def _without_nested_media_sections(chunk: str) -> str:
     ranges: list[tuple[int, int]] = []
     for match in _HTML_TAG_RE.finditer(chunk):
         token = match.group(0)
-        if token.startswith("<!--") or token.startswith("<!"):
+        if token.startswith(("<!--", "<!")):
             continue
 
         # Recover from a missing quote/article closing tag before scanning a
@@ -206,7 +211,7 @@ def extract_next_cursor(html: str) -> str:
         r'href="[^"]*?cursor=([^"&#]+)[^"]*"[^>]*>\s*Load more',
         r"(?:[?&]|amp;)cursor=([A-Za-z0-9_\-%=]+)",
     ):
-        match = re.search(pat, html, re.I)
+        match = re.search(pat, html, re.IGNORECASE)
         if match:
             return unquote(match.group(1))
     return ""
@@ -238,7 +243,7 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
     for href in re.findall(
         r'class="still-image"[^>]*href="([^"]+)"|href="([^"]+)"[^>]*class="still-image"',
         scan_chunk,
-        re.I,
+        re.IGNORECASE,
     ):
         add("image", href[0] or href[1])
     for rel in re.findall(r'(?:href|src)="(/pic/orig/media[^"]+)"', scan_chunk):
@@ -268,7 +273,7 @@ def _extract_tweet_text(chunk: str) -> str:
         r'(?s)<div class="tweet-body"[^>]*>.*?<div class="tweet-content[^"]*"[^>]*>(.*?)</div>',
     )
     for pat in patterns:
-        match = re.search(pat, chunk, re.I)
+        match = re.search(pat, chunk, re.IGNORECASE)
         if not match:
             continue
         text = clean_html_text(match.group(1))
@@ -319,15 +324,13 @@ def is_pure_retweet_chunk(chunk: str) -> bool:
             cut = min(cut, idx)
     head = chunk[: min(cut, 2500)]
 
-    if re.search(r'class="[^"]*retweet-header[^"]*"', head, re.I):
+    if re.search(r'class="[^"]*retweet-header[^"]*"', head, re.IGNORECASE):
         return True
-    if re.search(r"class='[^']*retweet-header[^']*'", head, re.I):
+    if re.search(r"class='[^']*retweet-header[^']*'", head, re.IGNORECASE):
         return True
-    if re.search(r"retweeted\s+by", head, re.I):
+    if re.search(r"retweeted\s+by", head, re.IGNORECASE):
         return True
-    if re.search(r"(转推了|转推自)", head[:800]):
-        return True
-    return False
+    return bool(re.search(r"(转推了|转推自)", head[:800]))
 
 
 def parse_timeline_html(html: str, instance: str, *, source: str = "") -> TimelinePage:
@@ -379,8 +382,8 @@ __all__ = [
     "abs_url",
     "clean_html_text",
     "extract_next_cursor",
-    "normalize_query",
     "is_pure_retweet_chunk",
+    "normalize_query",
     "parse_timeline_html",
     "prefer_orig_pbs",
     "query_kind",

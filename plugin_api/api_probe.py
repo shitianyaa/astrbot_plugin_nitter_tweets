@@ -11,27 +11,27 @@ from typing import Any
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
-    from ..scheduler import ScheduleGroup
+    from ..config import config_get, parse_config_bool
     from ..delivery import PlatformResolver, parse_umo
-    from ..shared import normalize_username
     from ..media_support.html_backend.query import (
         MAX_QUERY_LENGTH,
         normalize_query,
         query_kind,
     )
     from ..media_support.network import UnsafeUrlError, validate_http_url
+    from ..scheduler import ScheduleGroup
+    from ..shared import normalize_username
 except ImportError:
-    from config import config_get
-    from scheduler import ScheduleGroup
+    from config import config_get, parse_config_bool
     from delivery import PlatformResolver, parse_umo
-    from shared import normalize_username
     from media_support.html_backend.query import (
         MAX_QUERY_LENGTH,
         normalize_query,
         query_kind,
     )
     from media_support.network import UnsafeUrlError, validate_http_url
+    from scheduler import ScheduleGroup
+    from shared import normalize_username
 
 
 class WebAPIProbeMixin:
@@ -126,15 +126,6 @@ class WebAPIProbeMixin:
         return "default"
 
     async def probe_mirror(self, data: dict[str, Any]) -> dict[str, Any]:
-        instance = self._data_text(data, "instance")
-        try:
-            # Keep the UI probe deterministic even when DNS is temporarily
-            # unavailable; the actual opener repeats strict DNS and redirect
-            # validation immediately before connecting.
-            instance = validate_http_url(instance, resolve_dns=False).rstrip("/")
-        except UnsafeUrlError:
-            return self._error("请填写完整 Nitter 镜像站地址，例如 https://nitter.net")
-
         mode = self._data_text(data, "mode") or "blogger_rss"
         mode = mode.strip().lower().replace("-", "_")
         if mode not in {"blogger_rss", "search"}:
@@ -149,55 +140,46 @@ class WebAPIProbeMixin:
             maximum=50,
         )
 
+        subject, username, query, kind, input_error = self._mirror_subject(data, mode)
+        if input_error:
+            return self._error(input_error)
+
+        raw_instance = self._data_text(data, "instance")
+        probe_all = parse_config_bool(data.get("probe_all", False), False)
+        if not raw_instance and probe_all:
+            key = "rss" if mode == "blogger_rss" else "search"
+            instances = self._configured_instance_lists().get(key, [])
+            if not instances:
+                return self._error("当前模式没有配置实例")
+            return await self._probe_mirror_all(
+                mode,
+                instances,
+                username=username,
+                query=query,
+                kind=kind,
+                subject=subject,
+                limit=limit,
+            )
+
+        if not raw_instance:
+            return self._error("请填写完整 Nitter 镜像站地址，或留空测试全部配置实例")
         try:
-            if mode == "blogger_rss":
-                username = normalize_username(
-                    self._data_text(data, "username")
-                    or self._data_text(data, "query")
-                    or "nasa"
-                )
-                if not username:
-                    return self._error("关注账号格式无效")
-                (
-                    used_instance,
-                    tweets,
-                ) = await self.plugin.nitter.fetch_tweets_from_instance(
-                    instance,
-                    username,
-                    limit,
-                )
-                subject = username
-                kind = ""
-            else:
-                raw_query = (
-                    self._data_text(data, "query")
-                    or self._data_text(data, "username")
-                    or ""
-                ).strip()
-                if len(raw_query) > MAX_QUERY_LENGTH:
-                    return self._error(f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）")
-                query = normalize_query(raw_query)
-                if not query:
-                    return self._error("请填写搜索内容（#标签 或短语）")
-                html_backend = getattr(self.plugin, "html_backend", None)
-                if html_backend is None:
-                    return self._error("HTML 后端未初始化")
-                if not bool(
-                    getattr(
-                        getattr(html_backend, "config", None), "search_enabled", True
-                    )
-                ):
-                    return self._error("search_enabled 已关闭")
-                kind = query_kind(query)
-                used_instance, tweets = await asyncio.to_thread(
-                    html_backend.search,
-                    query,
-                    limit,
-                    kind=kind,
-                    instance=instance,
-                )
-                subject = query
-                username = query
+            # Keep the UI probe deterministic even when DNS is temporarily
+            # unavailable; the actual opener repeats strict DNS and redirect
+            # validation immediately before connecting.
+            instance = validate_http_url(raw_instance, resolve_dns=False).rstrip("/")
+        except UnsafeUrlError:
+            return self._error("请填写完整 Nitter 镜像站地址，例如 https://nitter.net")
+
+        try:
+            used_instance, tweets = await self._probe_mirror_instance(
+                mode,
+                instance,
+                username=username,
+                query=query,
+                kind=kind,
+                limit=limit,
+            )
         except Exception as exc:
             logger.warning(
                 "[NitterTweets] WebUI 镜像测试失败: "
@@ -221,6 +203,145 @@ class WebAPIProbeMixin:
             limit=limit,
             tweet_count=len(tweets),
             tweets=[self._serialize_probe_tweet(tweet) for tweet in tweets[:limit]],
+        )
+
+    def _mirror_subject(
+        self, data: dict[str, Any], mode: str
+    ) -> tuple[str, str, str, str, str]:
+        if mode == "blogger_rss":
+            username = normalize_username(
+                self._data_text(data, "username")
+                or self._data_text(data, "query")
+                or "nasa"
+            )
+            if not username:
+                return "", "", "", "", "关注账号格式无效"
+            return username, username, "", "", ""
+
+        raw_query = (
+            self._data_text(data, "query") or self._data_text(data, "username") or ""
+        ).strip()
+        if len(raw_query) > MAX_QUERY_LENGTH:
+            return "", "", "", "", f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）"
+        query = normalize_query(raw_query)
+        if not query:
+            return "", "", "", "", "请填写搜索内容（#标签 或短语）"
+        html_backend = getattr(self.plugin, "html_backend", None)
+        if html_backend is None:
+            return "", "", "", "", "HTML 后端未初始化"
+        if not bool(
+            getattr(getattr(html_backend, "config", None), "search_enabled", True)
+        ):
+            return "", "", "", "", "search_enabled 已关闭"
+        kind = query_kind(query)
+        return query, "", query, kind, ""
+
+    async def _probe_mirror_instance(
+        self,
+        mode: str,
+        instance: str,
+        *,
+        username: str,
+        query: str,
+        kind: str,
+        limit: int,
+    ):
+        if mode == "blogger_rss":
+            return await self.plugin.nitter.fetch_tweets_from_instance(
+                instance,
+                username,
+                limit,
+            )
+        return await asyncio.to_thread(
+            self.plugin.html_backend.search,
+            query,
+            limit,
+            kind=kind,
+            instance=instance,
+        )
+
+    async def _probe_mirror_all(
+        self,
+        mode: str,
+        instances: list[str],
+        *,
+        username: str,
+        query: str,
+        kind: str,
+        subject: str,
+        limit: int,
+    ) -> dict[str, Any]:
+        results: list[dict[str, Any]] = []
+        for configured_instance in instances:
+            started = asyncio.get_running_loop().time()
+            try:
+                instance = validate_http_url(
+                    configured_instance,
+                    resolve_dns=False,
+                ).rstrip("/")
+                used_instance, tweets = await self._probe_mirror_instance(
+                    mode,
+                    instance,
+                    username=username,
+                    query=query,
+                    kind=kind,
+                    limit=limit,
+                )
+                tweets = list(tweets)
+                results.append(
+                    {
+                        "instance": used_instance or instance,
+                        "success": True,
+                        "tweet_count": len(tweets),
+                        "tweets": [
+                            self._serialize_probe_tweet(tweet)
+                            for tweet in tweets[:limit]
+                        ],
+                        "error": "",
+                        "duration_ms": round(
+                            (asyncio.get_running_loop().time() - started) * 1000,
+                            1,
+                        ),
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[NitterTweets] WebUI 多站镜像测试失败: "
+                    f"mode={mode}, instance={configured_instance}, error={exc}"
+                )
+                error = (
+                    f"通过 {configured_instance} 搜索失败：实例不可达、被限流，或搜索门禁未通过。"
+                    if mode == "search"
+                    else f"通过 {configured_instance} 获取失败：Nitter 暂时不可用，或用户没有公开 RSS。"
+                )
+                results.append(
+                    {
+                        "instance": configured_instance,
+                        "success": False,
+                        "tweet_count": 0,
+                        "tweets": [],
+                        "error": error,
+                        "duration_ms": round(
+                            (asyncio.get_running_loop().time() - started) * 1000,
+                            1,
+                        ),
+                    }
+                )
+
+        succeeded = sum(1 for item in results if item["success"])
+        return self._ok(
+            mode=mode,
+            username=username if mode != "search" else "",
+            query=query if mode == "search" else "",
+            kind=kind,
+            subject=subject,
+            limit=limit,
+            results=results,
+            summary={
+                "total": len(results),
+                "succeeded": succeeded,
+                "failed": len(results) - succeeded,
+            },
         )
 
     def _configured_instance_lists(self) -> dict[str, list[str]]:

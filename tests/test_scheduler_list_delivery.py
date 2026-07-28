@@ -15,20 +15,27 @@ if str(_ROOT) not in sys.path:
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-import test_scheduler_delivery as base  # noqa: E402
+import test_scheduler_delivery as base
 
-from media_support.html_backend.pool import HtmlSearchResult  # noqa: E402
-from shared.utils import TweetItem  # noqa: E402
-from storage import SQLiteStorage, StorageAdapter  # noqa: E402
+from media_support.html_backend.pool import HtmlSearchResult
+from shared.utils import TweetItem
+from storage import SQLiteStorage, StorageAdapter
 
 
 class _ListBackend:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.filter_reposts_calls = []
 
-    def fetch_list(self, list_id: str, limit: int = 5):
+    def fetch_list(
+        self,
+        list_id: str,
+        limit: int = 5,
+        filter_reposts: bool | None = None,
+    ):
         self.calls.append((list_id, limit))
+        self.filter_reposts_calls.append(filter_reposts)
         item = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
         instance, tweets = item
         if isinstance(tweets, HtmlSearchResult):
@@ -93,11 +100,11 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             "send_user_interval": 0,
         }
 
-    def _create_scheduler(self, html_backend, sender=None, nitter=None):
+    def _create_scheduler(self, html_backend, sender=None, nitter=None, config=None):
         scheduler = base.NitterTweetScheduler(
             base._Owner(),
             context=None,
-            config=self._config(),
+            config=config or self._config(),
             nitter=nitter or base._Nitter(),
             media=base._Media(),
             sender=sender or base._Sender(),
@@ -131,6 +138,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sender.sent, [])
         self.assertIn("101", await scheduler.storage.get_seen_ids("lists1", key))
         self.assertEqual(nitter.host_skip_calls, [])
+        self.assertEqual(backend.filter_reposts_calls, [True, True])
 
     async def test_filtered_first_scan_writes_empty_watermark_then_pushes(self):
         backend = _ListBackend(
@@ -154,3 +162,23 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.new_tweet_count, 1)
         self.assertEqual(sender.sent[-1][3], ["102"])
         self.assertIn("102", await scheduler.storage.get_seen_ids("lists1", key))
+
+    async def test_list_group_can_disable_repost_filter(self):
+        backend = _ListBackend([("https://list.test", [self._tweet("100")])])
+        config = self._config()
+        config["tweet_groups"][0]["filter_reposts_enabled"] = False
+        scheduler = self._create_scheduler(backend, config=config)
+        group = scheduler._schedule_groups(log_invalid_targets=False)[0]
+
+        result = await scheduler._fetch_group_user(
+            group,
+            0,
+            "list:12345",
+            20,
+            False,
+            None,
+            concurrent=False,
+        )
+
+        self.assertEqual(backend.filter_reposts_calls, [False])
+        self.assertEqual([tweet.status_id for tweet in result.tweets], ["100"])

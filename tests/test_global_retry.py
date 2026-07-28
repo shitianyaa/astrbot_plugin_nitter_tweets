@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Test global retry mechanism in HtmlNitterPool."""
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ def test_search_global_retry_on_all_instances_fail():
     pool._search_once = mock_search_once
 
     start = time.time()
-    base, tweets = pool.search("#test", limit=5)
+    base, _tweets = pool.search("#test", limit=5)
     elapsed = time.time() - start
 
     assert call_count == 2  # 1 failed + 1 success
@@ -83,7 +82,7 @@ def test_search_global_retry_on_cooldown_uses_longer_delay():
     pool._search_once = mock_search_once
 
     start = time.time()
-    base, tweets = pool.search("#test", limit=5)
+    _base, _tweets = pool.search("#test", limit=5)
     elapsed = time.time() - start
 
     assert call_count == 2
@@ -109,7 +108,7 @@ def test_fetch_user_global_retry_on_all_instances_fail():
     pool = HtmlNitterPool(config)
     pool._fetch_user_once = mock_fetch_once
 
-    base, tweets = pool.fetch_user("testuser", limit=5)
+    base, _tweets = pool.fetch_user("testuser", limit=5)
     assert call_count == 2
     assert base == "https://a.example"
 
@@ -187,7 +186,7 @@ def test_global_retry_delay_increases_progressively():
         pool = HtmlNitterPool(config)
         pool._search_once = mock_search_once
 
-        base, tweets = pool.search("#test", limit=5)
+        _base, _tweets = pool.search("#test", limit=5)
         assert call_count == 3  # 2 failed + 1 success
         assert len(delays) == 2  # 2 retries = 2 delays
         assert delays[0] == 5.0  # First retry: 5s

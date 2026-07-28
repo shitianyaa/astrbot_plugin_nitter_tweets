@@ -11,7 +11,7 @@ class DeliveryAdapter:
     is_lark = False
     is_telegram = False
 
-    def __init__(self, sender: Any, profile: "PlatformProfile"):
+    def __init__(self, sender: Any, profile: PlatformProfile):
         self.sender = sender
         self.profile = profile
 

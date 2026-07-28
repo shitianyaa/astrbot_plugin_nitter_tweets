@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier, Event
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -116,7 +117,7 @@ def test_download_registers_lease_before_return_and_cleanup_releases_it(
     service.user_agent = "test"
 
     class _Response:
-        headers = {}
+        headers: ClassVar[dict] = {}
 
         def __enter__(self):
             return self
@@ -156,7 +157,7 @@ def test_concurrent_same_url_downloads_share_one_final_file(tmp_path, monkeypatc
     barrier = Barrier(2)
 
     class _Response:
-        headers = {}
+        headers: ClassVar[dict] = {}
 
         def __enter__(self):
             return self

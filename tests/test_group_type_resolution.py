@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """分组类型解析：数据优先，但不得推翻空分组的显式声明。
 
 `_ensure_tweet_group_template_key` 会按解析结果清空“另一侧”的订阅列表，

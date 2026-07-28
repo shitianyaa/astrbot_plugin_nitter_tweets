@@ -14,11 +14,11 @@ from __future__ import annotations
 from astrbot.api import logger
 
 try:
-    from ..shared import TweetItem, safe_call
     from ..rendering import TweetBatch
+    from ..shared import TweetItem, safe_call
 except ImportError:
-    from shared import TweetItem, safe_call
     from rendering import TweetBatch
+    from shared import TweetItem, safe_call
 
 
 class SenderHelpersMixin:
