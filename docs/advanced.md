@@ -160,7 +160,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `group_type` | `blogger`、`tag` 或 `list`；类型创建后不可修改。分别使用 `watch_users`、`watch_queries`、`watch_lists`。 |
 | `watch_users` | Blogger 分组的博主订阅源列表。 |
 | `watch_queries` | Tag 分组的搜索订阅列表；前导 `#` 为标签，否则为短语。 |
-| `watch_lists` | List 分组的纯数字 List ID 列表。 |
+| `watch_lists` | List 分组的纯数字 List ID 列表。**刚创建不久的 List 往往要过一段时间才会被 Nitter 收录/搜到**，空结果时先等待再排查。详见 [twitter-lists.md](./twitter-lists.md)。 |
 | `push_targets` | 该分组推送目标列表。 |
 | `interval_check_enabled` | 是否让该分组参与全局间隔检查；只有 `schedule_enabled` 开启后才会触发。 |
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
@@ -307,7 +307,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 - `group_type: blogger`：只使用 `watch_users`，**仅 RSS**（`instances`，可多站）。不设博主 HTML 回退池，避免与搜索抢公共 HTML。
 - `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 订阅源键为 `q:<casefold query>`。
-- `group_type: list`：只使用 `watch_lists`，通过 HTML `search_instances` 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。
+- `group_type: list`：只使用 `watch_lists`，通过 HTML `search_instances` 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
 - **风险提示：Bot 若使用私人 QQ 号，不建议启用 Tag/List 分组定时搜索/推送**（HTML 查询与推送更频繁，有封号风险）。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
 - Tag/List 首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
