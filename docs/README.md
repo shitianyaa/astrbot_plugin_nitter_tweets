@@ -23,11 +23,10 @@
 
 ### 快速理解插件
 
-1. `docs/project/overview.md`
-2. `docs/project/architecture.md`
-3. `docs/project/platform-delivery.md`
-4. `README.md`
-5. `docs/advanced.md`
+1. 根目录 `README.md`（上手与定位，宜先读）
+2. `docs/advanced.md`（行为边界与全配置）
+3. 按需：`docs/twitter-lists.md`、`docs/instances-guide.md`
+4. 开发向：`docs/project/overview.md` → `architecture.md` → `platform-delivery.md`
 
 ### 参与开发
 

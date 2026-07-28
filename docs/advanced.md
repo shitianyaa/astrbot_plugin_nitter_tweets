@@ -1,9 +1,12 @@
 # Nitter 推文记录进阶说明
 
-本文承接 README 中不适合放在首页的细节：平台差异、工作流程、完整配置参考、缓存、推送记录和本地诊断。
+本文承接 README **不适合放在首页**的细节：平台差异、工作流程、完整配置、行为边界、缓存、推送记录和本地诊断。
+README 只保留上手与定位；边界以本文与 `_conf_schema.json` 为准。
 
 - 返回 [README](../README.md)
 - 查看完整默认值：[_conf_schema.json](../_conf_schema.json)
+- List 专题：[twitter-lists.md](./twitter-lists.md)
+- 实例专题：[instances-guide.md](./instances-guide.md)
 
 ## 平台支持
 
@@ -238,7 +241,9 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 解析顺序：FxTwitter → VxTwitter → Syndication；媒体直链优先，缺失时 xdown 兜底。
 - 强制准备图片/视频（无视全局图视频开关与 `max_media_per_tweet`），仍受大小、时长、超时限制。
 - 翻译走现有 `TweetTranslator`；原文显隐仅看全局 `show_original_when_translated`（与手动一致，无分组覆盖）。
-- 发送版式复用现有 QQ plain / 各平台 Sender；默认 `omit_status_url=true`。
+- 发送版式复用现有 Sender；正文布局 R1（译文为主文，原文 `>` 引用；无「翻译/原文」小标题）；默认 `omit_status_url=true`。
+- 展示时间统一为 **Asia/Shanghai（UTC+8）** `YYYY-MM-DD HH:MM:SS`（RSS、链接解析、HTML 搜索/List、渲染兜底）。
+- 同会话同 status 约 60 秒防抖（成功发送后记录）；单条消息最多 3 个不同链接。
 
 - 首次启用某个订阅源时，会初始化当前扫描到的 seen ID 和独立扫描基准组，不推送历史内容；Tag/List 首轮边界见“Tag/List 分组与 HTML 搜索”。
 - `check_on_startup=true` 时，存储迁移完成后会先按分组串行执行一次首检，再进入间隔/每日槽位轮询；首检日志始终包含分组、类型、订阅源数、目标数、触发原因、结果统计和耗时。缺少订阅源或目标的启用分组只记录明确跳过原因。
