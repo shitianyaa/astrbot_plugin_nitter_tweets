@@ -110,6 +110,48 @@ def test_fx_media_only_empty_text_not_raw_dict():
     assert len(tweet.media) == 1
 
 
+def test_fx_media_only_status_with_video_keeps_empty_body():
+    """A video-only status must not expose author/player metadata as body text."""
+    link = StatusLink(
+        "yureiyks",
+        "2081959562219794868",
+        "https://x.com/yureiyks/status/2081959562219794868",
+    )
+    payload = {
+        "tweet": {
+            "text": "",
+            "raw_text": {
+                "text": "https://t.co/rnKeFYWAqs",
+                "display_text_range": [0, 0],
+            },
+            "url": link.canonical_url,
+            "author": {"screen_name": "yureiyks"},
+            "media": {
+                "all": [
+                    {
+                        "type": "video",
+                        "url": "https://video.twimg.com/video.mp4",
+                        "variants": [
+                            {
+                                "content_type": "video/mp4",
+                                "bitrate": 1,
+                                "url": "https://video.twimg.com/video.mp4",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    }
+
+    tweet = _tweet_from_fx(link, payload)
+
+    assert tweet is not None
+    assert tweet.text == ""
+    assert tweet.translation == ""
+    assert len(tweet.media) == 1
+
+
 def test_fx_payload_maps_photo_tweet():
     link = StatusLink(
         "ErroR_eroi",

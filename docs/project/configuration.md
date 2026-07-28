@@ -48,7 +48,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 - `daily_check_times`: 每日检查时间。
 - `filter_reposts_enabled`: 分组级转发过滤子开关，默认 `true`；只有全局同名总开关也开启时才过滤。
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文（博主 RSS 与标签/HTML 路径均适用）。
-- `omit_status_url`: 该分组定时发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；关闭时正文/译文链接保留。Telegram 用正文摘要 Markdown 链到推文。仅媒体模式不调用翻译。
+- `omit_status_url`: 该分组定时发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；关闭时正文/译文链接保留。Telegram 用正文摘要 Markdown 链到推文，并在底层发送时关闭网页预览。仅媒体模式不调用翻译。
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。

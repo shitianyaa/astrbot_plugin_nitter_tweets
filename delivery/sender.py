@@ -345,12 +345,19 @@ class TweetSender(
         chain: MessageChain,
         label: str,
     ) -> SendAttempt:
+        adapter = self._delivery_adapter_for_umo(context, umo)
+        custom_send = getattr(adapter, "send_context_chain", None)
+        if callable(custom_send):
+            handled = await custom_send(context, umo, chain, label)
+            if handled is not None:
+                return handled
+
         target = umo
         try:
             sent = await context.send_message(umo, chain)
         except Exception as exc:
             flood_attempt = await self._adapter_flood_control_attempt(
-                self._delivery_adapter_for_umo(context, umo),
+                adapter,
                 lambda: context.send_message(umo, chain),
                 label,
                 target,
@@ -375,12 +382,19 @@ class TweetSender(
         chain: MessageChain,
         label: str,
     ) -> SendAttempt:
+        adapter = self._delivery_adapter_for_event(event)
+        custom_send = getattr(adapter, "send_event_chain", None)
+        if callable(custom_send):
+            handled = await custom_send(event, chain, label)
+            if handled is not None:
+                return handled
+
         target = self._event_target(event)
         try:
             await event.send(chain)
         except Exception as exc:
             flood_attempt = await self._adapter_flood_control_attempt(
-                self._delivery_adapter_for_event(event),
+                adapter,
                 lambda: event.send(chain),
                 label,
                 target,

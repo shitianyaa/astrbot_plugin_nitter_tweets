@@ -45,7 +45,7 @@
 | 手动 | `/推文`、`/推文搜索`、`/镜像测试` |
 | 链接 | 可选被动解析聊天中的 status 链接（默认关） |
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
-| 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送 |
+| 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
 | 运维 | WebUI 面板、缓存与推送记录清理 |
 
