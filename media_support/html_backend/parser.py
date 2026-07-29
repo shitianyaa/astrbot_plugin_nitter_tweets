@@ -280,27 +280,7 @@ def _extract_tweet_text(chunk: str) -> str:
         if text:
             return text
 
-    cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", "", chunk or "")
-    cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", "", cleaned)
-    cleaned = re.sub(
-        r'(?is)<div class="quote(?:-tweet)?[^"]*"[^>]*>.*?</div>\s*</div>',
-        "",
-        cleaned,
-    )
-    text = clean_html_text(cleaned)
-    lines_out = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    kept = []
-    noise = {"retweet", "quote", "reply", "load more"}
-    for ln in lines_out:
-        low = ln.lower()
-        if low in noise:
-            continue
-        if re.fullmatch(r"[@#]?\w{1,32}", ln) and not kept:
-            continue
-        if re.fullmatch(r"[\d,.]+[KMBkmb]?", ln):
-            continue
-        kept.append(ln)
-    return chr(10).join(kept[:12]).strip()
+    return ""
 
 
 def is_pure_retweet_chunk(chunk: str) -> bool:

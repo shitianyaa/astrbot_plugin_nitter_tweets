@@ -152,6 +152,92 @@ def test_fx_media_only_status_with_video_keeps_empty_body():
     assert len(tweet.media) == 1
 
 
+def test_user_status_payloads_keep_media_only_and_text_photo_distinct():
+    yurei_link = StatusLink(
+        "yureiyks",
+        "2082364407330341030",
+        "https://x.com/yureiyks/status/2082364407330341030",
+    )
+    yurei = _tweet_from_fx(
+        yurei_link,
+        {
+            "tweet": {
+                "text": "",
+                "raw_text": {
+                    "text": "https://t.co/R53nVq6QL8",
+                    "display_text_range": [0, 0],
+                },
+                "url": yurei_link.canonical_url,
+                "created_at": "Wed Jul 29 07:15:37 +0000 2026",
+                "author": {"screen_name": "yureiyks"},
+                "media": {
+                    "all": [
+                        {
+                            "type": "video",
+                            "url": "https://video.twimg.com/video.mp4",
+                            "variants": [
+                                {
+                                    "content_type": "video/mp4",
+                                    "bitrate": 1,
+                                    "url": "https://video.twimg.com/video.mp4",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        },
+    )
+
+    yoda_link = StatusLink(
+        "Yodachipoi",
+        "2082072289068351718",
+        "https://x.com/Yodachipoi/status/2082072289068351718",
+    )
+    yoda = _tweet_from_fx(
+        yoda_link,
+        {
+            "tweet": {
+                "text": "狼群之名终将响彻大地！",
+                "raw_text": {
+                    "text": "狼群之名终将响彻大地！ https://t.co/0TCaUvtsqi",
+                    "display_text_range": [0, 11],
+                },
+                "url": yoda_link.canonical_url,
+                "created_at": "Tue Jul 28 11:54:51 +0000 2026",
+                "author": {"screen_name": "Yodachipoi"},
+                "media": {
+                    "all": [
+                        {
+                            "type": "photo",
+                            "url": "https://pbs.twimg.com/media/HOOD.jpg?name=orig",
+                        }
+                    ]
+                },
+            }
+        },
+    )
+
+    assert yurei is not None
+    assert yurei.text == ""
+    assert [media.kind for media in yurei.media] == ["video"]
+    yurei_output = TweetMessageRenderer.format_tweet(
+        0, "yureiyks", yurei, omit_status_url=True
+    )
+    assert yurei_output == "@yureiyks · 2026-07-29 15:15:37\n\n📎 视频/GIF 1 个"
+    assert "Yūrei" not in yurei_output
+    assert "启用 HLS 播放" not in yurei_output
+
+    assert yoda is not None
+    assert yoda.text == "狼群之名终将响彻大地！"
+    assert [media.kind for media in yoda.media] == ["image"]
+    yoda_output = TweetMessageRenderer.format_tweet(
+        0, "Yodachipoi", yoda, omit_status_url=True
+    )
+    assert "狼群之名终将响彻大地！" in yoda_output
+    assert "📎 图片 1 张" in yoda_output
+
+
 def test_fx_payload_maps_photo_tweet():
     link = StatusLink(
         "ErroR_eroi",

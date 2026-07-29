@@ -1119,7 +1119,7 @@ class TweetMessageRenderer:
         # Body layout (R1, all platforms including Telegram):
         # translation as main text; original as '>' quoted block; no "翻译"/"原文"
         # section titles. Media-only / empty body: header only (+ media summary).
-        # Telegram still uses its own author header (𝕏 · name · link).
+        # Telegram uses its own author header with an explicit status link.
         if translation and show_original:
             blocks.append(translation)
             blocks.append(TweetMessageRenderer._quote_plain_block(original_text))
@@ -1211,7 +1211,7 @@ class TweetMessageRenderer:
         status_link = TweetMessageRenderer.telegram_markdown_link(
             "🔗 查看推文", status_url
         )
-        return f"𝕏 · {safe_author_name} · {status_link}"
+        return f"@{safe_author_name} · {status_link}"
 
     @staticmethod
     def format_video_attachment_text(

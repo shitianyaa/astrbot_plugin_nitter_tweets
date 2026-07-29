@@ -49,7 +49,7 @@ NitterTweetScheduler
 4. 解析 RSS item 或 HTML item
 5. 过滤转发（Blogger、Tag、List 均按“全局总开关 && 分组子开关”的有效值处理）
 6. 可选过滤纯文本
-7. 手动路径按请求数量停止；后台 Blogger 扫描首屏约 20 条并按 `Min-Id` 分页，Tag/List 每个订阅源最多保留 20 条候选
+7. 手动路径按请求数量停止；后台 Blogger 扫描首屏约 20 条并按 `Min-Id` 分页；Tag 最多保留 20 条候选；List 首轮最多 20 条，后续本轮扫描可超过 20 条并按旧水位分页到边界或游标结束
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
@@ -59,11 +59,11 @@ NitterTweetScheduler
 2. 调度存储初始化由后台循环和手动/Plugin Pages 检查共享同一异步锁；迁移未完成时不会进入抓取或发送。
 3. `run_check()` 加锁，避免并发检查；启动首检、手动检查和 WebUI 检查会等待已有检查完成，普通定时触发则返回已在运行。
 4. 读取该分组 seen map 和独立扫描基准组。
-5. Blogger 按 RSS 首屏与基准分页；Tag/List 按 `search_instances` 串行扫描 HTML，Tag 使用 `q:`、List 使用 `list:` seen 键。
+5. Blogger 按 RSS 首屏与基准分页；Tag 按 `search_instances` 串行取固定候选；List 按旧水位继续翻页，达到页数上限仍未结束时标记扫描未完成。Tag 使用 `q:`、List 使用 `list:` seen 键。
 6. 首次订阅源初始化 seen 和最近最多 20 个扫描基准 ID，不推送历史；Tag/List 真正空首轮保持未初始化，有原始结果但全被过滤时记录空扫描水位。
 7. 非首次订阅源按命中的基准 ID 确定时间边界，再用 seen 排除已成功送达的推文。
 8. 按推文 ID 与 seen 做差集，所有新推文都在本轮准备并发送。
-9. 发送成功后更新 seen；扫描完整且找到旧基准后替换当前扫描基准组。
+9. 发送成功后更新 seen；扫描完整且本轮选中内容均已送达后替换当前扫描基准组。
 10. 分页、准备或发送失败时不跨过未送达推文，并清理普通缓存。
 
 当 `check_on_startup=true` 时，存储初始化完成后按分组顺序执行一次独立 `startup` 检查，覆盖仅每日、仅间隔和无定时槽位的启用分组；首检结束后锚定当前槽位，避免下一轮重复触发。
@@ -101,7 +101,7 @@ NitterTweetScheduler
 - SQLite 是运行期存储。
 - 旧 KV seen 只用于迁移。
 - seen 按 `group_id + username` 隔离。
-- scan watermark 基准组按 `group_id + username` 独立存储，保存最近最多 20 个 RSS ID，负责分页边界和首次初始化状态；它不等同于 seen 最大 ID。
+- scan watermark 基准组按 `group_id + username` 独立存储，保存最近最多 20 个 status ID，负责分页边界和首次初始化状态；它不等同于 seen 最大 ID，也不随本轮扫描条数无限增长。
 - push history 记录成功/部分失败的推送快照，供 WebUI 历史查看和重推。
 
 不要把运行时 SQLite、缓存、`data/` 提交到 Git。

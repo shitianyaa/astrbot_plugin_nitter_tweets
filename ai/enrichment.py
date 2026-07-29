@@ -194,27 +194,8 @@ class TweetTranslator:
             logger.debug(f"{LOG_PREFIX} 翻译已跳过: no_tweets")
             return report
 
-        provider_id, source = await self._resolve_provider(umo)
-        report.provider_id = provider_id
-        report.provider_source = source
-        if not provider_id:
-            if not self._warned_no_provider:
-                logger.warning(f"{LOG_PREFIX} 翻译已启用但没有可用模型")
-                self._warned_no_provider = True
-            report.tweet_results = [
-                TranslationTweetResult(
-                    status_id=tweet.status_id or f"index-{index}",
-                    status="unavailable",
-                )
-                for index, tweet in enumerate(tweets, 1)
-            ]
-            return report
-        if len(tweets) > 1:
-            logger.info(
-                f"{LOG_PREFIX} 翻译开始: tweets={len(tweets)}, provider={provider_id} ({source})"
-            )
-
         translated = skipped = failed = 0
+        candidates: list[tuple[TweetItem, str, TranslationTweetResult, str]] = []
         for index, tweet in enumerate(tweets, 1):
             sid = tweet.status_id or f"index-{index}"
             tweet_result = TranslationTweetResult(status_id=sid)
@@ -232,6 +213,29 @@ class TweetTranslator:
                 skipped += 1
                 continue
 
+            candidates.append((tweet, sid, tweet_result, reason))
+
+        if not candidates:
+            report.skipped = skipped
+            return report
+
+        provider_id, source = await self._resolve_provider(umo)
+        report.provider_id = provider_id
+        report.provider_source = source
+        if not provider_id:
+            if not self._warned_no_provider:
+                logger.warning(f"{LOG_PREFIX} 翻译已启用但没有可用模型")
+                self._warned_no_provider = True
+            for _, _, tweet_result, _ in candidates:
+                tweet_result.status = "unavailable"
+            report.skipped = skipped
+            return report
+        if len(candidates) > 1:
+            logger.info(
+                f"{LOG_PREFIX} 翻译开始: tweets={len(candidates)}, provider={provider_id} ({source})"
+            )
+
+        for tweet, sid, tweet_result, reason in candidates:
             result = await self._translate(provider_id, tweet, sid)
             if result:
                 tweet.translation = result
@@ -256,6 +260,9 @@ class TweetTranslator:
     # ── 判断是否需要翻译 ──
 
     def _should_translate(self, text: str) -> tuple[bool, str]:
+        if self._is_empty_tweet_body(text):
+            return False, "empty_body"
+
         cleaned = self._clean_for_detect(text)
         if len(cleaned) < self.min_chars:
             return False, f"too_short(len={len(cleaned)}, min={self.min_chars})"
@@ -271,6 +278,10 @@ class TweetTranslator:
         ratio = chinese_count / len(meaningful)
         reason = f"chinese_ratio={ratio:.2f}, threshold={self.chinese_ratio_threshold:.2f}, len={len(meaningful)}"
         return ratio < self.chinese_ratio_threshold, reason
+
+    @staticmethod
+    def _is_empty_tweet_body(text: str) -> bool:
+        return str(text or "").strip() in {"", "(无正文)", "（无正文）"}
 
     async def _translate(
         self, provider_id: str, tweet: TweetItem, status_id: str

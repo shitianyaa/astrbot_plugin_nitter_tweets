@@ -38,7 +38,7 @@ def test_format_tweet_telegram_header_has_explicit_link_not_query():
         1, "#tag", tweet, link_style="telegram_md", omit_status_url=True
     )
     assert text.startswith(
-        "𝕏 · RealUser · [🔗 查看推文](https://x.com/RealUser/status/99)"
+        "@RealUser · [🔗 查看推文](https://x.com/RealUser/status/99)"
     )
     assert "visible body for link" in text
     assert not text.startswith("[#tag]")

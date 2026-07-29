@@ -1,11 +1,14 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.18.0-blue" />
-  <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
-  <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
-  <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
-  <img alt="Media" src="https://img.shields.io/badge/media-xdown.app-orange" />
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
+  <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <br />
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=gold" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge" /></a>
+  <a href="https://qm.qq.com/q/cPQnFNtdN6"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%E7%BE%A4-Bot%E6%B5%8B%E8%AF%95%E7%BE%A4-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" /></a>
   <br />
   <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
 </p>
@@ -113,7 +116,7 @@ lark:GroupMessage:oc_xxxxxxxxxxxxx
 | `/订阅导入` `/订阅删除` `/订阅列表` `/订阅导出` `/订阅去重` | 管理员 | 博主订阅 |
 | `/标签导入` `/标签删除` | 管理员 | 标签订阅（须带分组名） |
 
-List 暂无配置或 WebUI 添加 ID，无导入命令。
+List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 ## 常用配置
 
@@ -147,7 +150,8 @@ List 暂无配置或 WebUI 添加 ID，无导入命令。
 
 ## 致谢
 
-- [`astrbot_plugin_parser`](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
 - 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成
 
 ## 许可证

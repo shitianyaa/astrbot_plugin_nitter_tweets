@@ -116,7 +116,7 @@
         "description": "HTML 最大翻页数",
         "type": "int",
         "default": 1,
-        "hint": "默认只取一页（约 20 条），再按 limit 截断。"
+        "hint": "手动搜索和 Tag 按请求上限截断；List 首轮最多取 20 条建立基线，已有水位后最多翻到该页数以寻找旧水位或游标末尾。达到上限仍未完整扫描时，本轮不推进 seen/水位；持久化水位始终最多保存 20 个 ID。"
       },
       "html_request_timeout": {
         "description": "HTML 请求超时秒",
@@ -622,7 +622,7 @@
                 "description": "Twitter List 订阅",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个纯数字 List ID（如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。刚创建不久的 List 往往要过一段时间才会被 Nitter 镜像收录/搜到，空结果时先等再查，不必立刻当配置错误。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
+                "hint": "每行一个正 uint64 List ID（1 至 18446744073709551615，如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。刚创建不久的 List 往往要过一段时间才会被 Nitter 镜像收录/搜到，空结果时先等再查，不必立刻当配置错误。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
               },
               "push_targets": {
                 "description": "分组推送目标",

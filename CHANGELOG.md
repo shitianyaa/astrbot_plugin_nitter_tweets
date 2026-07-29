@@ -6,13 +6,19 @@
 
 ### Fixed
 
+- 修复已初始化 List 订阅的本轮扫描在前 20 条处截断并提前推进水位的问题：现在会继续翻页到命中旧水位或游标结束；达到 `html_max_pages` 仍未完成时跳过本轮，不写 seen、不推进水位。首次基线和后续持久化水位仍最多保存 20 个 ID。
+- 修复自定义 Telegram 实例 ID（如 `tg-main`）遮蔽平台名称/类型，导致 Telegram 专用发送能力识别失败的问题。
+- 修复同一 UMO 中相同 status 链接并发解析时可能重复 resolve、重复发送的问题；失败后仍允许重试。
+- List ID 后端校验改为正 `uint64`，拒绝超过 `18446744073709551615` 的 20 位数字。
+- 翻译流程会在模型/provider 解析前跳过空正文及“无正文”占位符，避免媒体推文触发无效的大模型翻译。
 - 媒体直链下载/时长探测不再对 `video.twimg.com`、`pbs.twimg.com` 等使用 `Referer: https://xdown.app/`（会触发 CDN HTTP 403）；改为 `https://x.com/`。xdown API 请求仍使用 xdown 站点头。
 
 ### Changed
 
+- Ruff 与主分支保持一致为 `0.15.22`，移除仅供 0.16 使用的项目级 `ruff.toml`。
 - README 精简为上手与定位（约减半篇幅）；细则、行为边界与诊断统一指向 `docs/advanced.md` 等专题文档。
 - Telegram 推文消息保留可点击的 X 链接，但关闭网页预览，避免视频推文卡片重复显示作者和 HLS 播放文案。
-- 推文正文布局（R1，含 QQ plain 与 Telegram）：有译文时译文作主文、原文用 `>` 引用块；去掉「翻译」「原文」小标题。Telegram 仍保留 `𝕏 · 作者 · 🔗 查看推文` 头。
+- 推文正文布局（R1，含 QQ plain 与 Telegram）：有译文时译文作主文、原文用 `>` 引用块；去掉「翻译」「原文」小标题。Telegram 使用 `@作者 · [🔗 查看推文](链接)` 头。
 - 纯媒体/空正文：Fx `text=""` 不再误用 `raw_text` dict；只保留头/作者行 + 媒体摘要，不显示「（无正文）」。
 - 推文展示时间统一为 **Asia/Shanghai（UTC+8）** `YYYY-MM-DD HH:MM:SS`：覆盖 RSS、链接解析（Fx/Vx/Syn）、HTML 搜索/List（Nitter tweet-date），渲染层再兜底一次。
 

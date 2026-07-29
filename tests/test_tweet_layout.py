@@ -34,7 +34,7 @@ def test_telegram_header_has_explicit_status_link_not_body_preview():
         link_style="telegram_md",
     )
     first = out.split("\n\n", 1)[0]
-    assert first.startswith("𝕏 · nasa · [🔗 查看推文](https://x.com/nasa/status/1)")
+    assert first.startswith("@nasa · [🔗 查看推文](https://x.com/nasa/status/1)")
     assert "Hello #space" not in first
     assert "原文" not in out  # R1: no section title
     assert "Hello #space world" in out  # body still present, URL stripped
@@ -53,7 +53,7 @@ def test_telegram_header_escapes_author_markdown():
         link_style="telegram_md",
     )
     assert out.startswith(
-        "𝕏 · real\\_user · [🔗 查看推文](https://x.com/real_user/status/1)"
+        "@real\\_user · [🔗 查看推文](https://x.com/real_user/status/1)"
     )
 
 
@@ -192,7 +192,7 @@ def test_telegram_r1_translation_body_keeps_header():
         hide_original_when_translated=False,
         link_style="telegram_md",
     )
-    assert out.startswith("𝕏 · nasa · [🔗 查看推文](")
+    assert out.startswith("@nasa · [🔗 查看推文](")
     assert "翻译" not in out
     assert "原文" not in out
     parts = out.split("\n\n")
@@ -226,5 +226,5 @@ def test_media_only_telegram_header_has_explicit_status_link():
     )
     assert comps
     text = getattr(comps[0], "text", None) or str(comps[0])
-    assert "𝕏 · nasa · [🔗 查看推文](https://x.com/nasa/status/1)" in text
+    assert "@nasa · [🔗 查看推文](https://x.com/nasa/status/1)" in text
     assert "Hello" not in text

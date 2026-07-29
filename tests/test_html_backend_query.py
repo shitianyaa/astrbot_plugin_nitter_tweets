@@ -271,3 +271,52 @@ def test_parse_timeline_html_minimal_fixture():
     assert "Hello world" in tweet.text
     assert tweet.media and tweet.media[0].is_image
     assert "name=orig" in tweet.media[0].url
+
+
+def test_parse_timeline_html_media_only_body_does_not_leak_page_chrome():
+    html = """
+    <div class="timeline-item">
+      <div class="tweet-body">
+        <div class="fullname">Yurei Display Name</div>
+        <a class="username">@yureiyks</a>
+        <div class="attachments">
+          <a class="hls-button">启用 HLS 播放</a>
+          <video src="/video/2082364407330341030.mp4"></video>
+        </div>
+      </div>
+      <a href="/yureiyks/status/2082364407330341030">status</a>
+    </div>
+    """
+
+    page = parse_timeline_html(html, "https://nitter.example")
+
+    assert len(page.tweets) == 1
+    tweet = page.tweets[0]
+    assert tweet.text == "(无正文)"
+    assert [(media.kind, media.url) for media in tweet.media] == [
+        ("video", "https://nitter.example/video/2082364407330341030.mp4")
+    ]
+
+
+def test_parse_timeline_html_text_photo_status_keeps_body_and_media():
+    html = """
+    <div class="timeline-item">
+      <div class="tweet-body">
+        <div class="tweet-content media-body">狼群之名终将响彻大地！</div>
+        <div class="attachments">
+          <a class="still-image" href="/pic/orig/media%2FHOOD.jpg"></a>
+        </div>
+      </div>
+      <span class="tweet-date"><a title="Jul 28, 2026 · 11:54 AM UTC">date</a></span>
+      <a href="/Yodachipoi/status/2082072289068351718">status</a>
+    </div>
+    """
+
+    page = parse_timeline_html(html, "https://nitter.example")
+
+    assert len(page.tweets) == 1
+    tweet = page.tweets[0]
+    assert tweet.text == "狼群之名终将响彻大地！"
+    assert [(media.kind, media.url) for media in tweet.media] == [
+        ("image", "https://nitter.example/pic/orig/media%2FHOOD.jpg")
+    ]
