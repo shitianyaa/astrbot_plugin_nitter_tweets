@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """media_only 下 Lark 不得在“一条媒体都没发”时判定完成。
 
 `send_lark_post` 在没有可渲染内容时、`send_media_with_video_retry` 在组件列表为空时，

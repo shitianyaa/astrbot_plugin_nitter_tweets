@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """manual_send_interval + global show_original_when_translated."""
 
 from __future__ import annotations
@@ -9,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from command_handlers.manual import ManualCommandMixin
 from config.compat import (
     resolve_hide_original_when_translated,
     resolve_manual_send_interval,
     resolve_show_original_when_translated,
 )
-from command_handlers.manual import ManualCommandMixin
 from media_support.search_session_buffer import SearchSessionStore
 from rendering.tweets import TweetMessageRenderer
 
@@ -76,8 +75,8 @@ def test_renderer_respects_hide_flag_with_translation():
     out = TweetMessageRenderer.format_tweet(
         0, "u", t, hide_original_when_translated=True
     )
-    assert "翻译" in out
-    assert "原文" not in out
+    assert "你好" in out
+    assert "hello" not in out
 
 
 @pytest.mark.asyncio

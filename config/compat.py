@@ -46,12 +46,14 @@ TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
 TWEET_GROUP_TEMPLATE_KEY_BLOGGER = "blogger"
 TWEET_GROUP_TEMPLATE_KEY_TAG = "tag"
+TWEET_GROUP_TEMPLATE_KEY_LIST = "list"
 # Default template for pure blogger / unspecified groups (incl. old "用户分组").
 TWEET_GROUP_TEMPLATE_KEY = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
 TWEET_GROUP_TEMPLATE_KEYS = frozenset(
     {
         TWEET_GROUP_TEMPLATE_KEY_BLOGGER,
         TWEET_GROUP_TEMPLATE_KEY_TAG,
+        TWEET_GROUP_TEMPLATE_KEY_LIST,
         TWEET_GROUP_TEMPLATE_KEY_LEGACY,
     }
 )
@@ -95,6 +97,7 @@ CONFIG_GROUP_BY_KEY = {
     "cooldown_seconds": "basic",
     "user_agent": "basic",
     "filter_reposts_enabled": "basic",
+    "auto_parse_tweet_links_enabled": "basic",
     "user_html_fallback": "basic",
     "search_enabled": "basic",
     "search_instances": "basic",
@@ -155,6 +158,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "retry_delay_seconds",
     "cooldown_seconds",
     "user_agent",
+    "auto_parse_tweet_links_enabled",
     "user_html_fallback",
     "search_enabled",
     "search_instances",
@@ -722,7 +726,7 @@ def _clamp_int(value, minimum: int, maximum: int) -> int:
 
 
 def resolve_tweet_group_template_key(group: dict) -> str:
-    """Map stored group to AstrBot template_list key (blogger | tag)."""
+    """Map stored group to AstrBot template_list key."""
     desired, _preserve_mixed = _resolve_tweet_group_type(group)
     return desired
 
@@ -733,14 +737,23 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
     raw_key = str(group.get(TWEET_GROUP_TEMPLATE_KEY_FIELD) or "").strip().lower()
     has_users = not _is_empty_value(group.get("watch_users"))
     has_queries = not _is_empty_value(group.get("watch_queries"))
-    preserve_mixed = has_users and has_queries
+    has_lists = not _is_empty_value(group.get("watch_lists"))
+    preserve_mixed = (
+        (has_users and has_queries)
+        or (has_users and has_lists)
+        or (has_queries and has_lists)
+    )
 
     # Infer from data first to avoid clearing valid subscriptions.
     inferred = ""
-    if has_queries and not has_users:
+    if has_lists and not has_users and not has_queries:
+        inferred = TWEET_GROUP_TEMPLATE_KEY_LIST
+    elif has_queries and not has_users and not has_lists:
         inferred = TWEET_GROUP_TEMPLATE_KEY_TAG
-    elif has_users and not has_queries:
+    elif has_users and not has_queries and not has_lists:
         inferred = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
+    elif raw_key == TWEET_GROUP_TEMPLATE_KEY_LIST:
+        inferred = TWEET_GROUP_TEMPLATE_KEY_LIST
     elif raw_key == TWEET_GROUP_TEMPLATE_KEY_TAG:
         inferred = TWEET_GROUP_TEMPLATE_KEY_TAG
     else:
@@ -749,7 +762,9 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
 
     # Respect explicit group_type only if it doesn't contradict data.
     desired = ""
-    if raw_type in {TWEET_GROUP_TEMPLATE_KEY_TAG, "search", "query", "keyword"}:
+    if raw_type in {TWEET_GROUP_TEMPLATE_KEY_LIST, "lists"}:
+        desired = TWEET_GROUP_TEMPLATE_KEY_LIST
+    elif raw_type in {TWEET_GROUP_TEMPLATE_KEY_TAG, "search", "query", "keyword"}:
         desired = TWEET_GROUP_TEMPLATE_KEY_TAG
     elif raw_type in {TWEET_GROUP_TEMPLATE_KEY_BLOGGER, "user", "users"}:
         desired = TWEET_GROUP_TEMPLATE_KEY_BLOGGER
@@ -762,7 +777,7 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
         and inferred
         and desired != inferred
         and not preserve_mixed
-        and (has_users or has_queries)
+        and (has_users or has_queries or has_lists)
     ):
         desired = inferred
 
@@ -773,7 +788,7 @@ def _resolve_tweet_group_type(group: dict) -> tuple[str, bool]:
 
 
 def _ensure_tweet_group_template_key(group: dict) -> bool:
-    """Align __template_key + group_type for dual templates (blogger/tag).
+    """Align __template_key + group_type for blogger/tag/list templates.
 
     Migrates legacy ``__template_key=group`` (old 用户分组) to blogger.
     """
@@ -793,13 +808,27 @@ def _ensure_tweet_group_template_key(group: dict) -> bool:
     # follows the resolved type; the opposite list remains available for an
     # operator to move or recover explicitly.
     if not preserve_mixed:
-        if desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
+        if desired == TWEET_GROUP_TEMPLATE_KEY_LIST:
             if group.get("watch_users"):
                 group["watch_users"] = []
                 changed = True
-        elif group.get("watch_queries"):
-            group["watch_queries"] = []
-            changed = True
+            if group.get("watch_queries"):
+                group["watch_queries"] = []
+                changed = True
+        elif desired == TWEET_GROUP_TEMPLATE_KEY_TAG:
+            if group.get("watch_users"):
+                group["watch_users"] = []
+                changed = True
+            if group.get("watch_lists"):
+                group["watch_lists"] = []
+                changed = True
+        else:  # blogger
+            if group.get("watch_queries"):
+                group["watch_queries"] = []
+                changed = True
+            if group.get("watch_lists"):
+                group["watch_lists"] = []
+                changed = True
     return changed
 
 

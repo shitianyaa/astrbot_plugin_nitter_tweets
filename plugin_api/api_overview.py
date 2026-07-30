@@ -16,6 +16,7 @@ try:
         resolve_send_video_attachments,
     )
     from ..scheduler import ScheduleGroup
+    from ..shared import format_subscription_count
 except ImportError:
     from config import (
         config_get,
@@ -25,6 +26,7 @@ except ImportError:
         resolve_send_video_attachments,
     )
     from scheduler import ScheduleGroup
+    from shared import format_subscription_count
 
 
 class WebAPIOverviewMixin:
@@ -33,18 +35,45 @@ class WebAPIOverviewMixin:
     async def build_overview(self) -> dict[str, Any]:
         groups = self._schedule_groups()
 
-        total_raw_users = sum(group.users_info.raw_count for group in groups)
-        total_duplicates = sum(len(group.users_info.duplicates) for group in groups)
+        blogger_groups = [group for group in groups if group.is_blogger_group]
+        tag_groups = [group for group in groups if group.is_tag_group]
+        list_groups = [group for group in groups if group.is_list_group]
+        total_raw_users = sum(group.users_info.raw_count for group in blogger_groups)
+        total_duplicate_users = sum(
+            len(group.users_info.duplicates) for group in blogger_groups
+        )
         total_invalid_users = sum(
-            len(group.users_info.invalid_entries) for group in groups
+            len(group.users_info.invalid_entries) for group in blogger_groups
+        )
+        total_raw_queries = sum(group.queries_info.raw_count for group in tag_groups)
+        total_duplicate_queries = sum(
+            len(group.queries_info.duplicates) for group in tag_groups
+        )
+        total_invalid_queries = sum(
+            len(group.queries_info.invalid_entries) for group in tag_groups
+        )
+        total_raw_lists = sum(group.lists_info.raw_count for group in list_groups)
+        total_duplicate_lists = sum(
+            len(group.lists_info.duplicates) for group in list_groups
+        )
+        total_invalid_lists = sum(
+            len(group.lists_info.invalid_entries) for group in list_groups
         )
         counts = {
             "groups": len(groups),
             "enabled_groups": sum(1 for group in groups if group.enabled),
-            "watch_users": sum(len(group.users) for group in groups),
+            "watch_users": sum(len(group.users) for group in blogger_groups),
             "raw_watch_users": total_raw_users,
-            "duplicate_watch_users": total_duplicates,
+            "duplicate_watch_users": total_duplicate_users,
             "invalid_watch_users": total_invalid_users,
+            "watch_queries": sum(len(group.queries) for group in tag_groups),
+            "raw_watch_queries": total_raw_queries,
+            "duplicate_watch_queries": total_duplicate_queries,
+            "invalid_watch_queries": total_invalid_queries,
+            "watch_lists": sum(len(group.list_ids) for group in list_groups),
+            "raw_watch_lists": total_raw_lists,
+            "duplicate_watch_lists": total_duplicate_lists,
+            "invalid_watch_lists": total_invalid_lists,
             "push_targets": sum(len(group.targets) for group in groups),
             "invalid_push_targets": sum(len(group.invalid_targets) for group in groups),
         }
@@ -123,8 +152,8 @@ class WebAPIOverviewMixin:
                 {
                     "key": "no_groups",
                     "level": "info",
-                    "title": "没有用户分组",
-                    "detail": "关注账号和推送目标需要先在 AstrBot 设置页配置。",
+                    "title": "没有推送分组",
+                    "detail": "订阅源和推送目标需要先在 AstrBot 设置页或插件面板配置。",
                 }
             )
         elif int(counts.get("enabled_groups", 0)) <= 0:
@@ -132,7 +161,7 @@ class WebAPIOverviewMixin:
                 {
                     "key": "no_enabled_groups",
                     "level": "warning",
-                    "title": "没有启用的用户分组",
+                    "title": "没有启用的推送分组",
                     "detail": "后台检查不会处理已停用分组。",
                 }
             )
@@ -152,6 +181,24 @@ class WebAPIOverviewMixin:
                     "level": "warning",
                     "title": "存在无效关注账号",
                     "detail": f"{counts['invalid_watch_users']} 个关注账号格式无效。",
+                }
+            )
+        if int(counts.get("invalid_watch_queries", 0)) > 0:
+            items.append(
+                {
+                    "key": "invalid_watch_queries",
+                    "level": "warning",
+                    "title": "存在无效搜索订阅",
+                    "detail": f"{counts['invalid_watch_queries']} 个搜索订阅格式无效。",
+                }
+            )
+        if int(counts.get("invalid_watch_lists", 0)) > 0:
+            items.append(
+                {
+                    "key": "invalid_watch_lists",
+                    "level": "warning",
+                    "title": "存在无效 List ID",
+                    "detail": f"{counts['invalid_watch_lists']} 个 List ID 格式无效。",
                 }
             )
         if groups:
@@ -187,6 +234,11 @@ class WebAPIOverviewMixin:
             for group in enabled_groups
             if group.is_tag_group and not group.queries
         ]
+        no_watch_lists = [
+            group
+            for group in enabled_groups
+            if group.is_list_group and not group.list_ids
+        ]
         no_push_targets = [group for group in enabled_groups if not group.targets]
         no_check_triggers = [
             group
@@ -218,6 +270,48 @@ class WebAPIOverviewMixin:
                     ),
                 }
             )
+        if no_watch_lists:
+            items.append(
+                {
+                    "key": "groups_without_watch_lists",
+                    "level": "warning",
+                    "title": "启用 List 分组没有 List ID",
+                    "detail": (
+                        "这些分组不会检查任何 List："
+                        + WebAPIOverviewMixin._format_group_names(no_watch_lists)
+                    ),
+                }
+            )
+        invalid_queries = [
+            group
+            for group in enabled_groups
+            if group.is_tag_group and group.queries_info.invalid_entries
+        ]
+        invalid_lists = [
+            group
+            for group in enabled_groups
+            if group.is_list_group and group.lists_info.invalid_entries
+        ]
+        if invalid_queries:
+            items.append(
+                {
+                    "key": "groups_with_invalid_watch_queries",
+                    "level": "warning",
+                    "title": "启用搜索分组存在无效订阅",
+                    "detail": "这些分组包含无效搜索订阅："
+                    + WebAPIOverviewMixin._format_group_names(invalid_queries),
+                }
+            )
+        if invalid_lists:
+            items.append(
+                {
+                    "key": "groups_with_invalid_watch_lists",
+                    "level": "warning",
+                    "title": "启用 List 分组存在无效 ID",
+                    "detail": "这些分组包含无效 List ID："
+                    + WebAPIOverviewMixin._format_group_names(invalid_lists),
+                }
+            )
         if no_push_targets:
             items.append(
                 {
@@ -235,9 +329,10 @@ class WebAPIOverviewMixin:
                 {
                     "key": "groups_without_check_triggers",
                     "level": "warning",
-                    "title": "启用分组没有检查触发",
+                    "title": "启用分组没有周期检查",
                     "detail": (
-                        "这些分组既没有间隔检查也没有每日检查："
+                        "这些分组既没有间隔检查也没有每日检查；"
+                        "开启启动首检时只会在启动后检查一次："
                         + WebAPIOverviewMixin._format_group_names(no_check_triggers)
                     ),
                 }
@@ -255,6 +350,13 @@ class WebAPIOverviewMixin:
         self,
         group: ScheduleGroup,
     ) -> dict[str, Any]:
+        global_filter_reposts_enabled = parse_config_bool(
+            config_get(self.config, "filter_reposts_enabled", True),
+            True,
+        )
+        group_filter_reposts_enabled = bool(
+            getattr(group, "filter_reposts_enabled", True)
+        )
         return {
             "group_id": group.group_id,
             "name": group.name,
@@ -273,6 +375,12 @@ class WebAPIOverviewMixin:
             "raw_watch_query_count": group.queries_info.raw_count,
             "duplicate_watch_queries": list(group.queries_info.duplicates),
             "invalid_watch_queries": list(group.queries_info.invalid_entries),
+            "watch_lists": list(group.list_ids),
+            "watch_list_count": len(group.list_ids),
+            "raw_watch_list_count": group.lists_info.raw_count,
+            "duplicate_watch_lists": list(group.lists_info.duplicates),
+            "invalid_watch_lists": list(group.lists_info.invalid_entries),
+            "subscription_label": self._subscription_label(group),
             "push_targets": list(group.targets),
             "push_target_count": len(group.targets),
             "invalid_push_targets": list(group.invalid_targets),
@@ -281,6 +389,11 @@ class WebAPIOverviewMixin:
             "check_interval_minutes": group.check_interval_minutes,
             "daily_check_enabled": group.daily_check_enabled,
             "daily_check_times": self._format_times(group.daily_check_times),
+            "filter_reposts_enabled": group_filter_reposts_enabled,
+            "global_filter_reposts_enabled": global_filter_reposts_enabled,
+            "effective_filter_reposts_enabled": (
+                global_filter_reposts_enabled and group_filter_reposts_enabled
+            ),
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
             "media_only_enabled": group.media_only_enabled,
             "omit_status_url": bool(getattr(group, "omit_status_url", True)),
@@ -323,6 +436,16 @@ class WebAPIOverviewMixin:
                         "detail": "该标签分组没有可检查的搜索订阅。",
                     }
                 )
+        elif group.is_list_group:
+            if not group.list_ids:
+                items.append(
+                    {
+                        "key": "no_watch_lists",
+                        "level": "warning",
+                        "title": "无 List 订阅",
+                        "detail": "该 List 分组没有可检查的 List ID。",
+                    }
+                )
         elif not group.users:
             items.append(
                 {
@@ -341,7 +464,25 @@ class WebAPIOverviewMixin:
                     "detail": "新推文没有可发送的推送目标。",
                 }
             )
-        if group.users_info.invalid_entries:
+        if group.is_tag_group and group.queries_info.invalid_entries:
+            items.append(
+                {
+                    "key": "invalid_watch_queries",
+                    "level": "warning",
+                    "title": "搜索订阅无效",
+                    "detail": f"{len(group.queries_info.invalid_entries)} 个搜索订阅格式无效。",
+                }
+            )
+        elif group.is_list_group and group.lists_info.invalid_entries:
+            items.append(
+                {
+                    "key": "invalid_watch_lists",
+                    "level": "warning",
+                    "title": "List ID 无效",
+                    "detail": f"{len(group.lists_info.invalid_entries)} 个 List ID 格式无效。",
+                }
+            )
+        elif group.users_info.invalid_entries:
             items.append(
                 {
                     "key": "invalid_watch_users",
@@ -360,3 +501,7 @@ class WebAPIOverviewMixin:
                 }
             )
         return items
+
+    @staticmethod
+    def _subscription_label(group: ScheduleGroup) -> str:
+        return format_subscription_count(len(group.account_keys), group.group_type)

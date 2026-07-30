@@ -20,8 +20,8 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from .outcomes import MergedSendOutcome, SendAttempt
     from ..rendering import TweetBatch
+    from .outcomes import MergedSendOutcome, SendAttempt
 except ImportError:
     from delivery import MergedSendOutcome, SendAttempt
     from rendering import TweetBatch

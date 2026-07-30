@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Auth modes: plain / anubis / poast_sha1 / auto.
 
 Only the gate differs; page fetch + parse stay shared.
@@ -9,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 from .http_session import HTML_ACCEPT, HttpSession, RawResponse
@@ -59,7 +58,7 @@ def detect_gate(body: bytes) -> str:
         or b"cf-turnstile" in low
     ):
         return "cf"
-    title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.S)
+    title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.DOTALL)
     title = title_match.group(1) if title_match else b""
     error_markers = (
         b'class="error-panel',
@@ -103,7 +102,7 @@ def _json_id(html: str, element_id: str):
     m = re.search(
         rf'<script id="{re.escape(element_id)}" type="application/json">(.*?)</script>',
         html,
-        re.S,
+        re.DOTALL,
     )
     return json.loads(m.group(1)) if m else None
 

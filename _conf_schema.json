@@ -55,10 +55,16 @@
         "hint": "发送给 Nitter 实例的 User-Agent。"
       },
       "filter_reposts_enabled": {
-        "description": "过滤博主转发",
+        "description": "转发过滤总开关",
         "type": "bool",
         "default": true,
-        "hint": "仅影响博主后台检查：开启后过滤订阅账号转发他人的推文；博主自己发布的引用或评论推文仍会保留。手动 /推文、/镜像测试 不受影响。老配置缺少该项时按开启处理。"
+        "hint": "控制 Blogger、Tag、List 后台检查。关闭时所有分组都保留转发；开启后还需对应分组的“过滤转发”开关开启才会过滤。博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。老配置缺少该项时按开启处理。"
+      },
+      "auto_parse_tweet_links_enabled": {
+        "description": "自动解析聊天中的推文链接",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后无需命令：识别消息里的公开 X/Twitter 推文链接并发送正文与媒体。默认关闭。忽略 Bot 自己的消息。翻译与「有译文时显示原文」跟随全局 AI 翻译设置。不受订阅、冷却、seen 和全局图/视频开关限制；仍受大小、时长、超时等安全限制。勿与同类链接解析插件同时对同一会话开启以免重复回复。"
       },
       "user_html_fallback": {
         "description": "博主 RSS 失败时回退到 HTML",
@@ -70,17 +76,17 @@
         "description": "启用 HTML 搜索",
         "type": "bool",
         "default": true,
-        "hint": "关闭后 /推文搜索 与标签分组定时搜索均不可用。"
+        "hint": "关闭后 /推文搜索、Tag 分组和 List 分组的 HTML 抓取均不可用。"
       },
       "search_instances": {
-        "description": "搜索 HTML 实例列表（标签专用）",
+        "description": "搜索 HTML 实例列表（Tag/List）",
         "type": "list",
         "default": [
           "https://nitter.tiekoetter.com",
           "https://nitter.poast.org",
           "https://nitter.kareem.one"
         ],
-        "hint": "仅 /推文搜索 与标签定时。默认 nitter.tiekoetter.com（Anubis 搜索主源）。禁止默认使用 nitter.net（搜索空）。勿把现网不可用的公共站写进默认；自建 plain 可只填自建地址。"
+        "hint": "用于 /推文搜索、Tag 和 List 定时检查。默认 nitter.tiekoetter.com（Anubis 搜索主源）。禁止默认使用 nitter.net（搜索空）。勿把现网不可用的公共站写进默认；自建 plain 可只填自建地址。"
       },
       "search_cooldown_seconds": {
         "description": "搜索命令冷却秒数",
@@ -110,7 +116,7 @@
         "description": "HTML 最大翻页数",
         "type": "int",
         "default": 1,
-        "hint": "默认只取一页（约 20 条），再按 limit 截断。"
+        "hint": "手动搜索和 Tag 按请求上限截断；List 首轮最多取 20 条建立基线，已有水位后最多翻到该页数以寻找旧水位或游标末尾。达到上限仍未完整扫描时，本轮不推进 seen/水位；持久化水位始终最多保存 20 个 ID。"
       },
       "html_request_timeout": {
         "description": "HTML 请求超时秒",
@@ -244,13 +250,13 @@
         "description": "后台检查无新推文时发送检查结果提示",
         "type": "bool",
         "default": false,
-        "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向对应分组的推送目标发送检查摘要。"
+        "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次建立订阅源基线时也会向对应分组的推送目标发送检查摘要。"
       },
       "check_on_startup": {
         "description": "启动后立即检查",
         "type": "bool",
         "default": false,
-        "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；只有后台检查总开关开启时才会生效。"
+        "hint": "开启后，调度存储初始化完成即按分组顺序检查所有启用且同时配置了订阅源和有效推送目标的分组；包括仅每日定点检查或没有定时槽位的分组。首检完成后会锚定当前间隔和每日时间槽，避免同一轮重复触发。只有后台检查总开关开启时生效。"
       },
       "check_interval_minutes": {
         "description": "全局间隔检查分钟数",
@@ -261,27 +267,27 @@
     }
   },
   "push": {
-    "description": "推送目标与用户分组",
+    "description": "推送目标与订阅分组",
     "type": "object",
-    "hint": "配置 QQ 合并阈值、发送间隔和用户分组；关注账号和推送目标请在用户分组中填写。",
+    "hint": "配置 QQ 合并阈值、发送间隔和订阅分组；订阅源和推送目标请在分组中填写。",
     "items": {
       "merge_tweet_threshold": {
         "description": "QQ 合并推送触发条数",
         "type": "int",
         "default": 2,
-        "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。"
+        "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐订阅源发送。范围 0-20。"
       },
       "send_target_interval": {
         "description": "多目标发送间隔秒数",
         "type": "float",
         "default": 1.5,
-        "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+        "hint": "同一订阅源的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
       },
       "send_user_interval": {
-        "description": "多账号发送间隔秒数",
+        "description": "多订阅源发送间隔秒数",
         "type": "float",
         "default": 2.0,
-        "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。"
+        "hint": "多个订阅源都有新推文时，订阅源之间的等待时间，范围 0-60。"
       },
       "manual_send_interval": {
         "description": "手动命令逐条发送间隔秒数",
@@ -307,7 +313,7 @@
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时先选「博主分组」或「标签分组」。博主分组只配置关注账号；标签分组只配置搜索订阅。共用推送目标与检查/过滤；group_id 自动生成。旧版「用户分组」启动时迁移为博主分组。风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时功能。",
+        "hint": "添加时选择「博主分组」「标签分组」或「列表分组」。三类分组分别填写关注账号、搜索订阅或公开 List ID。共用推送目标与检查/过滤；group_id 自动生成。风险提示：Bot 若使用私人 QQ 号，不建议启用标签或列表分组定时功能。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -337,7 +343,7 @@
                 "type": "string",
                 "default": "blogger",
                 "invisible": true,
-                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_users": {
                 "description": "关注账号",
@@ -363,11 +369,17 @@
                 "default": [],
                 "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
               },
+              "filter_reposts_enabled": {
+                "description": "过滤转发",
+                "type": "bool",
+                "default": true,
+                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该博主转发他人的推文；博主自己发布的引用或评论推文仍会保留。旧分组缺少本项时按开启处理。"
+              },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；博主 RSS 与标签 HTML 搜索均按抓取解析结果判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的后台检查会跳过没有任何作者上传媒体附件（图片/视频/GIF）的推文；按当前订阅源的 RSS 或 HTML 解析结果判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动命令不受影响。"
               },
               "media_only_enabled": {
                 "description": "仅媒体",
@@ -426,7 +438,7 @@
                 "invisible": true
               },
               "send_user_interval": {
-                "description": "多账号发送间隔秒数",
+                "description": "多订阅源发送间隔秒数",
                 "type": "float",
                 "default": 2.0,
                 "invisible": true
@@ -435,7 +447,7 @@
                 "description": "单次检查最多推送推文数",
                 "type": "int",
                 "default": 0,
-                "hint": "单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
+                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
               }
             }
           },
@@ -468,13 +480,13 @@
                 "type": "string",
                 "default": "tag",
                 "invisible": true,
-                "hint": "由添加模板写入：blogger 或 tag。请勿手改。"
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_queries": {
                 "description": "搜索订阅",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个纯字符串：#标签 或短语。前导 # 为标签搜索，否则为短语（不会自动加 #）。不要填对象，否则 WebUI 会显示 [object Object]。也可用插件 Dashboard 管理。定时每查询约拉一页最多 20 条，过滤纯转推与已 seen 后发送全部新帖。"
+                "hint": "每行一个纯字符串：#标签 或短语。前导 # 为标签搜索，否则为短语（不会自动加 #）。不要填对象，否则 WebUI 会显示 [object Object]。也可用插件 Dashboard 管理。定时每查询约拉一页最多 20 条，按全局与分组双层开关过滤转发，再与已 seen 做差集。"
               },
               "push_targets": {
                 "description": "分组推送目标",
@@ -494,11 +506,17 @@
                 "default": [],
                 "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
               },
+              "filter_reposts_enabled": {
+                "description": "过滤转发",
+                "type": "bool",
+                "default": true,
+                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该搜索订阅中的纯转推。旧分组缺少本项时按开启处理。"
+              },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "开启后，该分组的定时推送会跳过没有任何作者上传媒体附件(图片/视频/GIF)的推文；只在 RSS 源头判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动 /推文、/镜像测试 命令不受影响，仍返回全部。"
+                "hint": "开启后，该分组的后台检查会跳过没有任何作者上传媒体附件（图片/视频/GIF）的推文；按 HTML 搜索解析结果判断，不依赖媒体下载，链接预览卡片图和 Twitter Article（长文）封面图不算作者上传媒体。手动命令不受影响。"
               },
               "media_only_enabled": {
                 "description": "仅媒体",
@@ -557,7 +575,7 @@
                 "invisible": true
               },
               "send_user_interval": {
-                "description": "多账号发送间隔秒数",
+                "description": "多订阅源发送间隔秒数",
                 "type": "float",
                 "default": 2.0,
                 "invisible": true
@@ -566,7 +584,142 @@
                 "description": "单次检查最多推送推文数",
                 "type": "int",
                 "default": 0,
-                "hint": "单个账号/查询单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
+                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息。"
+              }
+            }
+          },
+          "list": {
+            "name": "列表分组",
+            "display_item": "name",
+            "hide_hint_in_list": true,
+            "items": {
+              "name": {
+                "description": "分组名称",
+                "type": "string",
+                "default": "",
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 我关注的人、科技圈。"
+              },
+              "group_id": {
+                "description": "内部稳定分组 ID",
+                "type": "string",
+                "default": "",
+                "hint": "内部存储键，启动时自动补齐；已有值会保留。请不要手动修改，否则可能导致推送记录和历史记录断开。",
+                "invisible": true
+              },
+              "enabled": {
+                "description": "启用分组",
+                "type": "bool",
+                "default": true
+              },
+              "group_type": {
+                "description": "分组类型",
+                "type": "string",
+                "default": "list",
+                "invisible": true,
+                "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
+              },
+              "watch_lists": {
+                "description": "Twitter List 订阅",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个正 uint64 List ID（1 至 18446744073709551615，如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。刚创建不久的 List 往往要过一段时间才会被 Nitter 镜像收录/搜到，空结果时先等再查，不必立刻当配置错误。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
+              },
+              "push_targets": {
+                "description": "分组推送目标",
+                "type": "list",
+                "default": [],
+                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+              },
+              "interval_check_enabled": {
+                "description": "启用间隔检查",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+              },
+              "daily_check_times": {
+                "description": "每日检查时间列表",
+                "type": "list",
+                "default": [],
+                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+              },
+              "filter_reposts_enabled": {
+                "description": "过滤转发",
+                "type": "bool",
+                "default": true,
+                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该 List 时间线中的转发。旧分组缺少本项时按开启处理。"
+              },
+              "filter_plain_text_enabled": {
+                "description": "过滤纯文本推文",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的后台检查会跳过没有任何作者上传媒体附件（图片/视频/GIF）的推文；按 List HTML 时间线解析结果判断，不依赖媒体下载。手动命令不受影响。"
+              },
+              "media_only_enabled": {
+                "description": "仅媒体",
+                "type": "bool",
+                "default": false,
+                "hint": "开启后，该分组的后台推送只发送作者和成功准备的图片、视频或 GIF，不发送正文、翻译或链接。受全局媒体开关和单条媒体数量上限控制；全局媒体不可用时自动回退完整内容。手动命令和历史重推不受影响。"
+              },
+              "omit_status_url": {
+                "description": "发送时去除推文链接",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文和译文中的链接会保留。默认开启。"
+              },
+              "hide_original_when_translated": {
+                "description": "有翻译时只发译文（隐藏原文）",
+                "type": "bool",
+                "default": false,
+                "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）；开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
+              },
+              "aliases": {
+                "description": "分组别名",
+                "type": "list",
+                "default": [],
+                "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
+                "invisible": true
+              },
+              "check_on_startup": {
+                "description": "启动后立即检查",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "notify_no_updates": {
+                "description": "无新推文时发送检查结果提示",
+                "type": "bool",
+                "default": false,
+                "invisible": true
+              },
+              "check_interval_minutes": {
+                "description": "间隔检查分钟数",
+                "type": "int",
+                "default": 30,
+                "invisible": true
+              },
+              "daily_check_enabled": {
+                "description": "启用每日定点检查",
+                "type": "bool",
+                "default": true,
+                "invisible": true
+              },
+              "send_target_interval": {
+                "description": "多目标发送间隔秒数",
+                "type": "float",
+                "default": 1.5,
+                "invisible": true
+              },
+              "send_user_interval": {
+                "description": "多订阅源发送间隔秒数",
+                "type": "float",
+                "default": 2.0,
+                "invisible": true
+              },
+              "max_tweets_per_check": {
+                "description": "单次检查最多推送推文数",
+                "type": "int",
+                "default": 0,
+                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。List 聚合多人推文，强烈建议设置（如 10），避免一次推送过多消息刷屏。"
               }
             }
           }
@@ -824,21 +977,21 @@
     "description": "启用定时检查",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按用户分组配置定时检查关注账号，并推送到对应分组的推送目标。",
+    "hint": "开启后会按订阅分组配置检查博主、搜索订阅或 List，并推送到对应分组的推送目标。",
     "invisible": true
   },
   "notify_no_updates": {
     "description": "定时检查无新推文时发送检查结果提示",
     "type": "bool",
     "default": false,
-    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次记录账号时也会向对应分组的推送目标发送检查摘要。",
+    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次建立订阅源基线时也会向对应分组的推送目标发送检查摘要。",
     "invisible": true
   },
   "check_on_startup": {
     "description": "启动后立即检查",
     "type": "bool",
     "default": false,
-    "hint": "关闭时插件重启后不会立刻检查新推文，而是等到下一个间隔或每日定点；开启后恢复旧行为。",
+    "hint": "开启后，调度存储初始化完成即按分组顺序检查所有启用且同时配置订阅源和有效推送目标的分组，并在首检后锚定当前调度槽位，避免同一轮重复触发。",
     "invisible": true
   },
   "interval_check_enabled": {
@@ -910,21 +1063,21 @@
     "description": "QQ 合并推送触发条数",
     "type": "int",
     "default": 2,
-    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐账号发送。范围 0-20。",
+    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐订阅源发送。范围 0-20。",
     "invisible": true
   },
   "send_target_interval": {
     "description": "多目标发送间隔秒数",
     "type": "float",
     "default": 1.5,
-    "hint": "同一账号的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。",
+    "hint": "同一订阅源的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。",
     "invisible": true
   },
   "send_user_interval": {
-    "description": "多账号发送间隔秒数",
+    "description": "多订阅源发送间隔秒数",
     "type": "float",
     "default": 2.0,
-    "hint": "多个关注账号都有新推文时，账号之间的等待时间，范围 0-60。",
+    "hint": "多个订阅源都有新推文时，订阅源之间的等待时间，范围 0-60。",
     "invisible": true
   },
   "manual_send_interval": {

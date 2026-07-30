@@ -3,19 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 try:
+    from ..shared import normalize_seen_account_key
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         GLOBAL_GROUP_ID,
         normalize_stable_group_id,
     )
-    from ..shared import normalize_seen_account_key
 except ImportError:
+    from shared import normalize_seen_account_key
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         GLOBAL_GROUP_ID,
         normalize_stable_group_id,
     )
-    from shared import normalize_seen_account_key
 
 
 KV_KEY_SEEN = "nitter_seen_status_ids"

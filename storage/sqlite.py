@@ -15,6 +15,7 @@ from typing import Any
 from astrbot.api import logger
 
 try:
+    from ..shared import TweetItem, normalize_seen_account_key
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -22,7 +23,7 @@ try:
     )
     from .records import PushHistoryGroupSummary, PushHistoryRecord
     from .seen import SEEN_LIMIT_PER_USER
-    from .sqlite_schema import (  # noqa: F401  拆分前定义于此，保留再导出
+    from .sqlite_schema import (
         PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS,
         SCAN_ANCHOR_LIMIT,
         SCHEMA_VERSION,
@@ -30,8 +31,8 @@ try:
         SQLiteSchemaMixin,
     )
     from .sqlite_serde import SQLiteSerdeMixin
-    from ..shared import TweetItem, normalize_seen_account_key
 except ImportError:
+    from shared import TweetItem, normalize_seen_account_key
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -47,7 +48,6 @@ except ImportError:
         SQLiteSchemaMixin,
     )
     from storage.sqlite_serde import SQLiteSerdeMixin
-    from shared import TweetItem, normalize_seen_account_key
 
 ORPHAN_SEEN_RETENTION_DAYS = 30
 

@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """Per-run RSS host skip (S2=A): only within one check/command, no disk."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 from urllib.parse import urlparse
 
 

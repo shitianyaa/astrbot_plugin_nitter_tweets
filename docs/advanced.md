@@ -1,16 +1,19 @@
 # Nitter 推文记录进阶说明
 
-本文承接 README 中不适合放在首页的细节：平台差异、工作流程、完整配置参考、缓存、推送记录和本地诊断。
+本文承接 README **不适合放在首页**的细节：平台差异、工作流程、完整配置、行为边界、缓存、推送记录和本地诊断。
+README 只保留上手与定位；边界以本文与 `_conf_schema.json` 为准。
 
 - 返回 [README](../README.md)
 - 查看完整默认值：[_conf_schema.json](../_conf_schema.json)
+- List 专题：[twitter-lists.md](./twitter-lists.md)
+- 实例专题：[instances-guide.md](./instances-guide.md)
 
 ## 平台支持
 
 | 平台 | 适配器类型 | 特殊要求/说明 |
 | --- | --- | --- |
 | QQ | `aiocqhttp` / OneBot-like | 支持文本、图片、视频拆分和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会按规则降级重试。 |
-| Feishu / Lark | `lark` | 普通逐账号发送；优先使用飞书原生 `post` 将正文和本地图片放在同一条消息中，失败时降级为 `text` 正文加普通媒体附件。 |
+| Feishu / Lark | `lark` | 普通逐订阅源发送；优先使用飞书原生 `post` 将正文和本地图片放在同一条消息中，失败时降级为 `text` 正文加普通媒体附件。 |
 | Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
 | 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 | 其他平台 | default | 走 AstrBot 通用消息链发送；不使用 QQ 式合并转发。 |
@@ -29,17 +32,17 @@ flowchart TD
     A["调度器每 30 秒检查一次"] --> B["读取推送分组 tweet_groups"]
     B --> C{"分组已启用并到达检查时间？"}
     C -->|否| B
-    C -->|是| D["读取该分组 watch_users 和 push_targets"]
-    D --> E{"账号或目标为空？"}
+    C -->|是| D["读取该分组订阅源和 push_targets"]
+    D --> E{"订阅源或目标为空？"}
     E -->|是| F["跳过并记录状态"]
-    E -->|否| G["按配置串行或并发拉取 Nitter RSS"]
-    G --> H{"首次记录账号？"}
+    E -->|否| G["按类型串行或并发拉取 RSS / HTML"]
+    G --> H{"首次记录订阅源？"}
     H -->|是| I["初始化 seen 和扫描基准组，不推送历史推文"]
     H -->|否| J["翻页到扫描基准，用 seen 筛出全部新推文"]
     J --> K{"发现新推文？"}
     K -->|否| L["更新推送记录，记录无更新"]
     K -->|是| M["按配置串行或并发准备翻译和媒体"]
-    M --> O["按账号顺序发送到 push_targets"]
+    M --> O["按订阅源顺序发送到 push_targets"]
 ```
 
 ### 多目标发送
@@ -84,10 +87,10 @@ flowchart TD
 
 | 页面 | 作用 |
 | --- | --- |
-| `概览` | 查看调度器运行状态、后台检查总开关、用户分组、关注账号、推送目标、无效推送目标、功能开关、关键配置摘要和常见配置诊断。 |
-| `分组订阅` | 左侧推送分组列表 + 右侧详情编辑；支持创建安全默认的新分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_plain_text_enabled`、`push_targets`，并继续支持导入和删除关注账号。 |
-| `最近推送` | 查看成功或部分送达历史；默认每页 10 条，最多 50 条；支持按分组、账号/查询和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
-| `镜像测试` | 管理员使用临时 Nitter 镜像 URL 测试指定账号 RSS 抓取；要求公开可访问的完整 `http://` 或 `https://` 地址，拒绝回环、私网、userinfo 和不安全重定向；不写入 `instances` 或推送记录。 |
+| `概览` | 分别查看博主订阅、搜索订阅和 List 数量，以及重复/无效订阅、无效推送目标和全局配置诊断。 |
+| `分组订阅` | 左侧推送分组列表 + 右侧详情编辑；支持创建博主、标签或列表分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_reposts_enabled`、`filter_plain_text_enabled`、`push_targets` 和对应的 `watch_users`、`watch_queries`、`watch_lists`。类型创建后不可修改。 |
+| `最近推送` | 查看成功或部分送达历史；默认每页 10 条，最多 50 条；支持按分组、订阅源和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
+| `镜像测试` | 管理员按当前模式测试 Nitter：Blogger RSS 使用 `instances`，搜索和 List 使用 `search_instances`。URL 留空会按配置顺序串行测试全部实例并返回逐站成功/失败、推文数和耗时；填写 URL 时只测试该站。不写入实例配置或推送记录。 |
 | `缓存清理` | 清理普通媒体缓存或推送记录；推送记录清理不会删除关注账号、推送目标或媒体文件。 |
 
 ### WebUI 分组管理 v2
@@ -97,19 +100,21 @@ flowchart TD
 - `最近推送` 中的失效分组检测只列出存在于推送历史、但当前 `tweet_groups` 不存在的 `group_id`；删除前需要确认，删除范围包括该 `group_id` 的推送历史和防重复推送记录。
 - `check_interval_minutes` 仍是全局配置，分组编辑页只展示“继承全局”的有效值。
 - `push_targets` 支持在分组详情里新增或删除；点击保存后写回当前分组配置。删除推送目标不会删除关注账号、媒体、推送记录或发送历史。“检测目标”只校验 UMO 格式、平台实例是否存在和是否支持合并转发，不会向目标发送消息。
+- 列表分组只接受正 `uint64` List ID。前端会检查 1-20 位纯数字及当前草稿/已有配置中的重复值；后端还会拒绝 `0` 和超过 `18446744073709551615` 的值。
+- `check_on_startup=true` 时，调度存储初始化完成后按分组顺序首检所有启用且同时配置订阅源和有效推送目标的分组；仅每日检查、仅间隔检查和没有定时槽位的分组都包含在首检范围内。缺少订阅源或目标的分组只记录跳过日志。
 
 WebUI 不编辑完整 `tweet_groups`，也不编辑 AI、媒体下载、Nitter 实例、并发与限流等配置。这些配置仍以 `_conf_schema.json` 对应的 AstrBot 设置页为准。
 
 ## 配置参考
 
-AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送目标与用户分组、并发与限流、日志设置”分组展示。旧版本扁平配置仍会兼容读取，并自动迁移到默认分组。
+AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送目标与订阅分组、并发与限流、日志设置”分组展示。旧版本扁平配置仍会兼容读取，并自动迁移到默认分组。
 
 ### 基础
 
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | 博主 RSS 实例列表；默认 `https://nitter.net`，可配多个。建议自建。 |
-| `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
+| `search_instances` | 搜索/List HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
 | `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后 RSS 全部失败时会尝试使用 `search_instances` 的 HTML 用户页获取博主推文。⚠️ 会占用搜索资源，增加 429 风险，降低搜索成功率。推荐方案：在 `instances` 中配置多个 RSS 镜像。详见 [实例配置指南](./instances-guide.md)。 |
 | `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试（5s → 10s → 15s 渐进式），提升容错能力。 |
 | `retry_delay_base` | 全局重试基础延迟秒数（默认 `5.0`）。第 N 轮延迟 = N × retry_delay_base。 |
@@ -119,7 +124,8 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 | `user_agent` | 请求 Nitter RSS 时使用的 User-Agent。 |
-| `filter_reposts_enabled` | 是否在博主后台检查中过滤转发；默认开启。插件会比较 RSS item 主链接作者和订阅账号，博主自己发布的引用或评论推文仍会保留。手动 `/推文`、`/镜像测试` 不受影响；搜索和标签分组固定过滤纯转推。 |
+| `filter_reposts_enabled` | Blogger、Tag、List 后台转发过滤总开关，默认开启。只有总开关与分组同名子开关都开启时才过滤；全局关闭时所有分组保留转发。Blogger 会比较 RSS item 主链接作者和订阅源，博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。 |
+| `auto_parse_tweet_links_enabled` | 是否被动解析聊天中的公开 X/Twitter status 链接，默认关闭。开启后无需命令；忽略 Bot 自身消息；翻译与「有译文时显示原文」跟随全局；不写 seen/push history；不受订阅、冷却和全局图/视频开关限制。同会话同帖约 60 秒防抖，单条消息最多 3 个不同链接。勿与同类链接解析插件同时开启以免重复回复。 |
 
 ### 后台检查与推送
 
@@ -129,18 +135,18 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `tweet_groups` | 推送分组列表；新建默认分组使用 `default`，旧配置中已有的显式 `group_id`（包括 `global`）会保留；`global` / `全局` 仍可作为默认分组别名用于命令查找。 |
 | `check_interval_minutes` | 全局间隔检查分钟数；启用后台检查总开关后，启用间隔检查的分组都会按这个间隔运行。 |
 | `scheduled_fetch_limit` | 旧版兼容字段；后台扫描首屏固定按 20 条处理，默认值为 `20`，该字段不会改变运行时首屏数量。 |
-| `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
-| `check_on_startup` | 插件启动后是否立即检查一次。 |
+| `notify_no_updates` | 无新推文或首次建立订阅源基线时是否发送检查摘要。 |
+| `check_on_startup` | 存储初始化完成后，是否按分组顺序首检所有启用且同时配置订阅源和有效推送目标的分组；包括仅每日定点、仅间隔和无定时槽位分组。首检完成后会锚定当前间隔和每日时间槽，避免同一轮重复触发。 |
 
-### 推送目标与用户分组
+### 推送目标与订阅分组
 
 | 配置 | 说明 |
 | --- | --- |
 | `merge_tweet_threshold` | QQ/OneBot 新推文总数达到多少条时启用合并转发；`0` 关闭，默认 `2`。 |
-| `send_target_interval` | 多个目标之间的发送间隔。 |
-| `send_user_interval` | 多个账号之间的发送间隔。 |
+| `send_target_interval` | 同一订阅源发送到多个目标之间的发送间隔。 |
+| `send_user_interval` | 多个订阅源之间的发送间隔；Tag/List 查询抓取也按该间隔串行等待。 |
 | `manual_send_interval` | 手动 `/推文`、`/推文搜索`、`/镜像测试` 非合并转发时，逐条消息间隔（秒），默认 `0`；在平台适配前 sleep，多平台生效。 |
-| `tweet_groups` | 推送分组列表；新配置请在这里填写关注账号和推送目标。 |
+| `tweet_groups` | 推送分组列表；新配置请在这里填写博主、搜索订阅或 List 以及推送目标。 |
 | `watch_users` | 旧版兼容字段；启动后会迁移到默认分组，配置界面隐藏。 |
 | `push_targets` | 旧版兼容字段；启动后会迁移到默认分组，配置界面隐藏。 |
 
@@ -151,13 +157,17 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `name` | 分组显示名称，也可用于 `/推文检查 分组名`。 |
 | `group_id` | 分组存储 ID；新建默认分组使用 `default`，已有值会保留。旧配置缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。 |
 | `enabled` | 是否启用该分组。 |
-| `watch_users` | 该分组关注账号列表。 |
+| `group_type` | `blogger`、`tag` 或 `list`；类型创建后不可修改。分别使用 `watch_users`、`watch_queries`、`watch_lists`。 |
+| `watch_users` | Blogger 分组的博主订阅源列表。 |
+| `watch_queries` | Tag 分组的搜索订阅列表；前导 `#` 为标签，否则为短语。 |
+| `watch_lists` | List 分组的纯数字 List ID 列表。**刚创建不久的 List 往往要过一段时间才会被 Nitter 收录/搜到**，空结果时先等待再排查。详见 [twitter-lists.md](./twitter-lists.md)。 |
 | `push_targets` | 该分组推送目标列表。 |
 | `interval_check_enabled` | 是否让该分组参与全局间隔检查；只有 `schedule_enabled` 开启后才会触发。 |
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
 | `send_target_interval` | 该分组多个目标之间的发送间隔（秒）；不设置则使用全局 `send_target_interval` 值。 |
-| `send_user_interval` | 该分组多个账号之间的发送间隔（秒）；不设置则使用全局 `send_user_interval` 值。标签分组的查询之间抓取时也按该间隔等待。 |
-| `max_tweets_per_check` | 单个账号/查询单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的推文不写 seen，下轮继续推送。 |
+| `send_user_interval` | 该分组多个订阅源之间的发送间隔（秒）；不设置则使用全局 `send_user_interval` 值。Tag/List 查询抓取之间也按该间隔等待。 |
+| `max_tweets_per_check` | 单个订阅源单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的较旧推文会标记 seen，不会在下轮重新推送。 |
+| `filter_reposts_enabled` | 分组级转发过滤子开关，默认开启；仅在全局同名总开关开启时生效。旧分组缺少该字段时按开启处理。 |
 | `filter_plain_text_enabled` | 是否过滤没有当前作者上传图片、视频或 GIF 的纯文本推文；只影响该分组的后台检查，手动 `/推文`、`/镜像测试` 不受影响。 |
 | `media_only_enabled` | 是否只发送作者和成功准备的图片/视频/GIF；受全局媒体类型开关和 `max_media_per_tweet` 控制。全局媒体不可用时只在 WebUI 和日志提示，并自动回退完整内容。仅媒体有效时：`policy_skipped` 允许扫描基准推进，`transient_failure` / `no_candidate` 下轮重试且不写 seen；手动命令和历史重推不受影响。 |
 
@@ -224,13 +234,26 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
 ## 详细行为
 
-- 首次启用某个博主账号时，会初始化当前 RSS 扫描到的 seen ID 和独立扫描基准组，不推送历史内容；标签组首轮边界见“标签分组与 HTML 搜索”。
+### 推文链接自动解析
+
+- 配置 `auto_parse_tweet_links_enabled=true` 后，消息中的 `x.com` / `twitter.com` status 链接会被被动解析。
+- 忽略 Bot 自己发送的消息；开关关闭或未识别到合法链接时不 `stop_event`。
+- 解析顺序：FxTwitter → VxTwitter → Syndication；媒体直链优先，缺失时 xdown 兜底。
+- 强制准备图片/视频（无视全局图视频开关与 `max_media_per_tweet`），仍受大小、时长、超时限制。
+- 翻译走现有 `TweetTranslator`；原文显隐仅看全局 `show_original_when_translated`（与手动一致，无分组覆盖）。
+- 发送版式复用现有 Sender；正文布局 R1（译文为主文，原文 `>` 引用；无「翻译/原文」小标题）；默认 `omit_status_url=true`。
+- 展示时间统一为 **Asia/Shanghai（UTC+8）** `YYYY-MM-DD HH:MM:SS`（RSS、链接解析、HTML 搜索/List、渲染兜底）。
+- 同会话同 status 约 60 秒防抖（成功发送后记录）；单条消息最多 3 个不同链接。
+
+- 首次启用某个订阅源时，会初始化当前扫描到的 seen ID 和独立扫描基准组，不推送历史内容；Tag/List 首轮边界见“Tag/List 分组与 HTML 搜索”。
+- `check_on_startup=true` 时，存储迁移完成后会先按分组串行执行一次首检，再进入间隔/每日槽位轮询；首检日志始终包含分组、类型、订阅源数、目标数、触发原因、结果统计和耗时。缺少订阅源或目标的启用分组只记录明确跳过原因。
 - 后台检查保存上一轮首屏最多 20 个精确基准 ID，并用最近 300 条 seen ID 做逐条去重。当前首屏未命中基准组中的任意 ID 时才按 `Min-Id` 继续翻页；命中基准前所有未 seen 推文都在本轮发送，命中位置及其后的旧内容不参与比较。发送失败、分页未完成或直到安全上限仍未命中任何基准 ID 时不会推进基准组。
 - 旧版顶层 `watch_users`、`push_targets` 和分组相关定时配置会自动迁移到 `default` 默认分组；`tweet_groups` 中的各推送分组会独立运行，并拥有独立的推送记录。
-- `filter_reposts_enabled` 只控制博主后台检查；手动 `/推文`、`/镜像测试` 始终保留转发，便于完整查看镜像返回内容。
+- Blogger、Tag、List 后台检查统一使用双层转发过滤：`实际过滤 = 全局 filter_reposts_enabled && 分组 filter_reposts_enabled`。全局和分组默认均开启，旧分组缺少子开关时按开启处理。
+- 手动 `/推文`、`/镜像测试` 始终保留转发，便于完整查看镜像返回内容；`/推文搜索` 保持过滤纯转推，不读取分组开关。
 - 转发过滤无法解析作者时会保留，避免误删；博主自己发布的引用或评论推文会保留。
 - 被过滤的转发不会推送；完整扫描仍会把其 ID 纳入扫描边界，避免下轮重复处理。如果某一页全是转发且存在下一页游标，插件会继续翻页查找更旧原创。
-- 后台检查推送的新推文会在本轮每个目标的第一条普通消息或合并转发头部显示批次概览：博主数、推文数和来源分组；概括只出现一次，不显示账号进度或推文序号。
+- 后台检查推送的新推文会在本轮每个目标的第一条普通消息或合并转发头部显示批次概览：按类型显示“n 位博主”“n 个搜索订阅”或“n 个 List”、推文数和来源分组；概括只出现一次，不显示订阅源进度或推文序号。
 - 同一个目标群同时属于多个分组时，消息按各分组自己的检查/发布流程发出，并通过“分组”行区分来源。
 - 没有新推文时默认只写日志，不往目标会话发送消息。
 - 普通 RSS 抓取会按 `instances` 配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
@@ -278,15 +301,16 @@ python scripts\probe_nitter_fetch.py nasa 5 --include-reposts
 python scripts\test_video_download.py https://x.com/user/status/123 --resolution highest --max-duration-minutes 8
 ```
 
-## 标签分组与 HTML 搜索（feat/tag-query-search）
+## Tag/List 分组与 HTML 搜索
 
 ### 分组类型
 
 - `group_type: blogger`：只使用 `watch_users`，**仅 RSS**（`instances`，可多站）。不设博主 HTML 回退池，避免与搜索抢公共 HTML。
-- `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 账号键为 `q:<casefold query>`。
-- **风险提示：Bot 若使用私人 QQ 号，不建议启用标签分组定时搜索/推送**（查询与推送更频繁，有封号风险）。
-- 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 users 与 queries。
-- 标签首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
+- `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 订阅源键为 `q:<casefold query>`。
+- `group_type: list`：只使用 `watch_lists`，通过 HTML `search_instances` 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
+- **风险提示：Bot 若使用私人 QQ 号，不建议启用 Tag/List 分组定时搜索/推送**（HTML 查询与推送更频繁，有封号风险）。
+- 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
+- Tag/List 首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
 - 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。
 
 ### 查询规则（配置怎么写）
@@ -298,37 +322,39 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - 运行时：tag 可回退 `/hashtag/`，phrase 仅 `/search`。
 - 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。手动搜索为凑满条数最多翻约 3 页；**定时标签组默认只取约 1 页**。
 
-### 标签分组定时：获取与发送数量
+### Tag/List 分组定时：获取与发送数量
 
 ```text
-每个 watch_query / 每轮检查
-  → HTML 搜索（组内串行，查询间按 send_user_interval 等待；默认 html_max_pages=1）
-  → 上限固定 fetch_limit=20（scheduled_fetch_limit 不生效）
-  → 固定丢掉纯转推
+每个 watch_query 或 watch_list / 每轮检查
+  → HTML 搜索（组内串行，订阅源间按 send_user_interval 等待；默认 html_max_pages=1）
+  → Tag：最多取 fetch_limit=20；List 首轮最多取 20 条建立基线
+  → 已初始化 List：本轮扫描可超过 20 条，继续翻页到命中旧水位或游标结束
+  → List 达到 html_max_pages 仍有后续游标：本轮按扫描未完成跳过，不写 seen/水位
+  → 按全局与分组双层开关过滤转发
   → 可选：纯文本过滤 / 仅媒体
-  → 与 seen（q:...）差集 → 只要新推文
+  → 与 seen（q:... 或 list:...）差集 → 只要新推文
   → 首次有可用结果仅初始化 seen，不推历史；首轮全被过滤则记录空扫描水位
   → 应用 max_tweets_per_check 限制（0 表示不限制）；超出上限的较旧推文标记 seen，避免下轮重复
   → 发送成功后才写 seen
 ```
 
-因此「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。`max_tweets_per_check` 可避免爆发式更新时一次推送过多消息；被截断的推文已标记 seen，不会下轮重新推送。
+因此 Tag「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已初始化 List 在一轮内可能扫描并发现超过 20 条新推文，但首次基线和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量，被截断的较旧推文会标记 seen，不会在下轮重新推送。
 HTTP 层可能有 Anubis 门禁与限流。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
-**空结果与全量过滤：** 搜索走 `search_instances`（默认单站 tiekoetter）；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。
+**空结果与全量过滤：** Tag/List 都走 `search_instances`；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。
 
 ### 实例列表
 
 | 列表 | 用途 |
 |------|------|
 | `instances` | 博主 RSS（默认 `nitter.net`，可多站） |
-| `search_instances` | 标签/搜索 HTML（默认仅 `nitter.tiekoetter.com`；禁止默认 net） |
+| `search_instances` | Tag/List/搜索 HTML（默认 `tiekoetter.com`、`poast.org`、`kareem.one`；禁止默认使用 nitter.net） |
 
-**公共默认策略：** 博主只用 RSS（`instances` 可多站）；标签搜索默认 **仅 tiekoetter（Anubis）**。不设 `blogger_html_instances`，避免博主 HTML 与搜索抢同一公共站。自建 plain 时：RSS 与搜索都可只填自建地址。
+**公共默认策略：** Blogger 只用 RSS（`instances` 可多站）；Tag/List 使用三站搜索池。不设 `blogger_html_instances`，避免博主 HTML 与搜索抢同一公共站。自建 plain 时：RSS 与搜索都可只填自建地址。
 
-HTML 全局串行节流；429 冷却约 30s 起、封顶 5 分钟。Cookie 落在插件数据目录 `html_sessions/`。
+HTML 全局串行节流；Tag/List 查询在组内也会按 `send_user_interval` 串行等待。429 冷却约 30s 起、封顶 5 分钟。Cookie 落在插件数据目录 `html_sessions/`。
 
-搜索列表有多站时失败会轮换（冷却殿后）。**可用性优先：** 进程内按请求成功率记分，ready 高分优先。默认单站时即直接打该站。
+搜索/List 实例池有多站时失败会轮换（冷却殿后）。**可用性优先：** 进程内按请求成功率记分，ready 高分优先。
 
 记分规则（内存，重启清零；RSS 与搜索 HTML 分账）：
 
@@ -351,7 +377,7 @@ HTML 全局串行节流；429 冷却约 30s 起、封顶 5 分钟。Cookie 落�
 
 ### 消息布局
 
-- Telegram：首行为 `[@作者](链接)`，正文/翻译在后续块中，避免与原文重复。
+- Telegram：首行为 `@作者 · [🔗 查看推文](链接) · 时间`，正文/翻译在后续块中；发送时关闭该链接的网页预览，避免视频推文卡片重复显示作者和 HLS 播放文案。
 - 正文与译文中的 http(s) 会剥离；关闭「去除推文链接」时，非 TG 平台在底部保留「原文链接」行。
-- 空正文显示「（无正文）」。有译文时「翻译」块在「原文」之前。
-- 转推：`/推文` 与 `/镜像测试` 不过滤转发；`/推文搜索` 与标签分组定时固定去掉纯转推（无开关）；博主分组仍由 `filter_reposts_enabled` 控制。
+- 空正文不显示占位文案，只保留作者/时间和媒体摘要。有译文时「翻译」块在「原文」之前。
+- 转推：`/推文` 与 `/镜像测试` 不过滤转发；`/推文搜索` 固定去掉纯转推。Blogger、Tag、List 分组定时检查仅在全局与分组的 `filter_reposts_enabled` 都开启时过滤。

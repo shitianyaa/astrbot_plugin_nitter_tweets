@@ -77,7 +77,7 @@ class RotationFirstRetryTest(unittest.TestCase):
 
         client._fetch_from_instance = mock_fetch
 
-        instance, tweets, _ = asyncio.run(
+        instance, _tweets, _ = asyncio.run(
             client._fetch_tweets_with_stats_from_instances(
                 "test_user",
                 10,
@@ -102,7 +102,7 @@ class RotationFirstRetryTest(unittest.TestCase):
 
         def mock_fetch_scheduler(*args, **kwargs):
             instance = args[0]
-            attempts.append(instance)
+            attempts.append((instance, args[-1]))
             raise RuntimeError(f"{instance} failed")
 
         client._fetch_for_scheduler_from_instance = mock_fetch_scheduler
@@ -114,14 +114,15 @@ class RotationFirstRetryTest(unittest.TestCase):
                     None,
                     client.instances,
                     retry_attempts=2,
+                    filter_reposts=False,
                 )
             )
 
         expected = [
-            "https://a.example",
-            "https://b.example",
-            "https://a.example",
-            "https://b.example",
+            ("https://a.example", False),
+            ("https://b.example", False),
+            ("https://a.example", False),
+            ("https://b.example", False),
         ]
         self.assertEqual(attempts, expected)
 

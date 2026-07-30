@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """HostScoreBook: success boost, failure penalty, stable order."""
 
 from __future__ import annotations
@@ -6,10 +5,10 @@ from __future__ import annotations
 from media_support.host_score import (
     DEFAULT_SCORE,
     FAILURE_FACTOR,
-    HostScoreBook,
     MAX_SCORE,
     MIN_SCORE,
     SUCCESS_DELTA,
+    HostScoreBook,
 )
 
 
@@ -57,8 +56,8 @@ def test_soft_success_smaller_than_full():
 def test_pool_orders_ready_by_score(monkeypatch=None):
     from unittest.mock import MagicMock
 
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.host_score import HostScoreBook
+    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 
     book = HostScoreBook()
     book.record_success("https://b.example")
@@ -83,8 +82,8 @@ def test_pool_orders_ready_by_score(monkeypatch=None):
 def test_pool_cooling_hosts_last():
     from unittest.mock import MagicMock
 
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.host_score import HostScoreBook
+    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 
     book = HostScoreBook()
     book.record_success("https://cool.example")  # high score but cooling
@@ -124,8 +123,8 @@ def test_rss_instances_for_run_orders_by_score():
 def test_get_html_transport_error_records_failure():
     from unittest.mock import MagicMock
 
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.host_score import DEFAULT_SCORE, FAILURE_FACTOR, HostScoreBook
+    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 
     pool = HtmlNitterPool.__new__(HtmlNitterPool)
     pool.config = PoolConfig(instances=["https://down.example"])
@@ -150,8 +149,8 @@ def test_get_html_transport_error_records_failure():
 def test_get_html_explicit_failure_not_double_scored():
     from unittest.mock import MagicMock
 
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.host_score import DEFAULT_SCORE, FAILURE_FACTOR, HostScoreBook
+    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 
     pool = HtmlNitterPool.__new__(HtmlNitterPool)
     pool.config = PoolConfig(instances=["https://x.example"])
@@ -180,13 +179,13 @@ def test_get_html_explicit_failure_not_double_scored():
 def test_search_empty_soft_success_and_nonempty_full():
     from unittest.mock import MagicMock
 
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from media_support.host_score import (
         DEFAULT_SCORE,
         SOFT_SUCCESS_DELTA,
         SUCCESS_DELTA,
         HostScoreBook,
     )
+    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
     from shared.utils import TweetItem
 
     pool = HtmlNitterPool.__new__(HtmlNitterPool)

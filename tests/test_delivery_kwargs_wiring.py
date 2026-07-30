@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Delivery-layer contracts for omit / hide / link_style wiring."""
 
 from __future__ import annotations

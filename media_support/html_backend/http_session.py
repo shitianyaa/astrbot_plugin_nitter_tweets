@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared cookie HTTP session (one opener style for all modes)."""
 
 from __future__ import annotations
@@ -11,9 +10,9 @@ import re
 import ssl
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import (
@@ -186,7 +185,7 @@ class HttpSession:
     ) -> RawResponse:
         try:
             validate_http_url(url, resolve_dns=not bool(self.proxy))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return RawResponse(-1, url, b"", 0.0, f"{type(exc).__name__}: {exc}")
         headers = {
             "User-Agent": self.user_agent,
@@ -230,7 +229,7 @@ class HttpSession:
                         time.time() - t0,
                         f"HTTPError {exc.code}",
                     )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return RawResponse(
                 -1, url, b"", time.time() - t0, f"{type(exc).__name__}: {exc}"
             )

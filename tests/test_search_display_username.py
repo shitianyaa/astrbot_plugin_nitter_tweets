@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
-from shared.utils import TweetItem
-from rendering.tweets import TweetMessageRenderer
 from media_support.html_backend.parser import parse_timeline_html
+from rendering.tweets import TweetMessageRenderer
+from shared.utils import TweetItem
 
 
 def test_display_username_prefers_link_author_for_query_keys():
@@ -29,7 +28,7 @@ def test_format_tweet_search_query_not_as_author():
     assert "hello body" in text
 
 
-def test_format_tweet_telegram_header_is_author_link_not_query():
+def test_format_tweet_telegram_header_has_explicit_link_not_query():
     tweet = TweetItem(
         text="visible body for link",
         link="https://x.com/RealUser/status/99",
@@ -38,7 +37,9 @@ def test_format_tweet_telegram_header_is_author_link_not_query():
     text = TweetMessageRenderer.format_tweet(
         1, "#tag", tweet, link_style="telegram_md", omit_status_url=True
     )
-    assert text.startswith("[@RealUser](https://x.com/RealUser/status/99)")
+    assert text.startswith(
+        "@RealUser · [🔗 查看推文](https://x.com/RealUser/status/99)"
+    )
     assert "visible body for link" in text
     assert not text.startswith("[#tag]")
 

@@ -1,12 +1,27 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import html
 import re
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+try:
+    CN_TZ = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:  # pragma: no cover
+    CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
+
+_DISPLAY_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+_NITTER_TITLE_RE = re.compile(
+    r"^([A-Za-z]{3} \d{1,2}, \d{4})"
+    r"(?:\s*[·•]\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?))?"
+    r"(?:\s*(UTC|GMT|Z))?$",
+    re.IGNORECASE,
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # 数据模型
@@ -63,6 +78,120 @@ class TweetItem:
 DEFAULT_INSTANCES = [
     "https://nitter.net",
 ]
+
+
+def format_tweet_published(raw: str) -> str:
+    """Normalize any tweet timestamp to Asia/Shanghai ``YYYY-MM-DD HH:MM:SS``.
+
+    Covers RSS pubDate, Twitter ``created_at``, Fx/Vx strings, and common
+    Nitter ``tweet-date`` title values (List/search HTML). Unparseable input
+    is returned unchanged.
+
+    Display-form guard: strings already matching ``YYYY-MM-DD HH:MM:SS`` are
+    treated as **final Asia/Shanghai wall time** and are not shifted again.
+    Callers must not write bare UTC wall clocks in that shape; emit Twitter/
+    RFC/ISO forms (with offset) or this function's own output only.
+
+    Date-only Nitter titles (e.g. ``Jul 23, 2026``) are interpreted as
+    **UTC midnight**, then converted to Shanghai (typically ``08:00:00``).
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if _DISPLAY_TIME_RE.fullmatch(text):
+        # Already normalized (or trusted local display). Do not assume UTC.
+        return text
+
+    parsed = _parse_tweet_datetime(text)
+    if parsed is None:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_tweet_datetime(text: str) -> dt.datetime | None:
+    try:
+        parsed = parsedate_to_datetime(text)
+        if isinstance(parsed, dt.datetime):
+            return parsed
+    except (TypeError, ValueError, IndexError, OverflowError):
+        pass
+
+    iso = text
+    if iso.endswith("Z") and "T" in iso:
+        iso = iso[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(iso)
+        if isinstance(parsed, dt.datetime):
+            return parsed
+    except ValueError:
+        pass
+
+    # Nitter: "Jul 23, 2026" or "Jul 28, 2026 · 5:15 AM UTC".
+    # Times without offset (and date-only) are treated as UTC, then converted
+    # by format_tweet_published to Asia/Shanghai.
+    m = _NITTER_TITLE_RE.match(text.replace("  ", " ").strip())
+    if m:
+        date_part = m.group(1)
+        time_part = (m.group(2) or "").strip()
+        if time_part:
+            for fmt in (
+                "%b %d, %Y %I:%M %p",
+                "%b %d, %Y %I:%M:%S %p",
+                "%b %d, %Y %H:%M",
+                "%b %d, %Y %H:%M:%S",
+            ):
+                try:
+                    naive = dt.datetime.strptime(  # noqa: DTZ007
+                        f"{date_part} {time_part}", fmt
+                    )
+                    return naive.replace(tzinfo=dt.timezone.utc)
+                except ValueError:
+                    continue
+        try:
+            # Date-only → UTC midnight (see format_tweet_published docstring).
+            naive = dt.datetime.strptime(date_part, "%b %d, %Y")  # noqa: DTZ007
+            return naive.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            pass
+    return None
+
+
+def format_subscription_count(count: int, group_type: str = "blogger") -> str:
+    """Return the user-facing quantity phrase for a subscription group."""
+    kind = str(group_type or "blogger").strip().lower()
+    if kind == "tag":
+        noun = "个搜索订阅"
+    elif kind == "list":
+        noun = "个 List"
+    else:
+        noun = "位博主"
+    return f"{int(count)} {noun}"
+
+
+def format_subscription_source(source: str, group_type: str = "blogger") -> str:
+    """Render a stored account/query/List key without internal prefixes."""
+    raw = str(source or "").strip()
+    if raw.startswith("@"):
+        raw = raw[1:].strip()
+    lowered = raw.lower()
+    kind = str(group_type or "blogger").strip().lower()
+    if lowered.startswith("q:"):
+        kind = "tag"
+        raw = raw[2:].strip()
+    elif lowered.startswith("list:"):
+        kind = "list"
+        raw = raw[5:].strip()
+
+    if not raw:
+        return "-"
+    if kind == "tag":
+        return f"搜索「{raw}」"
+    if kind == "list":
+        return f"List {raw}"
+    return f"@{raw}"
+
 
 URL_LIKE_RE = re.compile(
     r"(?i)(?<![@\w])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}"
@@ -189,7 +318,7 @@ def normalize_username(value: str) -> str:
 
 
 def normalize_seen_account_key(value: str) -> str:
-    """Normalize seen/scan keys: Twitter username or tag search key ``q:...``."""
+    """Normalize username, tag-query, and Twitter List seen/scan keys."""
     value = (value or "").strip()
     if not value:
         return ""
@@ -199,6 +328,11 @@ def normalize_seen_account_key(value: str) -> str:
         if not body or len(body) > 200 or len(folded) > 200:
             return ""
         return "q:" + folded
+    if value[:5].casefold() == "list:":
+        list_id = value[5:].strip()
+        if not list_id.isdigit() or len(list_id) > 20 or int(list_id) <= 0:
+            return ""
+        return "list:" + list_id
     return normalize_username(value)
 
 

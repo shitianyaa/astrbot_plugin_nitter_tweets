@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Regression probes for PR #36 CodeRabbit findings (P0–P2).
 
 Write tests first: failures prove the bug still exists; then fix production code.
@@ -20,7 +19,6 @@ from rendering.tweets import TweetMessageRenderer
 from scheduler.config import SchedulerConfigReader
 from scheduler.models import PendingTweetBatch, ScheduledCheckResult
 from shared.utils import TweetItem, TweetMedia
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -116,7 +114,8 @@ def test_dashboard_history_uses_generic_partial_and_query_labels():
     src = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
 
     assert 'text: "部分送达"' in src
-    assert 'text: "账号/查询"' in src
+    assert 'text: "订阅源"' in src
+    assert 'text: "账号/查询"' not in src
     assert "function historyAccountLabel(row)" in src
     assert 'text: "媒体失败"' not in src
 
@@ -489,7 +488,7 @@ def test_p0_configuration_md_title_not_corrupted():
     # known corruption from PR #36 bot review
     joined = "\n".join(lines[:8])
     assert "（默认 true，去推文链接）" not in joined
-    assert not re.search(r"^（默认", joined, re.M)
+    assert not re.search(r"^（默认", joined, re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------

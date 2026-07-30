@@ -31,13 +31,13 @@ except ImportError:
     from config.subscriptions import (
         save_subscription_config,
     )
-    from scheduler import ScheduleGroup
     from plugin_api.api_history import WebAPIHistoryMixin
     from plugin_api.api_overview import WebAPIOverviewMixin
     from plugin_api.api_probe import WebAPIProbeMixin
     from plugin_api.api_serializers import WebAPISerializersMixin
     from plugin_api.api_subscriptions import WebAPISubscriptionsMixin
     from plugin_api.groups import WebUIGroupEditor
+    from scheduler import ScheduleGroup
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"

@@ -5,12 +5,11 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from astrbot.api import logger
 
 try:
-    from ..config import config_get, config_set
+    from ..config import config_get, config_set, parse_config_bool
+    from ..shared import format_subscription_count, format_subscription_source
     from ..shared.group_ids import (
         GLOBAL_GROUP_ID,
         is_default_group,
@@ -19,20 +18,29 @@ try:
     from .config import ScheduleGroup, WatchUsersInfo
     from .formatting import (
         _format_limited_values as scheduler_format_limited_values,
+    )
+    from .formatting import (
         format_group_schedule as scheduler_format_group_schedule,
+    )
+    from .formatting import (
         format_merge_threshold as scheduler_format_merge_threshold,
     )
     from .models import ScheduledCheckResult
 except ImportError:
-    from config import config_get, config_set
-    from shared.group_ids import GLOBAL_GROUP_ID, is_default_group, normalize_group_id
+    from config import config_get, config_set, parse_config_bool
     from scheduler.config import ScheduleGroup, WatchUsersInfo
     from scheduler.formatting import (
         _format_limited_values as scheduler_format_limited_values,
+    )
+    from scheduler.formatting import (
         format_group_schedule as scheduler_format_group_schedule,
+    )
+    from scheduler.formatting import (
         format_merge_threshold as scheduler_format_merge_threshold,
     )
     from scheduler.models import ScheduledCheckResult
+    from shared import format_subscription_count, format_subscription_source
+    from shared.group_ids import GLOBAL_GROUP_ID, is_default_group, normalize_group_id
 
 
 class SchedulerStatusMixin:
@@ -50,64 +58,54 @@ class SchedulerStatusMixin:
         enabled_groups = [item for item in groups if item.enabled]
         total_users = sum(len(item.account_keys) for item in groups)
         total_raw_users = sum(
-            (
-                item.queries_info.raw_count
-                if item.is_tag_group
-                else item.users_info.raw_count
-            )
-            for item in groups
+            self._group_subscription_info(item).raw_count for item in groups
         )
         total_duplicates = sum(
-            len(
-                item.queries_info.duplicates
-                if item.is_tag_group
-                else item.users_info.duplicates
-            )
-            for item in groups
+            len(self._group_subscription_info(item).duplicates) for item in groups
         )
         total_invalid_users = sum(
-            len(
-                item.queries_info.invalid_entries
-                if item.is_tag_group
-                else item.users_info.invalid_entries
-            )
-            for item in groups
+            len(self._group_subscription_info(item).invalid_entries) for item in groups
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
-        seen_map_results = await asyncio.gather(
-            *[self._get_seen_map(item.group_id) for item in groups]
+        global_filter_reposts_enabled = parse_config_bool(
+            config_get(self.config, "filter_reposts_enabled", True),
+            True,
         )
-        group_seen_counts = {
-            item.group_id: len(seen_map)
-            for item, seen_map in zip(groups, seen_map_results)
-        }
-        total_seen_users = sum(group_seen_counts.values())
-
         lines = [
             "Nitter 定时检查状态",
             f"调度器: {'运行中' if self.is_running else '未运行'}",
             f"总开关: {'已启用' if self.schedule_enabled else '已关闭'}",
-            "全局检查间隔: "
-            f"{config_get(self.config, 'check_interval_minutes', 30)} 分钟",
-            "启动立即检查: "
-            f"{'已启用' if config_get(self.config, 'check_on_startup', False) else '已关闭'}",
-            "无更新提示: "
-            f"{'已启用' if config_get(self.config, 'notify_no_updates', False) else '已关闭'}",
+            (
+                "全局检查间隔: "
+                f"{config_get(self.config, 'check_interval_minutes', 30)} 分钟"
+            ),
+            (
+                "启动立即检查: "
+                f"{'已启用' if config_get(self.config, 'check_on_startup', False) else '已关闭'}"
+            ),
+            (
+                "无更新提示: "
+                f"{'已启用' if config_get(self.config, 'notify_no_updates', False) else '已关闭'}"
+            ),
+            (
+                "转发过滤总开关: "
+                f"{'已启用' if global_filter_reposts_enabled else '已关闭'}"
+            ),
             f"分组数量: {len(groups)} 个（启用 {len(enabled_groups)} 个）",
             f"QQ 合并阈值: {self._format_merge_threshold(self._merge_tweet_threshold())}",
-            "全部分组订阅账号项: "
-            f"{total_users} 个（配置 {total_raw_users} 项，"
-            f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）",
+            (
+                "全部分组订阅项: "
+                f"{total_users} 个（配置 {total_raw_users} 项，"
+                f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）"
+            ),
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
-            f"全部分组已记录索引: {total_seen_users} 个",
         ]
         if default_group is not None:
             lines.append("默认分组详情:")
             self._append_group_status(
                 lines,
                 default_group,
-                seen_count=group_seen_counts.get(default_group.group_id, 0),
             )
         if len(groups) > (1 if default_group is not None else 0):
             lines.append("其他分组详情:")
@@ -120,7 +118,6 @@ class SchedulerStatusMixin:
                 self._append_group_status(
                     lines,
                     item,
-                    seen_count=group_seen_counts.get(item.group_id, 0),
                 )
         return "\n".join(lines)
 
@@ -182,20 +179,30 @@ class SchedulerStatusMixin:
     def _format_group_schedule(group: ScheduleGroup) -> str:
         return scheduler_format_group_schedule(group)
 
+    @staticmethod
+    def _group_subscription_info(group: ScheduleGroup):
+        if group.is_tag_group:
+            return group.queries_info
+        if group.is_list_group:
+            return group.lists_info
+        return group.users_info
+
     def _append_group_status(
         self,
         lines: list[str],
         group: ScheduleGroup,
-        seen_count: int | None = None,
     ) -> None:
-        type_label = "标签" if group.is_tag_group else "博主"
+        type_label = (
+            "标签" if group.is_tag_group else "列表" if group.is_list_group else "博主"
+        )
         account_count = len(group.account_keys)
         lines.append(
             "- "
             f"{group.name} ({group.group_id}): "
             f"{'启用' if group.enabled else '关闭'}，"
             f"类型 {type_label}，"
-            f"订阅 {account_count}，目标 {len(group.targets)}，"
+            f"订阅 {format_subscription_count(account_count, group.group_type)}，"
+            f"目标 {len(group.targets)}，"
             f"{self._format_group_schedule(group)}"
         )
         if group.aliases:
@@ -207,9 +214,16 @@ class SchedulerStatusMixin:
                 f"重复 {len(group.queries_info.duplicates)} 项，"
                 f"无效 {len(group.queries_info.invalid_entries)} 项）"
             )
+        elif group.is_list_group:
+            lines.append(
+                "  List 订阅: "
+                f"{len(group.list_ids)} 个（配置 {group.lists_info.raw_count} 项，"
+                f"重复 {len(group.lists_info.duplicates)} 项，"
+                f"无效 {len(group.lists_info.invalid_entries)} 项）"
+            )
         else:
             lines.append(
-                "  关注账号: "
+                "  博主订阅: "
                 f"{len(group.users)} 个（配置 {group.users_info.raw_count} 项，"
                 f"重复 {len(group.users_info.duplicates)} 项，"
                 f"无效 {len(group.users_info.invalid_entries)} 项）"
@@ -218,8 +232,22 @@ class SchedulerStatusMixin:
             f"  推送目标: {len(group.targets)} 个"
             f"（无效 {len(group.invalid_targets)} 个）"
         )
-        if seen_count is not None:
-            lines.append(f"  已记录索引: {seen_count} 个")
+        global_filter_reposts_enabled = parse_config_bool(
+            config_get(getattr(self, "config", {}), "filter_reposts_enabled", True),
+            True,
+        )
+        group_filter_reposts_enabled = bool(
+            getattr(group, "filter_reposts_enabled", True)
+        )
+        effective_filter_reposts_enabled = (
+            global_filter_reposts_enabled and group_filter_reposts_enabled
+        )
+        lines.append(
+            "  转发过滤: "
+            f"{'开启' if effective_filter_reposts_enabled else '关闭'}"
+            f"（全局 {'开' if global_filter_reposts_enabled else '关'}，"
+            f"分组 {'开' if group_filter_reposts_enabled else '关'}）"
+        )
         daily_times = group.daily_check_times
         if daily_times:
             formatted_times = ", ".join(
@@ -239,9 +267,24 @@ class SchedulerStatusMixin:
                     "  无效查询: "
                     + self._format_limited_values(group.queries_info.invalid_entries)
                 )
+        elif group.is_list_group and group.list_ids:
+            lines.append("  List ID: " + self._format_limited_values(group.list_ids))
+            if group.lists_info.duplicates:
+                lines.append(
+                    "  重复 List ID: "
+                    + self._format_limited_values(group.lists_info.duplicates)
+                )
+            if group.lists_info.invalid_entries:
+                lines.append(
+                    "  无效 List ID: "
+                    + self._format_limited_values(group.lists_info.invalid_entries)
+                )
         elif group.users:
-            usernames = [f"@{username}" for username in group.users]
-            lines.append("  订阅账号: " + self._format_limited_values(usernames))
+            usernames = [
+                format_subscription_source(username, group.group_type)
+                for username in group.users
+            ]
+            lines.append("  博主订阅源: " + self._format_limited_values(usernames))
             if group.users_info.duplicates:
                 lines.append(
                     "  重复订阅: "

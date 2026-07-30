@@ -9,10 +9,10 @@ from typing import Any
 
 try:
     from ..scheduler import ScheduleGroup
-    from ..shared import TweetItem
+    from ..shared import TweetItem, format_subscription_count
 except ImportError:
     from scheduler import ScheduleGroup
-    from shared import TweetItem
+    from shared import TweetItem, format_subscription_count
 
 
 class WebAPISerializersMixin:
@@ -23,8 +23,13 @@ class WebAPISerializersMixin:
         return {
             "group_id": getattr(result, "group_id", ""),
             "group_name": getattr(result, "group_name", ""),
+            "group_type": getattr(result, "group_type", "blogger") or "blogger",
+            "reason": getattr(result, "reason", ""),
+            "source_count": len(getattr(result, "users", []) or []),
+            "target_count": len(getattr(result, "targets", []) or []),
             "skipped_reason": getattr(result, "skipped_reason", ""),
             "new_tweet_count": getattr(result, "new_tweet_count", 0),
+            "failed_count": len(getattr(result, "failed_users", {}) or {}),
             "pushed_target_successes": getattr(result, "pushed_target_successes", 0),
             "pushed_target_attempts": getattr(result, "pushed_target_attempts", 0),
         }
@@ -71,7 +76,11 @@ class WebAPISerializersMixin:
     @staticmethod
     def _terminology() -> dict[str, str]:
         return {
-            "watch_users": "关注账号",
+            "watch_users": "博主订阅",
+            "watch_queries": "搜索订阅",
+            "watch_lists": "List",
+            "subscription_source": "订阅源",
+            "subscription_count": "订阅数量",
             "push_targets": "推送目标",
             "seen": "推送记录",
         }
@@ -84,7 +93,13 @@ class WebAPISerializersMixin:
 
     @staticmethod
     def _group_payload_label(group: ScheduleGroup) -> dict[str, str]:
-        return {"group_id": group.group_id, "name": group.name}
+        return {
+            "group_id": group.group_id,
+            "name": group.name,
+            "subscription_label": format_subscription_count(
+                len(group.account_keys), group.group_type
+            ),
+        }
 
     @staticmethod
     def _data_text(data: dict[str, Any], key: str) -> str:

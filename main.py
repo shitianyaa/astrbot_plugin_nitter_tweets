@@ -8,7 +8,9 @@ from astrbot.api.star import register
 from astrbot.core.star.filter.command import GreedyStr
 
 try:
+    from .ai import TweetTranslator
     from .command_handlers import (
+        LinkPreviewMixin,
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
@@ -21,19 +23,21 @@ try:
         migrate_legacy_grouped_config,
         parse_config_bool,
     )
-    from .ai import TweetTranslator
+    from .delivery import TweetSender
     from .media_support import MediaService, NitterClient
     from .media_support.html_backend import (
         DEFAULT_SEARCH_INSTANCES,
         HtmlBackendConfig,
         HtmlNitterService,
     )
+    from .media_support.status_link import STATUS_LINK_REGEX
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
-    from .delivery import TweetSender
     from .shared import clamp_float, clamp_int
 except ImportError:
+    from ai import TweetTranslator
     from command_handlers import (
+        LinkPreviewMixin,
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
@@ -46,16 +50,16 @@ except ImportError:
         migrate_legacy_grouped_config,
         parse_config_bool,
     )
-    from ai import TweetTranslator
+    from delivery import TweetSender
     from media_support import MediaService, NitterClient
     from media_support.html_backend import (
         DEFAULT_SEARCH_INSTANCES,
         HtmlBackendConfig,
         HtmlNitterService,
     )
+    from media_support.status_link import STATUS_LINK_REGEX
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
-    from delivery import TweetSender
     from shared import clamp_float, clamp_int
 
 
@@ -63,13 +67,14 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.17.0",
+    "0.18.1",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
     ManualCommandMixin,
     MaintenanceCommandMixin,
     SubscriptionCommandMixin,
+    LinkPreviewMixin,
     Star,
 ):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -225,6 +230,11 @@ class NitterTweetsPlugin(
     async def terminate(self):
         await self.scheduler.stop()
 
+    @filter.regex(STATUS_LINK_REGEX)
+    async def cmd_auto_parse_tweet_links(self, event: AstrMessageEvent):
+        """被动解析聊天中的公开 X/Twitter 推文链接（需开启配置开关）。"""
+        return await self._cmd_link_preview_impl(event)
+
     @filter.command("推文")
     async def cmd_tweets(
         self,
@@ -249,7 +259,7 @@ class NitterTweetsPlugin(
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文状态")
     async def cmd_tweets_status(self, event: AstrMessageEvent):
-        """查看 Nitter 推文调度状态、关注账号、推送目标和分组配置。"""
+        """查看 Nitter 推文调度状态、订阅源、推送目标和分组配置。"""
         return await self._cmd_tweets_status_impl(event)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -259,7 +269,7 @@ class NitterTweetsPlugin(
         event: AstrMessageEvent,
         group_name: str = "",
     ):
-        """立即检查订阅账号是否有新推文。用法：/推文检查 [分组名]"""
+        """立即检查订阅源是否有新推文。用法：/推文检查 [分组名]"""
         return await self._cmd_tweets_check_impl(event, group_name)
 
     @filter.permission_type(filter.PermissionType.ADMIN)

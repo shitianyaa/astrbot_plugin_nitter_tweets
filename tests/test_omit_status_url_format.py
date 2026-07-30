@@ -36,8 +36,7 @@ class OmitStatusUrlFormatTests(unittest.TestCase):
         text = TweetMessageRenderer.format_tweet(
             1, "nasa", self._tweet(), link_style="telegram_md"
         )
-        self.assertTrue(text.startswith("["))
-        self.assertIn("](", text)
+        self.assertTrue(text.startswith("@nasa · [🔗 查看推文]("))
         self.assertIn("nasa/status/1", text)
 
     def test_schedule_group_has_omit_field(self) -> None:

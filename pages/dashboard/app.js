@@ -80,16 +80,16 @@ const els = {
 const viewMeta = {
   overview: {
     title: "Nitter 推文控制台总览",
-    desc: "聚合查看博主/标签订阅分组、推送目标状态以及 Nitter 节点连通性。",
+    desc: "聚合查看博主、搜索订阅与 List 分组、推送目标状态以及 Nitter 节点连通性。",
   },
   groups: {
     title: "订阅分组管理",
-    desc: "维护订阅（关注账号或搜索）、推送目标与分组级检查策略。",
+    desc: "维护博主、搜索订阅或 List、推送目标与分组级检查策略。",
   },
 
   history: {
     title: "最近推送历史",
-    desc: "查看成功或部分送达记录，按分组和账号/查询筛选，并选择当前推送目标重新推送。",
+    desc: "查看成功或部分送达记录，按分组和订阅源筛选，并选择当前推送目标重新推送。",
   },
   mirror: {
     title: "Nitter 镜像连通诊断",
@@ -100,6 +100,9 @@ const viewMeta = {
     desc: "清理普通媒体缓存或推送记录，危险操作会二次确认。",
   },
 };
+
+const PRIVATE_QQ_GROUP_WARNING =
+  "风险提示：使用私人 QQ 号作为 Bot 时，不建议开启标签分组或 List 分组定时功能。";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const icons = {
@@ -491,12 +494,17 @@ function historyDeliveryStatus(row) {
 
 function historyAccountLabel(row) {
   const accountKey = String(row.username || "").trim();
-  const isQuery =
-    row.group_type === "tag" || accountKey.toLowerCase().startsWith("q:");
-  if (isQuery) {
-    return accountKey.replace(/^q:/i, "").trim() || accountKey || "-";
+  if (row.subscription_source) {
+    return String(row.subscription_source);
   }
-  return accountKey ? `@${accountKey}` : "-";
+  const lowered = accountKey.toLowerCase();
+  if (row.group_type === "list" || lowered.startsWith("list:")) {
+    return `List ${accountKey.replace(/^list:/i, "").trim()}`;
+  }
+  if (row.group_type === "tag" || lowered.startsWith("q:")) {
+    return `搜索「${accountKey.replace(/^q:/i, "").trim()}」`;
+  }
+  return accountKey ? `@${accountKey.replace(/^@/, "")}` : "-";
 }
 
 function isDefaultGroupId(value) {
@@ -700,7 +708,7 @@ function buildWatchQuerySection(group, draft) {
     }),
     el("p", {
       className: "helper-text",
-      text: "风险提示：使用私人 QQ 号作为 Bot 时，不建议开启标签分组定时功能。",
+      text: PRIVATE_QQ_GROUP_WARNING,
     }),
     el("div", { className: "input-with-actions" }, [
       editorField("添加查询", queryInput),
@@ -727,6 +735,75 @@ function buildWatchQuerySection(group, draft) {
         group.duplicate_watch_queries,
         "chip-list warn",
       ),
+    ]),
+  ]);
+}
+
+function buildWatchListSection(group, draft) {
+  const lists = Array.isArray(draft.watch_lists)
+    ? draft.watch_lists.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const list = el("div", { className: "chip-list" });
+  if (!lists.length) {
+    list.appendChild(el("span", { className: "muted", text: "空" }));
+  } else {
+    list.append(
+      ...lists.map((listId, index) =>
+        el(
+          "button",
+          {
+            className: "chip chip-action mono",
+            attrs: {
+              type: "button",
+              title: `删除 List ${listId}`,
+            },
+            dataset: {
+              deleteWatchListIndex: String(index),
+              deleteWatchListGroup: group.group_id,
+            },
+            disabled: state.loading || state.actionBusy,
+          },
+          `List ${listId}`,
+        ),
+      ),
+    );
+  }
+  const listInput = el("input", {
+    attrs: {
+      id: "groupListInput",
+      type: "text",
+      inputmode: "numeric",
+      placeholder: "2081623084780671084（可用逗号分隔）",
+    },
+    disabled: state.loading || state.actionBusy,
+  });
+  return el("section", { className: "editor-section" }, [
+    el("div", { className: "section-head" }, [el("h3", { text: "List 订阅" })]),
+    el("p", {
+      className: "helper-text",
+      text: "只接受正整数 List ID；可一次输入多个，重复或非法 ID 会直接提示。刚创建不久的 List 往往要过一段时间才会被 Nitter 收录，空结果时先等再查。",
+    }),
+    el("p", {
+      className: "helper-text",
+      text: PRIVATE_QQ_GROUP_WARNING,
+    }),
+    el("div", { className: "input-with-actions" }, [
+      editorField("添加 List ID", listInput),
+      el(
+        "button",
+        {
+          className: "button primary",
+          attrs: { type: "button" },
+          dataset: { addWatchList: group.group_id },
+          disabled: state.loading || state.actionBusy,
+        },
+        [iconSpan("plus"), "添加"],
+      ),
+    ]),
+    el("div", { className: "details-grid" }, [
+      el("div", {}, [el("b", { text: "当前 List" }), list]),
+      buildChipSection("无效 List ID", group.invalid_watch_lists, "chip-list bad"),
+      buildChipSection("重复 List ID", group.duplicate_watch_lists, "chip-list warn"),
     ]),
   ]);
 }
@@ -777,6 +854,53 @@ function deleteWatchQuery(groupId, index) {
   if (index < 0 || index >= draft.watch_queries.length) return;
   const next = draft.watch_queries.filter((_, i) => i !== index);
   updateGroupDraft(groupId, "watch_queries", next);
+  renderGroupEditor();
+}
+
+function addWatchList(groupId) {
+  const input = document.getElementById("groupListInput");
+  const raw = String(input?.value || "").trim();
+  if (!raw) {
+    showAlert("请输入 List ID", "error");
+    return;
+  }
+  const values = raw
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const invalid = values.filter((item) => !/^\d{1,20}$/.test(item) || /^0+$/.test(item));
+  if (invalid.length) {
+    showAlert(`List ID 必须是 1-20 位正整数：${invalid.slice(0, 3).join("、")}`, "error");
+    return;
+  }
+  const draft =
+    state.groupDrafts[groupId] ||
+    snapshotEditableGroup(state.groups.find((item) => item.group_id === groupId) || {});
+  const next = Array.isArray(draft.watch_lists) ? [...draft.watch_lists] : [];
+  const seenValues = new Set(next);
+  const duplicates = [];
+  values.forEach((item) => {
+    if (seenValues.has(item)) duplicates.push(item);
+    seenValues.add(item);
+  });
+  if (duplicates.length) {
+    showAlert(`List ID 已存在：${duplicates.slice(0, 3).join("、")}`, "error");
+    return;
+  }
+  updateGroupDraft(groupId, "watch_lists", [...next, ...values]);
+  if (input) input.value = "";
+  renderGroupEditor();
+}
+
+function deleteWatchList(groupId, index) {
+  const draft = state.groupDrafts[groupId];
+  if (!draft || !Array.isArray(draft.watch_lists)) return;
+  if (index < 0 || index >= draft.watch_lists.length) return;
+  updateGroupDraft(
+    groupId,
+    "watch_lists",
+    draft.watch_lists.filter((_, itemIndex) => itemIndex !== index),
+  );
   renderGroupEditor();
 }
 
@@ -890,11 +1014,13 @@ function snapshotEditableGroup(group) {
     group_type: group.group_type || "blogger",
     interval_check_enabled: !!group.interval_check_enabled,
     daily_check_times: [...(group.daily_check_times || [])],
+    filter_reposts_enabled: group.filter_reposts_enabled !== false,
     filter_plain_text_enabled: !!group.filter_plain_text_enabled,
     media_only_enabled: !!group.media_only_enabled,
     omit_status_url: group.omit_status_url !== false,
     hide_original_when_translated: !!group.hide_original_when_translated,
     push_targets: [...(group.push_targets || [])],
+    watch_lists: [...(group.watch_lists || [])],
     watch_queries: (group.watch_queries || [])
       .map(normalizeWatchQueryItem)
       .filter(Boolean),
@@ -1024,7 +1150,9 @@ function renderOverview() {
       "推送分组",
       `${formatNumber(counts.groups)} / 启用 ${formatNumber(counts.enabled_groups)}`,
     ],
-    ["关注账号（博主）", formatNumber(counts.watch_users)],
+    ["博主订阅", formatNumber(counts.watch_users)],
+    ["搜索订阅", formatNumber(counts.watch_queries)],
+    ["List", formatNumber(counts.watch_lists)],
     ["推送目标", formatNumber(counts.push_targets)],
     ["无效推送目标", formatNumber(counts.invalid_push_targets)],
   ];
@@ -1058,6 +1186,16 @@ function renderOverview() {
       ["重复关注项", formatNumber(counts.duplicate_watch_users)],
       ["无效关注项", formatNumber(counts.invalid_watch_users)],
     ]),
+    buildPanel("搜索订阅状态", [
+      ["原始搜索订阅", formatNumber(counts.raw_watch_queries)],
+      ["重复搜索订阅", formatNumber(counts.duplicate_watch_queries)],
+      ["无效搜索订阅", formatNumber(counts.invalid_watch_queries)],
+    ]),
+    buildPanel("List 状态", [
+      ["原始 List ID", formatNumber(counts.raw_watch_lists)],
+      ["重复 List ID", formatNumber(counts.duplicate_watch_lists)],
+      ["无效 List ID", formatNumber(counts.invalid_watch_lists)],
+    ]),
     buildPanel("功能开关", featureRows),
     buildPanel("配置摘要", configRows),
   ]);
@@ -1084,18 +1222,27 @@ function renderGroupList() {
     return;
   }
   const items = state.groups.map((group) => {
-    const typeLabel = group.group_type === "tag" ? "标签" : "博主";
-    const subCount =
-      group.group_type === "tag"
-        ? formatNumber(group.watch_query_count || 0)
+    const isTag = group.group_type === "tag";
+    const isList = group.group_type === "list";
+    const typeLabel = isTag ? "搜索" : isList ? "List" : "博主";
+    const subCount = isTag
+      ? formatNumber(group.watch_query_count || 0)
+      : isList
+        ? formatNumber(group.watch_list_count || 0)
         : formatNumber(group.watch_user_count);
-    const subLabel = group.group_type === "tag" ? "查询" : "关注";
+    const subscriptionLabel =
+      group.subscription_label ||
+      (isTag
+        ? `${subCount} 个搜索订阅`
+        : isList
+          ? `${subCount} 个 List`
+          : `${subCount} 位博主`);
     const meta = el("div", { className: "group-list-meta" }, [
       el("span", { text: group.group_id }),
       el("span", { text: typeLabel }),
       el("span", { text: group.enabled ? "启用" : "停用" }),
       el("span", {
-        text: `${subLabel} ${subCount} · 目标 ${formatNumber(group.push_target_count)}`,
+        text: `${subscriptionLabel} · 目标 ${formatNumber(group.push_target_count)}`,
       }),
     ]);
     const alerts = el(
@@ -1133,6 +1280,8 @@ function renderGroupEditor() {
     return;
   }
   const draft = groupDraft(group);
+  const globalFilterRepostsEnabled =
+    group.global_filter_reposts_enabled !== false;
   const dirty = isGroupDirty(group.group_id);
   const checkButton = el(
     "button",
@@ -1206,7 +1355,13 @@ function renderGroupEditor() {
       editorField("分组 ID", readonlyField(group.group_id)),
       editorField(
         "分组类型",
-        readonlyField(group.group_type === "tag" ? "标签分组" : "博主分组"),
+        readonlyField(
+          group.group_type === "tag"
+            ? "搜索订阅分组"
+            : group.group_type === "list"
+              ? "List 分组"
+              : "博主分组",
+        ),
       ),
       editorField(
         "启用分组",
@@ -1235,6 +1390,20 @@ function renderGroupEditor() {
           "08:30,21:05",
         ),
       ),
+      editorField(
+        "过滤转发",
+        toggleField(
+          group.group_id,
+          "filter_reposts_enabled",
+          draft.filter_reposts_enabled !== false,
+        ),
+      ),
+      el("p", {
+        className: "helper-text",
+        text: globalFilterRepostsEnabled
+          ? "双层控制：全局转发过滤总开关已开启；本分组开关也开启时才会过滤转发。"
+          : "全局转发过滤总开关当前关闭，本分组将保留转发；开启全局总开关后才按这里的配置过滤。",
+      }),
       editorField(
         "纯文本过滤",
         toggleField(
@@ -1289,6 +1458,8 @@ function renderGroupEditor() {
     ]),
     group.group_type === "tag"
       ? buildWatchQuerySection(group, draft)
+      : group.group_type === "list"
+        ? buildWatchListSection(group, draft)
       : el("section", { className: "editor-section" }, [
           el("div", { className: "section-head" }, [
             el("h3", { text: "关注账号" }),
@@ -1366,13 +1537,18 @@ function renderGroupEditor() {
         ),
         group.group_type === "tag"
           ? groupRuntimeCard(
-              "无效搜索查询",
+              "无效搜索订阅",
               formatNumber(group.invalid_watch_queries?.length),
             )
-          : groupRuntimeCard(
-              "无效关注账号",
-              formatNumber(group.invalid_watch_users?.length),
-            ),
+          : group.group_type === "list"
+            ? groupRuntimeCard(
+                "无效 List ID",
+                formatNumber(group.invalid_watch_lists?.length),
+              )
+            : groupRuntimeCard(
+                "无效关注账号",
+                formatNumber(group.invalid_watch_users?.length),
+              ),
       ]),
     ]),
   ]);
@@ -1439,7 +1615,7 @@ function renderHistory() {
           el("tr", {}, [
             el("th", { text: "发送时间" }),
             el("th", { text: "分组" }),
-            el("th", { text: "账号/查询" }),
+            el("th", { text: "订阅源" }),
             el("th", { text: "推文" }),
             el("th", { text: "当时推送目标" }),
             el("th", { text: "来源" }),
@@ -1515,7 +1691,7 @@ function renderHistoryOrphans(payload = state.historyOrphans) {
             el("tr", {}, [
               el("th", { text: "Group ID" }),
               el("th", { text: "记录" }),
-              el("th", { text: "账号" }),
+              el("th", { text: "订阅源" }),
               el("th", { text: "最近推送" }),
               el("th", { text: "操作" }),
             ]),
@@ -1580,8 +1756,8 @@ function syncMirrorModeUi() {
   }
   if (els.mirrorInstanceListHint) {
     els.mirrorInstanceListHint.textContent = isSearch
-      ? "点击填入左侧 URL；搜索请用 search_instances，勿混用 RSS 列表"
-      : "点击填入左侧 URL（博主仅测 RSS）";
+      ? "点击填入左侧 URL；留空将按顺序测试全部 search_instances"
+      : "点击填入左侧 URL；留空将按顺序测试全部 RSS instances";
   }
 }
 
@@ -1589,9 +1765,6 @@ function renderMirrorBase() {
   syncMirrorModeUi();
   const mode = mirrorModeValue();
   const instances = instancesForMirrorMode(mode);
-  if (!els.mirrorInstance.value && instances.length) {
-    els.mirrorInstance.value = instances[0];
-  }
   if (!instances.length) {
     els.instanceList.replaceChildren(
       el("span", {
@@ -1884,23 +2057,60 @@ function createGroup() {
       autocomplete: "off",
     },
   });
-  const typeSelect = el(
-    "select",
+  const typeRadios = [];
+  const typeOptions = [
     {
-      attrs: { id: "createGroupType" },
+      value: "blogger",
+      mark: "@",
+      label: "博主分组",
+      description: "跟踪 X 用户",
     },
-    [
-      el("option", {
-        attrs: { value: "blogger", selected: true },
-        text: "博主分组",
-      }),
-      el("option", { attrs: { value: "tag" }, text: "标签分组" }),
-    ],
-  );
+    {
+      value: "tag",
+      mark: "#",
+      label: "标签分组",
+      description: "跟踪标签或短语",
+    },
+    {
+      value: "list",
+      mark: "L",
+      label: "List 分组",
+      description: "跟踪纯数字 List ID",
+    },
+  ].map((item, index) => {
+    const radio = el("input", {
+      className: "group-type-radio",
+      attrs: {
+        type: "radio",
+        name: "createGroupType",
+        value: item.value,
+        checked: index === 0,
+      },
+    });
+    typeRadios.push(radio);
+    return el(
+      "label",
+      { className: `group-type-option group-type-option-${item.value}` },
+      [
+        radio,
+        el("span", { className: "group-type-option-body" }, [
+          el("span", {
+            className: "group-type-mark",
+            attrs: { "aria-hidden": "true" },
+            text: item.mark,
+          }),
+          el("span", { className: "group-type-copy" }, [
+            el("strong", { text: item.label }),
+            el("small", { text: item.description }),
+          ]),
+        ]),
+      ],
+    );
+  });
   const form = el("div", { className: "confirm-form" }, [
-    el("label", { className: "field" }, [
-      el("span", { text: "分组类型" }),
-      typeSelect,
+    el("fieldset", { className: "group-type-fieldset" }, [
+      el("legend", { className: "group-type-legend", text: "分组类型" }),
+      el("div", { className: "group-type-options" }, typeOptions),
     ]),
     el("label", { className: "field" }, [
       el("span", { text: "分组名称" }),
@@ -1908,12 +2118,21 @@ function createGroup() {
     ]),
     el("p", {
       className: "helper-text",
-      text: "类型创建后不可修改。博主分组跟用户；标签分组跟搜索订阅（#标签 或短语）。",
+      text: "类型创建后不可修改，请按实际订阅来源选择。",
     }),
-    el("p", {
-      className: "helper-text",
-      text: "风险提示：若 Bot 使用私人 QQ 号，不建议创建或启用标签分组（定时搜索/推送较频繁，有封号风险）。",
-    }),
+    el("div", { className: "group-type-warning", attrs: { role: "note" } }, [
+      el("span", {
+        className: "group-type-warning-mark",
+        attrs: { "aria-hidden": "true" },
+        text: "!",
+      }),
+      el("div", { className: "group-type-warning-copy" }, [
+        el("strong", { text: "私人 QQ 使用提示" }),
+        el("span", {
+          text: "不建议创建或启用标签分组和 List 分组；这两类分组依赖 HTML 定时抓取，检查和推送较频繁，存在封号风险。",
+        }),
+      ]),
+    ]),
   ]);
   openConfirm({
     kicker: "新建分组",
@@ -1925,7 +2144,8 @@ function createGroup() {
       withAction(async () => {
         const result = await apiPost("web/groups/create", {
           name: nameInput.value.trim(),
-          group_type: typeSelect.value || "blogger",
+          group_type:
+            typeRadios.find((radio) => radio.checked)?.value || "blogger",
         });
         // API returns { success, group: { group_id, ... } } via _ok(group=...).
         const newId = String(
@@ -2236,10 +2456,12 @@ async function probeMirror(event) {
   try {
     const mode = mirrorModeValue();
     const query = els.mirrorUsername.value.trim();
+    const instance = els.mirrorInstance.value.trim();
     const payload = {
       mode,
       limit: Number(els.mirrorLimit.value || 5),
-      instance: els.mirrorInstance.value.trim(),
+      instance,
+      probe_all: !instance,
     };
     if (mode === "search") {
       payload.query = query;
@@ -2247,11 +2469,6 @@ async function probeMirror(event) {
       payload.username = query;
     }
     const result = await apiPost("web/mirror/probe", payload);
-    const tweets = (result.tweets || []).map((tweet) => {
-      const link = externalLink(tweet.link, tweet.status_id || tweet.link || "");
-      link.appendChild(el("span", { text: tweet.text_preview || "" }));
-      return link;
-    });
     const modeLabel = result.mode === "search" ? "搜索" : "博主 RSS";
     const subject =
       result.mode === "search"
@@ -2261,18 +2478,58 @@ async function probeMirror(event) {
       result.mode === "search" && result.kind
         ? ` · ${result.kind === "tag" ? "标签" : "短语"}`
         : "";
-    els.mirrorResult.replaceChildren(
-      el("div", { className: "panel" }, [
-        el("h2", {
-          text: `${modeLabel}${kindHint} · ${subject} · ${result.instance}`,
-        }),
-        el("p", {
-          className: "muted",
-          text: `获取 ${formatNumber(result.tweet_count)} 条`,
-        }),
-        el("div", { className: "probe-list" }, tweets),
-      ]),
-    );
+    const renderTweets = (tweets) =>
+      (tweets || []).map((tweet) => {
+        const link = externalLink(tweet.link, tweet.status_id || tweet.link || "");
+        link.appendChild(el("span", { text: tweet.text_preview || "" }));
+        return link;
+      });
+    if (Array.isArray(result.results)) {
+      const summary = result.summary || {};
+      const cards = result.results.map((item) =>
+        el("div", { className: "panel mirror-probe-card" }, [
+          el("div", { className: "panel-head" }, [
+            el("h3", { text: item.instance || "未知实例" }),
+            el("span", {
+              className: `badge ${item.success ? "ok" : "warning"}`,
+              text: item.success ? "成功" : "失败",
+            }),
+          ]),
+          el("p", {
+            className: "muted",
+            text: item.success
+              ? `获取 ${formatNumber(item.tweet_count)} 条 · ${formatNumber(item.duration_ms)} ms`
+              : `${item.error || "实例测试失败"} · ${formatNumber(item.duration_ms)} ms`,
+          }),
+          item.success
+            ? el("div", { className: "probe-list" }, renderTweets(item.tweets))
+            : el("p", { className: "helper-text", text: item.error || "-" }),
+        ]),
+      );
+      els.mirrorResult.replaceChildren(
+        el("div", { className: "panel" }, [
+          el("h2", { text: `${modeLabel}${kindHint} · ${subject} · 多站测试` }),
+          el("p", {
+            className: "muted",
+            text: `共 ${formatNumber(summary.total)} 个实例，成功 ${formatNumber(summary.succeeded)} 个，失败 ${formatNumber(summary.failed)} 个`,
+          }),
+        ]),
+        el("div", { className: "stack mirror-probe-results" }, cards),
+      );
+    } else {
+      els.mirrorResult.replaceChildren(
+        el("div", { className: "panel" }, [
+          el("h2", {
+            text: `${modeLabel}${kindHint} · ${subject} · ${result.instance}`,
+          }),
+          el("p", {
+            className: "muted",
+            text: `获取 ${formatNumber(result.tweet_count)} 条`,
+          }),
+          el("div", { className: "probe-list" }, renderTweets(result.tweets)),
+        ]),
+      );
+    }
   } catch (error) {
     showAlert(error.message || "镜像测试失败", "error");
   } finally {
@@ -2451,6 +2708,17 @@ function bindEvents() {
       deleteWatchQuery(
         target.dataset.deleteWatchQueryGroup,
         Number(target.dataset.deleteWatchQueryIndex || -1),
+      );
+      return;
+    }
+    if (target.dataset.addWatchList) {
+      addWatchList(target.dataset.addWatchList);
+      return;
+    }
+    if (target.dataset.deleteWatchListGroup != null) {
+      deleteWatchList(
+        target.dataset.deleteWatchListGroup,
+        Number(target.dataset.deleteWatchListIndex || -1),
       );
       return;
     }
