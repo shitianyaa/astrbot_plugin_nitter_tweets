@@ -1,10 +1,12 @@
-# -*- coding: utf-8 -*-
-"""Repost filtering: search always on; manual /推文 forced off."""
+"""Repost filtering overrides across RSS, HTML, and scheduled groups."""
 
 from __future__ import annotations
 
-from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
+from types import SimpleNamespace
+
 from media_support.client import NitterClient
+from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
+from scheduler.runner_fetch import SchedulerFetchMixin
 from shared.utils import TweetItem
 
 
@@ -54,6 +56,54 @@ def test_filter_reposts_enabled_override():
     assert n2 == 0 and len(kept2) == 2
 
 
+def test_effective_group_repost_filter_requires_global_and_group_switches():
+    host = SchedulerFetchMixin.__new__(SchedulerFetchMixin)
+    group = SimpleNamespace(filter_reposts_enabled=True)
+
+    for global_enabled, group_enabled, expected in (
+        (True, True, True),
+        (True, False, False),
+        (False, True, False),
+        (False, False, False),
+    ):
+        host.config = {"filter_reposts_enabled": global_enabled}
+        group.filter_reposts_enabled = group_enabled
+        assert host._effective_filter_reposts(group) is expected
+
+
+def test_rss_plain_text_filter_uses_effective_repost_override():
+    client = NitterClient({})
+    rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss><channel><item>
+      <title>plain repost</title>
+      <description>plain repost</description>
+      <link>https://nitter.example/other/status/123</link>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+    </item></channel></rss>"""
+
+    deferred, filtered_count, _, _ = client._parse_rss(
+        rss,
+        "https://nitter.example",
+        0,
+        skip_plain_text=True,
+        username="watched",
+        filter_reposts=True,
+    )
+    removed_by_plain_text, plain_text_count, _, _ = client._parse_rss(
+        rss,
+        "https://nitter.example",
+        0,
+        skip_plain_text=True,
+        username="watched",
+        filter_reposts=False,
+    )
+
+    assert len(deferred) == 1
+    assert filtered_count == 0
+    assert removed_by_plain_text == []
+    assert plain_text_count == 1
+
+
 def test_paginate_search_drops_is_retweet():
     from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 
@@ -100,6 +150,14 @@ def test_paginate_search_drops_is_retweet():
         out = HtmlNitterPool._paginate_search(
             pool, "https://nitter.example", "#tag", 10, kind="tag"
         )
+        unfiltered = HtmlNitterPool._paginate_search(
+            pool,
+            "https://nitter.example",
+            "#tag",
+            10,
+            kind="tag",
+            filter_reposts=False,
+        )
     finally:
         pool_mod.parse_timeline_html = original
 
@@ -107,6 +165,9 @@ def test_paginate_search_drops_is_retweet():
     assert out[0].status_id == "2"
     assert out.raw_item_count == 2
     assert out.retweet_filtered == 1
+
+    assert [tweet.status_id for tweet in unfiltered] == ["1", "2"]
+    assert unfiltered.retweet_filtered == 0
 
 
 def test_retweet_header_inside_tweet_body_not_killed_by_icon():

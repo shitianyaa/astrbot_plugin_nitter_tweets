@@ -2,23 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import datetime as dt
 import re
 import ssl
 import time
 from dataclasses import dataclass, field
-from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
 from xml.etree import ElementTree as ET
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-try:
-    CN_TZ = ZoneInfo("Asia/Shanghai")
-except ZoneInfoNotFoundError:
-    CN_TZ = dt.timezone(dt.timedelta(hours=8), name="Asia/Shanghai")
 
 from astrbot.api import logger
 
@@ -26,9 +18,9 @@ try:
     from ..config import config_get, parse_config_bool
     from ..shared import (
         TweetItem,
-        clean_text,
         clamp_float,
         clamp_int,
+        clean_text,
         load_instances,
         normalize_external_links,
     )
@@ -36,9 +28,9 @@ except ImportError:
     from config import config_get, parse_config_bool
     from shared import (
         TweetItem,
-        clean_text,
         clamp_float,
         clamp_int,
+        clean_text,
         load_instances,
         normalize_external_links,
     )
@@ -406,6 +398,7 @@ class NitterClient:
         start_index: int = 0,
         skip_plain_text: bool = False,
         retry_attempts: int = 3,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem], int]:
         """Fetch using a dedicated instance pool rotated by ``start_index``.
 
@@ -425,6 +418,7 @@ class NitterClient:
             skip_plain_text=skip_plain_text,
             retry_attempts=retry_attempts,
             total_retry_attempts_per_instance=True,
+            filter_reposts=filter_reposts,
         )
 
     async def fetch_tweets_for_scheduler(
@@ -432,6 +426,7 @@ class NitterClient:
         username: str,
         anchor_ids: list[str] | None,
         skip_plain_text: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, SchedulerFetchResult]:
         return await self._fetch_tweets_for_scheduler_from_instances(
             username,
@@ -439,6 +434,7 @@ class NitterClient:
             self.instances,
             skip_plain_text=skip_plain_text,
             retry_attempts=self.retry_attempts,
+            filter_reposts=filter_reposts,
         )
 
     async def fetch_tweets_for_scheduler_from_instances(
@@ -449,6 +445,7 @@ class NitterClient:
         start_index: int = 0,
         skip_plain_text: bool = False,
         retry_attempts: int = 3,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, SchedulerFetchResult]:
         """Fetch a complete scheduler scan from a dedicated instance pool.
 
@@ -468,6 +465,7 @@ class NitterClient:
             skip_plain_text=skip_plain_text,
             retry_attempts=retry_attempts,
             total_retry_attempts_per_instance=False,
+            filter_reposts=filter_reposts,
         )
 
     async def _fetch_tweets_for_scheduler_from_instances(
@@ -478,6 +476,7 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
         total_retry_attempts_per_instance: bool = False,
+        filter_reposts: bool | None = None,
     ) -> tuple[str, SchedulerFetchResult]:
         errors: list[str] = []
         empty_instances: list[str] = []
@@ -511,6 +510,7 @@ class NitterClient:
                         skip_plain_text,
                         1,
                         total_retry_attempts_per_instance,
+                        filter_reposts,
                     )
                 except EmptyFeedError as exc:
                     if instance not in empty_instances:
@@ -797,6 +797,7 @@ class NitterClient:
                     skip_plain_text,
                     retry_attempts,
                     attempt_budget,
+                    filter_reposts,
                 )
             except Exception:
                 if not tweets:
@@ -856,6 +857,7 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
         total_retry_attempts_per_instance: bool = False,
+        filter_reposts: bool | None = None,
     ) -> SchedulerFetchResult:
         initial_scan = anchor_ids is None
         normalized_anchor_ids = (
@@ -895,6 +897,7 @@ class NitterClient:
                 skip_plain_text,
                 retry_attempts,
                 attempt_budget,
+                filter_reposts,
             )
             if page.raw_item_count == 0 and page.plain_text_filtered == 0:
                 if scanned_item_count == 0:
@@ -942,7 +945,9 @@ class NitterClient:
 
             plain_text_filtered_total += page.plain_text_filtered
             page_tweets, page_reposts_filtered = self._filter_reposts(
-                page.tweets, username
+                page.tweets,
+                username,
+                enabled=filter_reposts,
             )
             if watermark_index is not None:
                 allowed_status_ids = set(page_status_ids)
@@ -1034,6 +1039,7 @@ class NitterClient:
         skip_plain_text: bool = False,
         retry_attempts: int | None = None,
         attempt_budget: FetchAttemptBudget | None = None,
+        filter_reposts: bool | None = None,
     ) -> RssPageResult:
         attempts = self._retry_attempt_count(retry_attempts)
         if attempt_budget is not None:
@@ -1051,6 +1057,7 @@ class NitterClient:
                     cursor,
                     limit,
                     skip_plain_text,
+                    filter_reposts,
                 )
             except TransientFetchError as exc:
                 last_error = exc
@@ -1083,6 +1090,7 @@ class NitterClient:
         cursor: str,
         limit: int,
         skip_plain_text: bool = False,
+        filter_reposts: bool | None = None,
     ) -> RssPageResult:
         rss_url = self._rss_url(instance, username, cursor)
         request = Request(
@@ -1112,6 +1120,7 @@ class NitterClient:
                 0,
                 skip_plain_text,
                 username,
+                filter_reposts,
             )
         )
         return RssPageResult(
@@ -1154,7 +1163,7 @@ class NitterClient:
         value = headers.get(name) if hasattr(headers, "get") else ""
         if value:
             return str(value).strip()
-        for key in getattr(headers, "keys", lambda: [])():
+        for key in getattr(headers, "keys", list)():
             if str(key).lower() == name.lower():
                 return str(headers[key]).strip()
         return ""
@@ -1179,6 +1188,7 @@ class NitterClient:
         limit: int,
         skip_plain_text: bool = False,
         username: str = "",
+        filter_reposts: bool | None = None,
     ) -> tuple[list[TweetItem], int, list[str], int]:
         if len(data) > self.RSS_RESPONSE_LIMIT:
             raise ValueError(f"RSS 响应超过安全上限 {self.RSS_RESPONSE_LIMIT} 字节")
@@ -1191,6 +1201,11 @@ class NitterClient:
         tweets: list[TweetItem] = []
         scanned_status_ids: list[str] = []
         plain_text_filtered = 0
+        use_filter_reposts = (
+            bool(getattr(self, "filter_reposts_enabled", True))
+            if filter_reposts is None
+            else bool(filter_reposts)
+        )
         items = channel.findall("item")
         for item in items:
             title = self._node_text(item, "title")
@@ -1206,7 +1221,7 @@ class NitterClient:
             # 把本来就会丢弃的转发也计入纯文本过滤数。
             lacks_author_media = skip_plain_text and not _has_author_media(description)
             if lacks_author_media and not (
-                self.filter_reposts_enabled and self._is_repost_link(link, username)
+                use_filter_reposts and self._is_repost_link(link, username)
             ):
                 plain_text_filtered += 1
                 continue
@@ -1227,14 +1242,12 @@ class NitterClient:
 
     @staticmethod
     def _format_pub_date(raw: str) -> str:
-        if not raw:
-            return ""
         try:
-            parsed = parsedate_to_datetime(raw)
-            shanghai_time = parsed.astimezone(CN_TZ)
-            return shanghai_time.strftime("%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError):
-            return raw
+            from ..shared.utils import format_tweet_published
+        except ImportError:  # pragma: no cover
+            from shared.utils import format_tweet_published
+
+        return format_tweet_published(raw)
 
     @staticmethod
     def _normalize_link(link: str, instance: str) -> str:

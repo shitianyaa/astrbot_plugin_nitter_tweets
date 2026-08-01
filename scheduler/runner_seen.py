@@ -93,7 +93,7 @@ class SchedulerSeenMixin:
         watermark_ids: list[str] | None,
     ) -> tuple[list[TweetItem], list[str]]:
         del watermark_ids
-        seen_set = set(str(item) for item in seen_ids)
+        seen_set = {str(item) for item in seen_ids}
         new_tweets: list[TweetItem] = []
 
         for tweet in tweets:

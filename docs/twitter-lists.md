@@ -21,9 +21,17 @@ Nitter 无法访问需要登录的 Private List，订阅的 List 必须设置为
 2. 点击"编辑列表"
 3. 确保"Make private"选项**未勾选**
 
-### 2. 获取 List ID
+### 2. 新建 List 需等待 Nitter 收录
 
-List ID 是一串正整数数字，从 List 的 URL 中获取。新建 List 通常是 18-20 位，早期 List 的 ID 可能更短：
+插件通过 **Nitter HTML 搜索实例**拉 List 时间线，不是直连 X 官方 API。
+
+**刚创建不久的 List**（创建时间较短）往往要 **过一段时间** 才会被 Nitter 镜像索引到；在此之前可能一直空结果或抓不到。实践中常见要等约 **10–30 分钟**（随镜像与平台波动，非固定 SLA）。空结果时先等再试，不要立刻判定 ID 配错。
+
+成员增删同样可能有数分钟级缓存延迟。
+
+### 3. 获取 List ID
+
+List ID 是一串正整数数字，从 List 的 URL 中获取。新建 List 通常是 18-20 位，早期 List 的 ID 可能更短；插件接受的最大值为 `uint64` 上限 `18446744073709551615`：
 
 ```
 https://x.com/i/lists/1553232306718257152
@@ -34,6 +42,19 @@ https://x.com/i/lists/1553232306718257152
 **如何获取**：
 - 网页版：打开 List 页面，从浏览器地址栏复制数字部分
 - App：分享 List → 复制链接 → 提取数字部分
+
+### 4. 把关注批量加入 List（可选工具）
+
+本插件**只订阅**已有 Public List 的 ID，不会在 X 上创建 List 或批量加成员。
+
+若需要把 Following 里的账号快速装进某个 List，可使用第三方浏览器扩展 [X Follow to List](https://github.com/DrErwin/X-Follow-to-List)（Chrome / Edge 等 Chromium；本地运行，无需 X API Key）：
+
+1. 从 [GitHub Release](https://github.com/DrErwin/X-Follow-to-List/releases/latest) 下载 ZIP，解压后在浏览器扩展页开启开发者模式并「加载已解压的扩展程序」。
+2. 登录 X，打开 `https://x.com/你的用户名/following`，滚动加载需要的账号。
+3. 在扩展中筛选、勾选账号，填入目标 List 分享链接后开始任务（建议先小批量、拉长间隔）。
+4. 确认 List 为 Public，再把 List ID 填入本插件的 `watch_lists` 或 Dashboard 列表分组。
+
+**速率限制：** X 对「将用户加入 List」有官方限制。实践中 **约 24 小时内大约只能成功约 100 次量级**（随账号与平台策略变化，非固定承诺）。请分批、分多天导入；触发限制后暂停，不要高频重试。该扩展与本插件相互独立，使用风险自负。
 
 ## 配置 List 分组
 
@@ -48,6 +69,8 @@ https://x.com/i/lists/1553232306718257152
    - **分组推送目标**：填写 UMO（在目标会话中发送 `/sid` 获取）
    - **单次检查最多推送推文数**：**强烈建议设置**（如 10-20），防止刷屏
 5. 保存配置
+
+Dashboard 会在保存前检查 List ID 是否为 1-20 位纯数字，并检查当前草稿和已有配置中的重复值；服务端还会校验 ID 为正 `uint64`，拒绝 `0` 和超过 `18446744073709551615` 的值。概览会单独统计 List 数量和无效 List ID，历史记录的订阅源显示为 `List {id}`，不会显示内部存储前缀。
 
 ### 方式二：配置文件
 
@@ -64,6 +87,7 @@ tweet_groups:
       - "2081623084780671084"
     push_targets:
       - "aiocqhttp:GroupMessage:123456"
+    filter_reposts_enabled: true  # 分组子开关，默认开启
     max_tweets_per_check: 10  # 强烈建议设置
 ```
 
@@ -73,19 +97,27 @@ tweet_groups:
 
 List 聚合多人推文，可能在短时间内产生大量更新。**强烈建议设置此项**（如 10-20），避免一次推送过多消息刷屏。
 
+超过上限的较旧推文会标记 seen，不会在下一轮重新补发；该选项用于控制消息量，不是积压队列。
+
 ```yaml
 max_tweets_per_check: 10  # 每个 List 单次检查最多推送 10 条
 ```
 
 ### `html_max_pages`
 
-这是全局 HTML 配置，控制一次 List 抓取最多请求多少页。每翻一页通常会增加一次页面 GET，不包含门禁请求。默认 `1`，实际运行时限制为 `1-5`；建议公共实例保持 `1-3`。它是每轮扫描预算，不保证一定命中旧水位；后台每个 List 单次扫描仍最多保留 20 条候选。
-
-如果已有水位的 List 在预算用尽前仍未命中旧基线，插件会自动用本轮第一页解析到的状态 ID 重建扫描基线，写入现有 seen/水位并跳过本轮发送。日志会明确提示“旧积压可能被跳过”。这是一种有损自恢复：旧积压不会继续无限累积，但可能不再补发。网络请求或解析直接失败不会触发自动重建；如果第一页没有有效状态 ID，则保留旧基线并等待下一轮。
+这是全局 HTML 配置，控制一次 List 抓取最多请求多少页。每翻一页通常会增加一次页面 GET，不包含门禁请求。首次订阅只取最多 20 条建立基线；已有水位后本轮扫描可以超过 20 条，并继续翻页到命中旧水位或游标结束，但持久化水位仍最多保存最新 20 个 ID。达到 `html_max_pages` 后仍有后续游标时，本轮会按扫描未完成跳过，不写 seen 或新水位。默认 `1`，公共实例可按更新量和限流情况设置为 `1-3`。
 
 ```yaml
 basic:
   html_max_pages: 1
+```
+
+### `filter_reposts_enabled`
+
+List 分组内的同名配置是子开关，默认开启。只有全局 `basic.filter_reposts_enabled` 总开关与当前 List 分组子开关都开启时才过滤转发；任一关闭都会保留转发。
+
+```yaml
+filter_reposts_enabled: true
 ```
 
 ### `filter_plain_text_enabled`
@@ -107,6 +139,9 @@ media_only_enabled: true  # 打造纯图片/视频推送频道
 ## 检查调度
 
 List 分组与博主/标签分组共享相同的检查调度机制：
+
+- `check_on_startup=true` 时，调度存储初始化完成后会按分组顺序首检所有启用且配置了 List 和有效推送目标的分组，即使该分组只有每日检查或没有定时槽位；首检后会锚定当前槽位，避免重复检查。
+- 首检、手动 `/推文检查` 和 WebUI 检查都会等待存储初始化完成；初始化失败时不会抓取或发送，并记录 `storage_not_ready`。
 
 ### 间隔检查
 
@@ -133,7 +168,11 @@ daily_check_times:
   ↓
 解析推文（复用 parse_timeline_html）
   ↓
-过滤转发（跟随全局 filter_reposts_enabled）
+首次订阅取最多 20 条建立基线；已有水位则翻页到旧水位或游标结束
+  ↓
+达到 html_max_pages 仍未完整扫描时跳过整轮，不推进 seen/水位
+  ↓
+按全局与分组双层开关过滤转发
   ↓
 过滤纯文本（如果分组启用）
   ↓
@@ -154,7 +193,7 @@ Nitter 无法读取需要登录的 Private List，订阅的 List 必须设置为
 
 ### 2. 新建 List 延迟生效
 
-新创建的 List 可能需要 10-30 分钟才能被 Nitter 镜像索引到，建议等待一段时间后再配置订阅。
+见上文「前置要求 · 新建 List 需等待 Nitter 收录」。创建时间较短的 List 需要过段时间才会被 Nitter 搜索到；配置里 `watch_lists` 也有同样提示。
 
 ### 3. List 成员上限
 
@@ -174,16 +213,16 @@ List 成员的增删改会有缓存延迟，Nitter 通常需要 5-10 分钟才�
 
 ### 6. 首次启用不推历史
 
-首次启用 List 订阅时，插件只会记录当前最新推文作为基线，**不会推送历史内容**。下次检查时才会推送新增推文。
+首次启用 List 订阅时，插件会记录当前扫描到的最多 20 个有效推文 ID 作为基线，**不会推送历史内容**。下次检查时才会推送新增推文。
 
 ## 转发过滤行为
 
-List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`：
+List 订阅使用全局与分组双层开关：
 
-- `filter_reposts_enabled: true`：List 推送会过滤转发
-- `filter_reposts_enabled: false`：List 推送包含转发
+- 全局 `basic.filter_reposts_enabled: true` 且分组 `filter_reposts_enabled: true`：过滤转发
+- 任一开关为 `false`：保留转发
 
-该配置默认开启。
+两个开关默认都开启；旧 List 分组缺少子开关时按开启处理。全局关闭时，分组不能单独强制开启过滤。
 
 这与博主订阅行为一致，便于统一管理。
 
@@ -209,16 +248,20 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 2. 检查 `filter_plain_text_enabled` 是否过滤了纯文本推文
 3. 检查 `filter_reposts_enabled` 是否过滤了转发
 4. 查看后台日志中的 `raw_item_count` / `retweet_filtered` 统计
-5. 使用 `/推文状态` 查看分组检查状态
+5. 检查是否出现“分页未完整扫描，已跳过本轮”；如持续出现，可适当提高 `html_max_pages`
+6. 使用 `/推文状态` 查看分组检查状态
+
+Dashboard 的“镜像测试”选择搜索模式即可验证 List 使用的 `search_instances`；镜像 URL 留空会按配置顺序串行测试全部搜索实例，返回每站推文数、耗时和错误。填写 URL 时只测试指定站点。
 
 ### List ID 无效
 
 **现象**：配置保存后分组显示 `invalid_entries`
 
-**原因**：List ID 格式错误（包含非数字字符）
+**原因**：List ID 包含非数字字符、为 `0`，或超过正 `uint64` 上限
 
 **解决**：
 - 只填写纯数字部分，不要包含 URL 前缀
+- 数值范围为 `1` 至 `18446744073709551615`
 - 正确：`1553232306718257152`
 - 错误：`https://x.com/i/lists/1553232306718257152`
 
@@ -230,7 +273,7 @@ List 订阅的转发过滤行为**跟随全局配置** `filter_reposts_enabled`�
 | 配置字段 | `watch_queries` | `watch_lists` |
 | 内容来源 | 全平台公开推文 | List 成员的推文 |
 | 首次订阅 | 记录基线，不推历史 | 记录基线，不推历史 |
-| 转发过滤 | 固定过滤纯转推 | 跟随全局配置 |
+| 转发过滤 | 全局总开关 + 分组子开关 | 全局总开关 + 分组子开关 |
 | 抓取实例 | `search_instances` | `search_instances` |
 | 风险提示 | 私人 QQ 号不建议 | 私人 QQ 号不建议 |
 
@@ -311,6 +354,7 @@ tweet_groups:
     daily_check_times: []
 
     # 内容过滤
+    filter_reposts_enabled: true
     filter_plain_text_enabled: false
     media_only_enabled: false
 

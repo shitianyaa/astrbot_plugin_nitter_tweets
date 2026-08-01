@@ -1,86 +1,70 @@
 # Nitter 推文记录
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.18.0-blue" />
-  <img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets" />
-  <img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B" />
-  <img alt="Nitter" src="https://img.shields.io/badge/Nitter-RSS-black" />
-  <img alt="Media" src="https://img.shields.io/badge/media-xdown.app-orange" />
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.1-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
+  <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <br />
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=gold" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge" /></a>
+  <a href="https://qm.qq.com/q/cPQnFNtdN6"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%E7%BE%A4-Bot%E6%B5%8B%E8%AF%95%E7%BE%A4-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" /></a>
   <br />
   <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
-  <br />
-  <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="count" />
 </p>
 
-通过 Nitter RSS / HTML 搜索获取指定 X/Twitter 公开推文，支持手动查询与搜索、镜像测试、图片附件、翻译、按博主/标签/列表分组定时推送和 SQLite 推送记录存储。
+通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.16.0`。
 
-兼容 AstrBot `>=4.16.0`。
+> 首页只保留**上手与定位**。边界行为、平台差异、完整配置见 [进阶说明](./docs/advanced.md)。
 
-## 界面预览
+## 目录
 
-### WebUI 运维面板
+- [预览](#预览)
+- [能做什么](#能做什么)
+- [5 分钟上手](#5-分钟上手)
+- [常用命令](#常用命令)
+- [常用配置](#常用配置)
+- [文档导航](#文档导航)
+- [致谢](#致谢)
+- [许可证](#许可证)
+- [免责声明](#免责声明)
+
+## 预览
 
 <p align="center">
   <img src="./docs/assets/readme/dashboard-overview.png" alt="Nitter 推文控制台总览" />
 </p>
 
 <p align="center">
-  <img src="./docs/assets/readme/group-management.png" alt="订阅分组与博主管理" />
-</p>
-
-### QQ 推送效果
-
-<p align="center">
   <img src="./docs/assets/readme/qq-delivery.png" alt="QQ 推送效果" width="360" />
 </p>
 
-## 功能概览
+更多界面说明见 [进阶说明 · WebUI](./docs/advanced.md#webui-运维面板)。
+
+## 能做什么
 
 | 场景 | 能力 |
 | --- | --- |
-| 手动查询 | `/推文` 查询公开博主推文，`/推文搜索`（固定过滤纯转推） 搜索标签/短语，`/镜像测试` 临时验证 Nitter 实例。 |
-| 后台推送 | 按 `tweet_groups` 分组：`blogger` 跟用户，`tag` 跟搜索订阅，`list` 跟 Twitter List；定时检查并即时推送。 |
-| 平台发送 | QQ/OneBot 支持合并转发；Lark、Telegram、微信 OC 和其他平台走普通发送。 |
-| 媒体与 AI | 支持图片附件；可选开启视频/GIF、翻译和分组“仅媒体”；可按组开启“发送时去除推文链接”（默认开）。 |
-| 运维存储 | 提供 WebUI 面板、缓存清理和推送记录清理。 |
+| 手动 | `/推文`、`/推文搜索`、`/镜像测试` |
+| 链接 | 可选被动解析聊天中的 status 链接（默认关） |
+| 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
+| 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
+| 媒体与 AI | 图片；可选视频/GIF、翻译 |
+| 运维 | WebUI 面板、缓存与推送记录清理 |
 
-## 快速开始
+## 5 分钟上手
 
-### 手动查询
+### 1. 先试命令
 
 ```text
 /推文 nasa
-/推文 nasa 5
-/推文 https://twitter.com/nasa 5
-```
-
-省略数量时使用 `default_limit`；填写数量时按用户输入获取，不额外截断。Nitter RSS 返回不足或部分内容解析失败时，最终发送数量可能少于请求数量；手动查询会保留转发。博主路径仅 RSS：可在 `instances` 配置多个 RSS 镜像；**不再提供博主 HTML 回退站列表**，避免与搜索抢公共 HTML。
-
-### 搜索
-
-同会话同查询会缓存搜索结果，按你要的条数依次发放，不够再向镜像翻页（约 10 分钟内有效）。
-
-```text
-/推文搜索 #圣娅
-/推文搜索 python programming 5
-```
-
-标签请带 `#`；普通词/短语直接写，不会自动加 `#`。走 `search_instances` HTML 搜索（默认 `https://nitter.tiekoetter.com`，Anubis），与 `/推文` 冷却分离（`search_cooldown_seconds`）。非合并转发时可用 `manual_send_interval` 控制逐条发送间隔（默认 0）。有译文时是否显示原文由全局 `show_original_when_translated` 控制（默认显示）。
-
-### 镜像测试
-
-```text
+/推文搜索 #标签
 /镜像测试 https://nitter.net
-/镜像测试 3 https://nitter.net
-/镜像测试 nasa https://nitter.net
-/镜像测试 nasa 3 https://nitter.net
 ```
 
-`/镜像测试` 仅管理员可用，默认测试 `nasa`，默认获取 `default_limit` 条。镜像站必须填写完整、公开可访问的 `http://` 或 `https://` 地址；回环、私网、userinfo 和不安全重定向会被拒绝。该命令只影响本次测试，不会写入 `instances` 配置。
+数量可省略（用 `default_limit`）。`/镜像测试` 仅管理员。说明与边界见 [进阶说明](./docs/advanced.md)。
 
-### 后台推送
-
-最小配置：
+### 2. 最小后台推送
 
 ```text
 schedule_enabled = true
@@ -90,161 +74,90 @@ tweet_groups:
     group_type: blogger
     watch_users: NASA, BBCWorld
     push_targets: aiocqhttp:GroupMessage:123456
-  - name: 标签示例
-    group_id: tags1
-    group_type: tag
-    watch_queries:
-      - "#圣娅"
-      - "python programming"
-    push_targets: aiocqhttp:GroupMessage:123456
-  - name: 列表示例
-    group_id: lists1
-    group_type: list
-    watch_lists:
-      - "1553232306718257152"
-    push_targets: aiocqhttp:GroupMessage:123456
-    max_tweets_per_check: 10
 ```
 
-每个分组有 `group_type`：`blogger` 使用 `watch_users`，`tag` 使用 `watch_queries`，`list` 使用 `watch_lists`（勿混用）。共用 `push_targets` 与检查调度。
+必知（3 条）：
 
-`watch_queries` 请填**纯字符串**（`#标签` 或短语）。`watch_lists` 请填**纯数字 List ID**（从 `https://x.com/i/lists/{id}` 获取，必须为 Public List）。不要在 AstrBot 配置列表里塞对象，否则会显示成 `[object Object]`。标签固定过滤纯转推；List 是否过滤转发跟随全局 `filter_reposts_enabled`。HTML 抓取最多翻页数由全局 `html_max_pages` 控制，每个 List 单次后台扫描最多保留 20 条候选，再受 `max_tweets_per_check` 限制最终推送数。`html_max_pages` 是每轮扫描预算，不是完整扫描保证；若 List 到达页数上限仍未命中旧基线，插件会自动用第一页状态 ID 重建基线，本轮不推送，旧积压可能被跳过。
+1. 在目标会话发 `/sid`，把**完整 UMO** 填进 `push_targets`
+2. `group_type` 与字段对应：`blogger`→`watch_users`，`tag`→`watch_queries`，`list`→`watch_lists`（勿混用）
+3. **首次只记 seen，不推历史**
 
-标签/列表组首轮真正没有搜索结果时保持未初始化；若镜像返回了原始结果，但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位，使下一轮符合条件的新帖可以正常推送。
+标签 / List 示例、风险与调度细节：[进阶说明](./docs/advanced.md) · [List 指南](./docs/twitter-lists.md)。**新建不久的 List 要过段时间才会被 Nitter 收录**，空结果先等再查。
 
-**风险提示：** Bot 使用**私人 QQ 号**时，不建议启用标签分组定时功能。列表分组同样走 HTML 搜索实例，请谨慎评估风险。
+### 3. 可选
 
-- 博主组：`/订阅导入` `/订阅删除`
-- 标签组：`/标签导入` `/标签删除`（须指定标签分组名；`#标签,短语 分组名`）
-- 列表组：暂不支持命令导入，请通过配置文件或 WebUI 添加
+| 需求 | 做法 |
+| --- | --- |
+| 聊天里自动解析推文链接 | 打开 `auto_parse_tweet_links_enabled` |
+| 批量把关注加入 Public List | 见 [List 指南](./docs/twitter-lists.md)（第三方扩展；X 约 24h ~100 次量级限额） |
+| WebUI 管分组 / 历史 / 镜像 | AstrBot 插件页「Nitter 推文面板」 |
 
-手动 `/推文检查` 会按当前会话 UMO 匹配已启用分组；当前会话必须写在该分组 `push_targets` 中才会执行。
-
-### 本地诊断脚本
-
-```text
-python scripts\probe_nitter_fetch.py nasa 5
-python scripts\probe_nitter_fetch.py nasa 5 --include-reposts
-```
-
-该脚本复用插件的 Nitter RSS 抓取和转发过滤逻辑。`--include-reposts` 会临时关闭转发过滤，便于对比 Nitter RSS 原始返回。
-
-## 推送目标
-
-在要接收推送的群聊或私聊里发送 `/sid`，复制返回的 UMO，填入 `push_targets`。
+### 推送目标示例
 
 ```text
 aiocqhttp:GroupMessage:123456
-aiocqhttp:FriendMessage:123456
-lark:GroupMessage:oc_xxxxxxxxxxxxx
-lark:FriendMessage:ou_xxxxxxxxxxxxx
 telegram:GroupMessage:-1001234567890
-telegram:FriendMessage:123456789
+lark:GroupMessage:oc_xxxxxxxxxxxxx
 ```
 
-`push_targets` 每行填写一个 UMO。不同平台的前缀以 `/sid` 实际返回为准，不需要手动猜平台 ID；自定义 QQ 平台 ID 也应直接使用 `/sid` 返回的完整 UMO。
-
-## WebUI 运维面板
-
-AstrBot 插件页面中会显示 `Nitter 推文面板`，用于日常查看和维护：
-
-- `概览`：查看调度器、后台检查、关注账号、推送目标、功能开关和关键配置摘要。
-- `分组订阅`：维护分组名称、启停、每日检查、纯文本过滤、“仅媒体”、关注账号和推送目标；“仅媒体”受全局媒体开关和单条媒体数量上限控制。
-- `最近推送`：查看成功或部分送达的推送历史，按分组和账号/查询筛选，并使用当前推送目标重新推送。
-- `镜像测试` / `缓存清理`：临时测试 Nitter 镜像连通性，或清理普通媒体缓存和推送记录。
-
-WebUI 不替代 AstrBot 设置页；Nitter 实例、媒体限制、AI provider、提示词、并发与限流等复杂配置仍在 `_conf_schema.json` 对应的 AstrBot 配置界面维护。完整页面行为见 [进阶说明](./docs/advanced.md#webui-运维面板)。
+以 `/sid` 返回为准，不要手猜平台 ID。
 
 ## 常用命令
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
-| `/推文 用户名 [数量]` | 普通用户 | 查询指定公开 X/Twitter 用户最近推文。 |
-| `/推文搜索 关键词 [数量]` | 普通用户 | 用 HTML 搜索标签/短语；标签请带 `#`，短语不自动加 `#`。 |
-| `/镜像测试 [用户名] [数量] 镜像站URL` | 管理员 | 用临时 Nitter 镜像站测试获取推文。 |
-| `/推文状态` | 管理员 | 查看调度器状态、分组、目标、无效项和推送记录索引数。 |
-| `/推文检查 [分组名]` | 管理员 | 立即执行一次当前会话有权限的分组检查。 |
-| `/推文缓存清理` | 管理员 | 清理普通图片/视频缓存。 |
-| `/推文记录清理 确认` | 管理员 | 清理全部分组推送记录；也支持指定分组。 |
-| `/订阅列表` | 管理员 | 查看默认分组有效账号、重复项和无效项。 |
-| `/订阅导入 账号1,账号2 [分组名]` | 管理员 | 批量追加订阅账号。 |
-| `/订阅删除 账号1,账号2 [分组名]` | 管理员 | 批量删除订阅账号。 |
-| `/订阅导出 [分组]` | 管理员 | 导出博主/标签订阅；可指定分组名。 |
-| `/订阅去重` | 管理员 | 规范化并去重默认分组关注账号。 |
+| `/推文 用户名 [数量]` | 普通 | 查公开用户最近推文 |
+| `/推文搜索 关键词 [数量]` | 普通 | HTML 搜索；标签请带 `#` |
+| `/镜像测试 … 镜像站URL` | 管理员 | 临时测 Nitter 镜像 |
+| `/推文状态` | 管理员 | 调度与分组状态 |
+| `/推文检查 [分组名]` | 管理员 | 立即检查（当前会话须在该组 `push_targets`） |
+| `/推文缓存清理` | 管理员 | 清媒体缓存 |
+| `/推文记录清理 确认` | 管理员 | 清推送记录 |
+| `/订阅导入` `/订阅删除` `/订阅列表` `/订阅导出` `/订阅去重` | 管理员 | 博主订阅 |
+| `/标签导入` `/标签删除` | 管理员 | 标签订阅（须带分组名） |
+
+List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 ## 常用配置
 
-这里只列日常最常调整的项；完整默认值和 WebUI 文案见 [_conf_schema.json](./_conf_schema.json)。
-
-### 实例配置
+完整默认值与 WebUI 文案见 [`_conf_schema.json`](./_conf_schema.json)。只列最常改的：
 
 | 配置 | 说明 |
 | --- | --- |
-| `instances` | 博主 RSS 列表；默认 `https://nitter.net`，可配多个。长期请改自建。 |
-| `search_instances` | 标签/搜索 HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余 + 自动门禁）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
-| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后会使用 `search_instances` 获取博主推文。⚠️ 占用搜索资源，增加 429 风险。推荐：配置多个 RSS 镜像。 |
-| `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试，提升容错能力。 |
+| `instances` | 博主 RSS 镜像列表 |
+| `search_instances` | 搜索 / List 用 HTML 镜像（**不要**默认塞 nitter.net） |
+| `default_limit` | 手动命令默认条数 |
+| `schedule_enabled` | 后台检查总开关 |
+| `tweet_groups` | 订阅与推送分组 |
+| `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
+| `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
+| `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
+| `translate_enabled` | 是否翻译 |
+| `merge_tweet_threshold` | QQ 合并转发条数阈值；`0` 关 |
 
-**📖 详细说明：** [Nitter 实例配置指南](./docs/instances-guide.md) - RSS vs HTML 架构、默认配置、回退机制、容错策略
+实例架构与容错：[实例配置指南](./docs/instances-guide.md)。
 
-### 基础配置
+## 文档导航
 
-| 配置 | 说明 |
+| 文档 | 内容 |
 | --- | --- |
-| `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数。 |
-| `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数。 |
-| `filter_reposts_enabled` | 是否在博主后台检查中过滤转发，默认开启；手动命令不受影响。 |
-| `html_max_pages` | HTML/List 每轮扫描页数预算，运行时限制 `1-5`；已有水位的 List 到达上限仍未命中旧基线时自动重建第一页基线并跳过本轮发送，旧积压可能被跳过。 |
-
-### 推送配置
-
-| 配置 | 说明 |
-| --- | --- |
-| `schedule_enabled` | 后台检查总开关；关闭后不会触发分组间隔检查和每日检查。 |
-| `tweet_groups` | 用户分组列表，配置关注账号、推送目标、间隔检查和每日检查。 |
-| `notify_no_updates` | 无新推文或首次记录账号时是否发送检查摘要。 |
-| `merge_tweet_threshold` | QQ/OneBot 新推文总数达到多少条时启用合并转发；`0` 关闭。 |
-
-### 媒体与 AI
-
-| 配置 | 说明 |
-| --- | --- |
-| `send_image_attachments` | 是否发送图片附件，默认开启。 |
-| `send_video_attachments` | 是否发送视频/GIF 附件，默认关闭。 |
-| `max_media_per_tweet` | 单条推文最多准备和发送的媒体数量；设为 `0` 时分组”仅媒体”自动回退完整内容。 |
-| `translate_enabled` | 是否翻译非中文推文。 |
-
-## 行为要点
-
-- 首次启用某个账号时，只记录当前 RSS 中已有推文 ID，不推送历史内容。
-- 标签组首轮真正空结果不初始化；首轮有原始结果但全部被过滤时记录空扫描水位，下一轮符合条件的新帖会直接进入推送流程。
-- List 分页预算耗尽不等同于网络抓取失败；已有水位时自动重建第一页基线并跳过本轮发送，网络/解析硬失败不会触发重建。
-- 博主后台检查启用 `filter_reposts_enabled` 时，会比较 RSS item 主链接作者和订阅账号；作者不同则视为转发并过滤，无法解析作者时保留。手动 `/推文`、`/镜像测试` 始终保留转发。
-- seen 去重 ID 按 `group_id + username` 独立存储；同一账号在不同分组里的记录互不影响。push history 是独立的成功/部分失败发送快照，供 WebUI 历史查看和重推。
-- 手动 `/推文 用户名 数量` 不写入 seen、扫描基准或 push history；后台检查会比较当前 RSS 首屏约 20 条与该账号的 seen 记录，首屏未命中上次最多 20 个基准 ID 时按 `Min-Id` 翻页直到命中任意基准，并发送所有差集。
-- QQ 合并转发只对 OneBot/`aiocqhttp` 类目标生效；Telegram、飞书/Lark、微信 OC 和其他平台始终普通发送。
-- 附件失败不会阻止推文文本和原文链接发送；普通媒体发送后会自动清理。
-- 后台新推文按 RSS 返回顺序发送；每条消息只标注 `@作者`，不显示推文序号或账号进度。每个目标本轮第一条消息会显示博主数、推文数和分组概括。
-- 分组开启“仅媒体”后，只有抓取结果确认有当前作者媒体且至少一个附件准备成功的推文会发送；博主 RSS 与标签 HTML 搜索使用各自解析出的作者媒体标记。媒体临时失败会在下轮重试，明确被全局类型、数量、时长、大小或分辨率策略排除的推文会跳过。全局媒体不可用时只在 WebUI 和日志提示并回退完整内容。
-
-## 更多说明
-
-- [进阶说明](./docs/advanced.md)：平台差异、流程图、完整配置参考、缓存和推送记录细节。
-- [_conf_schema.json](./_conf_schema.json)：插件配置默认值和 AstrBot WebUI 文案。
-- [CHANGELOG.md](./CHANGELOG.md)：版本变更记录。
+| [进阶说明](./docs/advanced.md) | 平台、流程、全配置、行为边界、诊断 |
+| [List 订阅](./docs/twitter-lists.md) | Public List、导入关注、故障排查 |
+| [实例指南](./docs/instances-guide.md) | RSS vs HTML、重试与回退 |
+| [文档索引](./docs/README.md) | 全部 docs 入口 |
+| [CHANGELOG](./CHANGELOG.md) | 版本记录 |
+| [`_conf_schema.json`](./_conf_schema.json) | 配置真源 |
 
 ## 致谢
 
-- [`astrbot_plugin_parser`](https://github.com/Zhalslar/astrbot_plugin_parser)：参考了 Twitter/X 媒体解析、媒体下载与消息发送分层思路。
-- [Nitter](https://github.com/zedeus/nitter)：提供公开推文 RSS 访问方式。
-- [xdown.app](https://xdown.app/)：提供 Twitter/X 媒体解析接口。
-- [AstrBot](https://github.com/Soulter/AstrBot)、OneBot/aiocqhttp 生态：提供插件运行、消息组件与合并转发能力。
-- [PeeGayhub Telegram 表情包系列](https://t.me/addstickers/PeeGayhub)：插件图标借鉴了该系列表情包风格；图标素材由 GPT 生成。
+- [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
+- 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成
 
 ## 许可证
 
-本项目代码采用 MIT License，详见 [LICENSE](./LICENSE)。
+MIT，见 [LICENSE](./LICENSE)。
 
 ## 免责声明
 
-本插件仅用于访问和转发公开可见的 X/Twitter 推文 RSS 内容，不提供绕过平台访问控制、批量抓取非公开内容或规避第三方服务限制的能力。使用本插件时，请自行确认并遵守 X/Twitter、Nitter 实例、xdown.app 以及消息平台的服务条款、速率限制和内容使用规则。
+仅用于公开可见推文的获取与转发。请遵守 X/Twitter、Nitter 实例、xdown 与各消息平台的服务条款与速率限制。不提供绕过访问控制或抓取非公开内容的能力。

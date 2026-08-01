@@ -15,11 +15,11 @@ try:
         sync_import_config_groups,
     )
     from ..media_support.html_backend import normalize_watch_query
+    from ..scheduler import ScheduleGroup
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
     )
-    from ..scheduler import ScheduleGroup
 except ImportError:
     from config.subscriptions import (
         ensure_default_import_group,
@@ -29,11 +29,11 @@ except ImportError:
         sync_import_config_groups,
     )
     from media_support.html_backend import normalize_watch_query
+    from scheduler import ScheduleGroup
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         DEFAULT_GROUP_NAME,
     )
-    from scheduler import ScheduleGroup
 
 
 class SubscriptionCommandMixin:
@@ -728,9 +728,11 @@ class SubscriptionCommandMixin:
             if target_umo not in group.targets:
                 return (
                     None,
-                    "当前对话不属于分组："
-                    f"{self._check_group_label(group)}\n"
-                    f"当前对话: {target_umo}",
+                    (
+                        "当前对话不属于分组："
+                        f"{self._check_group_label(group)}\n"
+                        f"当前对话: {target_umo}"
+                    ),
                 )
             return group, ""
 
@@ -753,9 +755,11 @@ class SubscriptionCommandMixin:
 
         return (
             None,
-            "当前对话不在任何已启用推送分组的 push_targets 中，"
-            "不会执行 /推文检查。\n"
-            f"当前对话: {target_umo}",
+            (
+                "当前对话不在任何已启用推送分组的 push_targets 中，"
+                "不会执行 /推文检查。\n"
+                f"当前对话: {target_umo}"
+            ),
         )
 
     def _available_group_labels(self) -> list[str]:

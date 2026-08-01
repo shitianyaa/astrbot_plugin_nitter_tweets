@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """In-memory per-host success scores for mirror selection.
 
 Simple availability-first ordering: higher score first, failure penalizes hard.
@@ -97,10 +96,10 @@ class HostScoreBook:
 __all__ = [
     "DEFAULT_SCORE",
     "FAILURE_FACTOR",
-    "HostScoreBook",
     "MAX_SCORE",
     "MIN_SCORE",
     "SOFT_SUCCESS_DELTA",
     "SUCCESS_DELTA",
+    "HostScoreBook",
     "host_key",
 ]

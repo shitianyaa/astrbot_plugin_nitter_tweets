@@ -83,7 +83,7 @@
           <div class="title-block">
             <span class="kicker">PLUGIN CONSOLE</span>
             <h1 id="currentTabTitle">Nitter 推文控制台总览</h1>
-            <p id="currentTabDesc">聚合查看推送分组（博主/标签）、目标状态以及 Nitter 镜像诊断。</p>
+            <p id="currentTabDesc">聚合查看推送分组（博主/搜索订阅/List）、目标状态以及 Nitter 镜像诊断。</p>
           </div>
           <div class="topbar-actions">
             <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换亮色/暗色" aria-label="切换亮色/暗色" aria-pressed="false">
@@ -131,8 +131,8 @@
               <select id="historyGroupSelect"></select>
             </label>
             <label class="field compact">
-              <span>账号/查询</span>
-              <input id="historyUsername" type="text" placeholder="NASA 或 q:查询" />
+              <span>订阅源</span>
+              <input id="historyUsername" type="text" placeholder="NASA、q:查询或 list:ID" />
             </label>
             <label class="field compact">
               <span>数量</span>
@@ -165,7 +165,7 @@
             <form id="mirrorForm" class="panel form-panel">
               <h2>镜像测试</h2>
               <p class="helper-text">
-                不改配置、不写推送记录。按模式使用配置中的实例列表（已去重）；也可手填临时 URL。
+                 不改配置、不写推送记录。按模式使用配置中的实例列表（已去重）；URL 留空会按顺序测试全部实例，填写 URL 则只测这一站。
               </p>
               <div class="form-grid">
                 <label class="field">

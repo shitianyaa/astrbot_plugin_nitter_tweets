@@ -22,9 +22,10 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
-    from ..config import configured_merge_tweet_threshold
     from ..ai import format_ai_tweet_summary
+    from ..config import configured_merge_tweet_threshold
     from ..rendering import TweetMessageRenderer
+    from ..shared import format_subscription_source
     from ..shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
     from .config import ScheduleGroup
     from .formatting import _format_limited_values as scheduler_format_limited_values
@@ -35,10 +36,9 @@ try:
         ScheduledPushResult,
     )
 except ImportError:
-    from config import configured_merge_tweet_threshold
     from ai import format_ai_tweet_summary
+    from config import configured_merge_tweet_threshold
     from rendering import TweetMessageRenderer
-    from shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
     from scheduler.config import ScheduleGroup
     from scheduler.formatting import (
         _format_limited_values as scheduler_format_limited_values,
@@ -49,6 +49,8 @@ except ImportError:
         ScheduledCheckResult,
         ScheduledPushResult,
     )
+    from shared import format_subscription_source
+    from shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
 
 
 class SchedulerSendMixin:
@@ -169,7 +171,7 @@ class SchedulerSendMixin:
             except Exception as exc:
                 logger.warning(
                     "[NitterTweets] 批量媒体清理失败，继续清理其余批次: "
-                    f"user=@{batch.username}, error={exc}"
+                    f"source={format_subscription_source(batch.username)}, error={exc}"
                 )
 
     async def _send_per_user_updates(
@@ -276,7 +278,8 @@ class SchedulerSendMixin:
                         result.delivery_warnings.append(outcome.warning)
                 except Exception as exc:
                     logger.warning(
-                        f"[NitterTweets] 定时推送失败: username={batch.username}, "
+                        "[NitterTweets] 定时推送失败: "
+                        f"source={format_subscription_source(batch.username, result.group_type)}, "
                         f"target={umo}, error={exc}"
                     )
                 if target_index < len(targets) - 1 and target_interval > 0:
@@ -297,7 +300,8 @@ class SchedulerSendMixin:
                 progress_text = ""
             self._log_verbose_info(
                 f"[NitterTweets] 推送完成{progress_text}: "
-                f"username={batch.username}, tweets={len(batch.tweets)}, "
+                f"source={format_subscription_source(batch.username, result.group_type)}, "
+                f"tweets={len(batch.tweets)}, "
                 f"targets={success}/{len(targets)}"
             )
             if batch_index < len(batches) - 1 and user_interval > 0:
@@ -413,7 +417,7 @@ class SchedulerSendMixin:
             except Exception as exc:
                 logger.warning(
                     "[NitterTweets] 记录推送历史失败: "
-                    f"group={group_id}, username={batch.username}, "
+                    f"group={group_id}, source={format_subscription_source(batch.username)}, "
                     f"status={tweet.status_id}, target={target_umo}, error={exc}"
                 )
 
@@ -713,6 +717,7 @@ class SchedulerSendMixin:
         batches: list[PendingTweetBatch],
         group_label: str,
         action_text: str,
+        group_type: str = "blogger",
     ) -> str:
         if not batches:
             return ""
@@ -720,22 +725,21 @@ class SchedulerSendMixin:
             SchedulerSendMixin._tweet_batches(batches),
             group_label=group_label,
             action_text=action_text,
+            group_type=group_type,
         )
 
     @staticmethod
     def _append_fetch_failure_summary(
         summary: str,
         failed_users: dict[str, str],
+        group_type: str = "blogger",
     ) -> str:
         if not failed_users:
             return summary
         failed_items = []
         for user, error in failed_users.items():
-            label = str(user)
-            if label.startswith("q:"):
-                failed_items.append(f"{label}: {error}")
-            else:
-                failed_items.append(f"@{label}: {error}")
+            label = format_subscription_source(user, group_type)
+            failed_items.append(f"{label}: {error}")
         failure_summary = "抓取失败：" + scheduler_format_limited_values(
             failed_items,
             limit=5,

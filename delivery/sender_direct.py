@@ -18,14 +18,14 @@ except ImportError:
     from astrbot.core.message.components import Plain
 
 try:
+    from ..rendering import TweetBatch
     from ..shared import TweetItem
     from .default import DefaultDeliveryAdapter
     from .outcomes import MergedSendOutcome, SendOutcome
-    from ..rendering import TweetBatch
 except ImportError:
-    from shared import TweetItem
     from delivery import DefaultDeliveryAdapter, MergedSendOutcome, SendOutcome
     from rendering import TweetBatch
+    from shared import TweetItem
 
 
 class SenderDirectMixin:

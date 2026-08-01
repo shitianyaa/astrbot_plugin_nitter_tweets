@@ -6,6 +6,7 @@
 
 - `docs/README.md`: 总索引和阅读路径。
 - `docs/advanced.md`: 用户侧进阶说明、平台差异、完整配置参考。
+- `docs/twitter-lists.md`: List 分组配置、调度、镜像测试和故障排查。
 - `docs/project/overview.md`: 插件定位、能力边界、入口。
 - `docs/project/architecture.md`: 模块关系、数据流、发送链路、存储边界。
 - `docs/project/configuration.md`: 配置字段来源、迁移规则、同步要求。
@@ -22,11 +23,10 @@
 
 ### 快速理解插件
 
-1. `docs/project/overview.md`
-2. `docs/project/architecture.md`
-3. `docs/project/platform-delivery.md`
-4. `README.md`
-5. `docs/advanced.md`
+1. 根目录 `README.md`（上手与定位，宜先读）
+2. `docs/advanced.md`（行为边界与全配置）
+3. 按需：`docs/twitter-lists.md`、`docs/instances-guide.md`
+4. 开发向：`docs/project/overview.md` → `architecture.md` → `platform-delivery.md`
 
 ### 参与开发
 

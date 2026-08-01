@@ -35,9 +35,17 @@ class _HtmlBackend:
             q: list(items) for q, items in responses_by_query.items()
         }
         self.calls: list[tuple[str, int, str | None]] = []
+        self.filter_reposts_calls: list[bool | None] = []
 
-    def search(self, query: str, limit: int = 5, kind: str | None = None):
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        kind: str | None = None,
+        filter_reposts: bool | None = None,
+    ):
         self.calls.append((query, limit, kind))
+        self.filter_reposts_calls.append(filter_reposts)
         queue = self.responses_by_query.setdefault(query, [("", [])])
         if len(queue) > 1:
             item = queue.pop(0)
@@ -50,10 +58,30 @@ class _HtmlBackend:
 class _StatsHtmlBackend(_HtmlBackend):
     """Preserve HTML pool RT/row counters for scheduler regression tests."""
 
-    def search(self, query: str, limit: int = 5, kind: str | None = None):
-        instance, tweets = super().search(query, limit=10_000, kind=kind)
-        retweets = [tweet for tweet in tweets if getattr(tweet, "is_retweet", False)]
-        kept = [tweet for tweet in tweets if not getattr(tweet, "is_retweet", False)]
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        kind: str | None = None,
+        filter_reposts: bool | None = None,
+    ):
+        instance, tweets = super().search(
+            query,
+            limit=10_000,
+            kind=kind,
+            filter_reposts=filter_reposts,
+        )
+        use_filter_reposts = True if filter_reposts is None else filter_reposts
+        retweets = (
+            [tweet for tweet in tweets if getattr(tweet, "is_retweet", False)]
+            if use_filter_reposts
+            else []
+        )
+        kept = (
+            [tweet for tweet in tweets if not getattr(tweet, "is_retweet", False)]
+            if use_filter_reposts
+            else list(tweets)
+        )
         return instance, HtmlSearchResult(
             kept[:limit],
             raw_item_count=len(tweets),
@@ -154,6 +182,7 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(html.calls), 1)
         self.assertEqual(html.calls[0][0], query)
         self.assertEqual(html.calls[0][2], "tag")
+        self.assertEqual(html.filter_reposts_calls, [True])
         seen = await scheduler.storage.get_seen_ids("tags1", key)
         self.assertIn("100", seen)
         self.assertIn("99", seen)
@@ -280,6 +309,31 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watermark_after_first, {key: []})
         self.assertEqual(second.new_tweet_count, 1)
         self.assertEqual(sender.sent[-1][3], ["101"])
+
+    async def test_tag_group_can_disable_repost_filter(self):
+        query = "#foo"
+        key = self._account_key(query)
+        retweet = self._make_tweet("100", author="other")
+        retweet.is_retweet = True
+        html = _StatsHtmlBackend({query: [("https://search.test", [retweet])]})
+        config = self._tag_config(query)
+        config["tweet_groups"][0]["filter_reposts_enabled"] = False
+        scheduler = self._create_scheduler(config, html_backend=html)
+        group = scheduler._schedule_groups(log_invalid_targets=False)[0]
+
+        result = await scheduler._fetch_group_user(
+            group,
+            0,
+            key,
+            20,
+            False,
+            None,
+            concurrent=False,
+        )
+
+        self.assertEqual(html.filter_reposts_calls, [False])
+        self.assertEqual([tweet.status_id for tweet in result.tweets], ["100"])
+        self.assertEqual(result.retweet_filtered, 0)
 
     async def test_tag_filtered_first_scan_uses_empty_watermark_then_pushes(self):
         query = "#foo"

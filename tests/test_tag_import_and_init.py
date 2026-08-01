@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from config.subscriptions import set_import_group_queries
+from media_support.html_backend import normalize_watch_query
 from scheduler.config import GROUP_TYPE_TAG, SchedulerConfigReader
 from scheduler.runner import NitterTweetScheduler
-from media_support.html_backend import normalize_watch_query
-from config.subscriptions import set_import_group_queries
 from shared.utils import TweetItem, TweetMedia
 
 

@@ -8,7 +8,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-
 astrbot_module = sys.modules.get("astrbot", types.ModuleType("astrbot"))
 astrbot_api_module = sys.modules.get("astrbot.api", types.ModuleType("astrbot.api"))
 astrbot_api_all_module = sys.modules.get(
@@ -174,15 +173,17 @@ if "rendering.tweets" in sys.modules:
     tweet_rendering_module.Nodes = _Nodes
 
 
-import scheduler as scheduler_module  # noqa: E402
 import delivery.telegram as telegram_delivery_module  # noqa: E402
-from scheduler import NitterTweetScheduler  # noqa: E402
+import scheduler as scheduler_module  # noqa: E402
 from delivery import DefaultDeliveryAdapter, TweetSender  # noqa: E402
 from delivery.outcomes import SendAttempt, SendOutcome  # noqa: E402
-from storage import SQLiteStorage  # noqa: E402
-from storage import StorageAdapter  # noqa: E402
 from rendering import TweetMessageRenderer  # noqa: E402
+from scheduler import NitterTweetScheduler  # noqa: E402
 from shared import TweetItem, TweetMedia  # noqa: E402
+from storage import (  # noqa: E402
+    SQLiteStorage,
+    StorageAdapter,
+)
 
 
 class _Owner:
@@ -192,6 +193,7 @@ class _Owner:
 
 class _Nitter:
     def __init__(self):
+        self.filter_reposts_calls = []
         self.tweets = [
             TweetItem(
                 text="old",
@@ -205,10 +207,24 @@ class _Nitter:
             ),
         ]
 
-    async def fetch_tweets(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         return "https://nitter.test", self.tweets[:limit]
 
-    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets_with_stats(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         return "https://nitter.test", self.tweets[:limit], 0
 
 
@@ -217,12 +233,27 @@ class _MultiUserNitter:
         self.tweets_by_user = tweets_by_user
         self.events = events if events is not None else []
         self.concurrent_calls = []
+        self.filter_reposts_calls = []
 
-    async def fetch_tweets(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
 
-    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets_with_stats(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.events.append(f"fetch:{username}")
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
@@ -234,7 +265,9 @@ class _MultiUserNitter:
         start_index=0,
         skip_plain_text=False,
         retry_attempts=3,
+        filter_reposts=None,
     ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.concurrent_calls.append(
             (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
         )
@@ -254,11 +287,17 @@ class _SchedulerNitter:
             username: list(scans) for username, scans in scans_by_user.items()
         }
         self.calls = []
+        self.filter_reposts_calls = []
 
     async def fetch_tweets_for_scheduler(
-        self, username, watermark, skip_plain_text=False
+        self,
+        username,
+        watermark,
+        skip_plain_text=False,
+        filter_reposts=None,
     ):
         del skip_plain_text
+        self.filter_reposts_calls.append(filter_reposts)
         self.calls.append((username, watermark))
         scans = self.scans_by_user[username]
         scan = scans.pop(0) if len(scans) > 1 else scans[0]
@@ -285,13 +324,27 @@ class _PartiallyFailingNitter(_MultiUserNitter):
         super().__init__(tweets_by_user, events=events)
         self.failures_by_user = failures_by_user
 
-    async def fetch_tweets(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.events.append(f"fetch:{username}")
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit]
 
-    async def fetch_tweets_with_stats(self, username, limit, skip_plain_text=False):
+    async def fetch_tweets_with_stats(
+        self,
+        username,
+        limit,
+        skip_plain_text=False,
+        filter_reposts=None,
+    ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.events.append(f"fetch:{username}")
         if username in self.failures_by_user:
             raise RuntimeError(self.failures_by_user[username])
@@ -315,7 +368,9 @@ class _ConcurrentNitter(_MultiUserNitter):
         start_index=0,
         skip_plain_text=False,
         retry_attempts=3,
+        filter_reposts=None,
     ):
+        self.filter_reposts_calls.append(filter_reposts)
         self.concurrent_calls.append(
             (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
         )
@@ -849,6 +904,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         media=None,
         sender=None,
         translator=None,
+        html_backend=None,
     ):
         scheduler = NitterTweetScheduler(
             _Owner(),
@@ -858,6 +914,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             media=media or _Media(),
             sender=sender or _Sender(),
             translator=translator or _Translator(),
+            html_backend=html_backend,
         )
         self.schedulers.append(scheduler)
         return scheduler
@@ -868,6 +925,100 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             link=f"https://x.com/{username}/status/{status_id}",
             published="",
         )
+
+    async def test_blogger_repost_filter_override_reaches_serial_and_concurrent_fetch(
+        self,
+    ):
+        class HtmlBackend:
+            def __init__(self):
+                self.filter_reposts_calls = []
+
+            def fetch_user(
+                self,
+                username,
+                limit,
+                *,
+                filter_reposts=None,
+            ):
+                self.filter_reposts_calls.append(filter_reposts)
+                return (
+                    "https://html.test",
+                    [
+                        TweetItem(
+                            text="tweet 100",
+                            link=f"https://x.com/{username}/status/100",
+                            published="",
+                        )
+                    ][:limit],
+                )
+
+        config = {
+            "filter_reposts_enabled": True,
+            "user_html_fallback": True,
+            "tweet_groups": [
+                {
+                    "name": "博主",
+                    "group_id": "bloggers1",
+                    "group_type": "blogger",
+                    "watch_users": ["NASA"],
+                    "push_targets": [],
+                    "filter_reposts_enabled": False,
+                }
+            ],
+        }
+        serial_nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [],
+                        "scanned_status_ids": [],
+                    }
+                ]
+            }
+        )
+        html_backend = HtmlBackend()
+        serial_scheduler = self._create_scheduler(
+            config,
+            nitter=serial_nitter,
+            html_backend=html_backend,
+        )
+        group = serial_scheduler._schedule_groups(log_invalid_targets=False)[0]
+
+        await serial_scheduler._fetch_group_user(
+            group,
+            0,
+            "NASA",
+            20,
+            False,
+            None,
+            concurrent=False,
+        )
+
+        concurrent_nitter = _MultiUserNitter(
+            {"NASA": [self._make_tweet("NASA", "100")]}
+        )
+        concurrent_scheduler = self._create_scheduler(
+            config,
+            nitter=concurrent_nitter,
+        )
+        concurrent_group = concurrent_scheduler._schedule_groups(
+            log_invalid_targets=False
+        )[0]
+        concurrent_group.concurrent_fetch_instances = ["https://nitter.test"]
+
+        await concurrent_scheduler._fetch_group_user(
+            concurrent_group,
+            0,
+            "NASA",
+            20,
+            False,
+            None,
+            concurrent=True,
+        )
+
+        self.assertEqual(serial_nitter.filter_reposts_calls, [False])
+        self.assertEqual(html_backend.filter_reposts_calls, [False])
+        self.assertEqual(concurrent_nitter.filter_reposts_calls, [False])
 
     def test_all_targets_delivered_rejects_empty_target_list(self):
         batch = scheduler_module.PendingTweetBatch(

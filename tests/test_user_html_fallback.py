@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Test user_html_fallback: RSS failure → HTML blogger fallback."""
 
 from __future__ import annotations
@@ -66,7 +65,7 @@ def test_fetch_user_attempts_pool_when_enabled():
 
     service.blogger_html._fetch_user_once = mock_fetch
 
-    base, tweets = service.fetch_user("testuser", limit=5)
+    base, _tweets = service.fetch_user("testuser", limit=5)
     assert call_count == 1  # Pool was used
     assert base == "https://a.example"
 

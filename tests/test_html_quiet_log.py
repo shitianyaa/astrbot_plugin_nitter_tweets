@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """QuietHtmlLog filters HTML backend chatter under brief_log_enabled."""
 
 from __future__ import annotations

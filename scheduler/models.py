@@ -4,13 +4,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 try:
-    from ..shared import TweetItem
+    from ..shared import (
+        TweetItem,
+        format_subscription_count,
+        format_subscription_source,
+    )
     from ..shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from .formatting import _format_limited_values
 except ImportError:
-    from shared import TweetItem
-    from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from scheduler.formatting import _format_limited_values
+    from shared import TweetItem, format_subscription_count, format_subscription_source
+    from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
 
 if TYPE_CHECKING:
     # 只用于注解。运行时不导入，避免 scheduler.models 反向拉起 ai（ai → config，
@@ -69,11 +73,11 @@ class ScheduledCheckResult:
     reason: str
     group_id: str = GLOBAL_GROUP_ID
     group_name: str = DEFAULT_GROUP_NAME
+    group_type: str = "blogger"
     users: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     invalid_targets: list[str] = field(default_factory=list)
     available_groups: list[str] = field(default_factory=list)
-    seen_users: int = 0
     # Fixed RSS first-page size used by the background scanner.
     fetch_limit: int = 0
     skipped_reason: str = ""
@@ -146,8 +150,8 @@ class ScheduledCheckResult:
         if self.skipped_reason:
             return (
                 "[NitterTweets] 定时检查已跳过: "
-                f"group={self.group_id}, reason={self.skipped_reason}, "
-                f"users={len(self.users)}, "
+                f"group={self.group_id}, type={self.group_type}, "
+                f"reason={self.skipped_reason}, sources={len(self.users)}, "
                 f"targets={len(self.targets)}, invalid_targets={len(self.invalid_targets)}"
             )
 
@@ -167,8 +171,8 @@ class ScheduledCheckResult:
         )
         return (
             "[NitterTweets] 定时检查完成: "
-            f"group={self.group_id}, reason={self.reason}, "
-            f"users={len(self.users)}, targets={len(self.targets)}, "
+            f"group={self.group_id}, type={self.group_type}, reason={self.reason}, "
+            f"sources={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
@@ -186,19 +190,20 @@ class ScheduledCheckResult:
             return [self.format_log_summary()]
 
         lines = [
-            "[NitterTweets] 推送结果: "
-            f"group={self.group_name}({self.group_id}), "
-            f"reason={self.reason}, "
-            f"mode={self.push_mode}, "
-            f"checked={self.checked_user_count}, "
-            f"new={self.new_tweet_count}, "
-            f"push_success={self.pushed_target_successes}/"
-            f"{self.pushed_target_attempts}, "
-            f"failed={len(self.failed_users)}, "
-            f"baseline_rebuilt={len(self.baseline_rebuilt_users)}, "
-            f"baseline_rebuild_failed={len(self.baseline_rebuild_failed_users)}, "
-            f"invalid_targets={len(self.invalid_targets)}, "
-            f"warnings={len(self.delivery_warnings)}"
+            (
+                "[NitterTweets] 推送结果: "
+                f"group={self.group_name}({self.group_id}), "
+                f"type={self.group_type}, "
+                f"reason={self.reason}, "
+                f"mode={self.push_mode}, "
+                f"checked={self.checked_user_count}, "
+                f"new={self.new_tweet_count}, "
+                f"push_success={self.pushed_target_successes}/"
+                f"{self.pushed_target_attempts}, "
+                f"failed={len(self.failed_users)}, "
+                f"invalid_targets={len(self.invalid_targets)}, "
+                f"warnings={len(self.delivery_warnings)}"
+            )
         ]
         if self.plain_text_filtered:
             lines[0] += f", filtered={self.plain_text_filtered}"
@@ -255,12 +260,18 @@ class ScheduledCheckResult:
             )
         return lines
 
-    @staticmethod
-    def _failure_label(user: str) -> str:
-        user = str(user or "").strip()
-        if user.startswith("@") or user.startswith("q:"):
-            return user
-        return f"@{user}"
+    def _failure_label(self, user: str) -> str:
+        source = str(user or "").strip()
+        status_suffix = ""
+        known_sources = {str(item or "").strip() for item in self.users}
+        if source not in known_sources and ":" in source:
+            candidate_source, candidate_suffix = source.rsplit(":", 1)
+            if candidate_source in known_sources and (
+                candidate_suffix.isdigit() or candidate_suffix.startswith("index-")
+            ):
+                source = candidate_source
+                status_suffix = f"（推文 {candidate_suffix}）"
+        return format_subscription_source(source, self.group_type) + status_suffix
 
     @staticmethod
     def _subscription_label(user: str) -> str:
@@ -274,9 +285,8 @@ class ScheduledCheckResult:
             title,
             f"分组: {self.group_name} ({self.group_id})",
             f"触发原因: {self.reason}",
-            f"订阅数量: {len(self.users)} 个",
+            f"订阅数量: {format_subscription_count(len(self.users), self.group_type)}",
             f"推送目标: {len(self.targets)} 个",
-            f"已记录索引: {self.seen_users} 个",
         ]
         if self.fetch_limit:
             lines.append(f"后台首屏扫描: {self.fetch_limit} 条")
@@ -292,6 +302,7 @@ class ScheduledCheckResult:
                 "no_watch_lists": "未配置 watch_lists",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
+                "storage_not_ready": "调度存储尚未就绪",
                 "unknown_group": "未找到指定分组",
             }.get(self.skipped_reason, self.skipped_reason)
             lines.append(f"检查跳过: {reason_text}")
@@ -302,7 +313,7 @@ class ScheduledCheckResult:
 
         if self.initialized_users:
             items = [
-                f"@{username}({count} 条)"
+                f"{format_subscription_source(username, self.group_type)}({count} 条)"
                 for username, count in self.initialized_users.items()
             ]
             lines.append("首次记录: " + _format_limited_values(items))
@@ -328,11 +339,16 @@ class ScheduledCheckResult:
             )
 
         if self.pushes and self.push_mode == "merged":
-            items = [f"@{item.username} {item.new_count} 条" for item in self.pushes]
+            items = [
+                f"{format_subscription_source(item.username, self.group_type)} "
+                f"{item.new_count} 条"
+                for item in self.pushes
+            ]
             lines.append("新推文: " + _format_limited_values(items, separator="; "))
         elif self.pushes:
             items = [
-                f"@{item.username} {item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
+                f"{format_subscription_source(item.username, self.group_type)} "
+                f"{item.new_count} 条，推送 {item.success_targets}/{item.total_targets}"
                 for item in self.pushes
             ]
             lines.append("新推文: " + _format_limited_values(items, separator="; "))
@@ -346,17 +362,30 @@ class ScheduledCheckResult:
         if self.no_new_users:
             lines.append(
                 "无新推文: "
-                + _format_limited_values([f"@{user}" for user in self.no_new_users])
+                + _format_limited_values(
+                    [
+                        format_subscription_source(user, self.group_type)
+                        for user in self.no_new_users
+                    ]
+                )
             )
 
         if self.empty_users:
             lines.append(
-                "RSS 无有效推文 ID: "
-                + _format_limited_values([f"@{user}" for user in self.empty_users])
+                "订阅源无有效推文 ID: "
+                + _format_limited_values(
+                    [
+                        format_subscription_source(user, self.group_type)
+                        for user in self.empty_users
+                    ]
+                )
             )
 
         if self.failed_users:
-            items = [f"@{user}: {error}" for user, error in self.failed_users.items()]
+            items = [
+                f"{self._failure_label(user)}: {error}"
+                for user, error in self.failed_users.items()
+            ]
             lines.append("失败: " + _format_limited_values(items, separator="; "))
 
         if self.invalid_targets:
@@ -376,7 +405,7 @@ class SchedulerTaskError:
     kind: str = ""
 
     @classmethod
-    def from_exception(cls, exc: Exception) -> "SchedulerTaskError":
+    def from_exception(cls, exc: Exception) -> SchedulerTaskError:
         return cls(message=str(exc), kind=type(exc).__name__)
 
 

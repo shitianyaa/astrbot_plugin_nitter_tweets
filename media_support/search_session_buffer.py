@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """In-memory session buffer for manual /推文搜索 freshness.
 
 Keys by session id (UMO preferred) + normalized query. Each fetch stores the

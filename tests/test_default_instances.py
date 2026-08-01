@@ -1,14 +1,16 @@
-# -*- coding: utf-8 -*-
 """Shipped defaults: RSS=net, search=tie+poast+kareem; no blogger HTML list."""
 
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 from command_handlers.manual import ManualCommandMixin
+from config.compat import migrate_legacy_grouped_config
+from main import NitterTweetsPlugin
 from media_support.client import NitterClient
 from media_support.html_backend.service import (
     DEFAULT_HTML_INSTANCES,
@@ -16,9 +18,7 @@ from media_support.html_backend.service import (
     DEFAULT_TIEKOETTER,
     HtmlBackendConfig,
 )
-from main import NitterTweetsPlugin
 from shared.utils import DEFAULT_INSTANCES
-from config.compat import migrate_legacy_grouped_config
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +53,13 @@ def test_schema_no_blogger_html_instances_key():
         "https://nitter.kareem.one",
     ]
     assert basic["user_html_fallback"]["default"] is False
+    assert basic["filter_reposts_enabled"]["default"] is True
+    assert basic["filter_reposts_enabled"]["description"] == "转发过滤总开关"
+    templates = schema["push"]["items"]["tweet_groups"]["templates"]
+    for template_key in ("blogger", "tag", "list"):
+        group_filter = templates[template_key]["items"]["filter_reposts_enabled"]
+        assert group_filter["default"] is True
+        assert group_filter["description"] == "过滤转发"
     # user_html_fallback is now visible (invisible removed) for user choice
     joined = " ".join(basic["search_instances"]["default"])
     assert "poast" in joined and "kareem" in joined and "tiekoetter" in joined
@@ -116,7 +123,7 @@ def test_rss_client_and_manual_fallback_parse_string_false_values():
     assert client.brief_log_enabled is False
 
     class Host(ManualCommandMixin):
-        config = {"user_html_fallback": "false"}
+        config: ClassVar[dict] = {"user_html_fallback": "false"}
         html_backend = SimpleNamespace(
             fetch_user=lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("disabled fallback must not fetch")

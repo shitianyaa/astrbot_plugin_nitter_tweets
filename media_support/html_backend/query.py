@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Search query normalize + kind (locked CF rules)."""
 
 from __future__ import annotations

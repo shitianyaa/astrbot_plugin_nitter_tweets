@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """OneBot merged-forward retcode 1200 → split retry."""
 
 from __future__ import annotations

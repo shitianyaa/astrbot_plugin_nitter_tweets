@@ -23,8 +23,8 @@ try:
     from ..shared import TweetItem
     from .outcomes import SendOutcome
 except ImportError:
-    from shared import TweetItem
     from delivery import SendOutcome
+    from shared import TweetItem
 
 
 class SenderForwardMixin:
@@ -187,13 +187,13 @@ class SenderForwardMixin:
                 for offset, part in enumerate(parts):
                     part_delivered = 0
 
-                    def record_part_delivered(count: int) -> None:
+                    def record_part_delivered(count: int, _part: list = part) -> None:
                         nonlocal part_delivered
                         try:
                             delivered = max(0, int(count))
                         except (TypeError, ValueError, OverflowError):
                             return
-                        delivered = min(len(part) - part_delivered, delivered)
+                        delivered = min(len(_part) - part_delivered, delivered)
                         if delivered <= 0:
                             return
                         part_delivered += delivered
