@@ -818,13 +818,18 @@ class NitterTweetScheduler(
                             current_seen = seen_map.get(username)
                             if not isinstance(current_seen, list):
                                 current_seen = []
-                            await self._set_scan_watermark(
-                                group.group_id, username, baseline_ids
-                            )
-                            seen_map[username] = self._merge_seen_ids(
+                            updated_seen_ids = self._merge_seen_ids(
                                 baseline_ids, current_seen
                             )
-                            await self._put_seen_map(group.group_id, seen_map)
+                            updated_seen_map = dict(seen_map)
+                            updated_seen_map[username] = updated_seen_ids
+                            await self._put_seen_map_and_scan_watermark(
+                                group.group_id,
+                                username,
+                                updated_seen_map,
+                                baseline_ids,
+                            )
+                            seen_map[username] = updated_seen_ids
                         except Exception as exc:
                             reason = f"写入新基线失败: {exc}"
                             result.baseline_rebuild_failed_users[username] = reason

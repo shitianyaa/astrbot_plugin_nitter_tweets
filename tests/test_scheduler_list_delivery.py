@@ -296,7 +296,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result.baseline_rebuild_failed_users.get(key),
-            "未解析到有效第一页状态 ID，保留旧基线",
+            "未解析到有效第一页状态 ID，保留旧基线",  # noqa: RUF001
         )
         self.assertEqual(before, after)
         self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))
@@ -342,17 +342,21 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         key = "list:12345"
 
         await scheduler.run_check(reason="list_seed", group_name="lists1")
-        original_set_watermark = scheduler._set_scan_watermark
+        original_set_watermark = SQLiteStorage._set_scan_watermark_unlocked
 
-        async def fail_new_watermark(group_id, username, status_ids):
+        def fail_new_watermark(storage, group_id, username, status_ids):
             if status_ids == ["101"]:
                 raise RuntimeError("watermark unavailable")
-            await original_set_watermark(group_id, username, status_ids)
+            original_set_watermark(storage, group_id, username, status_ids)
 
-        scheduler._set_scan_watermark = fail_new_watermark
-        result = await scheduler.run_check(
-            reason="list_write_failure", group_name="lists1"
-        )
+        with patch.object(
+            SQLiteStorage,
+            "_set_scan_watermark_unlocked",
+            fail_new_watermark,
+        ):
+            result = await scheduler.run_check(
+                reason="list_write_failure", group_name="lists1"
+            )
 
         self.assertIn(key, result.baseline_rebuild_failed_users)
         self.assertNotIn(key, result.baseline_rebuilt_users)
@@ -361,4 +365,53 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             await scheduler.storage.get_group_scan_watermarks("lists1"),
             {key: ["100"]},
         )
-        self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("lists1", key),
+            ["100"],
+        )
+
+    async def test_baseline_seen_write_failure_rolls_back_watermark(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet("101")],
+                        anchor_status_ids=["101"],
+                        scan_complete=False,
+                    ),
+                ),
+            ]
+        )
+        scheduler = self._create_scheduler(backend)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        original_add_seen = SQLiteStorage._add_seen_ids_unlocked
+
+        def fail_new_seen(storage, group_id, username, status_ids):
+            if "101" in status_ids:
+                raise RuntimeError("seen unavailable")
+            original_add_seen(storage, group_id, username, status_ids)
+
+        with patch.object(
+            SQLiteStorage,
+            "_add_seen_ids_unlocked",
+            fail_new_seen,
+        ):
+            result = await scheduler.run_check(
+                reason="list_seen_write_failure", group_name="lists1"
+            )
+
+        self.assertIn(key, result.baseline_rebuild_failed_users)
+        self.assertNotIn(key, result.baseline_rebuilt_users)
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("lists1"),
+            {key: ["100"]},
+        )
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("lists1", key),
+            ["100"],
+        )

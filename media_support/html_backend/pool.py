@@ -64,19 +64,19 @@ class HtmlSearchResult(list[TweetItem]):
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
         self.scan_complete = bool(scan_complete)
-        if anchor_status_ids is None:
-            self.anchor_status_ids = None
-        else:
-            normalized_ids = []
-            for status_id in (
-                [anchor_status_ids]
-                if isinstance(anchor_status_ids, str)
-                else anchor_status_ids
-            ):
-                value = str(status_id or "").strip()
-                if value and value not in normalized_ids:
-                    normalized_ids.append(value)
-            self.anchor_status_ids = normalized_ids[:20]
+        source_ids = (
+            [getattr(tweet, "status_id", "") for tweet in self]
+            if anchor_status_ids is None
+            else [anchor_status_ids]
+            if isinstance(anchor_status_ids, str)
+            else anchor_status_ids
+        )
+        normalized_ids = []
+        for status_id in source_ids:
+            value = str(status_id or "").strip()
+            if value and value not in normalized_ids:
+                normalized_ids.append(value)
+        self.anchor_status_ids = normalized_ids[:20]
 
     def limited(self, limit: int) -> HtmlSearchResult:
         """Return a bounded result while retaining parser statistics."""
@@ -507,7 +507,7 @@ class HtmlNitterPool:
         instance: str | None = None,
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+    ) -> tuple[str, HtmlSearchResult]:
         """Fetch Twitter List timeline with global retry."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
@@ -564,7 +564,7 @@ class HtmlNitterPool:
         instance: str | None = None,
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+    ) -> tuple[str, HtmlSearchResult]:
         """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
         list_id_str = str(list_id).strip()
         if not list_id_str:
@@ -646,9 +646,7 @@ class HtmlNitterPool:
     ) -> HtmlSearchResult:
         """Paginate Twitter List timeline (same HTML structure as user timeline)."""
         initial_scan = anchor_ids is None
-        normalized_anchor_ids = (
-            [anchor_ids] if isinstance(anchor_ids, str) else (anchor_ids or [])
-        )
+        normalized_anchor_ids = anchor_ids or []
         boundary_ids = {
             str(status_id).strip()
             for status_id in normalized_anchor_ids

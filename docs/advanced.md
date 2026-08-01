@@ -329,7 +329,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
   → HTML 搜索（组内串行，订阅源间按 send_user_interval 等待；默认 html_max_pages=1）
   → Tag：最多取 fetch_limit=20；List 首轮最多取 20 条建立基线
   → 已初始化 List：本轮扫描可超过 20 条，继续翻页到命中旧水位或游标结束
-  → List 达到 html_max_pages 仍有后续游标：用第一页状态 ID 自动重建基线，本轮不发送，旧积压可能被跳过
+  → 已初始化且第一页有有效状态 ID 的 List 达到 html_max_pages 仍有后续游标：自动重建基线，本轮不发送，旧积压可能被跳过；否则保留旧基线，未初始化 List 按分页失败跳过
   → 按全局与分组双层开关过滤转发
   → 可选：纯文本过滤 / 仅媒体
   → 与 seen（q:... 或 list:...）差集 → 只要新推文

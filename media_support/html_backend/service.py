@@ -15,14 +15,18 @@ try:
     from ..host_score import HostScoreBook
     from .http_session import DEFAULT_UA, HttpSession
     from .logging_util import QuietHtmlLog
-    from .pool import HtmlNitterPool, PoolConfig
+    from .pool import HtmlNitterPool, HtmlSearchResult, PoolConfig
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
     from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import DEFAULT_UA, HttpSession
     from media_support.html_backend.logging_util import QuietHtmlLog
-    from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
+    from media_support.html_backend.pool import (
+        HtmlNitterPool,
+        HtmlSearchResult,
+        PoolConfig,
+    )
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
 
@@ -177,7 +181,7 @@ class HtmlNitterService:
         instance: str | None = None,
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+    ) -> tuple[str, HtmlSearchResult]:
         """Fetch Twitter List timeline (shares search pool)."""
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
