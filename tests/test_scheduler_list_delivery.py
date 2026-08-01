@@ -357,3 +357,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(key, result.baseline_rebuild_failed_users)
         self.assertNotIn(key, result.baseline_rebuilt_users)
         self.assertNotIn(key, result.failed_users)
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("lists1"),
+            {key: ["100"]},
+        )
