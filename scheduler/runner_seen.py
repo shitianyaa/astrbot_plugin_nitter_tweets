@@ -99,9 +99,10 @@ class SchedulerSeenMixin:
             return
 
         # Keep lightweight/legacy storage adapters usable until they expose
-        # the SQLite transaction-backed operation.
-        await self._set_scan_watermark(group_id, username, status_ids)
+        # the SQLite transaction-backed operation. Match the atomic writer's
+        # ordering so a failed watermark write cannot run ahead of seen data.
         await self._put_seen_map(group_id, seen_map)
+        await self._set_scan_watermark(group_id, username, status_ids)
 
     def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
         return self.storage.merge_seen_ids(new_ids, old_ids)

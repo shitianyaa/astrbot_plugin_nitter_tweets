@@ -18,6 +18,7 @@ if str(_TESTS_DIR) not in sys.path:
 import test_scheduler_delivery as base  # noqa: E402
 
 from media_support.html_backend.pool import HtmlSearchResult  # noqa: E402
+from scheduler.runner_seen import SchedulerSeenMixin  # noqa: E402
 from shared.utils import TweetItem  # noqa: E402
 from storage import SQLiteStorage, StorageAdapter  # noqa: E402
 
@@ -64,6 +65,27 @@ class _HostSkipNitter(base._Nitter):
         self.host_skip_calls.append("end")
 
 
+class _LegacySeenStorage:
+    def __init__(self, *, fail_seen: bool = False):
+        self.calls = []
+        self.fail_seen = fail_seen
+
+    async def put_group_seen_map(self, group_id, seen_map):
+        del group_id, seen_map
+        self.calls.append("seen")
+        if self.fail_seen:
+            raise RuntimeError("seen unavailable")
+
+    async def set_scan_watermark(self, group_id, username, status_ids):
+        del group_id, username, status_ids
+        self.calls.append("watermark")
+
+
+class _SeenWriterHarness(SchedulerSeenMixin):
+    def __init__(self, storage):
+        self.storage = storage
+
+
 class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp_dir = TemporaryDirectory()
@@ -89,6 +111,30 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             link=f"https://x.com/member/status/{status_id}",
             published="",
         )
+
+    async def test_legacy_baseline_writer_orders_seen_before_watermark(self):
+        storage = _LegacySeenStorage()
+        writer = _SeenWriterHarness(storage)
+
+        await writer._put_seen_map_and_scan_watermark(
+            "lists1",
+            "list:12345",
+            {"list:12345": ["101"]},
+            ["101"],
+        )
+
+        self.assertEqual(storage.calls, ["seen", "watermark"])
+
+        failed_storage = _LegacySeenStorage(fail_seen=True)
+        failed_writer = _SeenWriterHarness(failed_storage)
+        with self.assertRaisesRegex(RuntimeError, "seen unavailable"):
+            await failed_writer._put_seen_map_and_scan_watermark(
+                "lists1",
+                "list:12345",
+                {"list:12345": ["101"]},
+                ["101"],
+            )
+        self.assertEqual(failed_storage.calls, ["seen"])
 
     @staticmethod
     def _config():
