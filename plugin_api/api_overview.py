@@ -59,13 +59,6 @@ class WebAPIOverviewMixin:
         total_invalid_lists = sum(
             len(group.lists_info.invalid_entries) for group in list_groups
         )
-        total_raw_lists = sum(group.lists_info.raw_count for group in groups)
-        total_duplicate_lists = sum(
-            len(group.lists_info.duplicates) for group in groups
-        )
-        total_invalid_lists = sum(
-            len(group.lists_info.invalid_entries) for group in groups
-        )
         counts = {
             "groups": len(groups),
             "enabled_groups": sum(1 for group in groups if group.enabled),

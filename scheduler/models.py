@@ -273,12 +273,11 @@ class ScheduledCheckResult:
                 status_suffix = f"（推文 {candidate_suffix}）"
         return format_subscription_source(source, self.group_type) + status_suffix
 
-    @staticmethod
-    def _subscription_label(user: str) -> str:
+    def _subscription_label(self, user: str) -> str:
         user = str(user or "").strip()
         if user.startswith("list:"):
             return f"List {user[5:]}"
-        return ScheduledCheckResult._failure_label(user)
+        return self._failure_label(user)
 
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [

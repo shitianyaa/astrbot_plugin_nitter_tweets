@@ -40,6 +40,8 @@ class _ListBackend:
         self.filter_reposts_calls.append(filter_reposts)
         self.anchor_ids_calls.append(None if anchor_ids is None else list(anchor_ids))
         item = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
+        if isinstance(item, Exception):
+            raise item
         instance, tweets = item
         if isinstance(tweets, HtmlSearchResult):
             return (
@@ -217,7 +219,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent_ids), 21)
         self.assertEqual(set(sent_ids), set(new_ids))
 
-    async def test_incomplete_list_scan_does_not_advance_seen_or_watermark(self):
+    async def test_incomplete_list_scan_rebuilds_baseline_without_sending(self):
         backend = _ListBackend(
             [
                 ("https://list.test", [self._tweet("100")]),
@@ -227,6 +229,15 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                         [self._tweet("101"), self._tweet("100")],
                         raw_item_count=2,
                         scan_complete=False,
+                        anchor_status_ids=["101", "100"],
+                    ),
+                ),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet("102"), self._tweet("101"), self._tweet("100")],
+                        raw_item_count=3,
+                        anchor_status_ids=["102", "101", "100"],
                     ),
                 ),
             ]
@@ -237,13 +248,112 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         key = "list:12345"
 
         await scheduler.run_check(reason="list_seed", group_name="lists1")
+        result = await scheduler.run_check(
+            reason="list_incomplete", group_name="lists1"
+        )
+        watermarks = await scheduler.storage.get_group_scan_watermarks("lists1")
+
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 2)
+        self.assertNotIn(key, result.failed_users)
+        self.assertEqual(watermarks[key], ["101", "100"])
+        self.assertIn("101", await scheduler.storage.get_seen_ids("lists1", key))
+        self.assertEqual(sender.sent, [])
+        self.assertIn("自动重建基线提示", "\n".join(result.format_brief_log_lines()))
+        self.assertIn("旧积压可能被跳过", result.format_message())
+
+        next_result = await scheduler.run_check(
+            reason="list_after_rebuild", group_name="lists1"
+        )
+        self.assertEqual(next_result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["102"])
+        self.assertEqual(backend.anchor_ids_calls, [None, ["100"], ["101", "100"]])
+
+    async def test_incomplete_list_scan_without_page_ids_keeps_old_baseline(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet("101"), self._tweet("100")],
+                        raw_item_count=2,
+                        scan_complete=False,
+                        anchor_status_ids=[],
+                    ),
+                ),
+            ]
+        )
+        scheduler = self._create_scheduler(backend)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
         before = await scheduler.storage.get_group_scan_watermarks("lists1")
         result = await scheduler.run_check(
             reason="list_incomplete", group_name="lists1"
         )
         after = await scheduler.storage.get_group_scan_watermarks("lists1")
 
-        self.assertIn(key, result.failed_users)
+        self.assertEqual(
+            result.baseline_rebuild_failed_users.get(key),
+            "未解析到有效第一页状态 ID，保留旧基线",
+        )
         self.assertEqual(before, after)
         self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))
-        self.assertEqual(sender.sent, [])
+        self.assertEqual(result.new_tweet_count, 0)
+
+    async def test_list_fetch_failure_does_not_rebuild_baseline(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                RuntimeError("temporary list failure"),
+            ]
+        )
+        scheduler = self._create_scheduler(backend)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        before = await scheduler.storage.get_group_scan_watermarks("lists1")
+        result = await scheduler.run_check(reason="list_failed", group_name="lists1")
+        after = await scheduler.storage.get_group_scan_watermarks("lists1")
+
+        self.assertIn(key, result.failed_users)
+        self.assertEqual(before, after)
+        self.assertEqual(result.baseline_rebuilt_users, {})
+        self.assertEqual(result.new_tweet_count, 0)
+
+    async def test_baseline_write_failure_is_reported_without_success_status(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [self._tweet("101")],
+                        anchor_status_ids=["101"],
+                        scan_complete=False,
+                    ),
+                ),
+            ]
+        )
+        scheduler = self._create_scheduler(backend)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        original_set_watermark = scheduler._set_scan_watermark
+
+        async def fail_new_watermark(group_id, username, status_ids):
+            if status_ids == ["101"]:
+                raise RuntimeError("watermark unavailable")
+            await original_set_watermark(group_id, username, status_ids)
+
+        scheduler._set_scan_watermark = fail_new_watermark
+        result = await scheduler.run_check(
+            reason="list_write_failure", group_name="lists1"
+        )
+
+        self.assertIn(key, result.baseline_rebuild_failed_users)
+        self.assertNotIn(key, result.baseline_rebuilt_users)
+        self.assertNotIn(key, result.failed_users)
