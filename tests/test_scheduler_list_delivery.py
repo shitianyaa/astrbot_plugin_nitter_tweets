@@ -361,3 +361,4 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             await scheduler.storage.get_group_scan_watermarks("lists1"),
             {key: ["100"]},
         )
+        self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))
