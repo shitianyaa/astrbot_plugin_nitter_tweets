@@ -92,10 +92,11 @@ class SubscriptionCommandMixin:
             len(group.users) for group in groups if group.is_blogger_group
         )
         query_count = sum(len(group.queries) for group in groups if group.is_tag_group)
+        list_count = sum(len(group.list_ids) for group in groups if group.is_list_group)
         logger.info(
             "[NitterTweets] 导出订阅配置: "
-            f"groups={len(groups)}, blogger={blogger_count}, queries={query_count}"
-            + (f", filter={group_name!r}" if group_name else "")
+            f"groups={len(groups)}, blogger={blogger_count}, queries={query_count}, "
+            f"lists={list_count}" + (f", filter={group_name!r}" if group_name else "")
         )
         await event.send(
             event.plain_result("\n".join(self._export_subscription_lines(groups)))
@@ -126,12 +127,13 @@ class SubscriptionCommandMixin:
                 )
             )
             return
-        if group is not None and group.is_tag_group:
-            await event.send(
-                event.plain_result(
-                    "该分组是标签分组，请使用 /标签删除；/订阅删除 仅用于博主分组。"
-                )
+        if group is not None and not group.is_blogger_group:
+            message = (
+                "该分组是标签分组，请使用 /标签删除；"
+                if group.is_tag_group
+                else "该分组是 List 分组，请通过 WebUI 修改 watch_lists；"
             )
+            await event.send(event.plain_result(message + "/订阅删除 仅用于博主分组。"))
             return
         if len(raw_entries) > 50:
             await event.send(
@@ -300,12 +302,13 @@ class SubscriptionCommandMixin:
                 )
             )
             return
-        if group is not None and group.is_tag_group:
-            await event.send(
-                event.plain_result(
-                    "该分组是标签分组，请使用 /标签导入；/订阅导入 仅用于博主分组。"
-                )
+        if group is not None and not group.is_blogger_group:
+            message = (
+                "该分组是标签分组，请使用 /标签导入；"
+                if group.is_tag_group
+                else "该分组是 List 分组，请通过 WebUI 修改 watch_lists；"
             )
+            await event.send(event.plain_result(message + "/订阅导入 仅用于博主分组。"))
             return
 
         existing_users = (
@@ -771,11 +774,13 @@ class SubscriptionCommandMixin:
             len(group.users) for group in groups if group.is_blogger_group
         )
         query_count = sum(len(group.queries) for group in groups if group.is_tag_group)
+        list_count = sum(len(group.list_ids) for group in groups if group.is_list_group)
         lines = [
             "Nitter 订阅导出",
             f"分组数: {len(groups)} 个",
             f"博主订阅: {blogger_count} 个",
             f"搜索订阅: {query_count} 个",
+            f"List 订阅: {list_count} 个",
         ]
         if not groups:
             lines.append("没有可导出的分组。")
@@ -784,9 +789,7 @@ class SubscriptionCommandMixin:
         lines.append("订阅列表:")
         for group in groups:
             lines.append(self._format_export_group_line(group))
-        lines.append(
-            "提示: 博主组 /订阅导入 用户列表 分组名 ；标签组 /标签导入 查询列表 分组名"
-        )
+        lines.append("提示: 博主组 /订阅导入；标签组 /标签导入；List 组请在 WebUI 配置")
         return lines
 
     def _format_export_group_line(self, group: ScheduleGroup) -> str:
@@ -798,6 +801,11 @@ class SubscriptionCommandMixin:
                 else "（空）"
             )
             return f"{label} ({group.group_id}, 标签, {len(group.queries)} 个): {items}"
+        if group.is_list_group:
+            items = ",".join(group.list_ids) if group.list_ids else "（空）"
+            return (
+                f"{label} ({group.group_id}, List, {len(group.list_ids)} 个): {items}"
+            )
         items = ",".join(group.users) if group.users else "（空）"
         return f"{label} ({group.group_id}, 博主, {len(group.users)} 个): {items}"
 

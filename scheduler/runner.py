@@ -560,9 +560,12 @@ class NitterTweetScheduler(
         )
         immediate_batches_sent = 0
         if not users:
-            result.skipped_reason = (
-                "no_watch_queries" if group.is_tag_group else "no_watch_users"
-            )
+            if group.is_tag_group:
+                result.skipped_reason = "no_watch_queries"
+            elif group.is_list_group:
+                result.skipped_reason = "no_watch_lists"
+            else:
+                result.skipped_reason = "no_watch_users"
             self._log_check_result(result)
             return result
         if not targets:
@@ -572,7 +575,7 @@ class NitterTweetScheduler(
 
         # S2=A: RSS host skip only for this blogger check; end only if we began.
         run_host_skip_started = False
-        if not group.is_tag_group and hasattr(self.nitter, "begin_run_host_skip"):
+        if group.is_blogger_group and hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
             run_host_skip_started = True
         try:
@@ -658,10 +661,59 @@ class NitterTweetScheduler(
                             if str(tweet.status_id or "") in allowed_status_ids
                         ]
                 if not fetch_result.scan_complete:
-                    result.failed_users[username] = "分页未完整扫描，已跳过本轮"
-                    logger.warning(
-                        f"[NitterTweets] 定时抓取 {username} 未完整扫描，跳过本轮"
-                    )
+                    if group.is_list_group and username in scan_watermarks:
+                        baseline_ids = list(
+                            dict.fromkeys(
+                                str(status_id).strip()
+                                for status_id in fetch_result.anchor_status_ids
+                                if str(status_id or "").strip()
+                            )
+                        )
+                        if not baseline_ids:
+                            reason = "未解析到有效第一页状态 ID，保留旧基线"
+                            result.baseline_rebuild_failed_users[username] = reason
+                            logger.warning(
+                                "[NitterTweets] List 分页未完整扫描，自动重建基线失败: "
+                                f"group={group.group_id}, list={username[5:]}, "
+                                f"reason={reason}"
+                            )
+                            continue
+                        try:
+                            current_seen = seen_map.get(username)
+                            if not isinstance(current_seen, list):
+                                current_seen = []
+                            seen_map[username] = self._merge_seen_ids(
+                                baseline_ids,
+                                current_seen,
+                            )
+                            await self._put_seen_map(group.group_id, seen_map)
+                            await self._set_scan_watermark(
+                                group.group_id,
+                                username,
+                                baseline_ids,
+                            )
+                        except Exception as exc:
+                            reason = f"写入新基线失败: {exc}"
+                            result.baseline_rebuild_failed_users[username] = reason
+                            logger.warning(
+                                "[NitterTweets] List 分页未完整扫描，自动重建基线未完成: "
+                                f"group={group.group_id}, list={username[5:]}, "
+                                f"baseline_ids={len(baseline_ids)}, error={exc}"
+                            )
+                            continue
+
+                        result.baseline_rebuilt_users[username] = len(baseline_ids)
+                        logger.warning(
+                            "[NitterTweets] List 分页扫描预算耗尽，已自动重建扫描基线: "
+                            f"group={group.group_id}, list={username[5:]}, "
+                            f"baseline_ids={len(baseline_ids)}, "
+                            "本轮不发送，旧积压可能被跳过"
+                        )
+                    else:
+                        result.failed_users[username] = "分页未完整扫描，已跳过本轮"
+                        logger.warning(
+                            f"[NitterTweets] 定时抓取 {username} 未完整扫描，跳过本轮"
+                        )
                     continue
                 plain_text_filtered = fetch_result.plain_text_filtered
                 if skip_plain_text and plain_text_filtered > 0:
@@ -686,7 +738,8 @@ class NitterTweetScheduler(
                     # the notification.  A genuinely empty response remains
                     # uninitialized so a transient empty search does not seal
                     # a whole page as history.
-                    if not seed_ids and group.is_tag_group:
+                    if not seed_ids and (group.is_tag_group or group.is_list_group):
+                        source_label = "标签订阅" if group.is_tag_group else "List 订阅"
                         if (
                             fetch_result.plain_text_filtered > 0
                             or fetch_result.retweet_filtered > 0
@@ -699,7 +752,7 @@ class NitterTweetScheduler(
                             )
                             result.initialized_users[username] = 0
                             self._log_verbose_info(
-                                "[NitterTweets] 标签订阅首轮结果全部被过滤，"
+                                f"[NitterTweets] {source_label}首轮结果全部被过滤，"
                                 "已记录空扫描水位: "
                                 f"group={group.group_id}, account={username}"
                             )
@@ -708,7 +761,7 @@ class NitterTweetScheduler(
                             "首次抓取无可用推文 ID，未初始化 seen（下轮重试）"
                         )
                         logger.warning(
-                            "[NitterTweets] 标签订阅首次抓取为空，跳过初始化: "
+                            f"[NitterTweets] {source_label}首次抓取为空，跳过初始化: "
                             f"group={group.group_id}, account={username}"
                         )
                         continue

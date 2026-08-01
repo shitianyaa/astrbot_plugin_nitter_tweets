@@ -33,8 +33,12 @@ class SchedulerFetchMixin:
         scan_watermarks: dict[str, list[str]],
     ) -> list[UserFetchResult]:
         accounts = list(group.account_keys)
-        # Tag groups always serial to protect shared HTML instances.
-        if group.is_tag_group or not self._should_use_concurrent_fetch(group):
+        # Tag/List groups always serial to protect shared HTML instances.
+        if (
+            group.is_tag_group
+            or group.is_list_group
+            or not self._should_use_concurrent_fetch(group)
+        ):
             results = []
             for index, username in enumerate(accounts):
                 # Add delay between queries (except before the first one)
@@ -90,6 +94,16 @@ class SchedulerFetchMixin:
                 username,
                 fetch_limit,
                 skip_plain_text=skip_plain_text,
+            )
+        if group.is_list_group:
+            return await self._fetch_group_list(
+                group,
+                index,
+                username,
+                fetch_limit,
+                scan_watermark,
+                skip_plain_text=skip_plain_text,
+                filter_reposts=self._global_filter_reposts(),
             )
         try:
             scheduler_method = (
@@ -206,6 +220,13 @@ class SchedulerFetchMixin:
         return parse_config_bool(
             config_get(self.config, "user_html_fallback", False), False
         )
+
+    def _global_filter_reposts(self) -> bool:
+        global_enabled = parse_config_bool(
+            config_get(self.config, "filter_reposts_enabled", True),
+            True,
+        )
+        return global_enabled
 
     async def _fetch_user_html_fallback(
         self,
@@ -330,6 +351,98 @@ class SchedulerFetchMixin:
             ],
             latest_status_id=(tweets[0].status_id if tweets else ""),
             scan_complete=True,
+            plain_text_filtered=plain_text_filtered,
+            retweet_filtered=retweet_filtered,
+            html_raw_item_count=html_raw_item_count,
+        )
+
+    async def _fetch_group_list(
+        self,
+        group: ScheduleGroup,
+        index: int,
+        account_key: str,
+        fetch_limit: int,
+        scan_watermark: list[str] | None,
+        *,
+        skip_plain_text: bool = False,
+        filter_reposts: bool = True,
+    ) -> UserFetchResult:
+        """Fetch Twitter List timeline (serial, HTML backend)."""
+        # account_key format: "list:1234567890"
+        if not account_key.startswith("list:"):
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(
+                    RuntimeError(f"invalid list account_key: {account_key}")
+                ),
+            )
+
+        list_id = account_key[5:]  # strip "list:" prefix
+
+        if self.html_backend is None:
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(
+                    RuntimeError("html_backend unavailable")
+                ),
+            )
+
+        self._log_verbose_info(
+            f"[NitterTweets] List 抓取开始: group={group.group_id}, "
+            f"list_id={list_id}, limit={fetch_limit}"
+        )
+
+        try:
+            instance, tweets = await asyncio.to_thread(
+                lambda: self.html_backend.fetch_list(
+                    list_id,
+                    fetch_limit,
+                    filter_reposts=filter_reposts,
+                    anchor_ids=scan_watermark,
+                )
+            )
+            retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
+            html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
+            scan_complete = bool(getattr(tweets, "scan_complete", True))
+            raw_anchor_status_ids = getattr(tweets, "anchor_status_ids", None)
+            tweets = list(tweets)
+            anchor_status_ids = (
+                [tweet.status_id for tweet in tweets[:20] if tweet.status_id]
+                if raw_anchor_status_ids is None
+                else list(raw_anchor_status_ids)
+            )
+            self._log_verbose_info(
+                f"[NitterTweets] List 扫描{'完成' if scan_complete else '未完整'}: "
+                f"group={group.group_id}, "
+                f"list_id={list_id}, instance={instance}, "
+                f"tweets={len(tweets)}, scan_complete={scan_complete}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] List 抓取失败: group={group.group_id}, "
+                f"list_id={list_id}, error={type(exc).__name__}: {exc}"
+            )
+            return UserFetchResult(
+                index=index,
+                username=account_key,
+                error=SchedulerTaskError.from_exception(exc),
+            )
+
+        tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
+            tweets, skip_plain_text=skip_plain_text
+        )
+
+        return UserFetchResult(
+            index=index,
+            username=account_key,
+            instance=instance,
+            tweets=tweets,
+            scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
+            anchor_status_ids=anchor_status_ids,
+            latest_status_id=(tweets[0].status_id if tweets else ""),
+            scan_complete=scan_complete,
             plain_text_filtered=plain_text_filtered,
             retweet_filtered=retweet_filtered,
             html_raw_item_count=html_raw_item_count,

@@ -81,6 +81,8 @@ class ScheduledCheckResult:
     no_new_users: list[str] = field(default_factory=list)
     empty_users: list[str] = field(default_factory=list)
     failed_users: dict[str, str] = field(default_factory=dict)
+    baseline_rebuilt_users: dict[str, int] = field(default_factory=dict)
+    baseline_rebuild_failed_users: dict[str, str] = field(default_factory=dict)
     pushes: list[ScheduledPushResult] = field(default_factory=list)
     push_mode: str = "per_user"
     merge_tweet_threshold: int = 0
@@ -120,6 +122,8 @@ class ScheduledCheckResult:
             + len(self.no_new_users)
             + len(self.empty_users)
             + len(self.failed_users)
+            + len(self.baseline_rebuilt_users)
+            + len(self.baseline_rebuild_failed_users)
             + len(self.pushes)
         )
 
@@ -133,6 +137,8 @@ class ScheduledCheckResult:
                 or bool(self.no_new_users)
                 or bool(self.empty_users)
                 or bool(self.failed_users)
+                or bool(self.baseline_rebuilt_users)
+                or bool(self.baseline_rebuild_failed_users)
             )
         )
 
@@ -166,6 +172,8 @@ class ScheduledCheckResult:
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
             f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
+            f"baseline_rebuilt={len(self.baseline_rebuilt_users)}, "
+            f"baseline_rebuild_failed={len(self.baseline_rebuild_failed_users)}, "
             f"push_mode={self.push_mode}, "
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
@@ -187,6 +195,8 @@ class ScheduledCheckResult:
             f"push_success={self.pushed_target_successes}/"
             f"{self.pushed_target_attempts}, "
             f"failed={len(self.failed_users)}, "
+            f"baseline_rebuilt={len(self.baseline_rebuilt_users)}, "
+            f"baseline_rebuild_failed={len(self.baseline_rebuild_failed_users)}, "
             f"invalid_targets={len(self.invalid_targets)}, "
             f"warnings={len(self.delivery_warnings)}"
         ]
@@ -205,6 +215,25 @@ class ScheduledCheckResult:
             lines.append(
                 "[NitterTweets] 失败详情: "
                 + _format_limited_values(failed_items, limit=5, separator="; ")
+            )
+        if self.baseline_rebuilt_users:
+            rebuilt_items = [
+                f"{self._subscription_label(user)}({count} 个第一页基线 ID)"
+                for user, count in self.baseline_rebuilt_users.items()
+            ]
+            lines.append(
+                "[NitterTweets] 自动重建基线提示: "
+                + _format_limited_values(rebuilt_items, limit=5, separator="; ")
+                + "；本轮不发送，旧积压可能被跳过"
+            )
+        if self.baseline_rebuild_failed_users:
+            rebuild_items = [
+                f"{self._subscription_label(user)}: {error}"
+                for user, error in self.baseline_rebuild_failed_users.items()
+            ]
+            lines.append(
+                "[NitterTweets] 自动重建基线未完成: "
+                + _format_limited_values(rebuild_items, limit=5, separator="; ")
             )
         if self.invalid_targets:
             lines.append(
@@ -233,6 +262,13 @@ class ScheduledCheckResult:
             return user
         return f"@{user}"
 
+    @staticmethod
+    def _subscription_label(user: str) -> str:
+        user = str(user or "").strip()
+        if user.startswith("list:"):
+            return f"List {user[5:]}"
+        return ScheduledCheckResult._failure_label(user)
+
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [
             title,
@@ -253,6 +289,7 @@ class ScheduledCheckResult:
             reason_text = {
                 "no_watch_users": "未配置 watch_users",
                 "no_watch_queries": "未配置 watch_queries",
+                "no_watch_lists": "未配置 watch_lists",
                 "no_push_targets": "未配置有效 push_targets",
                 "check_already_running": "已有一次检查正在运行",
                 "unknown_group": "未找到指定分组",
@@ -269,6 +306,26 @@ class ScheduledCheckResult:
                 for username, count in self.initialized_users.items()
             ]
             lines.append("首次记录: " + _format_limited_values(items))
+
+        if self.baseline_rebuilt_users:
+            items = [
+                f"{self._subscription_label(user)} {count} 个第一页基线 ID"
+                for user, count in self.baseline_rebuilt_users.items()
+            ]
+            lines.append(
+                "自动重建基线: "
+                + _format_limited_values(items, separator="; ")
+                + "（本轮不发送，旧积压可能被跳过）"
+            )
+
+        if self.baseline_rebuild_failed_users:
+            items = [
+                f"{self._subscription_label(user)}: {error}"
+                for user, error in self.baseline_rebuild_failed_users.items()
+            ]
+            lines.append(
+                "基线重建未完成: " + _format_limited_values(items, separator="; ")
+            )
 
         if self.pushes and self.push_mode == "merged":
             items = [f"@{item.username} {item.new_count} 条" for item in self.pushes]

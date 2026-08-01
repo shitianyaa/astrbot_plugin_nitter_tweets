@@ -184,12 +184,14 @@ class WebAPIHistoryMixin:
                 group = groups_by_id.get(record.group_id)
                 current_targets = list(getattr(group, "targets", []) or [])
                 group_type = str(getattr(group, "group_type", "") or "").strip().lower()
-                if group_type not in {"blogger", "tag"}:
-                    group_type = (
-                        "tag"
-                        if str(record.username or "").strip().lower().startswith("q:")
-                        else "blogger"
-                    )
+                if group_type not in {"blogger", "tag", "list"}:
+                    account_key = str(record.username or "").strip().lower()
+                    if account_key.startswith("q:"):
+                        group_type = "tag"
+                    elif account_key.startswith("list:"):
+                        group_type = "list"
+                    else:
+                        group_type = "blogger"
                 item = {
                     **serialized,
                     "group_type": group_type,

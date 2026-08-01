@@ -58,10 +58,28 @@ class HtmlSearchResult(list[TweetItem]):
         *,
         raw_item_count: int = 0,
         retweet_filtered: int = 0,
+        anchor_status_ids: list[str] | str | None = None,
+        scan_complete: bool = True,
     ):
         super().__init__(tweets or ())
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
+        if anchor_status_ids is None:
+            self.anchor_status_ids = None
+        else:
+            raw_anchor_ids = (
+                [anchor_status_ids]
+                if isinstance(anchor_status_ids, str)
+                else anchor_status_ids
+            )
+            self.anchor_status_ids = list(
+                dict.fromkeys(
+                    str(status_id).strip()
+                    for status_id in raw_anchor_ids
+                    if str(status_id or "").strip()
+                )
+            )
+        self.scan_complete = bool(scan_complete)
 
     def limited(self, limit: int) -> "HtmlSearchResult":
         """Return a bounded result while retaining parser statistics."""
@@ -69,6 +87,8 @@ class HtmlSearchResult(list[TweetItem]):
             self[:limit],
             raw_item_count=self.raw_item_count,
             retweet_filtered=self.retweet_filtered,
+            anchor_status_ids=self.anchor_status_ids,
+            scan_complete=self.scan_complete,
         )
 
 
@@ -441,6 +461,238 @@ class HtmlNitterPool:
             )
             return empty_success_base, empty_success_result
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
+
+    def fetch_list(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+        filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline with global retry."""
+        # Skip global retry when targeting a specific instance (probe mode)
+        if instance and str(instance).strip():
+            return self._fetch_list_once(
+                list_id,
+                limit,
+                instance=instance,
+                filter_reposts=filter_reposts,
+                anchor_ids=anchor_ids,
+            )
+
+        max_retries = self.config.max_global_retries
+        for attempt in range(max_retries):
+            try:
+                return self._fetch_list_once(
+                    list_id,
+                    limit,
+                    instance=instance,
+                    filter_reposts=filter_reposts,
+                    anchor_ids=anchor_ids,
+                )
+            except RuntimeError as exc:
+                msg = str(exc)
+                is_last_attempt = attempt >= max_retries - 1
+
+                if "all instances in cooldown" in msg:
+                    if is_last_attempt:
+                        raise
+                    delay = self.config.retry_delay_on_cooldown
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"all cooling, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+                elif is_last_attempt:
+                    raise
+                else:
+                    delay = self.config.retry_delay_base * (attempt + 1)
+                    self.log(
+                        f"list global retry {attempt + 1}/{max_retries}: "
+                        f"{exc}, wait {delay:.0f}s"
+                    )
+                    time.sleep(delay)
+            except ValueError:
+                # Validation errors should not retry
+                raise
+        raise RuntimeError("fetch_list: exhausted retries")
+
+    def _fetch_list_once(
+        self,
+        list_id: str,
+        limit: int,
+        *,
+        instance: str | None = None,
+        filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
+    ) -> tuple[str, list[TweetItem]]:
+        """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
+        list_id_str = str(list_id).strip()
+        if not list_id_str:
+            raise ValueError("empty list_id")
+
+        errors: list[str] = []
+        empty_success_base: str | None = None
+        empty_success_result = HtmlSearchResult(
+            scan_complete=False,
+            anchor_status_ids=[],
+        )
+        hosts = self._hosts_for_rotation(instance)
+        if not hosts:
+            raise RuntimeError("HTML list fetch unavailable: all instances in cooldown")
+
+        total = len(hosts)
+        for index, base in enumerate(hosts, 1):
+            host = self.session.host_of(base)
+            try:
+                self.log(f"list try {index}/{total} host={host} list_id={list_id_str}")
+                paginate_kwargs = {}
+                if filter_reposts is not None:
+                    paginate_kwargs["filter_reposts"] = bool(filter_reposts)
+                if anchor_ids is not None:
+                    paginate_kwargs["anchor_ids"] = anchor_ids
+                tweets = self._as_search_result(
+                    self._paginate_list(
+                        base,
+                        list_id_str,
+                        limit,
+                        **paginate_kwargs,
+                    )
+                )
+                if tweets:
+                    self.scores.record_success(host)
+                    if index > 1:
+                        self.log(
+                            f"list ok after rotate host={host} tried={index}/{total}"
+                        )
+                    return (
+                        base,
+                        tweets.limited(limit) if not anchor_ids else tweets,
+                    )
+                empty_success_base = base
+                empty_success_result.raw_item_count += tweets.raw_item_count
+                empty_success_result.retweet_filtered += tweets.retweet_filtered
+                empty_success_result.anchor_status_ids.extend(
+                    status_id
+                    for status_id in tweets.anchor_status_ids or []
+                    if status_id not in empty_success_result.anchor_status_ids
+                )
+                empty_success_result.scan_complete = (
+                    empty_success_result.scan_complete or tweets.scan_complete
+                )
+                # Empty list: soft success (valid but no content)
+                self.scores.record_success(host, soft=True)
+                errors.append(f"{base}: empty")
+                self.log(f"list empty host={host}, rotate next ({index}/{total})")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{base}: {exc}")
+                self.log(f"list fail host={host}, rotate next ({index}/{total}): {exc}")
+
+        if empty_success_base is not None:
+            self.log(
+                f"list empty after rotate hosts={total}, "
+                f"list_id={list_id_str}, "
+                f"last_empty={self.session.host_of(empty_success_base)}"
+            )
+            return empty_success_base, empty_success_result
+        raise RuntimeError("HTML list failed: " + "; ".join(errors[-4:]))
+
+    def _paginate_list(
+        self,
+        base: str,
+        list_id: str,
+        limit: int,
+        *,
+        filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
+    ) -> HtmlSearchResult:
+        """Paginate Twitter List timeline (same HTML structure as user timeline)."""
+        normalized_anchor_ids = (
+            [anchor_ids] if isinstance(anchor_ids, str) else (anchor_ids or [])
+        )
+        # An explicit empty watermark means the source was initialized after a
+        # filtered/empty first page; there is no boundary to paginate toward.
+        initial_scan = not normalized_anchor_ids
+        boundary_ids = {
+            str(status_id).strip()
+            for status_id in normalized_anchor_ids
+            if str(status_id or "").strip()
+        }
+        tweets: list[TweetItem] = []
+        seen: set[str] = set()
+        cursor = ""
+        raw_count = 0
+        retweet_filtered = 0
+        anchor_status_ids: list[str] = []
+        scan_complete = initial_scan
+        use_filter_reposts = (
+            bool(self.config.filter_reposts)
+            if filter_reposts is None
+            else bool(filter_reposts)
+        )
+
+        page_count = self._page_count(self.config.max_pages)
+        for page_index in range(page_count):
+            # Nitter List path: /i/lists/{list_id}
+            path = f"/i/lists/{quote(list_id, safe='')}"
+            if cursor:
+                path += "?" + urlencode({"cursor": cursor})
+
+            body = self._get_html(base, path)
+            page = parse_timeline_html(
+                body.decode("utf-8", "replace"), base, source=f"list:{base}"
+            )
+
+            raw_count += int(getattr(page, "raw_item_count", len(page.tweets)) or 0)
+            if page_index == 0:
+                anchor_status_ids = [
+                    str(tweet.status_id).strip()
+                    for tweet in page.tweets
+                    if str(tweet.status_id or "").strip()
+                ][:20]
+
+            for t in page.tweets:
+                k = t.status_id or t.link
+                reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
+                if k in seen:
+                    if reached_boundary:
+                        scan_complete = True
+                        break
+                    continue
+
+                # Filter reposts if enabled
+                if use_filter_reposts and t.is_retweet:
+                    retweet_filtered += 1
+                    if reached_boundary:
+                        scan_complete = True
+                        break
+                    continue
+
+                seen.add(k)
+                tweets.append(t)
+                if reached_boundary:
+                    scan_complete = True
+                    break
+
+            if scan_complete and not initial_scan:
+                break
+            if initial_scan and len(tweets) >= limit:
+                break
+
+            if not page.next_cursor or page.next_cursor == cursor:
+                scan_complete = True
+                break
+            cursor = page.next_cursor
+
+        return HtmlSearchResult(
+            tweets[:limit] if initial_scan else tweets,
+            raw_item_count=raw_count,
+            retweet_filtered=retweet_filtered,
+            anchor_status_ids=anchor_status_ids,
+            scan_complete=scan_complete,
+        )
 
     @staticmethod
     def _as_search_result(value) -> HtmlSearchResult:

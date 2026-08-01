@@ -66,8 +66,18 @@ class WatchQueriesInfo:
     changed: bool = False
 
 
+@dataclass(slots=True)
+class WatchListsInfo:
+    raw_count: int
+    list_ids: list[str] = field(default_factory=list)
+    duplicates: list[str] = field(default_factory=list)
+    invalid_entries: list[str] = field(default_factory=list)
+    changed: bool = False
+
+
 GROUP_TYPE_BLOGGER = "blogger"
 GROUP_TYPE_TAG = "tag"
+GROUP_TYPE_LIST = "list"
 
 
 @dataclass(slots=True)
@@ -97,6 +107,7 @@ class ScheduleGroup:
     max_tweets_per_check: int
     users_info: WatchUsersInfo
     queries_info: WatchQueriesInfo
+    lists_info: WatchListsInfo
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
 
@@ -105,8 +116,12 @@ class ScheduleGroup:
         return self.group_type == GROUP_TYPE_TAG
 
     @property
+    def is_list_group(self) -> bool:
+        return self.group_type == GROUP_TYPE_LIST
+
+    @property
     def is_blogger_group(self) -> bool:
-        return not self.is_tag_group
+        return self.group_type == GROUP_TYPE_BLOGGER
 
     @property
     def users(self) -> list[str]:
@@ -117,10 +132,16 @@ class ScheduleGroup:
         return self.queries_info.queries
 
     @property
+    def list_ids(self) -> list[str]:
+        return self.lists_info.list_ids
+
+    @property
     def account_keys(self) -> list[str]:
         """Seen/account iteration keys for this group."""
         if self.is_tag_group:
             return [item.account_key for item in self.queries]
+        if self.is_list_group:
+            return [f"list:{lid}" for lid in self.list_ids]
         return list(self.users)
 
     @property
@@ -165,6 +186,7 @@ class SchedulerConfigReader:
             max_tweets_per_check=0,
             users_info=self.parse_watch_users([]),
             queries_info=self.parse_watch_queries([]),
+            lists_info=WatchListsInfo(raw_count=0),
             target_info=self.parse_push_targets(
                 [], log_invalid=log_invalid_targets, group_id=DEFAULT_GROUP_ID
             ),
@@ -325,15 +347,23 @@ class SchedulerConfigReader:
             raw_group.get("group_type"),
             raw_group.get("watch_users"),
             raw_group.get("watch_queries"),
+            raw_group.get("watch_lists"),
             raw_group.get("__template_key"),
         )
         users_info = self.parse_watch_users(raw_group.get("watch_users", []))
         queries_info = self.parse_watch_queries(raw_group.get("watch_queries", []))
-        # Tag groups only follow queries; blogger groups only follow users.
+        lists_info = self.parse_watch_lists(raw_group.get("watch_lists", []))
+
+        # Type-specific filtering: each group type only follows its own accounts
         if group_type == GROUP_TYPE_TAG:
             users_info = WatchUsersInfo(raw_count=0)
-        else:
+            lists_info = WatchListsInfo(raw_count=0)
+        elif group_type == GROUP_TYPE_LIST:
+            users_info = WatchUsersInfo(raw_count=0)
             queries_info = WatchQueriesInfo(raw_count=0)
+        else:  # blogger
+            queries_info = WatchQueriesInfo(raw_count=0)
+            lists_info = WatchListsInfo(raw_count=0)
 
         return ScheduleGroup(
             group_id=group_id,
@@ -411,6 +441,7 @@ class SchedulerConfigReader:
             ),
             users_info=users_info,
             queries_info=queries_info,
+            lists_info=lists_info,
             target_info=self.parse_push_targets(
                 raw_group.get("push_targets", []),
                 log_invalid=log_invalid_targets,
@@ -483,19 +514,28 @@ class SchedulerConfigReader:
         raw_type,
         raw_users=None,
         raw_queries=None,
+        raw_lists=None,
         raw_template_key=None,
     ) -> str:
         text = str(raw_type or "").strip().lower()
         if text in {GROUP_TYPE_TAG, "search", "query", "keyword"}:
             return GROUP_TYPE_TAG
+        if text in {GROUP_TYPE_LIST, "lists"}:
+            return GROUP_TYPE_LIST
         if text in {GROUP_TYPE_BLOGGER, "user", "users"}:
             return GROUP_TYPE_BLOGGER
         template_key = str(raw_template_key or "").strip().lower()
         if template_key == GROUP_TYPE_TAG:
             return GROUP_TYPE_TAG
-        # Legacy hand-written configs may omit group_type. Preserve a query-only
-        # group as a tag group before the type-specific parser drops it.
-        if bool(raw_queries) and not bool(raw_users):
+        if template_key == GROUP_TYPE_LIST:
+            return GROUP_TYPE_LIST
+        # Legacy hand-written configs may omit group_type. Infer from content:
+        # - List-only → list
+        # - Query-only → tag
+        # - Otherwise → blogger (default)
+        if bool(raw_lists) and not bool(raw_users) and not bool(raw_queries):
+            return GROUP_TYPE_LIST
+        if bool(raw_queries) and not bool(raw_users) and not bool(raw_lists):
             return GROUP_TYPE_TAG
         return GROUP_TYPE_BLOGGER
 
@@ -573,6 +613,53 @@ class SchedulerConfigReader:
         return WatchQueriesInfo(
             raw_count=raw_count,
             queries=queries,
+            duplicates=duplicates,
+            invalid_entries=invalid_entries,
+            changed=changed,
+        )
+
+    def parse_watch_lists(self, raw_lists) -> WatchListsInfo:
+        """Parse positive numeric Twitter List IDs up to uint64 width."""
+        if isinstance(raw_lists, str):
+            raw_lists = re.split(r"[\n,，]+", raw_lists)
+        elif not isinstance(raw_lists, list):
+            raw_lists = [raw_lists] if raw_lists else []
+
+        raw_count = 0
+        list_ids: list[str] = []
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        invalid_entries: list[str] = []
+        changed = False
+
+        for raw in raw_lists:
+            if raw is None:
+                continue
+            list_id_str = str(raw).strip()
+            if not list_id_str:
+                continue
+            raw_count += 1
+
+            if (
+                not list_id_str.isdigit()
+                or len(list_id_str) > 20
+                or int(list_id_str) <= 0
+            ):
+                invalid_entries.append(list_id_str)
+                changed = True
+                continue
+
+            if list_id_str in seen:
+                duplicates.append(list_id_str)
+                changed = True
+                continue
+
+            seen.add(list_id_str)
+            list_ids.append(list_id_str)
+
+        return WatchListsInfo(
+            raw_count=raw_count,
+            list_ids=list_ids,
             duplicates=duplicates,
             invalid_entries=invalid_entries,
             changed=changed,

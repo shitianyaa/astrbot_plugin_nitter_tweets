@@ -57,7 +57,9 @@ class WebUIGroupEditor:
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         group_type = self._group_type(data.get("group_type"))
-        template_key = "tag" if group_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+        template_key = (
+            group_type if group_type in {"tag", "list"} else TWEET_GROUP_TEMPLATE_KEY
+        )
         groups.append(
             {
                 TWEET_GROUP_TEMPLATE_KEY_FIELD: template_key,
@@ -67,6 +69,7 @@ class WebUIGroupEditor:
                 "group_type": group_type,
                 "watch_users": [],
                 "watch_queries": [],
+                "watch_lists": [],
                 "push_targets": [],
                 "interval_check_enabled": True,
                 "daily_check_times": [],
@@ -118,7 +121,9 @@ class WebUIGroupEditor:
                 }
 
         raw_group[TWEET_GROUP_TEMPLATE_KEY_FIELD] = (
-            "tag" if existing_type == "tag" else TWEET_GROUP_TEMPLATE_KEY
+            existing_type
+            if existing_type in {"tag", "list"}
+            else TWEET_GROUP_TEMPLATE_KEY
         )
         raw_group["name"] = name
         raw_group["group_id"] = stable_group_id
@@ -162,6 +167,13 @@ class WebUIGroupEditor:
             try:
                 raw_group["watch_queries"] = self._normalized_watch_queries(
                     data.get("watch_queries", raw_group.get("watch_queries", []))
+                )
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+        elif existing_type == "list":
+            try:
+                raw_group["watch_lists"] = self._normalized_watch_lists(
+                    data.get("watch_lists", raw_group.get("watch_lists", []))
                 )
             except ValueError as exc:
                 return {"success": False, "error": str(exc)}
@@ -323,6 +335,8 @@ class WebUIGroupEditor:
         text = str(value or "").strip().lower()
         if text in {"tag", "search", "query", "keyword"}:
             return "tag"
+        if text in {"list", "lists"}:
+            return "list"
         return "blogger"
 
     def _normalized_watch_queries(self, raw_values: Any) -> list[str]:
@@ -332,6 +346,12 @@ class WebUIGroupEditor:
         # AstrBot list fields require strings. Keep explicit type reversible
         # when it cannot be inferred from the leading '#'.
         return [encode_watch_query(item.query, item.type) for item in info.queries]
+
+    def _normalized_watch_lists(self, raw_values: Any) -> list[str]:
+        info = self.scheduler.config_reader.parse_watch_lists(raw_values)
+        if info.invalid_entries:
+            raise ValueError("List ID 无效：" + ", ".join(info.invalid_entries[:5]))
+        return list(info.list_ids)
 
     @staticmethod
     def _bool(value: Any) -> bool:
