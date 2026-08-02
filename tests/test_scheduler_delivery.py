@@ -105,6 +105,13 @@ class _Filter:
 
         return decorator
 
+    @staticmethod
+    def regex(*args, **kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
 
 def _register(*args, **kwargs):
     def decorator(cls):

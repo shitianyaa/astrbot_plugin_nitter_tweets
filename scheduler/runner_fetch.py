@@ -429,6 +429,14 @@ class SchedulerFetchMixin:
             retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
             html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
             scan_complete = bool(getattr(tweets, "scan_complete", True))
+            raw_anchor_status_ids = getattr(tweets, "anchor_status_ids", None)
+            # HtmlSearchResult is populated by the HTML layer; only legacy
+            # adapters returning a bare list need this compatibility fallback.
+            anchor_status_ids = (
+                [tweet.status_id for tweet in tweets[:20] if tweet.status_id]
+                if raw_anchor_status_ids is None
+                else list(raw_anchor_status_ids)
+            )
             tweets = list(tweets)
             self._log_verbose_info(
                 f"[NitterTweets] List 抓取成功: group={group.group_id}, "
@@ -456,9 +464,7 @@ class SchedulerFetchMixin:
             instance=instance,
             tweets=tweets,
             scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
-            anchor_status_ids=[
-                tweet.status_id for tweet in tweets[:20] if tweet.status_id
-            ],
+            anchor_status_ids=anchor_status_ids,
             latest_status_id=(tweets[0].status_id if tweets else ""),
             scan_complete=scan_complete,
             plain_text_filtered=plain_text_filtered,

@@ -347,7 +347,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         return [row[0] for row in rows]
 
-    def add_seen_ids(
+    def _add_seen_ids_unlocked(
         self,
         group_id: str,
         username: str,
@@ -442,7 +442,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         ).fetchall()
         return {str(row[0]): self._decode_scan_anchor_ids(row[1]) for row in rows}
 
-    def set_scan_watermark(
+    def _set_scan_watermark_unlocked(
         self,
         group_id: str,
         username: str,
@@ -474,6 +474,37 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 int(time.time()),
             ),
         )
+
+    def add_seen_ids(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str],
+    ) -> None:
+        """添加已见推文 ID（批量）."""
+        self._add_seen_ids_unlocked(group_id, username, status_ids)
+
+    def set_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """设置一个分组账号的最近扫描基准组并标记为已初始化。"""
+        self._set_scan_watermark_unlocked(group_id, username, status_ids)
+
+    def put_group_seen_map_and_scan_watermark(
+        self,
+        group_id: str,
+        username: str,
+        seen_map: dict[str, list[str]],
+        status_ids: list[str] | str | None = None,
+    ) -> None:
+        """在同一事务中写入 seen map 和一个账号的扫描水位。"""
+        for seen_username, seen_ids in seen_map.items():
+            if seen_ids:
+                self._add_seen_ids_unlocked(group_id, seen_username, seen_ids)
+        self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
     def clear_seen_tweets(self, group_id: str | None = None) -> int:
         """清理 seen 记录；group_id 为空时清理全部分组."""
@@ -937,6 +968,7 @@ for _method_name in (
     "get_group_seen_map",
     "get_group_scan_watermarks",
     "set_scan_watermark",
+    "put_group_seen_map_and_scan_watermark",
     "clear_seen_tweets",
     "delete_group_runtime_data",
     "record_push_history",

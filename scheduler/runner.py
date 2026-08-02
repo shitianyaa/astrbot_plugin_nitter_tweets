@@ -796,10 +796,62 @@ class NitterTweetScheduler(
                             if str(tweet.status_id or "") in allowed_status_ids
                         ]
                 if not fetch_result.scan_complete:
-                    result.failed_users[username] = "分页未完整扫描，已跳过本轮"
-                    logger.warning(
-                        f"[NitterTweets] 定时抓取 {source_label} 未完整扫描，跳过本轮"
-                    )
+                    if group.is_list_group and username in scan_watermarks:
+                        baseline_ids = list(
+                            dict.fromkeys(
+                                str(status_id).strip()
+                                for status_id in fetch_result.anchor_status_ids
+                                if str(status_id or "").strip()
+                            )
+                        )[:20]
+                        if not baseline_ids:
+                            reason = "未解析到有效第一页状态 ID，保留旧基线"
+                            result.baseline_rebuild_failed_users[username] = reason
+                            logger.warning(
+                                "[NitterTweets] List 分页未完整扫描，自动重建基线失败: "
+                                f"group={group.group_id}, source={source_label}, "
+                                f"reason={reason}"
+                            )
+                            continue
+
+                        try:
+                            current_seen = seen_map.get(username)
+                            if not isinstance(current_seen, list):
+                                current_seen = []
+                            updated_seen_ids = self._merge_seen_ids(
+                                baseline_ids, current_seen
+                            )
+                            updated_seen_map = dict(seen_map)
+                            updated_seen_map[username] = updated_seen_ids
+                            await self._put_seen_map_and_scan_watermark(
+                                group.group_id,
+                                username,
+                                updated_seen_map,
+                                baseline_ids,
+                            )
+                            seen_map[username] = updated_seen_ids
+                        except Exception as exc:
+                            reason = f"写入新基线失败: {exc}"
+                            result.baseline_rebuild_failed_users[username] = reason
+                            logger.warning(
+                                "[NitterTweets] List 分页未完整扫描，自动重建基线未完成: "
+                                f"group={group.group_id}, source={source_label}, "
+                                f"baseline_ids={len(baseline_ids)}, error={exc}"
+                            )
+                            continue
+
+                        result.baseline_rebuilt_users[username] = len(baseline_ids)
+                        logger.warning(
+                            "[NitterTweets] List 分页扫描预算耗尽，已自动重建扫描基线: "
+                            f"group={group.group_id}, source={source_label}, "
+                            f"baseline_ids={len(baseline_ids)}, "
+                            "本轮不发送，旧积压可能被跳过"
+                        )
+                    else:
+                        result.failed_users[username] = "分页未完整扫描，已跳过本轮"
+                        logger.warning(
+                            f"[NitterTweets] 定时抓取 {source_label} 未完整扫描，跳过本轮"
+                        )
                     continue
                 plain_text_filtered = fetch_result.plain_text_filtered
                 if skip_plain_text and plain_text_filtered > 0:

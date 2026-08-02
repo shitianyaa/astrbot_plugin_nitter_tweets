@@ -88,6 +88,30 @@ def test_html_backend_builder_parses_legacy_string_values_safely():
     assert backend.log.brief is False
 
 
+def test_html_backend_builder_passes_list_page_budget_to_service():
+    plugin = NitterTweetsPlugin.__new__(NitterTweetsPlugin)
+    plugin.config = {
+        "html_max_pages": "4",
+        "search_instances": ["https://search.example"],
+    }
+
+    backend = plugin._build_html_backend()
+
+    assert backend.config.html_max_pages == 4
+    assert backend.search_pool.config.max_pages == 4
+
+
+def test_html_backend_builder_clamps_list_page_budget():
+    for raw_value, expected in (("0", 1), ("99", 5)):
+        plugin = NitterTweetsPlugin.__new__(NitterTweetsPlugin)
+        plugin.config = {"html_max_pages": raw_value}
+
+        backend = plugin._build_html_backend()
+
+        assert backend.config.html_max_pages == expected
+        assert backend.search_pool.config.max_pages == expected
+
+
 def test_rss_client_and_manual_fallback_parse_string_false_values():
     client = NitterClient(
         {

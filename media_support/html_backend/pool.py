@@ -58,11 +58,25 @@ class HtmlSearchResult(list[TweetItem]):
         raw_item_count: int = 0,
         retweet_filtered: int = 0,
         scan_complete: bool = True,
+        anchor_status_ids: list[str] | str | None = None,
     ):
         super().__init__(tweets or ())
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
         self.scan_complete = bool(scan_complete)
+        source_ids = (
+            [getattr(tweet, "status_id", "") for tweet in self]
+            if anchor_status_ids is None
+            else [anchor_status_ids]
+            if isinstance(anchor_status_ids, str)
+            else anchor_status_ids
+        )
+        normalized_ids = []
+        for status_id in source_ids:
+            value = str(status_id or "").strip()
+            if value and value not in normalized_ids:
+                normalized_ids.append(value)
+        self.anchor_status_ids = normalized_ids[:20]
 
     def limited(self, limit: int) -> HtmlSearchResult:
         """Return a bounded result while retaining parser statistics."""
@@ -71,6 +85,7 @@ class HtmlSearchResult(list[TweetItem]):
             raw_item_count=self.raw_item_count,
             retweet_filtered=self.retweet_filtered,
             scan_complete=self.scan_complete,
+            anchor_status_ids=self.anchor_status_ids,
         )
 
 
@@ -492,7 +507,7 @@ class HtmlNitterPool:
         instance: str | None = None,
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+    ) -> tuple[str, HtmlSearchResult]:
         """Fetch Twitter List timeline with global retry."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
@@ -549,7 +564,7 @@ class HtmlNitterPool:
         instance: str | None = None,
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+    ) -> tuple[str, HtmlSearchResult]:
         """Fetch Twitter List timeline (HTML only, same structure as user timeline)."""
         list_id_str = str(list_id).strip()
         if not list_id_str:
@@ -557,7 +572,10 @@ class HtmlNitterPool:
 
         errors: list[str] = []
         empty_success_base: str | None = None
-        empty_success_result = HtmlSearchResult(scan_complete=False)
+        empty_success_result = HtmlSearchResult(
+            scan_complete=False,
+            anchor_status_ids=[],
+        )
         hosts = self._hosts_for_rotation(instance)
         if not hosts:
             raise RuntimeError("HTML list fetch unavailable: all instances in cooldown")
@@ -594,6 +612,12 @@ class HtmlNitterPool:
                 empty_success_result.scan_complete = (
                     empty_success_result.scan_complete or tweets.scan_complete
                 )
+                for status_id in tweets.anchor_status_ids or []:
+                    if status_id not in empty_success_result.anchor_status_ids:
+                        empty_success_result.anchor_status_ids.append(status_id)
+                empty_success_result.anchor_status_ids = (
+                    empty_success_result.anchor_status_ids[:20]
+                )
                 # Empty list: soft success (valid but no content)
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
@@ -622,9 +646,7 @@ class HtmlNitterPool:
     ) -> HtmlSearchResult:
         """Paginate Twitter List timeline (same HTML structure as user timeline)."""
         initial_scan = anchor_ids is None
-        normalized_anchor_ids = (
-            [anchor_ids] if isinstance(anchor_ids, str) else (anchor_ids or [])
-        )
+        normalized_anchor_ids = anchor_ids or []
         boundary_ids = {
             str(status_id).strip()
             for status_id in normalized_anchor_ids
@@ -636,6 +658,7 @@ class HtmlNitterPool:
         raw_count = 0
         retweet_filtered = 0
         scan_complete = initial_scan
+        anchor_status_ids: list[str] = []
         use_filter_reposts = (
             bool(self.config.filter_reposts)
             if filter_reposts is None
@@ -643,9 +666,9 @@ class HtmlNitterPool:
         )
 
         page_count = self._page_count(self.config.max_pages)
-        for _ in range(page_count):
+        for page_index in range(page_count):
             # Nitter List path: /i/lists/{list_id}
-            path = f"/i/lists/{quote(list_id)}"
+            path = f"/i/lists/{quote(list_id, safe='')}"
             if cursor:
                 path += "?" + urlencode({"cursor": cursor})
 
@@ -655,6 +678,13 @@ class HtmlNitterPool:
             )
 
             raw_count += int(getattr(page, "raw_item_count", len(page.tweets)) or 0)
+
+            if page_index == 0:
+                anchor_status_ids = [
+                    str(tweet.status_id).strip()
+                    for tweet in page.tweets
+                    if str(tweet.status_id or "").strip()
+                ][:20]
 
             for t in page.tweets:
                 k = t.status_id or t.link
@@ -693,6 +723,7 @@ class HtmlNitterPool:
             raw_item_count=raw_count,
             retweet_filtered=retweet_filtered,
             scan_complete=scan_complete,
+            anchor_status_ids=anchor_status_ids,
         )
 
     @staticmethod

@@ -302,6 +302,7 @@ def test_list_pagination_uses_cursor_and_global_repost_filter(monkeypatch):
     assert [tweet.status_id for tweet in tweets] == ["9", "8"]
     assert tweets.raw_item_count == 4
     assert tweets.retweet_filtered == 1
+    assert tweets.anchor_status_ids == ["10", "9"]
     assert pool._get_html.call_args_list[0].args[1] == "/i/lists/12345"
     assert "cursor=cursor-2" in pool._get_html.call_args_list[1].args[1]
 
@@ -346,6 +347,7 @@ def test_list_pagination_scans_past_limit_until_watermark(monkeypatch):
 
     assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
     assert tweets.scan_complete is True
+    assert tweets.anchor_status_ids == ["10", "9"]
     assert pool._get_html.call_count == 2
 
 
@@ -379,7 +381,9 @@ def test_list_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
 
     assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
     assert tweets.scan_complete is False
+    assert tweets.anchor_status_ids == ["10", "9"]
     assert tweets.limited(2).scan_complete is False
+    assert tweets.limited(2).anchor_status_ids == ["10", "9"]
 
 
 def test_list_empty_host_rotates_to_later_hit():
