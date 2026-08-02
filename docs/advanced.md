@@ -166,7 +166,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `daily_check_times` | 该分组每日检查时间列表，格式 `HH:MM`；只有 `schedule_enabled` 开启后才会触发。 |
 | `send_target_interval` | 该分组多个目标之间的发送间隔（秒）；不设置则使用全局 `send_target_interval` 值。 |
 | `send_user_interval` | 该分组多个订阅源之间的发送间隔（秒）；不设置则使用全局 `send_user_interval` 值。Tag/List 查询抓取之间也按该间隔等待。 |
-| `max_tweets_per_check` | 单个订阅源单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的较旧推文会标记 seen，不会在下轮重新推送。 |
+| `max_tweets_per_check` | 单个订阅源单次检查最多推送的推文条数；`0`（默认）表示不限制，范围 0-200。适用于爆发式更新场景，避免一次推送过多消息。被截断的较旧推文会标记 seen，不会在下轮重新推送；Tag/List 扫描未完整且找不到旧基准时，`0` 会跳过推送并自动重建第一页基准，正数会按上限推送后再重建基准，旧积压可能被跳过。 |
 | `filter_reposts_enabled` | 分组级转发过滤子开关，默认开启；仅在全局同名总开关开启时生效。旧分组缺少该字段时按开启处理。 |
 | `filter_plain_text_enabled` | 是否过滤没有当前作者上传图片、视频或 GIF 的纯文本推文；只影响该分组的后台检查，手动 `/推文`、`/镜像测试` 不受影响。 |
 | `media_only_enabled` | 是否只发送作者和成功准备的图片/视频/GIF；受全局媒体类型开关和 `max_media_per_tweet` 控制。全局媒体不可用时只在 WebUI 和日志提示，并自动回退完整内容。仅媒体有效时：`policy_skipped` 允许扫描基准推进，`transient_failure` / `no_candidate` 下轮重试且不写 seen；手动命令和历史重推不受影响。 |
@@ -247,7 +247,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
 - 首次启用某个订阅源时，会初始化当前扫描到的 seen ID 和独立扫描基准组，不推送历史内容；Tag/List 首轮边界见“Tag/List 分组与 HTML 搜索”。
 - `check_on_startup=true` 时，存储迁移完成后会先按分组串行执行一次首检，再进入间隔/每日槽位轮询；首检日志始终包含分组、类型、订阅源数、目标数、触发原因、结果统计和耗时。缺少订阅源或目标的启用分组只记录明确跳过原因。
-- 后台检查保存上一轮首屏最多 20 个精确基准 ID，并用最近 300 条 seen ID 做逐条去重。当前首屏未命中基准组中的任意 ID 时才按 `Min-Id` 继续翻页；命中基准前所有未 seen 推文都在本轮发送，命中位置及其后的旧内容不参与比较。发送失败、分页未完成或直到安全上限仍未命中任何基准 ID 时不会推进基准组。
+- 后台检查保存上一轮首屏最多 20 个精确基准 ID，并用最近 300 条 seen ID 做逐条去重。当前首屏未命中基准组中的任意 ID 时才按 `Min-Id` 继续翻页；命中基准前所有未 seen 推文都在本轮发送，命中位置及其后的旧内容不参与比较。Tag/List 在页数用尽仍未命中旧基准时，按 `max_tweets_per_check` 处理并在安全条件满足后自动用当前第一页基准重建；发送失败、基准无效或基准写入失败时保留旧水位。
 - 旧版顶层 `watch_users`、`push_targets` 和分组相关定时配置会自动迁移到 `default` 默认分组；`tweet_groups` 中的各推送分组会独立运行，并拥有独立的推送记录。
 - Blogger、Tag、List 后台检查统一使用双层转发过滤：`实际过滤 = 全局 filter_reposts_enabled && 分组 filter_reposts_enabled`。全局和分组默认均开启，旧分组缺少子开关时按开启处理。
 - 手动 `/推文`、`/镜像测试` 始终保留转发，便于完整查看镜像返回内容；`/推文搜索` 保持过滤纯转推，不读取分组开关。
@@ -256,6 +256,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 后台检查推送的新推文会在本轮每个目标的第一条普通消息或合并转发头部显示批次概览：按类型显示“n 位博主”“n 个搜索订阅”或“n 个 List”、推文数和来源分组；概括只出现一次，不显示订阅源进度或推文序号。
 - 同一个目标群同时属于多个分组时，消息按各分组自己的检查/发布流程发出，并通过“分组”行区分来源。
 - 没有新推文时默认只写日志，不往目标会话发送消息。
+- 后台检查结果会区分“正常无更新”“HTML 返回空结果”“结果全部被过滤”“扫描未完整”和“抓取失败”；空结果或实例不可用时会显示实例轮换原因、水位保持不变，不再使用“没有发现新推文”概括。
 - 普通 RSS 抓取会按 `instances` 配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 普通 RSS 抓取遇到 SSL EOF、HTTP 5xx、429 等临时错误时，同一实例初次请求失败后最多再重试 1 次；仍失败则按配置顺序尝试下一个实例。
 - 后台并发拉取启用时只使用 `concurrent_fetch_instances`，不会回退到 `instances`；专用池内每个镜像总请求尝试 3 次，仍失败才尝试下一个专用镜像。
@@ -320,16 +321,18 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - 兼容读取旧的 `{query, type}` 对象，启动/保存时会规范成字符串，避免 AstrBot 配置列表显示成 `[object Object]`。
 - 若配置里已出现字面量 `[object Object]`，该项无效，请删除后重新填写 `#标签` 或短语。
 - 运行时：tag 可回退 `/hashtag/`，phrase 仅 `/search`。
-- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。手动搜索为凑满条数最多翻约 3 页；**定时标签组默认只取约 1 页**。
+- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。手动搜索为凑满条数最多翻约 3 页；定时 Tag/List 默认按 `html_max_pages=1`，已有水位时会在该范围内寻找旧基准。
 
 ### Tag/List 分组定时：获取与发送数量
 
 ```text
 每个 watch_query 或 watch_list / 每轮检查
   → HTML 搜索（组内串行，订阅源间按 send_user_interval 等待；默认 html_max_pages=1）
-  → Tag：最多取 fetch_limit=20；List 首轮最多取 20 条建立基线
-  → 已初始化 List：本轮扫描可超过 20 条，继续翻页到命中旧水位或游标结束
-  → 已初始化且第一页有有效状态 ID 的 List 达到 html_max_pages 仍有后续游标：自动重建基线，本轮不发送，旧积压可能被跳过；否则保留旧基线，未初始化 List 按分页失败跳过
+  → 首轮/无旧基准：最多取首屏 20 条建立基准；已有 Tag/List 水位时本轮扫描可超过 20 条
+  → 在 html_max_pages 内寻找旧水位，命中则正常推送；到达页数仍未命中则视为扫描未完整
+  → max_tweets_per_check=0：不推送，使用当前第一页最多 20 个有效状态 ID 自动重建基准
+  → max_tweets_per_check>0：最多推送 N 条，所有目标成功后使用当前第一页最多 20 个有效状态 ID 自动重建基准
+  → 首屏无有效 ID、发送失败或基准写入失败：保留旧水位，允许下轮重试
   → 按全局与分组双层开关过滤转发
   → 可选：纯文本过滤 / 仅媒体
   → 与 seen（q:... 或 list:...）差集 → 只要新推文
@@ -338,7 +341,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
   → 发送成功后才写 seen
 ```
 
-因此 Tag「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已初始化 List 在一轮内可能扫描并发现超过 20 条新推文，但首次基线和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量，被截断的较旧推文会标记 seen，不会在下轮重新推送。
+因此 Tag/List「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已有水位时一轮内可能扫描并发现超过 20 条新推文，但首次基准和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量。若页数用尽仍找不到旧基准，日志会明确提示扫描未完整和自动重建基准，旧积压可能被跳过。
 HTTP 层可能有 Anubis 门禁与限流。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
 **空结果与全量过滤：** Tag/List 都走 `search_instances`；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。

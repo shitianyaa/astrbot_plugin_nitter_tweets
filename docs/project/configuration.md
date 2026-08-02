@@ -52,7 +52,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
-- `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。
+- `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送失败、首屏基准无效或基准写入失败时保留旧水位。
 
 全局 `filter_reposts_enabled` 是 Blogger、Tag、List 后台检查的总开关。实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动命令不读取分组子开关。
 
@@ -68,7 +68,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 
 后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
-后台**Tag/List**检查：每个 `watch_query` 或 `watch_list` 走 HTML（`search_instances`），组内串行、订阅源之间按 `send_user_interval` 等待。Tag 最多取固定 `fetch_limit=20`；List 首轮最多取 20 条建立基线，已有水位后本轮扫描可超过 20 条，并按 `html_max_pages` 翻页到旧水位或游标结束；持久化水位仍最多保存 20 个 ID。已初始化且第一页有有效状态 ID 的 List 达到页数上限仍未完整扫描时，自动重建基线并跳过本轮发送，旧积压可能被跳过；第一页没有有效状态 ID 时保留旧基线，未初始化 List 按分页失败处理。二者都按全局和分组双层开关决定是否过滤转发，可选纯文本/仅媒体，再与 seen（`q:...` / `list:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
+后台**Tag/List**检查：每个 `watch_query` 或 `watch_list` 走 HTML（`search_instances`），组内串行、订阅源之间按 `send_user_interval` 等待。首轮最多取 20 条建立基准；已有水位时本轮扫描可超过 20 条，并按 `html_max_pages` 翻页到旧水位或游标结束，持久化水位仍最多保存 20 个 ID。达到页数上限仍未命中旧基准时，`max_tweets_per_check=0` 会跳过推送并自动重建当前第一页基准，正数会按上限推送后再重建；首屏没有有效状态 ID、发送失败或基准写入失败时保留旧水位。二者都按全局和分组双层开关决定是否过滤转发，可选纯文本/仅媒体，再与 seen（`q:...` / `list:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
 
 `check_on_startup=true` 时，调度存储初始化完成后按分组顺序首检所有启用且同时配置订阅源和有效推送目标的分组；仅每日定点、仅间隔和没有定时槽位的分组都执行一次。首检完成后锚定当前间隔/每日槽位，避免同一轮重复触发。手动 `/推文检查` 仍要求当前会话属于该分组的 `push_targets`，只是会等待同一套存储初始化完成。
 

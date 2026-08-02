@@ -81,11 +81,41 @@ def test_check_messages_and_failure_summaries_hide_internal_prefixes(
     combined = f"{message}\n{brief}\n{failure_summary}"
 
     assert source_label in combined
-    assert "订阅源无有效推文 ID" in message
+    assert "订阅源返回空结果" in message
     assert "RSS 无有效推文 ID" not in combined
     assert "已记录索引" not in combined
     assert "@q:" not in combined
     assert "@list:" not in combined
+
+
+def test_empty_html_result_is_not_reported_as_no_new_tweets():
+    source = "q:#AI"
+    result = ScheduledCheckResult(
+        reason="interval:20m",
+        group_id="g1",
+        group_name="测试组",
+        group_type="tag",
+        users=[source],
+        targets=["telegram:FriendMessage:1"],
+        empty_users=[source],
+        source_statuses={source: "empty"},
+        source_attempts={
+            source: [
+                "nitter.top=登录/维护/错误页",
+                "nitter.poast.org=HTTP 403",
+            ]
+        },
+    )
+
+    message = result.format_message()
+    brief = "\n".join(result.format_brief_log_lines())
+
+    assert "抓取状态: 返回空结果 1 个" in message
+    assert "水位状态: 未更新 1 个" in message
+    assert "订阅源返回空结果" in message
+    assert "实例结果" in message
+    assert "本次没有发现需要推送的新推文。" not in message
+    assert "status=empty:1" in brief
 
 
 def test_plain_list_fetch_failure_keeps_the_list_id_as_the_source():

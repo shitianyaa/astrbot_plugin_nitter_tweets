@@ -36,6 +36,7 @@ class _HtmlBackend:
         }
         self.calls: list[tuple[str, int, str | None]] = []
         self.filter_reposts_calls: list[bool | None] = []
+        self.anchor_ids_calls: list[list[str] | None] = []
 
     def search(
         self,
@@ -43,15 +44,22 @@ class _HtmlBackend:
         limit: int = 5,
         kind: str | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ):
         self.calls.append((query, limit, kind))
         self.filter_reposts_calls.append(filter_reposts)
+        self.anchor_ids_calls.append(None if anchor_ids is None else list(anchor_ids))
         queue = self.responses_by_query.setdefault(query, [("", [])])
         if len(queue) > 1:
             item = queue.pop(0)
         else:
             item = queue[0]
         instance, tweets = item
+        if isinstance(tweets, HtmlSearchResult):
+            return (
+                instance,
+                tweets.limited(limit) if not anchor_ids else tweets,
+            )
         return instance, list(tweets)[:limit]
 
 
@@ -64,12 +72,14 @@ class _StatsHtmlBackend(_HtmlBackend):
         limit: int = 5,
         kind: str | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ):
         instance, tweets = super().search(
             query,
             limit=10_000,
             kind=kind,
             filter_reposts=filter_reposts,
+            anchor_ids=anchor_ids,
         )
         use_filter_reposts = True if filter_reposts is None else filter_reposts
         retweets = (
@@ -86,6 +96,8 @@ class _StatsHtmlBackend(_HtmlBackend):
             kept[:limit],
             raw_item_count=len(tweets),
             retweet_filtered=len(retweets),
+            scan_complete=bool(getattr(tweets, "scan_complete", True)),
+            anchor_status_ids=getattr(tweets, "anchor_status_ids", None),
         )
 
 
@@ -228,6 +240,218 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("101", seen)
         self.assertIn("100", seen)
 
+        third = await scheduler.run_check(reason="tag_no_new", group_name="tags1")
+        self.assertEqual(third.source_statuses.get(key), "no_new")
+        self.assertIn("本次没有发现需要推送的新推文。", third.format_message())
+
+    async def test_tag_scan_passes_watermark_and_pushes_across_pages(self):
+        query = "#foo"
+        key = self._account_key(query)
+        html = _HtmlBackend(
+            {
+                query: [
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("100"), self._make_tweet("99")],
+                            anchor_status_ids=["100", "99"],
+                        ),
+                    ),
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [
+                                self._make_tweet("101"),
+                                self._make_tweet("100"),
+                                self._make_tweet("99"),
+                            ],
+                            anchor_status_ids=["101", "100", "99"],
+                        ),
+                    ),
+                ]
+            }
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(
+            self._tag_config(query),
+            html_backend=html,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="tag_seed", group_name="tags1")
+        result = await scheduler.run_check(reason="tag_page_two", group_name="tags1")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["101"])
+        self.assertEqual(html.anchor_ids_calls, [None, ["100", "99"]])
+        self.assertIn(key, await scheduler.storage.get_group_scan_watermarks("tags1"))
+
+    async def test_incomplete_tag_scan_with_zero_limit_rebuilds_without_sending(self):
+        query = "#foo"
+        key = self._account_key(query)
+        html = _HtmlBackend(
+            {
+                query: [
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("100")],
+                            anchor_status_ids=["100"],
+                        ),
+                    ),
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("102"), self._make_tweet("101")],
+                            scan_complete=False,
+                            anchor_status_ids=["102", "101"],
+                        ),
+                    ),
+                ]
+            }
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(
+            self._tag_config(query),
+            html_backend=html,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="tag_seed", group_name="tags1")
+        result = await scheduler.run_check(reason="tag_incomplete", group_name="tags1")
+
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 2)
+        self.assertEqual(result.new_tweet_count, 0)
+        self.assertEqual(sender.sent, [])
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("tags1"),
+            {key: ["102", "101"]},
+        )
+        self.assertIn("102", await scheduler.storage.get_seen_ids("tags1", key))
+        self.assertNotIn("本次没有发现需要推送的新推文。", result.format_message())
+
+    async def test_incomplete_tag_scan_with_limit_pushes_then_rebuilds(self):
+        query = "#foo"
+        key = self._account_key(query)
+        config = self._tag_config(query)
+        config["tweet_groups"][0]["max_tweets_per_check"] = 1
+        html = _HtmlBackend(
+            {
+                query: [
+                    ("https://search.test", [self._make_tweet("100")]),
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [
+                                self._make_tweet("103"),
+                                self._make_tweet("102"),
+                                self._make_tweet("101"),
+                            ],
+                            scan_complete=False,
+                            anchor_status_ids=["103", "102", "101"],
+                        ),
+                    ),
+                ]
+            }
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(config, html_backend=html, sender=sender)
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="tag_seed", group_name="tags1")
+        result = await scheduler.run_check(reason="tag_incomplete", group_name="tags1")
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["103"])
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 3)
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("tags1"),
+            {key: ["103", "102", "101"]},
+        )
+
+    async def test_incomplete_tag_scan_delivery_failure_keeps_old_watermark(self):
+        query = "#foo"
+        key = self._account_key(query)
+        html = _HtmlBackend(
+            {
+                query: [
+                    ("https://search.test", [self._make_tweet("100")]),
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("101")],
+                            scan_complete=False,
+                            anchor_status_ids=["101"],
+                        ),
+                    ),
+                ]
+            }
+        )
+        sender = base._Sender(success=False)
+        config = self._tag_config(query)
+        config["tweet_groups"][0]["max_tweets_per_check"] = 1
+        scheduler = self._create_scheduler(config, html_backend=html, sender=sender)
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="tag_seed", group_name="tags1")
+        result = await scheduler.run_check(
+            reason="tag_delivery_failure", group_name="tags1"
+        )
+
+        self.assertIn(key, result.baseline_rebuild_failed_users)
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("tags1"),
+            {key: ["100"]},
+        )
+        self.assertNotIn("101", await scheduler.storage.get_seen_ids("tags1", key))
+
+    async def test_incomplete_tag_scan_without_old_watermark_keeps_state(self):
+        query = "#foo"
+        key = self._account_key(query)
+        html = _HtmlBackend(
+            {
+                query: [
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("101")],
+                            scan_complete=False,
+                            anchor_status_ids=["101"],
+                        ),
+                    )
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            self._tag_config(query),
+            html_backend=html,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        result = await scheduler.run_check(
+            reason="tag_incomplete_without_watermark", group_name="tags1"
+        )
+
+        self.assertEqual(
+            result.baseline_rebuild_failed_users.get(key),
+            "扫描未完整且没有可用旧扫描基准，保留旧水位",
+        )
+        self.assertEqual(result.failed_users, {})
+        self.assertEqual(result.source_statuses.get(key), "incomplete")
+        self.assertEqual(await scheduler.storage.get_group_scan_watermarks("tags1"), {})
+
     async def test_tag_empty_first_scan_does_not_initialize_seen(self):
         query = "#foo"
         key = self._account_key(query)
@@ -309,6 +533,46 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watermark_after_first, {key: []})
         self.assertEqual(second.new_tweet_count, 1)
         self.assertEqual(sender.sent[-1][3], ["101"])
+
+    async def test_incomplete_scan_with_explicit_empty_watermark_can_rebuild(self):
+        query = "#foo"
+        key = self._account_key(query)
+        retweet = self._make_tweet("100", author="other")
+        retweet.is_retweet = True
+        html = _StatsHtmlBackend(
+            {
+                query: [
+                    ("https://search.test", [retweet]),
+                    (
+                        "https://search.test",
+                        HtmlSearchResult(
+                            [self._make_tweet("102"), self._make_tweet("101")],
+                            scan_complete=False,
+                            anchor_status_ids=["102", "101"],
+                        ),
+                    ),
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            self._tag_config(query),
+            html_backend=html,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+
+        await scheduler.run_check(reason="tag_filtered_init", group_name="tags1")
+        result = await scheduler.run_check(
+            reason="tag_incomplete_after_empty", group_name="tags1"
+        )
+
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 2)
+        self.assertEqual(result.source_statuses.get(key), "baseline_rebuilt")
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("tags1"),
+            {key: ["102", "101"]},
+        )
 
     async def test_tag_group_can_disable_repost_filter(self):
         query = "#foo"
