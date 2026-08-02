@@ -386,6 +386,75 @@ def test_list_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
     assert tweets.limited(2).anchor_status_ids == ["10", "9"]
 
 
+def test_search_pagination_scans_past_limit_until_watermark(monkeypatch):
+    pool = _pool(filter_reposts=False, max_pages=3)
+    pool._get_html = MagicMock(side_effect=[b"page-1", b"page-2"])
+    pages = {
+        "page-1": SimpleNamespace(
+            tweets=[_tweet("10"), _tweet("9")],
+            next_cursor="cursor-2",
+            raw_item_count=2,
+        ),
+        "page-2": SimpleNamespace(
+            tweets=[_tweet("8"), _tweet("7")],
+            next_cursor="cursor-3",
+            raw_item_count=2,
+        ),
+    }
+    monkeypatch.setattr(
+        pool_module,
+        "parse_timeline_html",
+        lambda body, _base, source="": pages[body],
+    )
+
+    tweets = pool._paginate_search(
+        "https://a.example",
+        "#foo",
+        2,
+        kind="tag",
+        anchor_ids=["7"],
+    )
+
+    assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
+    assert tweets.scan_complete is True
+    assert tweets.anchor_status_ids == ["10", "9"]
+    assert pool._get_html.call_count == 2
+
+
+def test_search_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
+    pool = _pool(filter_reposts=False, max_pages=2)
+    pool._get_html = MagicMock(side_effect=[b"page-1", b"page-2"])
+    pages = {
+        "page-1": SimpleNamespace(
+            tweets=[_tweet("10"), _tweet("9")],
+            next_cursor="cursor-2",
+            raw_item_count=2,
+        ),
+        "page-2": SimpleNamespace(
+            tweets=[_tweet("8"), _tweet("7")],
+            next_cursor="cursor-3",
+            raw_item_count=2,
+        ),
+    }
+    monkeypatch.setattr(
+        pool_module,
+        "parse_timeline_html",
+        lambda body, _base, source="": pages[body],
+    )
+
+    tweets = pool._paginate_search(
+        "https://a.example",
+        "#foo",
+        2,
+        kind="tag",
+        anchor_ids=["1"],
+    )
+
+    assert [tweet.status_id for tweet in tweets] == ["10", "9", "8", "7"]
+    assert tweets.scan_complete is False
+    assert tweets.anchor_status_ids == ["10", "9"]
+
+
 def test_list_empty_host_rotates_to_later_hit():
     pool = _pool()
     tried = []
@@ -403,6 +472,7 @@ def test_list_empty_host_rotates_to_later_hit():
     assert base == "https://b.example"
     assert [tweet.status_id for tweet in tweets] == ["42"]
     assert tried == ["https://a.example", "https://b.example"]
+    assert tweets.host_attempts == ["a.example=空结果", "b.example=成功"]
 
 
 def test_list_pool_inherits_global_repost_filter():

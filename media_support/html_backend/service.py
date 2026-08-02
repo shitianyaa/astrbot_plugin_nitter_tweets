@@ -159,7 +159,8 @@ class HtmlNitterService:
         instance: str | None = None,
         max_pages: int | None = None,
         filter_reposts: bool | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+        anchor_ids: list[str] | None = None,
+    ) -> tuple[str, HtmlSearchResult]:
         if not self.config.search_enabled:
             raise RuntimeError("search_enabled is false")
         q = normalize_query(query)
@@ -171,6 +172,7 @@ class HtmlNitterService:
             instance=instance,
             max_pages=max_pages,
             filter_reposts=filter_reposts,
+            anchor_ids=anchor_ids,
         )
 
     def fetch_list(

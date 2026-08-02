@@ -48,6 +48,39 @@ class PoolConfig:
     retry_delay_on_cooldown: float = 10.0  # Delay when all instances cooling
 
 
+class HtmlFetchError(RuntimeError):
+    """A mirror request that failed for a reason we can name.
+
+    Subclasses `RuntimeError` so every existing `except RuntimeError` handler
+    in the rotation/retry paths keeps working unchanged; the added `status`
+    carries the operator-facing label so reporting does not have to reverse
+    engineer it out of the message text.
+    """
+
+    def __init__(self, message: str, status: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _format_host_failure(exc: Exception) -> str:
+    """Turn mirror exceptions into a short operator-facing status."""
+    if isinstance(exc, HtmlFetchError) and exc.status:
+        return exc.status
+    # Transport errors and third-party/mocked RuntimeErrors carry no status,
+    # so fall back to matching the message we would have formatted ourselves.
+    message = str(exc)
+    lowered = message.lower()
+    if "http 403" in lowered or "httperror 403" in lowered:
+        return "HTTP 403"
+    if "login/maintenance/error page" in lowered:
+        return "登录/维护/错误页"
+    if "gate failed" in lowered or "still gated" in lowered:
+        return "网关验证失败"
+    if "cloudflare unsupported" in lowered:
+        return "Cloudflare 不支持"
+    return type(exc).__name__
+
+
 class HtmlSearchResult(list[TweetItem]):
     """List-compatible search result carrying parser/filter statistics."""
 
@@ -59,11 +92,15 @@ class HtmlSearchResult(list[TweetItem]):
         retweet_filtered: int = 0,
         scan_complete: bool = True,
         anchor_status_ids: list[str] | str | None = None,
+        host_attempts: list[str] | None = None,
     ):
         super().__init__(tweets or ())
         self.raw_item_count = max(0, int(raw_item_count or 0))
         self.retweet_filtered = max(0, int(retweet_filtered or 0))
         self.scan_complete = bool(scan_complete)
+        self.host_attempts = [
+            str(item).strip() for item in (host_attempts or []) if str(item).strip()
+        ]
         source_ids = (
             [getattr(tweet, "status_id", "") for tweet in self]
             if anchor_status_ids is None
@@ -86,6 +123,7 @@ class HtmlSearchResult(list[TweetItem]):
             retweet_filtered=self.retweet_filtered,
             scan_complete=self.scan_complete,
             anchor_status_ids=self.anchor_status_ids,
+            host_attempts=self.host_attempts,
         )
 
 
@@ -221,38 +259,39 @@ class HtmlNitterPool:
                 self.scores.record_failure(host)
                 scored_failure = True
                 self.log(f"punish {host} http={resp.code} cooldown={sec:.0f}s")
-                raise RuntimeError(f"{host} HTTP {resp.code}")
+                raise HtmlFetchError(f"{host} HTTP {resp.code}", f"HTTP {resp.code}")
             if gate in {"anubis", "poast_sha1"}:
                 if not self.gates.ensure(
                     base, seed_path=path if path.startswith("/") else "/NASA"
                 ):
                     self.scores.record_failure(host)
                     scored_failure = True
-                    raise RuntimeError(f"{host} gate failed")
+                    raise HtmlFetchError(f"{host} gate failed", "网关验证失败")
                 self.limiter.wait(host)
                 resp = self.session.request(url, accept=HTML_ACCEPT)
                 gate = detect_gate(resp.body)
             if resp.code != 200:
                 self.scores.record_failure(host)
                 scored_failure = True
-                raise RuntimeError(
-                    f"{host} HTTP {resp.code} {resp.error or ''}".strip()
+                raise HtmlFetchError(
+                    f"{host} HTTP {resp.code} {resp.error or ''}".strip(),
+                    f"HTTP {resp.code}",
                 )
             if gate in {"cf", "error", "other"}:
                 self.scores.record_failure(host)
                 scored_failure = True
-                reason = (
-                    "cloudflare unsupported"
+                reason, status = (
+                    ("cloudflare unsupported", "Cloudflare 不支持")
                     if gate == "cf"
-                    else "login/maintenance/error page"
+                    else ("login/maintenance/error page", "登录/维护/错误页")
                     if gate == "error"
-                    else "unexpected HTML page"
+                    else ("unexpected HTML page", "异常页面")
                 )
-                raise RuntimeError(f"{host} {reason}")
+                raise HtmlFetchError(f"{host} {reason}", status)
             if gate in {"anubis", "poast_sha1"}:
                 self.scores.record_failure(host)
                 scored_failure = True
-                raise RuntimeError(f"{host} still gated")
+                raise HtmlFetchError(f"{host} still gated", "网关验证失败")
             self.limiter.reward(host)
             self.session.save_cookies(host)
             return resp.body
@@ -374,7 +413,8 @@ class HtmlNitterPool:
         instance: str | None = None,
         max_pages: int | None = None,
         filter_reposts: bool | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+        anchor_ids: list[str] | None = None,
+    ) -> tuple[str, HtmlSearchResult]:
         """Search with global retry on total failure."""
         # Skip global retry when targeting a specific instance (probe mode)
         if instance and str(instance).strip():
@@ -384,6 +424,7 @@ class HtmlNitterPool:
                 kind=kind,
                 instance=instance,
                 max_pages=max_pages,
+                anchor_ids=anchor_ids,
                 **self._repost_filter_kwargs(filter_reposts),
             )
 
@@ -396,6 +437,7 @@ class HtmlNitterPool:
                     kind=kind,
                     instance=instance,
                     max_pages=max_pages,
+                    anchor_ids=anchor_ids,
                     **self._repost_filter_kwargs(filter_reposts),
                 )
             except RuntimeError as exc:
@@ -435,7 +477,8 @@ class HtmlNitterPool:
         instance: str | None = None,
         max_pages: int | None = None,
         filter_reposts: bool | None = None,
-    ) -> tuple[str, list[TweetItem]]:
+        anchor_ids: list[str] | None = None,
+    ) -> tuple[str, HtmlSearchResult]:
         q = normalize_query(query)
         if not q:
             raise ValueError("empty query")
@@ -448,7 +491,11 @@ class HtmlNitterPool:
         # yields empty, return [] so tag schedule can skip seen init instead of
         # treating the query as permanently failed.
         empty_success_base: str | None = None
-        empty_success_result = HtmlSearchResult()
+        attempts: list[str] = []
+        empty_success_result = HtmlSearchResult(
+            scan_complete=not bool(anchor_ids),
+            anchor_status_ids=[],
+        )
         hosts = self._hosts_for_rotation(instance)
         if not hosts:
             raise RuntimeError("HTML search unavailable: all instances in cooldown")
@@ -467,19 +514,34 @@ class HtmlNitterPool:
                         limit,
                         kind=resolved,
                         max_pages=max_pages,
+                        **(
+                            {"anchor_ids": anchor_ids} if anchor_ids is not None else {}
+                        ),
                         **self._repost_filter_kwargs(filter_reposts),
                     )
                 )
                 if tweets:
+                    if attempts:
+                        tweets.host_attempts = [*attempts, f"{host}=成功"]
                     self.scores.record_success(host)
                     if index > 1:
                         self.log(
                             f"search ok after rotate host={host} tried={index}/{total}"
                         )
-                    return base, tweets.limited(limit)
+                    return base, tweets.limited(limit) if not anchor_ids else tweets
                 empty_success_base = base
+                attempts.append(f"{host}=空结果")
                 empty_success_result.raw_item_count += tweets.raw_item_count
                 empty_success_result.retweet_filtered += tweets.retweet_filtered
+                empty_success_result.scan_complete = (
+                    empty_success_result.scan_complete or tweets.scan_complete
+                )
+                for status_id in tweets.anchor_status_ids or []:
+                    if status_id not in empty_success_result.anchor_status_ids:
+                        empty_success_result.anchor_status_ids.append(status_id)
+                empty_success_result.anchor_status_ids = (
+                    empty_success_result.anchor_status_ids[:20]
+                )
                 # Empty after RT filter: soft success, not an outage.
                 self.scores.record_success(host, soft=True)
                 errors.append(f"{base}: empty")
@@ -487,14 +549,17 @@ class HtmlNitterPool:
             except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
                 errors.append(f"{base}: {exc}")
+                attempts.append(f"{host}={_format_host_failure(exc)}")
                 self.log(
                     f"search fail host={host}, rotate next ({index}/{total}): {exc}"
                 )
         if empty_success_base is not None:
+            empty_success_result.host_attempts = attempts
             self.log(
                 f"search empty after rotate hosts={total}, "
                 f"query={q!r} kind={resolved}, "
-                f"last_empty={self.session.host_of(empty_success_base)}"
+                f"last_empty={self.session.host_of(empty_success_base)}, "
+                f"attempts={'; '.join(attempts)}"
             )
             return empty_success_base, empty_success_result
         raise RuntimeError("HTML search failed: " + "; ".join(errors[-4:]))
@@ -572,6 +637,7 @@ class HtmlNitterPool:
 
         errors: list[str] = []
         empty_success_base: str | None = None
+        attempts: list[str] = []
         empty_success_result = HtmlSearchResult(
             scan_complete=False,
             anchor_status_ids=[],
@@ -597,6 +663,8 @@ class HtmlNitterPool:
                     )
                 )
                 if tweets:
+                    if attempts:
+                        tweets.host_attempts = [*attempts, f"{host}=成功"]
                     self.scores.record_success(host)
                     if index > 1:
                         self.log(
@@ -607,6 +675,7 @@ class HtmlNitterPool:
                         tweets.limited(limit) if anchor_ids is None else tweets,
                     )
                 empty_success_base = base
+                attempts.append(f"{host}=空结果")
                 empty_success_result.raw_item_count += tweets.raw_item_count
                 empty_success_result.retweet_filtered += tweets.retweet_filtered
                 empty_success_result.scan_complete = (
@@ -624,13 +693,16 @@ class HtmlNitterPool:
                 self.log(f"list empty host={host}, rotate next ({index}/{total})")
             except Exception as exc:
                 errors.append(f"{base}: {exc}")
+                attempts.append(f"{host}={_format_host_failure(exc)}")
                 self.log(f"list fail host={host}, rotate next ({index}/{total}): {exc}")
 
         if empty_success_base is not None:
+            empty_success_result.host_attempts = attempts
             self.log(
                 f"list empty after rotate hosts={total}, "
                 f"list_id={list_id_str}, "
-                f"last_empty={self.session.host_of(empty_success_base)}"
+                f"last_empty={self.session.host_of(empty_success_base)}, "
+                f"attempts={'; '.join(attempts)}"
             )
             return empty_success_base, empty_success_result
         raise RuntimeError("HTML list failed: " + "; ".join(errors[-4:]))
@@ -645,7 +717,7 @@ class HtmlNitterPool:
         anchor_ids: list[str] | None = None,
     ) -> HtmlSearchResult:
         """Paginate Twitter List timeline (same HTML structure as user timeline)."""
-        initial_scan = anchor_ids is None
+        initial_scan = not anchor_ids
         normalized_anchor_ids = anchor_ids or []
         boundary_ids = {
             str(status_id).strip()
@@ -785,12 +857,21 @@ class HtmlNitterPool:
         kind: str,
         max_pages: int | None = None,
         filter_reposts: bool | None = None,
+        anchor_ids: list[str] | None = None,
     ) -> HtmlSearchResult:
-        tweets = HtmlSearchResult()
+        initial_scan = not anchor_ids
+        boundary_ids = {
+            str(status_id).strip()
+            for status_id in (anchor_ids or [])
+            if str(status_id or "").strip()
+        }
+        tweets: list[TweetItem] = []
         seen: set[str] = set()
         cursor = ""
         raw_item_count = 0
         retweet_filtered = 0
+        scan_complete = initial_scan
+        anchor_status_ids: list[str] = []
         use_filter_reposts = True if filter_reposts is None else bool(filter_reposts)
         allow_hashtag = kind == "tag"
         pages = self.config.max_pages if max_pages is None else max_pages
@@ -824,22 +905,43 @@ class HtmlNitterPool:
                 raw_item_count += int(
                     getattr(page, "raw_item_count", len(page.tweets)) or 0
                 )
+            if page_i == 0:
+                anchor_status_ids = [
+                    str(tweet.status_id).strip()
+                    for tweet in page.tweets
+                    if str(tweet.status_id or "").strip()
+                ][:20]
             for t in page.tweets:
-                if use_filter_reposts and getattr(t, "is_retweet", False):
-                    retweet_filtered += 1
-                    continue
+                reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
                 k = t.status_id or t.link
                 if k in seen:
+                    if reached_boundary:
+                        scan_complete = True
+                        break
+                    continue
+                if use_filter_reposts and getattr(t, "is_retweet", False):
+                    retweet_filtered += 1
+                    if reached_boundary:
+                        scan_complete = True
+                        break
                     continue
                 seen.add(k)
                 tweets.append(t)
-                if len(tweets) >= limit:
-                    tweets.raw_item_count = raw_item_count
-                    tweets.retweet_filtered = retweet_filtered
-                    return tweets
+                if reached_boundary:
+                    scan_complete = True
+                    break
+            if scan_complete and not initial_scan:
+                break
+            if initial_scan and len(tweets) >= limit:
+                break
             if not page.next_cursor or page.next_cursor == cursor:
+                scan_complete = True
                 break
             cursor = page.next_cursor
-        tweets.raw_item_count = raw_item_count
-        tweets.retweet_filtered = retweet_filtered
-        return tweets
+        return HtmlSearchResult(
+            tweets[:limit] if initial_scan else tweets,
+            raw_item_count=raw_item_count,
+            retweet_filtered=retweet_filtered,
+            scan_complete=scan_complete,
+            anchor_status_ids=anchor_status_ids,
+        )
