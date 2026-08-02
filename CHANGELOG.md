@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-08-02
+
 ### Fixed
 
 - 修复 Tag 搜索首屏达到 20 条后提前停止分页的问题；Tag/List 现在都会在 `html_max_pages` 范围内寻找旧扫描基准，扫描未完整时按 `max_tweets_per_check` 自动处理并在安全条件满足后重建当前第一页基准。
