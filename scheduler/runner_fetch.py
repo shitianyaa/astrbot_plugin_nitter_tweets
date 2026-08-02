@@ -14,11 +14,11 @@ try:
     from ..config import config_get, parse_config_bool
     from ..shared import TweetItem, format_subscription_source
     from .config import ScheduleGroup
-    from .models import SchedulerTaskError, UserFetchResult
+    from .models import SchedulerTaskError, SourceStatus, UserFetchResult
 except ImportError:
     from config import config_get, parse_config_bool
     from scheduler.config import ScheduleGroup
-    from scheduler.models import SchedulerTaskError, UserFetchResult
+    from scheduler.models import SchedulerTaskError, SourceStatus, UserFetchResult
     from shared import TweetItem, format_subscription_source
 
 
@@ -38,17 +38,17 @@ def _classify_html_fetch(
         and not plain_text_filtered
     ):
         # Nothing parsed at all: the mirror had no usable page, so an
-        # incomplete scan cannot rebuild a baseline either.  Report "empty"
-        # so the scheduler keeps the old watermark instead of logging a
-        # baseline-rebuild failure it could never satisfy.
-        return "empty"
+        # incomplete scan cannot rebuild a baseline from it either.  Report
+        # "empty" so the scheduler keeps the old watermark instead of logging
+        # a baseline-rebuild failure it could never satisfy.
+        return SourceStatus.EMPTY
     if not scan_complete:
-        return "incomplete"
+        return SourceStatus.INCOMPLETE
     if tweets:
-        return "success"
+        return SourceStatus.SUCCESS
     # Rows existed but every one was filtered (pure RT / plain text / media
     # policy); the first branch already ruled out an all-zero result.
-    return "filtered_empty"
+    return SourceStatus.FILTERED_EMPTY
 
 
 class SchedulerFetchMixin:

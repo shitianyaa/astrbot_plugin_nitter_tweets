@@ -25,24 +25,47 @@ if TYPE_CHECKING:
         from ai import TranslationReport
 
 
+class SourceStatus:
+    """Per-source check outcomes, shared by the fetch and scheduling layers.
+
+    Attribute access rather than bare literals: a mistyped status would
+    otherwise be counted under a name no formatter knows about and vanish from
+    every summary, so the miscount is the only symptom.
+    """
+
+    # Fetch classification (`UserFetchResult.fetch_status`).
+    SUCCESS = "success"
+    EMPTY = "empty"
+    FILTERED_EMPTY = "filtered_empty"
+    INCOMPLETE = "incomplete"
+    # Refined once the scheduler knows what happened to the fetched tweets.
+    UPDATED = "updated"
+    NO_NEW = "no_new"
+    INITIALIZED = "initialized"
+    BASELINE_REBUILT = "baseline_rebuilt"
+    BASELINE_REBUILD_FAILED = "baseline_rebuild_failed"
+    DELIVERY_FAILED = "delivery_failed"
+    FAILED = "failed"
+
+
 # Per-source check outcomes, ordered from "healthy" to "needs attention".
 # Insertion order drives both the log summary and the user-facing message so
 # the two never disagree; the values are the labels shown to users.
 _SOURCE_STATUS_LABELS: dict[str, str] = {
-    "updated": "发现更新",
+    SourceStatus.UPDATED: "发现更新",
     # Provisional status written right after a successful fetch; normally
     # refined to updated / no_new / initialized before the check ends.  Kept
     # in the table so a leaked provisional value is still counted, not dropped.
-    "success": "抓取成功",
-    "no_new": "正常无更新",
-    "initialized": "首次初始化",
-    "empty": "返回空结果",
-    "filtered_empty": "过滤后为空",
-    "incomplete": "扫描未完整",
-    "baseline_rebuilt": "已重建基准",
-    "baseline_rebuild_failed": "基准未重建",
-    "delivery_failed": "发送未完成",
-    "failed": "抓取失败",
+    SourceStatus.SUCCESS: "抓取成功",
+    SourceStatus.NO_NEW: "正常无更新",
+    SourceStatus.INITIALIZED: "首次初始化",
+    SourceStatus.EMPTY: "返回空结果",
+    SourceStatus.FILTERED_EMPTY: "过滤后为空",
+    SourceStatus.INCOMPLETE: "扫描未完整",
+    SourceStatus.BASELINE_REBUILT: "已重建基准",
+    SourceStatus.BASELINE_REBUILD_FAILED: "基准未重建",
+    SourceStatus.DELIVERY_FAILED: "发送未完成",
+    SourceStatus.FAILED: "抓取失败",
 }
 
 
@@ -224,7 +247,10 @@ class ScheduledCheckResult:
                 counts["rebuilt"] += 1
             elif username in self.initialized_users:
                 counts["initialized"] += 1
-            elif self.source_statuses.get(username) in {"updated", "no_new"}:
+            elif self.source_statuses.get(username) in {
+                SourceStatus.UPDATED,
+                SourceStatus.NO_NEW,
+            }:
                 counts["advanced"] += 1
             else:
                 counts["unchanged"] += 1
