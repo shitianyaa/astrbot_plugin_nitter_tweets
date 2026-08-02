@@ -56,6 +56,41 @@ except ImportError:
 class SchedulerSendMixin:
     """定时推送的发送路径。"""
 
+    def _tweets_for_target(
+        self,
+        batch: PendingTweetBatch,
+        target_umo: str,
+        result: ScheduledCheckResult | None = None,
+    ) -> tuple[list, int]:
+        reader = getattr(self, "config_reader", None)
+        blocked_users_cache = getattr(self, "_target_blocked_users_cache", None)
+        if blocked_users_cache is None:
+            blocked_users_cache = (
+                reader.target_blocked_users() if reader is not None else {}
+            )
+            self._target_blocked_users_cache = blocked_users_cache
+        blocked_users = {
+            str(username).casefold()
+            for username in blocked_users_cache.get(target_umo, [])
+        }
+        if not blocked_users:
+            return batch.tweets, 0
+
+        allowed_tweets = [
+            tweet
+            for tweet in batch.tweets
+            if str(getattr(tweet, "username", "") or "").casefold() not in blocked_users
+        ]
+        filtered_count = len(batch.tweets) - len(allowed_tweets)
+        if filtered_count and result is not None:
+            result.target_blocked_filtered += filtered_count
+            self._log_verbose_info(
+                "[NitterTweets] 按推送目标过滤作者: "
+                f"target={target_umo}, source={batch.username}, "
+                f"filtered={filtered_count}"
+            )
+        return allowed_tweets, filtered_count
+
     async def _send_no_update_notice(
         self, result: ScheduledCheckResult, target_interval: float
     ) -> None:
@@ -200,6 +235,14 @@ class SchedulerSendMixin:
             for target_index, umo in enumerate(targets):
                 if umo in batch.delivered_targets:
                     continue
+                target_tweets, target_filtered_count = self._tweets_for_target(
+                    batch, umo, result
+                )
+                if not target_tweets:
+                    await self._mark_batch_target_delivered(
+                        batch, umo, on_target_delivered
+                    )
+                    continue
                 attempted += 1
                 try:
                     header_text = self._scheduled_update_header(batch, batch_progress)
@@ -208,6 +251,8 @@ class SchedulerSendMixin:
                         if batch_summary_tracker is not None
                         else ""
                     )
+                    if target_filtered_count:
+                        target_batch_summary = ""
                     if target_batch_summary:
                         summary_outcome = await self.sender.send_summary_to_umo(
                             self.context,
@@ -249,7 +294,7 @@ class SchedulerSendMixin:
                         umo,
                         batch.username,
                         batch.instance,
-                        batch.tweets,
+                        target_tweets,
                         **send_kwargs,
                     )
                     delivery_complete = self._delivery_is_complete(outcome)
@@ -258,7 +303,7 @@ class SchedulerSendMixin:
                             batch, umo, on_target_delivered
                         )
                     history_status_ids = self._delivery_history_status_ids(
-                        outcome, batch.tweets
+                        outcome, target_tweets
                     )
                     if history_status_ids:
                         await self._record_batch_push_history(
@@ -436,49 +481,69 @@ class SchedulerSendMixin:
         success = 0
         attempts = 0
         for target_index, umo in enumerate(targets):
-            target_batches = [
-                batch for batch in batches if umo not in batch.delivered_targets
-            ]
+            target_batches: list[tuple[PendingTweetBatch, list]] = []
+            target_filtered_count = 0
+            for batch in batches:
+                if umo in batch.delivered_targets:
+                    continue
+                target_tweets, filtered_count = self._tweets_for_target(
+                    batch, umo, result
+                )
+                target_filtered_count += filtered_count
+                if not target_tweets:
+                    await self._mark_batch_target_delivered(
+                        batch, umo, on_target_delivered
+                    )
+                    continue
+                target_batches.append((batch, target_tweets))
             if not target_batches:
                 continue
             attempts += 1
             try:
+                target_batch_objects = [item[0] for item in target_batches]
                 merge_kwargs = {
                     "omit_status_url": all(
                         bool(getattr(batch, "omit_status_url", True))
-                        for batch in target_batches
+                        for batch in target_batch_objects
                     ),
                     "hide_original_when_translated": all(
                         bool(getattr(batch, "hide_original_when_translated", False))
-                        for batch in target_batches
+                        for batch in target_batch_objects
                     ),
                 }
-                if any(batch.media_only for batch in target_batches):
+                if any(batch.media_only for batch in target_batch_objects):
                     merge_kwargs["media_only"] = True
                 outcome = await self.sender.send_merged_to_umo(
                     self.context,
                     umo,
-                    self._tweet_batches(target_batches),
+                    [
+                        (batch.username, batch.instance, target_tweets)
+                        for batch, target_tweets in target_batches
+                    ],
                     group_label=group_label,
-                    batch_summary=batch_summary,
+                    batch_summary=("" if target_filtered_count else batch_summary),
                     **merge_kwargs,
                 )
                 delivery_complete = self._delivery_is_complete(outcome)
                 if delivery_complete:
-                    for batch in target_batches:
+                    for batch, _ in target_batches:
                         await self._mark_batch_target_delivered(
                             batch, umo, on_target_delivered
                         )
                 history_status_ids = self._delivery_history_status_ids(
                     outcome,
-                    [tweet for batch in target_batches for tweet in batch.tweets],
+                    [
+                        tweet
+                        for _, target_tweets in target_batches
+                        for tweet in target_tweets
+                    ],
                 )
                 if history_status_ids:
                     selected_status_ids = set(history_status_ids)
-                    for batch in target_batches:
+                    for batch, target_tweets in target_batches:
                         batch_status_ids = tuple(
                             str(tweet.status_id)
-                            for tweet in batch.tweets
+                            for tweet in target_tweets
                             if tweet.status_id
                             and str(tweet.status_id) in selected_status_ids
                         )

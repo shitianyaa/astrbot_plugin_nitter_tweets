@@ -111,6 +111,7 @@ lark:GroupMessage:oc_xxxxxxxxxxxxx
 | `/镜像测试 … 镜像站URL` | 管理员 | 临时测 Nitter 镜像 |
 | `/推文状态` | 管理员 | 调度与分组状态 |
 | `/推文检查 [分组名]` | 管理员 | 立即检查（当前会话须在该组 `push_targets`） |
+| `/推文黑名单 添加/删除/查看` | 管理员 | 按当前或指定 UMO 维护跨分组共享的作者黑名单 |
 | `/推文缓存清理` | 管理员 | 清媒体缓存 |
 | `/推文记录清理 确认` | 管理员 | 清推送记录 |
 | `/订阅导入` `/订阅删除` `/订阅列表` `/订阅导出` `/订阅去重` | 管理员 | 博主订阅 |
@@ -128,6 +129,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `search_instances` | 搜索 / List 用 HTML 镜像（**不要**默认塞 nitter.net） |
 | `default_limit` | 手动命令默认条数 |
 | `schedule_enabled` | 后台检查总开关 |
+| `push.target_blocked_users` | 按完整 UMO 保存作者黑名单；命令和 Dashboard 维护，跨分组共享 |
 | `tweet_groups` | 订阅与推送分组 |
 | `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |

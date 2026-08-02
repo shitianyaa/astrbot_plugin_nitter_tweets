@@ -761,6 +761,7 @@ class NitterTweetScheduler(
         if group.is_blogger_group and hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
             run_host_skip_started = True
+        self._target_blocked_users_cache = None
         try:
             seen_map = await self._get_seen_map(group.group_id)
             scan_watermarks = await self._get_scan_watermarks(group.group_id, seen_map)
@@ -1238,6 +1239,7 @@ class NitterTweetScheduler(
                 await self._send_no_update_notice(result, target_interval)
             return result
         finally:
+            self._target_blocked_users_cache = None
             if run_host_skip_started and hasattr(self.nitter, "end_run_host_skip"):
                 self.nitter.end_run_host_skip()
 

@@ -8,6 +8,8 @@ const state = {
   groups: [],
   groupDrafts: {},
   targetProbeResults: {},
+  targetBlacklists: [],
+  targetBlacklistTarget: "",
 
   history: null,
   historyOrphans: null,
@@ -960,6 +962,89 @@ function buildPushTargetEditor(group, draft) {
       }, [iconSpan("probe"), "检测目标"]),
     ]),
     renderTargetProbeResults(group.group_id),
+    buildTargetBlacklistEditor(group, targets),
+  ]);
+}
+
+function targetBlacklistRows() {
+  return Array.isArray(state.targetBlacklists) ? state.targetBlacklists : [];
+}
+
+function targetBlacklistUsers(target) {
+  const row = targetBlacklistRows().find((item) => item.target_umo === target);
+  return Array.isArray(row?.blocked_users) ? [...row.blocked_users] : [];
+}
+
+function buildTargetBlacklistEditor(group, targets) {
+  const selected = targets.includes(state.targetBlacklistTarget)
+    ? state.targetBlacklistTarget
+    : targets[0] || "";
+  state.targetBlacklistTarget = selected;
+  const users = targetBlacklistUsers(selected);
+  const list = el("div", { className: "chip-list mono editable-chip-list" });
+  if (!users.length) {
+    list.appendChild(el("span", { className: "muted", text: "黑名单为空" }));
+  } else {
+    list.append(
+      ...users.map((username) =>
+        el(
+          "button",
+          {
+            className: "chip chip-action",
+            attrs: { type: "button", title: `删除 ${username}` },
+            dataset: {
+              deleteTargetBlacklist: username,
+              deleteTargetBlacklistTarget: selected,
+            },
+            disabled: state.loading || state.actionBusy,
+          },
+          `@${username}`,
+        ),
+      ),
+    );
+  }
+  const select = el("select", {
+    attrs: {
+      id: "targetBlacklistSelect",
+      disabled: state.loading || state.actionBusy,
+    },
+    dataset: { targetBlacklistSelect: group.group_id },
+  });
+  select.append(
+    ...targets.map((target) =>
+      el("option", { attrs: { value: target }, text: target }),
+    ),
+  );
+  select.value = selected;
+  return el("div", { className: "target-blacklist-editor" }, [
+    el("div", { className: "section-head" }, [
+      el("b", { text: "目标作者黑名单" }),
+      el("span", { className: "helper-text", text: "跨所有分组共享" }),
+    ]),
+    targets.length
+      ? el("div", { className: "target-edit-row" }, [
+          editorField("推送目标", select),
+          el("input", {
+            attrs: {
+              id: "targetBlacklistInput",
+              type: "text",
+              placeholder: "用户名或 @用户名",
+              disabled: state.loading || state.actionBusy,
+            },
+          }),
+          el(
+            "button",
+            {
+              className: "button primary small",
+              attrs: { type: "button" },
+              dataset: { addTargetBlacklist: selected },
+              disabled: state.loading || state.actionBusy,
+            },
+            [iconSpan("plus"), "加入"],
+          ),
+        ])
+      : el("p", { className: "helper-text", text: "请先添加并保存推送目标。" }),
+    list,
   ]);
 }
 
@@ -1846,12 +1931,16 @@ async function reloadAll(options = {}) {
   hideAlert();
   try {
     await bridge.ready();
-    const [overview, groups] = await Promise.all([
+    const [overview, groups, targetBlacklists] = await Promise.all([
       apiGet("web/overview"),
       apiGet("web/groups"),
+      apiGet("web/target-blacklists"),
     ]);
     state.overview = overview;
     state.groups = Array.isArray(groups.groups) ? groups.groups : [];
+    state.targetBlacklists = Array.isArray(targetBlacklists.target_blacklists)
+      ? targetBlacklists.target_blacklists
+      : [];
     if (!state.selectedGroupId && state.groups[0]) {
       state.selectedGroupId = state.groups[0].group_id;
     }
@@ -2184,6 +2273,70 @@ function subscriptionEntriesValue() {
 
 function pushTargetInput() {
   return document.getElementById("pushTargetInput");
+}
+
+function targetBlacklistInput() {
+  return document.getElementById("targetBlacklistInput");
+}
+
+function loadTargetBlacklists() {
+  return apiGet("web/target-blacklists").then((payload) => {
+    state.targetBlacklists = Array.isArray(payload.target_blacklists)
+      ? payload.target_blacklists
+      : [];
+  });
+}
+
+async function addTargetBlacklist(target) {
+  const input = targetBlacklistInput();
+  const values = (input?.value || "")
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!target || !values.length) {
+    showAlert("请选择目标并填写作者用户名", "error");
+    return;
+  }
+  await withAction(
+    async () => {
+      const next = [...targetBlacklistUsers(target), ...values];
+      const result = await apiPost("web/target-blacklists/update", {
+        target_umo: target,
+        blocked_users: next,
+      });
+      await loadTargetBlacklists();
+      if (input) input.value = "";
+      return result;
+    },
+    "目标作者黑名单已更新",
+    { reload: false, rerender: renderGroupEditor },
+  );
+}
+
+function confirmDeleteTargetBlacklist(target, username) {
+  if (!target || !username) return;
+  openConfirm({
+    kicker: "目标作者黑名单",
+    title: `移除 ${username}？`,
+    desc: `只会从目标 ${target} 的共享黑名单移除该作者。`,
+    confirmText: "移除",
+    action: () =>
+      withAction(
+        async () => {
+          const next = targetBlacklistUsers(target).filter(
+            (item) => item.toLowerCase() !== username.toLowerCase(),
+          );
+          const result = await apiPost("web/target-blacklists/update", {
+            target_umo: target,
+            blocked_users: next,
+          });
+          await loadTargetBlacklists();
+          return result;
+        },
+        "目标作者黑名单已更新",
+        { reload: false, rerender: renderGroupEditor },
+      ),
+  });
 }
 
 function pushTargetList(groupId) {
@@ -2733,6 +2886,17 @@ function bindEvents() {
         target.dataset.deletePushTarget,
       );
     }
+    if (target.dataset.addTargetBlacklist) {
+      addTargetBlacklist(target.dataset.addTargetBlacklist);
+      return;
+    }
+    if (target.dataset.deleteTargetBlacklist) {
+      confirmDeleteTargetBlacklist(
+        target.dataset.deleteTargetBlacklistTarget,
+        target.dataset.deleteTargetBlacklist,
+      );
+      return;
+    }
     if (target.dataset.deleteSubscriptions) {
       confirmDeleteSubscriptions(target.dataset.deleteSubscriptions);
     }
@@ -2774,6 +2938,11 @@ function bindEvents() {
   });
   els.groupEditor.addEventListener("change", (event) => {
     const target = event.target;
+    if (target instanceof HTMLSelectElement && target.dataset.targetBlacklistSelect) {
+      state.targetBlacklistTarget = target.value;
+      renderGroupEditor();
+      return;
+    }
     if (!(target instanceof HTMLInputElement)) return;
     if (
       target.dataset.groupField &&

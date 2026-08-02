@@ -59,6 +59,12 @@ class WebAPIOverviewMixin:
         total_invalid_lists = sum(
             len(group.lists_info.invalid_entries) for group in list_groups
         )
+        target_blacklist_info = (
+            self.scheduler.config_reader.parse_target_blocked_users()
+        )
+        target_blacklist_users = sum(
+            len(users) for users in target_blacklist_info.blocked_users.values()
+        )
         counts = {
             "groups": len(groups),
             "enabled_groups": sum(1 for group in groups if group.enabled),
@@ -76,6 +82,8 @@ class WebAPIOverviewMixin:
             "invalid_watch_lists": total_invalid_lists,
             "push_targets": sum(len(group.targets) for group in groups),
             "invalid_push_targets": sum(len(group.invalid_targets) for group in groups),
+            "target_blacklist_targets": len(target_blacklist_info.blocked_users),
+            "target_blacklist_users": target_blacklist_users,
         }
         scheduler_state = {
             "running": bool(getattr(self.scheduler, "is_running", False)),

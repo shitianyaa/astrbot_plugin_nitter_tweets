@@ -11,7 +11,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `media`: 图片、视频、xdown、缓存。
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
-- `push`: `tweet_groups`、推送间隔、合并阈值。
+- `push`: `tweet_groups`、推送间隔、合并阈值和目标级作者黑名单。
 - `performance`: 后台账号并发拉取、并发准备和专用镜像池。
 - `logging`: 日志模式。
 
@@ -63,6 +63,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 全局推送：
 
 - `manual_send_interval`（默认 `0`）：手动命令逐条发送间隔秒数。
+- `target_blocked_users`：隐藏对象配置，键为完整 UMO，值为用户名列表；同一目标跨多个分组共享，命令和 Dashboard 维护，发送阶段按目标过滤。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 

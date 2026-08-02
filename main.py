@@ -14,6 +14,7 @@ try:
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
+        TargetBlacklistCommandMixin,
     )
     from .config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
@@ -41,6 +42,7 @@ except ImportError:
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
+        TargetBlacklistCommandMixin,
     )
     from config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
@@ -74,6 +76,7 @@ class NitterTweetsPlugin(
     ManualCommandMixin,
     MaintenanceCommandMixin,
     SubscriptionCommandMixin,
+    TargetBlacklistCommandMixin,
     LinkPreviewMixin,
     Star,
 ):
@@ -289,6 +292,14 @@ class NitterTweetsPlugin(
     async def cmd_tweets_list(self, event: AstrMessageEvent):
         """查看当前推文订阅账号、分组和推送目标配置。"""
         return await self._cmd_tweets_list_impl(event)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("推文黑名单")
+    async def cmd_tweets_target_blacklist(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        """按推送目标维护跨分组共享的作者黑名单。"""
+        return await self._cmd_target_blacklist_impl(event, args)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("订阅导出")

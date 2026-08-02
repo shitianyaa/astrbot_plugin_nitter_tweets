@@ -68,6 +68,20 @@ class SchedulerStatusMixin:
         )
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
+        config_reader = getattr(self, "config_reader", None)
+        target_blacklist_info = (
+            config_reader.parse_target_blocked_users()
+            if config_reader is not None
+            else None
+        )
+        target_blacklist_users = sum(
+            len(users)
+            for users in (
+                target_blacklist_info.blocked_users.values()
+                if target_blacklist_info
+                else []
+            )
+        )
         global_filter_reposts_enabled = parse_config_bool(
             config_get(self.config, "filter_reposts_enabled", True),
             True,
@@ -100,6 +114,9 @@ class SchedulerStatusMixin:
                 f"重复 {total_duplicates} 项，无效 {total_invalid_users} 项）"
             ),
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
+            "目标作者黑名单: "
+            f"{len(target_blacklist_info.blocked_users) if target_blacklist_info else 0} 个目标，"
+            f"{target_blacklist_users} 个作者",
         ]
         if default_group is not None:
             lines.append("默认分组详情:")
