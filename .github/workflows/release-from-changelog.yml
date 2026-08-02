@@ -170,6 +170,68 @@ jobs:
           echo "tag_exists=$tag_exists" >> "$GITHUB_OUTPUT"
           echo "release_exists=$release_exists" >> "$GITHUB_OUTPUT"
 
+      - name: Build plugin archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive_name="astrbot_plugin_nitter_tweets-v${{ steps.parse.outputs.version }}.zip"
+          staging_dir="$(mktemp -d)"
+          trap 'rm -rf "$staging_dir"' EXIT
+          package_root="$staging_dir/astrbot_plugin_nitter_tweets"
+          mkdir -p "$package_root"
+
+          # Keep the release asset installable and exclude tests, docs, and
+          # repository-only development files by construction.
+          package_items=(
+            ".astrbot-plugin"
+            "_conf_schema.json"
+            "__init__.py"
+            "ai"
+            "command_handlers"
+            "config"
+            "delivery"
+            "LICENSE"
+            "logo.png"
+            "main.py"
+            "media_support"
+            "metadata.yaml"
+            "pages"
+            "plugin_api"
+            "rendering"
+            "requirements.txt"
+            "scheduler"
+            "shared"
+            "storage"
+          )
+
+          for item in "${package_items[@]}"; do
+            if [ ! -e "$item" ]; then
+              echo "Missing package item: $item" >&2
+              exit 1
+            fi
+            cp -a "$item" "$package_root/"
+          done
+
+          archive_path="$GITHUB_WORKSPACE/$archive_name"
+          (
+            cd "$staging_dir"
+            zip -qr "$archive_path" "astrbot_plugin_nitter_tweets"
+          )
+          unzip -t "$archive_path" >/dev/null
+
+          if unzip -Z1 "$archive_path" \
+            | grep -E '(^|/)(test|tests|docs|scripts|Progress|\.github)(/|$)|(^|/)[^/]+\.md$' >/dev/null; then
+            echo "Archive contains excluded repository files" >&2
+            exit 1
+          fi
+
+          echo "archive_name=$archive_name" >> "$GITHUB_OUTPUT"
+          echo "archive_path=$archive_path" >> "$GITHUB_OUTPUT"
+          echo "Created $archive_name"
+          unzip -l "$archive_path"
+
       - name: Update existing release notes
         if: steps.dedupe.outputs.release_exists == 'true'
         env:
@@ -204,6 +266,18 @@ jobs:
               --notes-file "${{ steps.parse.outputs.notes_file }}"
           fi
 
+      - name: Upload plugin archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release upload \
+            "${{ steps.parse.outputs.tag }}" \
+            "${{ steps.package.outputs.archive_path }}" \
+            --clobber
+
       - name: Release summary
         shell: bash
         run: |
@@ -226,5 +300,12 @@ jobs:
           body="$(gh release view "$tag" --json body --jq '.body // ""')"
           if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
             echo "Release body is still empty for $tag" >&2
+            exit 1
+          fi
+
+          archive_name="${{ steps.package.outputs.archive_name }}"
+          if ! gh release view "$tag" --json assets --jq '.assets[].name' \
+            | grep -Fxq "$archive_name"; then
+            echo "Release asset is missing: $archive_name" >&2
             exit 1
           fi
