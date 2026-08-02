@@ -187,7 +187,9 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         second = await scheduler.run_check(reason="list_seed", group_name="lists1")
 
         self.assertEqual(first.new_tweet_count, 0)
-        self.assertIn(key, first.failed_users)
+        self.assertIn(key, first.empty_users)
+        self.assertEqual(first.source_statuses.get(key), "empty")
+        self.assertNotIn(key, first.failed_users)
         self.assertNotIn(key, first_watermarks)
         self.assertEqual(second.new_tweet_count, 0)
         self.assertEqual(sender.sent, [])
@@ -304,7 +306,9 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watermarks[key], ["101", "100"])
         self.assertIn("101", await scheduler.storage.get_seen_ids("lists1", key))
         self.assertEqual(sender.sent, [])
-        self.assertIn("自动重建基线提示", "\n".join(result.format_brief_log_lines()))
+        self.assertIn(
+            "扫描未完整，自动重建基准", "\n".join(result.format_brief_log_lines())
+        )
         self.assertIn("旧积压可能被跳过", result.format_message())
 
         next_result = await scheduler.run_check(
@@ -314,7 +318,70 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sender.sent[-1][3], ["102"])
         self.assertEqual(backend.anchor_ids_calls, [None, ["100"], ["101", "100"]])
 
-    async def test_incomplete_list_scan_without_page_ids_keeps_old_baseline(self):
+    async def test_existing_empty_list_result_keeps_watermark(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult([], scan_complete=False),
+                ),
+            ]
+        )
+        scheduler = self._create_scheduler(backend)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        before = await scheduler.storage.get_group_scan_watermarks("lists1")
+        result = await scheduler.run_check(reason="list_empty", group_name="lists1")
+        after = await scheduler.storage.get_group_scan_watermarks("lists1")
+
+        self.assertEqual(result.source_statuses.get(key), "empty")
+        self.assertIn(key, result.empty_users)
+        self.assertEqual(result.baseline_rebuild_failed_users, {})
+        self.assertEqual(before, after)
+        self.assertNotIn("本次没有发现需要推送的新推文。", result.format_message())
+
+    async def test_incomplete_list_scan_with_limit_pushes_then_rebuilds(self):
+        config = self._config()
+        config["tweet_groups"][0]["max_tweets_per_check"] = 1
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                (
+                    "https://list.test",
+                    HtmlSearchResult(
+                        [
+                            self._tweet("103"),
+                            self._tweet("102"),
+                            self._tweet("101"),
+                        ],
+                        scan_complete=False,
+                        anchor_status_ids=["103", "102", "101"],
+                    ),
+                ),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, sender=sender, config=config)
+        await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        key = "list:12345"
+
+        await scheduler.run_check(reason="list_seed", group_name="lists1")
+        result = await scheduler.run_check(
+            reason="list_incomplete", group_name="lists1"
+        )
+
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["103"])
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 3)
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("lists1"),
+            {key: ["103", "102", "101"]},
+        )
+
+    async def test_incomplete_list_scan_without_valid_page_ids_keeps_old_baseline(self):
         backend = _ListBackend(
             [
                 ("https://list.test", [self._tweet("100")]),
@@ -324,7 +391,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                         [self._tweet("101"), self._tweet("100")],
                         raw_item_count=2,
                         scan_complete=False,
-                        anchor_status_ids=[],
+                        anchor_status_ids=["invalid-status-id"],
                     ),
                 ),
             ]
@@ -342,7 +409,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result.baseline_rebuild_failed_users.get(key),
-            "未解析到有效第一页状态 ID，保留旧基线",  # noqa: RUF001
+            "扫描未完整且当前第一页没有有效状态 ID，保留旧水位",
         )
         self.assertEqual(before, after)
         self.assertNotIn("101", await scheduler.storage.get_seen_ids("lists1", key))

@@ -26,6 +26,7 @@ try:
     )
     from .models import (
         BatchSummaryTracker,
+        PendingBaselineRebuild,
         PendingTweetBatch,
         PreparedBatchResult,
         ScheduledCheckResult,
@@ -52,6 +53,7 @@ except ImportError:
     )
     from scheduler.models import (
         BatchSummaryTracker,
+        PendingBaselineRebuild,
         PendingTweetBatch,
         PreparedBatchResult,  # noqa: F401  拆分前定义于此，保留再导出
         ScheduledCheckResult,
@@ -674,6 +676,7 @@ class NitterTweetScheduler(
             users=list(group.account_keys),
             targets=targets,
             invalid_targets=invalid_targets,
+            max_tweets_per_check=group.max_tweets_per_check,
         )
 
     async def _run_check_unlocked(
@@ -751,10 +754,14 @@ class NitterTweetScheduler(
                 group, fetch_limit, skip_plain_text, scan_watermarks
             )
             watermark_candidates: dict[str, tuple[list[str], set[str]]] = {}
+            incomplete_baseline_candidates: dict[str, PendingBaselineRebuild] = {}
             for fetch_result in fetch_results:
                 username = fetch_result.username
                 source_label = format_subscription_source(username, group.group_type)
+                if fetch_result.host_attempts:
+                    result.source_attempts[username] = list(fetch_result.host_attempts)
                 if fetch_result.error:
+                    result.source_statuses[username] = "failed"
                     result.failed_users[username] = fetch_result.error.message
                     logger.warning(
                         f"[NitterTweets] 定时抓取 {source_label} 失败: "
@@ -764,6 +771,9 @@ class NitterTweetScheduler(
 
                 instance = fetch_result.instance
                 tweets = fetch_result.tweets
+                result.source_statuses[username] = fetch_result.fetch_status or (
+                    "success" if tweets else "empty"
+                )
                 scanned_status_ids = list(
                     dict.fromkeys(
                         str(item)
@@ -777,6 +787,18 @@ class NitterTweetScheduler(
                     else scanned_status_ids
                 )
                 watermark = scan_watermarks.get(username)
+                # Checked before the incomplete-scan branch below on purpose: a
+                # mirror that parsed nothing at all cannot supply first-page IDs
+                # to rebuild a baseline from, so reporting "empty" and keeping
+                # the current watermark beats a rebuild failure it could never
+                # satisfy.  `fetch_status` already folds scan_complete in.
+                if fetch_result.fetch_status == "empty" and username in scan_watermarks:
+                    result.empty_users.append(username)
+                    result.source_statuses[username] = "empty"
+                    self._log_verbose_info(
+                        f"[NitterTweets] 定时检查 {source_label} 返回空结果，保留当前水位"
+                    )
+                    continue
                 if watermark and scanned_status_ids:
                     boundary_ids = set(watermark)
                     boundary_index = next(
@@ -795,64 +817,61 @@ class NitterTweetScheduler(
                             for tweet in tweets
                             if str(tweet.status_id or "") in allowed_status_ids
                         ]
-                if not fetch_result.scan_complete:
-                    if group.is_list_group and username in scan_watermarks:
-                        baseline_ids = list(
-                            dict.fromkeys(
-                                str(status_id).strip()
-                                for status_id in fetch_result.anchor_status_ids
-                                if str(status_id or "").strip()
-                            )
-                        )[:20]
-                        if not baseline_ids:
-                            reason = "未解析到有效第一页状态 ID，保留旧基线"
-                            result.baseline_rebuild_failed_users[username] = reason
-                            logger.warning(
-                                "[NitterTweets] List 分页未完整扫描，自动重建基线失败: "
-                                f"group={group.group_id}, source={source_label}, "
-                                f"reason={reason}"
-                            )
-                            continue
+                incomplete_scan = not fetch_result.scan_complete
+                if incomplete_scan:
+                    if (
+                        not (group.is_tag_group or group.is_list_group)
+                        or username not in scan_watermarks
+                    ):
+                        result.source_statuses[username] = "incomplete"
+                        reason = "扫描未完整且没有可用旧扫描基准，保留旧水位"
+                        result.baseline_rebuild_failed_users[username] = reason
+                        logger.warning(
+                            f"[NitterTweets] 定时抓取 {source_label} {reason}"
+                        )
+                        continue
 
+                    baseline_ids = self._normalize_scan_baseline_ids(
+                        fetch_result.anchor_status_ids
+                    )
+                    if not baseline_ids:
+                        result.source_statuses[username] = "baseline_rebuild_failed"
+                        reason = "扫描未完整且当前第一页没有有效状态 ID，保留旧水位"
+                        result.baseline_rebuild_failed_users[username] = reason
+                        logger.warning(
+                            f"[NitterTweets] 定时抓取 {source_label} {reason}"
+                        )
+                        continue
+
+                    if group.max_tweets_per_check == 0:
                         try:
-                            current_seen = seen_map.get(username)
-                            if not isinstance(current_seen, list):
-                                current_seen = []
-                            updated_seen_ids = self._merge_seen_ids(
-                                baseline_ids, current_seen
-                            )
-                            updated_seen_map = dict(seen_map)
-                            updated_seen_map[username] = updated_seen_ids
-                            await self._put_seen_map_and_scan_watermark(
+                            rebuilt_count = await self._rebuild_scan_baseline(
                                 group.group_id,
                                 username,
-                                updated_seen_map,
+                                seen_map,
                                 baseline_ids,
                             )
-                            seen_map[username] = updated_seen_ids
                         except Exception as exc:
-                            reason = f"写入新基线失败: {exc}"
+                            result.source_statuses[username] = "baseline_rebuild_failed"
+                            reason = f"写入新基准失败，保留旧水位: {exc}"
                             result.baseline_rebuild_failed_users[username] = reason
                             logger.warning(
-                                "[NitterTweets] List 分页未完整扫描，自动重建基线未完成: "
-                                f"group={group.group_id}, source={source_label}, "
-                                f"baseline_ids={len(baseline_ids)}, error={exc}"
+                                f"[NitterTweets] 定时抓取 {source_label} 扫描未完整，"
+                                f"自动重建基准未完成: {exc}"
                             )
                             continue
+                        result.baseline_rebuilt_users[username] = rebuilt_count
+                        result.source_statuses[username] = "baseline_rebuilt"
+                        logger.warning(
+                            f"[NitterTweets] 定时抓取 {source_label} 扫描未完整，"
+                            "未配置单轮推送上限，已自动重建基准并跳过本轮推送，"
+                            "旧积压可能被跳过"
+                        )
+                        continue
 
-                        result.baseline_rebuilt_users[username] = len(baseline_ids)
-                        logger.warning(
-                            "[NitterTweets] List 分页扫描预算耗尽，已自动重建扫描基线: "
-                            f"group={group.group_id}, source={source_label}, "
-                            f"baseline_ids={len(baseline_ids)}, "
-                            "本轮不发送，旧积压可能被跳过"
-                        )
-                    else:
-                        result.failed_users[username] = "分页未完整扫描，已跳过本轮"
-                        logger.warning(
-                            f"[NitterTweets] 定时抓取 {source_label} 未完整扫描，跳过本轮"
-                        )
-                    continue
+                    incomplete_baseline_candidates[username] = PendingBaselineRebuild(
+                        baseline_ids
+                    )
                 plain_text_filtered = fetch_result.plain_text_filtered
                 if skip_plain_text and plain_text_filtered > 0:
                     group_plain_text_filtered_total += plain_text_filtered
@@ -891,17 +910,17 @@ class NitterTweetScheduler(
                                 [],
                             )
                             result.initialized_users[username] = 0
+                            result.source_statuses[username] = "filtered_empty"
                             self._log_verbose_info(
                                 f"[NitterTweets] {source_kind_label}首轮结果全部被过滤，"
                                 "已记录空扫描水位: "
                                 f"group={group.group_id}, source={source_label}"
                             )
                             continue
-                        result.failed_users[username] = (
-                            "首次抓取无有效推文 ID，未建立订阅源基线（下轮重试）"
-                        )
+                        result.empty_users.append(username)
+                        result.source_statuses[username] = "empty"
                         logger.warning(
-                            f"[NitterTweets] {source_kind_label}首次抓取为空，跳过初始化: "
+                            f"[NitterTweets] {source_kind_label}首次抓取为空，未建立订阅源基线: "
                             f"group={group.group_id}, source={source_label}"
                         )
                         continue
@@ -911,6 +930,7 @@ class NitterTweetScheduler(
                         group.group_id, username, full_scanned_status_ids
                     )
                     result.initialized_users[username] = len(seed_ids)
+                    result.source_statuses[username] = "initialized"
                     self._log_verbose_info(
                         "[NitterTweets] 首次订阅源已初始化: "
                         f"group={group.group_id}, source={source_label}, "
@@ -961,10 +981,16 @@ class NitterTweetScheduler(
                     selected_ids = {
                         tweet.status_id for tweet in new_tweets if tweet.status_id
                     }
-                    watermark_candidates[username] = (
-                        full_scanned_status_ids,
-                        selected_ids,
-                    )
+                    if incomplete_scan:
+                        incomplete_baseline_candidates[username].selected_ids.update(
+                            selected_ids
+                        )
+                    else:
+                        result.source_statuses[username] = "updated"
+                        watermark_candidates[username] = (
+                            full_scanned_status_ids,
+                            selected_ids,
+                        )
                     discovered_batches.append(
                         PendingTweetBatch(
                             username=username,
@@ -989,7 +1015,30 @@ class NitterTweetScheduler(
                         )
                     )
                 else:
+                    if incomplete_scan:
+                        result.source_statuses[username] = "incomplete"
+                        self._log_verbose_info(
+                            f"[NitterTweets] 定时检查 {source_label} 扫描未完整，"
+                            "本轮没有可推送候选，等待基准重建"
+                        )
+                        continue
+                    if fetch_result.fetch_status == "empty":
+                        result.empty_users.append(username)
+                        result.source_statuses[username] = "empty"
+                        self._log_verbose_info(
+                            f"[NitterTweets] 定时检查 {source_label} 返回空结果，保留当前水位"
+                        )
+                        continue
+                    if fetch_result.fetch_status == "filtered_empty":
+                        result.filtered_empty_users.append(username)
+                        result.source_statuses[username] = "filtered_empty"
+                        self._log_verbose_info(
+                            f"[NitterTweets] 定时检查 {source_label} 的结果全部被过滤，"
+                            "保留当前水位"
+                        )
+                        continue
                     result.no_new_users.append(username)
+                    result.source_statuses[username] = "no_new"
                     self._log_verbose_info(
                         f"[NitterTweets] 定时检查无新推文: group={group.group_id}, "
                         f"source={source_label}"
@@ -1101,16 +1150,53 @@ class NitterTweetScheduler(
                     for batch in pending_batches:
                         await self._cleanup_batch_media(batch)
 
+            for username, rebuild in incomplete_baseline_candidates.items():
+                source_label = format_subscription_source(username, group.group_type)
+                current_seen = set(seen_map.get(username, []))
+                if not rebuild.selected_ids.issubset(current_seen):
+                    result.source_statuses[username] = "baseline_rebuild_failed"
+                    reason = "本轮推送未全部成功，保留旧水位"
+                    result.baseline_rebuild_failed_users[username] = reason
+                    logger.warning(
+                        f"[NitterTweets] 定时抓取 {source_label} 扫描未完整，{reason}"
+                    )
+                    continue
+                try:
+                    rebuilt_count = await self._rebuild_scan_baseline(
+                        group.group_id,
+                        username,
+                        seen_map,
+                        rebuild.baseline_ids,
+                    )
+                except Exception as exc:
+                    result.source_statuses[username] = "baseline_rebuild_failed"
+                    reason = f"写入新基准失败，保留旧水位: {exc}"
+                    result.baseline_rebuild_failed_users[username] = reason
+                    logger.warning(
+                        f"[NitterTweets] 定时抓取 {source_label} "
+                        f"扫描未完整，自动重建基准未完成: {exc}"
+                    )
+                    continue
+                result.baseline_rebuilt_users[username] = rebuilt_count
+                result.source_statuses[username] = "baseline_rebuilt"
+                logger.warning(
+                    f"[NitterTweets] 定时抓取 {source_label} "
+                    f"扫描未完整，已按单轮推送上限 {group.max_tweets_per_check} 条处理并自动重建基准，"
+                    "旧积压可能被跳过"
+                )
+
             for username, (
                 anchor_status_ids,
                 selected_ids,
             ) in watermark_candidates.items():
                 current_seen = set(seen_map.get(username, []))
                 if selected_ids and not selected_ids.issubset(current_seen):
+                    result.source_statuses[username] = "delivery_failed"
                     continue
                 await self._set_scan_watermark(
                     group.group_id, username, anchor_status_ids
                 )
+                result.source_statuses[username] = "updated"
 
             self._log_check_result(result)
             if self._should_notify_no_updates(result, notify_no_updates, group):

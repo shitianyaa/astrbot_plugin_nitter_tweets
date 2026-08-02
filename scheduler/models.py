@@ -25,6 +25,27 @@ if TYPE_CHECKING:
         from ai import TranslationReport
 
 
+# Per-source check outcomes, ordered from "healthy" to "needs attention".
+# Insertion order drives both the log summary and the user-facing message so
+# the two never disagree; the values are the labels shown to users.
+_SOURCE_STATUS_LABELS: dict[str, str] = {
+    "updated": "发现更新",
+    # Provisional status written right after a successful fetch; normally
+    # refined to updated / no_new / initialized before the check ends.  Kept
+    # in the table so a leaked provisional value is still counted, not dropped.
+    "success": "抓取成功",
+    "no_new": "正常无更新",
+    "initialized": "首次初始化",
+    "empty": "返回空结果",
+    "filtered_empty": "过滤后为空",
+    "incomplete": "扫描未完整",
+    "baseline_rebuilt": "已重建基准",
+    "baseline_rebuild_failed": "基准未重建",
+    "delivery_failed": "发送未完成",
+    "failed": "抓取失败",
+}
+
+
 @dataclass(slots=True)
 class ScheduledPushResult:
     username: str
@@ -54,6 +75,20 @@ class PendingTweetBatch:
 
 
 @dataclass(slots=True)
+class PendingBaselineRebuild:
+    """A Tag/List source whose scan never reached the old watermark.
+
+    `max_tweets_per_check > 0` still delivers up to that many tweets, so the
+    rebuild has to wait until sending finishes: `selected_ids` collects what
+    was queued, and the baseline is only rewritten once every one of those IDs
+    made it into seen (i.e. all targets accepted the batch).
+    """
+
+    baseline_ids: list[str]
+    selected_ids: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
 class BatchSummaryTracker:
     text: str = ""
     delivered_targets: set[str] = field(default_factory=set)
@@ -80,11 +115,15 @@ class ScheduledCheckResult:
     available_groups: list[str] = field(default_factory=list)
     # Fixed RSS first-page size used by the background scanner.
     fetch_limit: int = 0
+    max_tweets_per_check: int = 0
     skipped_reason: str = ""
     initialized_users: dict[str, int] = field(default_factory=dict)
     no_new_users: list[str] = field(default_factory=list)
     empty_users: list[str] = field(default_factory=list)
+    filtered_empty_users: list[str] = field(default_factory=list)
     failed_users: dict[str, str] = field(default_factory=dict)
+    source_statuses: dict[str, str] = field(default_factory=dict)
+    source_attempts: dict[str, list[str]] = field(default_factory=dict)
     baseline_rebuilt_users: dict[str, int] = field(default_factory=dict)
     baseline_rebuild_failed_users: dict[str, str] = field(default_factory=dict)
     pushes: list[ScheduledPushResult] = field(default_factory=list)
@@ -125,6 +164,7 @@ class ScheduledCheckResult:
             len(self.initialized_users)
             + len(self.no_new_users)
             + len(self.empty_users)
+            + len(self.filtered_empty_users)
             + len(self.failed_users)
             + len(self.baseline_rebuilt_users)
             + len(self.baseline_rebuild_failed_users)
@@ -136,14 +176,77 @@ class ScheduledCheckResult:
             not self.skipped_reason
             and self.targets
             and self.new_tweet_count == 0
+            and not self.baseline_rebuilt_users
+            and not self.baseline_rebuild_failed_users
             and (
                 bool(self.initialized_users)
                 or bool(self.no_new_users)
                 or bool(self.empty_users)
+                or bool(self.filtered_empty_users)
                 or bool(self.failed_users)
-                or bool(self.baseline_rebuilt_users)
-                or bool(self.baseline_rebuild_failed_users)
             )
+        )
+
+    def _source_status_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for username in self.users:
+            status = self.source_statuses.get(username)
+            if status:
+                counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def _source_status_summary(self) -> str:
+        counts = self._source_status_counts()
+        return (
+            ",".join(
+                f"{status}:{counts[status]}"
+                for status in _SOURCE_STATUS_LABELS
+                if counts.get(status)
+            )
+            or "unknown"
+        )
+
+    def _source_status_message(self) -> str:
+        counts = self._source_status_counts()
+        return (
+            "、".join(
+                f"{label} {counts[status]} 个"
+                for status, label in _SOURCE_STATUS_LABELS.items()
+                if counts.get(status)
+            )
+            or "暂无结果"
+        )
+
+    def _watermark_counts(self) -> dict[str, int]:
+        counts = {"advanced": 0, "rebuilt": 0, "initialized": 0, "unchanged": 0}
+        for username in self.users:
+            if username in self.baseline_rebuilt_users:
+                counts["rebuilt"] += 1
+            elif username in self.initialized_users:
+                counts["initialized"] += 1
+            elif self.source_statuses.get(username) in {"updated", "no_new"}:
+                counts["advanced"] += 1
+            else:
+                counts["unchanged"] += 1
+        return counts
+
+    def _watermark_summary(self) -> str:
+        counts = self._watermark_counts()
+        return ",".join(f"{name}:{count}" for name, count in counts.items() if count)
+
+    def _watermark_message(self) -> str:
+        labels = {
+            "advanced": "已推进",
+            "rebuilt": "已重建",
+            "initialized": "已初始化",
+            "unchanged": "未更新",
+        }
+        counts = self._watermark_counts()
+        return (
+            "、".join(
+                f"{labels[name]} {count} 个" for name, count in counts.items() if count
+            )
+            or "暂无结果"
         )
 
     def format_log_summary(self) -> str:
@@ -175,7 +278,11 @@ class ScheduledCheckResult:
             f"sources={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
-            f"empty={len(self.empty_users)}, failed={len(self.failed_users)}, "
+            f"empty={len(self.empty_users)}, "
+            f"filtered_empty={len(self.filtered_empty_users)}, "
+            f"failed={len(self.failed_users)}, "
+            f"status={self._source_status_summary()}, "
+            f"watermark={self._watermark_summary()}, "
             f"baseline_rebuilt={len(self.baseline_rebuilt_users)}, "
             f"baseline_rebuild_failed={len(self.baseline_rebuild_failed_users)}, "
             f"push_mode={self.push_mode}, "
@@ -198,6 +305,8 @@ class ScheduledCheckResult:
                 f"mode={self.push_mode}, "
                 f"checked={self.checked_user_count}, "
                 f"new={self.new_tweet_count}, "
+                f"status={self._source_status_summary()}, "
+                f"watermark={self._watermark_summary()}, "
                 f"push_success={self.pushed_target_successes}/"
                 f"{self.pushed_target_attempts}, "
                 f"failed={len(self.failed_users)}, "
@@ -227,9 +336,9 @@ class ScheduledCheckResult:
                 for user, count in self.baseline_rebuilt_users.items()
             ]
             lines.append(
-                "[NitterTweets] 自动重建基线提示: "
+                "[NitterTweets] 扫描未完整，自动重建基准: "
                 + _format_limited_values(rebuilt_items, limit=5, separator="; ")
-                + "；本轮不发送，旧积压可能被跳过"
+                + self._baseline_rebuild_notice()
             )
         if self.baseline_rebuild_failed_users:
             rebuild_items = [
@@ -237,9 +346,41 @@ class ScheduledCheckResult:
                 for user, error in self.baseline_rebuild_failed_users.items()
             ]
             lines.append(
-                "[NitterTweets] 自动重建基线未完成: "
+                "[NitterTweets] 扫描未完整，自动重建基准未完成: "
                 + _format_limited_values(rebuild_items, limit=5, separator="; ")
             )
+        if self.empty_users:
+            lines.append(
+                "[NitterTweets] 空结果详情: "
+                + _format_limited_values(
+                    [self._subscription_label(user) for user in self.empty_users],
+                    limit=5,
+                    separator="; ",
+                )
+            )
+        if self.filtered_empty_users:
+            lines.append(
+                "[NitterTweets] 过滤后为空: "
+                + _format_limited_values(
+                    [
+                        self._subscription_label(user)
+                        for user in self.filtered_empty_users
+                    ],
+                    limit=5,
+                    separator="; ",
+                )
+            )
+        if self.source_attempts:
+            attempts = [
+                f"{self._subscription_label(user)}: {'；'.join(details)}"
+                for user, details in self.source_attempts.items()
+                if details
+            ]
+            if attempts:
+                lines.append(
+                    "[NitterTweets] 实例结果: "
+                    + _format_limited_values(attempts, limit=5, separator="; ")
+                )
         if self.invalid_targets:
             lines.append(
                 "[NitterTweets] 无效推送目标: "
@@ -279,6 +420,14 @@ class ScheduledCheckResult:
             return f"List {user[5:]}"
         return self._failure_label(user)
 
+    def _baseline_rebuild_notice(self) -> str:
+        if self.max_tweets_per_check <= 0:
+            return "；未配置单轮推送上限，本轮未推送并自动重建基准，旧积压可能被跳过"
+        return (
+            f"；已按单轮推送上限 {self.max_tweets_per_check} 条处理并自动重建基准，"
+            "旧积压可能被跳过"
+        )
+
     def format_message(self, title: str = "Nitter 定时检查结果") -> str:
         lines = [
             title,
@@ -293,6 +442,10 @@ class ScheduledCheckResult:
             lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:
             lines.append("QQ 合并阈值: 已关闭")
+
+        if self.source_statuses:
+            lines.append(f"抓取状态: {self._source_status_message()}")
+            lines.append(f"水位状态: {self._watermark_message()}")
 
         if self.skipped_reason:
             reason_text = {
@@ -323,9 +476,9 @@ class ScheduledCheckResult:
                 for user, count in self.baseline_rebuilt_users.items()
             ]
             lines.append(
-                "自动重建基线: "
+                "扫描未完整，自动重建基准: "
                 + _format_limited_values(items, separator="; ")
-                + "（本轮不发送，旧积压可能被跳过）"
+                + self._baseline_rebuild_notice()
             )
 
         if self.baseline_rebuild_failed_users:
@@ -334,7 +487,8 @@ class ScheduledCheckResult:
                 for user, error in self.baseline_rebuild_failed_users.items()
             ]
             lines.append(
-                "基线重建未完成: " + _format_limited_values(items, separator="; ")
+                "扫描未完整，自动重建基准未完成: "
+                + _format_limited_values(items, separator="; ")
             )
 
         if self.pushes and self.push_mode == "merged":
@@ -371,7 +525,7 @@ class ScheduledCheckResult:
 
         if self.empty_users:
             lines.append(
-                "订阅源无有效推文 ID: "
+                "订阅源返回空结果: "
                 + _format_limited_values(
                     [
                         format_subscription_source(user, self.group_type)
@@ -379,6 +533,29 @@ class ScheduledCheckResult:
                     ]
                 )
             )
+
+        if self.filtered_empty_users:
+            lines.append(
+                "订阅源结果全部被过滤: "
+                + _format_limited_values(
+                    [
+                        format_subscription_source(user, self.group_type)
+                        for user in self.filtered_empty_users
+                    ]
+                )
+            )
+
+        if self.source_attempts:
+            attempts = [
+                f"{self._subscription_label(user)}: {'；'.join(details)}"
+                for user, details in self.source_attempts.items()
+                if details
+            ]
+            if attempts:
+                lines.append(
+                    "实例结果: "
+                    + _format_limited_values(attempts, limit=5, separator="; ")
+                )
 
         if self.failed_users:
             items = [
@@ -392,7 +569,18 @@ class ScheduledCheckResult:
                 "无效推送目标: " + _format_limited_values(self.invalid_targets)
             )
 
-        if not self.skipped_reason and self.new_tweet_count == 0:
+        if (
+            not self.skipped_reason
+            and self.new_tweet_count == 0
+            and self.no_new_users
+            and len(self.no_new_users) == len(self.users)
+            and not self.initialized_users
+            and not self.empty_users
+            and not self.filtered_empty_users
+            and not self.failed_users
+            and not self.baseline_rebuilt_users
+            and not self.baseline_rebuild_failed_users
+        ):
             lines.append("本次没有发现需要推送的新推文。")
 
         return "\n".join(lines)
@@ -424,6 +612,8 @@ class UserFetchResult:
     # response can be distinguished from a genuinely empty page.
     retweet_filtered: int = 0
     html_raw_item_count: int = 0
+    fetch_status: str = ""
+    host_attempts: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

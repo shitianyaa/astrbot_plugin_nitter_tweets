@@ -104,6 +104,39 @@ class SchedulerSeenMixin:
         await self._put_seen_map(group_id, seen_map)
         await self._set_scan_watermark(group_id, username, status_ids)
 
+    @staticmethod
+    def _normalize_scan_baseline_ids(status_ids: list[str] | str | None) -> list[str]:
+        """Keep only valid numeric status IDs for an automatic baseline."""
+        values = [status_ids] if isinstance(status_ids, str) else status_ids or []
+        normalized: list[str] = []
+        for status_id in values:
+            value = str(status_id or "").strip()
+            if value and value.isdigit() and value not in normalized:
+                normalized.append(value)
+        return normalized[:20]
+
+    async def _rebuild_scan_baseline(
+        self,
+        group_id: str,
+        username: str,
+        seen_map: dict[str, list[str]],
+        baseline_ids: list[str],
+    ) -> int:
+        current_seen = seen_map.get(username)
+        if not isinstance(current_seen, list):
+            current_seen = []
+        updated_seen_ids = self._merge_seen_ids(baseline_ids, current_seen)
+        updated_seen_map = dict(seen_map)
+        updated_seen_map[username] = updated_seen_ids
+        await self._put_seen_map_and_scan_watermark(
+            group_id,
+            username,
+            updated_seen_map,
+            baseline_ids,
+        )
+        seen_map[username] = updated_seen_ids
+        return len(baseline_ids)
+
     def _merge_seen_ids(self, new_ids: list[str], old_ids: list[str]) -> list[str]:
         return self.storage.merge_seen_ids(new_ids, old_ids)
 

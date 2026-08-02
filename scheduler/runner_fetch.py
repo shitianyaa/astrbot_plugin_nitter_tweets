@@ -22,6 +22,35 @@ except ImportError:
     from shared import TweetItem, format_subscription_source
 
 
+def _classify_html_fetch(
+    tweets: list[TweetItem],
+    *,
+    scan_complete: bool,
+    raw_item_count: int,
+    retweet_filtered: int,
+    plain_text_filtered: int,
+) -> str:
+    """Classify the HTML result before the scheduler applies seen/watermarks."""
+    if (
+        not tweets
+        and not raw_item_count
+        and not retweet_filtered
+        and not plain_text_filtered
+    ):
+        # Nothing parsed at all: the mirror had no usable page, so an
+        # incomplete scan cannot rebuild a baseline either.  Report "empty"
+        # so the scheduler keeps the old watermark instead of logging a
+        # baseline-rebuild failure it could never satisfy.
+        return "empty"
+    if not scan_complete:
+        return "incomplete"
+    if tweets:
+        return "success"
+    # Rows existed but every one was filtered (pure RT / plain text / media
+    # policy); the first branch already ruled out an all-zero result.
+    return "filtered_empty"
+
+
 class SchedulerFetchMixin:
     """博主与标签的抓取入口。"""
 
@@ -96,6 +125,7 @@ class SchedulerFetchMixin:
                 fetch_limit,
                 skip_plain_text=skip_plain_text,
                 filter_reposts=filter_reposts,
+                scan_watermark=scan_watermark,
             )
         if group.is_list_group:
             return await self._fetch_group_list(
@@ -303,6 +333,7 @@ class SchedulerFetchMixin:
         *,
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
+        scan_watermark: list[str] | None = None,
     ) -> UserFetchResult:
         query_item = next(
             (item for item in group.queries if item.account_key == account_key),
@@ -333,16 +364,29 @@ class SchedulerFetchMixin:
         )
 
         try:
+            search_kwargs = {
+                "kind": query_item.type,
+                "filter_reposts": filter_reposts,
+            }
+            if scan_watermark is not None:
+                search_kwargs["anchor_ids"] = scan_watermark
             instance, tweets = await asyncio.to_thread(
                 lambda: html_backend.search(
                     query_item.query,
                     fetch_limit,
-                    kind=query_item.type,
-                    filter_reposts=filter_reposts,
+                    **search_kwargs,
                 )
             )
             retweet_filtered = max(0, int(getattr(tweets, "retweet_filtered", 0) or 0))
             html_raw_item_count = max(0, int(getattr(tweets, "raw_item_count", 0) or 0))
+            scan_complete = bool(getattr(tweets, "scan_complete", True))
+            raw_anchor_status_ids = getattr(tweets, "anchor_status_ids", None)
+            anchor_status_ids = (
+                [tweet.status_id for tweet in tweets[:20] if tweet.status_id]
+                if raw_anchor_status_ids is None
+                else list(raw_anchor_status_ids)
+            )
+            host_attempts = list(getattr(tweets, "host_attempts", []) or [])
             tweets = list(tweets)
             self._log_verbose_info(
                 f"[NitterTweets] 搜索订阅抓取成功: group={group.group_id}, "
@@ -368,14 +412,20 @@ class SchedulerFetchMixin:
             instance=instance,
             tweets=tweets,
             scanned_status_ids=[tweet.status_id for tweet in tweets if tweet.status_id],
-            anchor_status_ids=[
-                tweet.status_id for tweet in tweets[:20] if tweet.status_id
-            ],
+            anchor_status_ids=anchor_status_ids,
             latest_status_id=(tweets[0].status_id if tweets else ""),
-            scan_complete=True,
+            scan_complete=scan_complete,
             plain_text_filtered=plain_text_filtered,
             retweet_filtered=retweet_filtered,
             html_raw_item_count=html_raw_item_count,
+            fetch_status=_classify_html_fetch(
+                tweets,
+                scan_complete=scan_complete,
+                raw_item_count=html_raw_item_count,
+                retweet_filtered=retweet_filtered,
+                plain_text_filtered=plain_text_filtered,
+            ),
+            host_attempts=host_attempts,
         )
 
     async def _fetch_group_list(
@@ -437,6 +487,7 @@ class SchedulerFetchMixin:
                 if raw_anchor_status_ids is None
                 else list(raw_anchor_status_ids)
             )
+            host_attempts = list(getattr(tweets, "host_attempts", []) or [])
             tweets = list(tweets)
             self._log_verbose_info(
                 f"[NitterTweets] List 抓取成功: group={group.group_id}, "
@@ -470,6 +521,14 @@ class SchedulerFetchMixin:
             plain_text_filtered=plain_text_filtered,
             retweet_filtered=retweet_filtered,
             html_raw_item_count=html_raw_item_count,
+            fetch_status=_classify_html_fetch(
+                tweets,
+                scan_complete=scan_complete,
+                raw_item_count=html_raw_item_count,
+                retweet_filtered=retweet_filtered,
+                plain_text_filtered=plain_text_filtered,
+            ),
+            host_attempts=host_attempts,
         )
 
     @staticmethod
