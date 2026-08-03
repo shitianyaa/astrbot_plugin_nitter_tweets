@@ -904,7 +904,10 @@ def _migrate_target_blocked_users_value(container: dict, key: str) -> bool:
     if not isinstance(value, dict):
         return False
     container[key] = [
-        {"target_umo": str(target), "blocked_users": list(users)}
+        {
+            "target_umo": str(target),
+            "blocked_users": _normalize_list(users),
+        }
         for target, users in value.items()
     ]
     return True

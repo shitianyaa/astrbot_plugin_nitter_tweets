@@ -189,6 +189,43 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         # Second call is a no-op.
         self.assertFalse(_migrate_target_blocked_users_to_list(config))
 
+    def test_migrate_target_blocked_users_normalizes_raw_values(self):
+        from config.compat import _migrate_target_blocked_users_to_list
+
+        config = {
+            "push": {
+                "target_blocked_users": {
+                    "aiocqhttp:GroupMessage:123": "NASA,OpenAI",
+                    "telegram:FriendMessage:9": None,
+                    "lark:GroupMessage:chat-1": "NASA",
+                    "weixin_oc:FriendMessage:8": ["A", "B"],
+                }
+            }
+        }
+        changed = _migrate_target_blocked_users_to_list(config)
+        self.assertTrue(changed)
+        self.assertEqual(
+            config["push"]["target_blocked_users"],
+            [
+                {
+                    "target_umo": "aiocqhttp:GroupMessage:123",
+                    "blocked_users": ["NASA", "OpenAI"],
+                },
+                {
+                    "target_umo": "telegram:FriendMessage:9",
+                    "blocked_users": [],
+                },
+                {
+                    "target_umo": "lark:GroupMessage:chat-1",
+                    "blocked_users": ["NASA"],
+                },
+                {
+                    "target_umo": "weixin_oc:FriendMessage:8",
+                    "blocked_users": ["A", "B"],
+                },
+            ],
+        )
+
     def test_bare_digit_is_not_treated_as_target_umo(self):
         """Bare digits stay usernames, not group targets (no ambiguity)."""
         from command_handlers.target_blacklist import TargetBlacklistCommandMixin
