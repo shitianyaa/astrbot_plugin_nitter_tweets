@@ -63,7 +63,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 全局推送：
 
 - `manual_send_interval`（默认 `0`）：手动命令逐条发送间隔秒数。
-- `target_blocked_users`：隐藏对象配置，键为完整 UMO，值为用户名列表；同一目标跨多个分组共享，命令和 Dashboard 维护，发送阶段按目标过滤。
+- `target_blocked_users`：隐藏列表配置，每项为完整 UMO 与其用户名列表；同一目标跨多个分组共享，命令和 Dashboard 维护，发送阶段按目标过滤。目标 UMO 需完整格式（如 `aiocqhttp:GroupMessage:123`）。
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 

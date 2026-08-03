@@ -746,10 +746,22 @@ class SchedulerConfigReader:
     def target_blocked_users(self) -> dict[str, list[str]]:
         return self.parse_target_blocked_users().blocked_users
 
-    def target_blocked_users_for(self, target_umo: str) -> set[str]:
-        target = str(target_umo or "").strip()
-        users = self.target_blocked_users().get(target, [])
-        return {str(username).casefold() for username in users}
+    @staticmethod
+    def serialize_target_blocked_users(
+        blocked_users: dict[str, list[str]],
+    ) -> list[dict[str, object]]:
+        """Serialize to the AstrBot-persistable list-of-dict shape.
+
+        AstrBot's `check_config_integrity` recurses into `object`-typed config
+        values and prunes keys missing from the schema's `items`; a dynamic
+        UMO-keyed dict would be wiped on reload. A `list` value is kept as-is,
+        and `parse_target_blocked_users` already accepts this list-of-dict
+        shape.
+        """
+        return [
+            {"target_umo": target, "blocked_users": list(users)}
+            for target, users in sorted(blocked_users.items())
+        ]
 
     def parse_push_targets(
         self,

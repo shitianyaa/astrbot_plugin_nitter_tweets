@@ -311,9 +311,8 @@
       },
       "target_blocked_users": {
         "description": "推送目标作者黑名单",
-        "type": "object",
-        "default": {},
-        "items": {},
+        "type": "list",
+        "default": [],
         "hint": "按完整 UMO 记录不希望发送到该目标的作者用户名；建议通过插件命令或 Dashboard 维护。该配置跨所有分组共享。",
         "invisible": true
       },
@@ -1110,9 +1109,8 @@
   },
   "target_blocked_users": {
     "description": "推送目标作者黑名单",
-    "type": "object",
-    "default": {},
-    "items": {},
+    "type": "list",
+    "default": [],
     "hint": "旧版兼容字段；新配置请在推送设置中通过命令或 Dashboard 维护。",
     "invisible": true
   },

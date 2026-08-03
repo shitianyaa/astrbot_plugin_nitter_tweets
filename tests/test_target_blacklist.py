@@ -21,6 +21,35 @@ from scheduler.config import SchedulerConfigReader  # noqa: E402
 from storage import SQLiteStorage, StorageAdapter  # noqa: E402
 
 
+def _check_config_integrity(refer_conf: dict, conf: dict) -> bool:
+    """Reproduce AstrBot's config integrity check (prunes unknown keys)."""
+    has_new = False
+    new_conf = {}
+    for key, value in refer_conf.items():
+        if key not in conf:
+            new_conf[key] = value
+            has_new = True
+        elif conf[key] is None:
+            new_conf[key] = value
+            has_new = True
+        elif isinstance(value, dict):
+            if not isinstance(conf[key], dict):
+                new_conf[key] = value
+                has_new = True
+            else:
+                child_has_new = _check_config_integrity(value, conf[key])
+                new_conf[key] = conf[key]
+                has_new |= child_has_new
+        else:
+            new_conf[key] = conf[key]
+    for key in list(conf.keys()):
+        if key not in refer_conf:
+            has_new = True
+    conf.clear()
+    conf.update(new_conf)
+    return has_new
+
+
 class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp_dir = TemporaryDirectory()
@@ -81,6 +110,96 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                     assert_object_items(value, f"{path}.{key}")
 
         assert_object_items(schema)
+
+    def test_plugin_schema_declares_target_blacklist_as_list(self):
+        schema = json.loads((_ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            schema["push"]["items"]["target_blocked_users"]["type"], "list"
+        )
+        self.assertEqual(schema["target_blocked_users"]["type"], "list")
+
+    def test_serialize_target_blocked_users_round_trips_through_parser(self):
+        reader = SchedulerConfigReader({}, context=None)
+        blocked = {
+            "aiocqhttp:GroupMessage:123": ["NASA", "OpenAI"],
+            "telegram:FriendMessage:9": ["OpenAI"],
+        }
+        serialized = reader.serialize_target_blocked_users(blocked)
+        self.assertEqual(
+            serialized,
+            [
+                {
+                    "target_umo": "aiocqhttp:GroupMessage:123",
+                    "blocked_users": ["NASA", "OpenAI"],
+                },
+                {"target_umo": "telegram:FriendMessage:9", "blocked_users": ["OpenAI"]},
+            ],
+        )
+        parsed = reader.parse_target_blocked_users(serialized).blocked_users
+        self.assertEqual(parsed, blocked)
+
+    def test_astrbot_config_integrity_keeps_list_blacklist(self):
+        """Reproduce AstrBot's check_config_integrity on the list shape."""
+        reader = SchedulerConfigReader({}, context=None)
+        stored = reader.serialize_target_blocked_users(
+            {
+                "aiocqhttp:GroupMessage:123": ["NASA"],
+                "telegram:FriendMessage:9": ["OpenAI"],
+            }
+        )
+
+        # Leaf-level check: refer value is the list default ([]), conf is the
+        # stored list. A list is not recursed, so the data must survive.
+        refer = {"target_blocked_users": []}
+        conf = {"target_blocked_users": list(stored)}
+        changed = _check_config_integrity(refer, conf)
+
+        self.assertFalse(changed)
+        self.assertEqual(conf["target_blocked_users"], stored)
+
+    def test_astrbot_config_integrity_keeps_legacy_dict_blacklist(self):
+        """A dict value also survives a list-typed schema (no recursion)."""
+        stored = {
+            "aiocqhttp:GroupMessage:123": ["NASA"],
+            "telegram:FriendMessage:9": ["OpenAI"],
+        }
+        refer = {"target_blocked_users": []}
+        conf = {"target_blocked_users": dict(stored)}
+        changed = _check_config_integrity(refer, conf)
+
+        self.assertFalse(changed)
+        self.assertEqual(conf["target_blocked_users"], stored)
+
+    def test_migrate_target_blocked_users_converts_dict_to_list(self):
+        from config.compat import _migrate_target_blocked_users_to_list
+
+        config = {
+            "push": {
+                "target_blocked_users": {
+                    "aiocqhttp:GroupMessage:123": ["NASA"],
+                }
+            }
+        }
+        changed = _migrate_target_blocked_users_to_list(config)
+        self.assertTrue(changed)
+        self.assertEqual(
+            config["push"]["target_blocked_users"],
+            [{"target_umo": "aiocqhttp:GroupMessage:123", "blocked_users": ["NASA"]}],
+        )
+        # Second call is a no-op.
+        self.assertFalse(_migrate_target_blocked_users_to_list(config))
+
+    def test_bare_digit_is_not_treated_as_target_umo(self):
+        """Bare digits stay usernames, not group targets (no ambiguity)."""
+        from command_handlers.target_blacklist import TargetBlacklistCommandMixin
+
+        self.assertFalse(TargetBlacklistCommandMixin._looks_like_target_umo("123"))
+        self.assertTrue(TargetBlacklistCommandMixin._looks_like_target_umo("group:123"))
+        self.assertTrue(
+            TargetBlacklistCommandMixin._looks_like_target_umo(
+                "aiocqhttp:GroupMessage:123"
+            )
+        )
 
     async def test_scheduler_filters_per_target_and_keeps_seen_shared(self):
         target_one = "telegram:FriendMessage:1"

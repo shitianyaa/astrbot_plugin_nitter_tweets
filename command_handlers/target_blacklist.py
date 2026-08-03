@@ -16,28 +16,6 @@ except ImportError:
 class TargetBlacklistCommandMixin:
     """管理员命令：维护按推送目标共享的作者黑名单。"""
 
-    async def _cmd_target_blacklist_impl(self, event: AstrMessageEvent, args=GreedyStr):
-        """兼容旧的单命令入口，实际注册入口使用原生指令组子命令。"""
-        tokens = self._command_tokens(event, args)
-        action = tokens.pop(0).lower() if tokens else "list"
-        aliases = {
-            "add": "add",
-            "添加": "add",
-            "增加": "add",
-            "remove": "remove",
-            "del": "remove",
-            "delete": "remove",
-            "删除": "remove",
-            "移除": "remove",
-            "list": "list",
-            "show": "list",
-            "查看": "list",
-            "查询": "list",
-        }
-        return await self._run_target_blacklist_action(
-            event, aliases.get(action, ""), tokens
-        )
-
     async def _cmd_target_blacklist_add_impl(
         self, event: AstrMessageEvent, args=GreedyStr
     ):
@@ -128,10 +106,19 @@ class TargetBlacklistCommandMixin:
             previous = {
                 target: list(items) for target, items in info.blocked_users.items()
             }
-            config_set(self.config, "target_blocked_users", current)
+            serialized = self.scheduler.config_reader.serialize_target_blocked_users(
+                current
+            )
+            config_set(self.config, "target_blocked_users", serialized)
             save_error = save_subscription_config(self.config)
             if save_error:
-                config_set(self.config, "target_blocked_users", previous)
+                config_set(
+                    self.config,
+                    "target_blocked_users",
+                    self.scheduler.config_reader.serialize_target_blocked_users(
+                        previous
+                    ),
+                )
             else:
                 save_error = ""
 

@@ -30,6 +30,7 @@ MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY = "_search_instances_default_v17_migrated"
+TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY = "_target_blocked_users_list_migrated"
 LEGACY_DEFAULT_SEARCH_INSTANCES = (
     "https://nitter.tiekoetter.com",
     "https://nitter.poast.org",
@@ -359,6 +360,8 @@ def migrate_legacy_grouped_config(config) -> bool:
     if _migrate_max_video_duration_grouped_config(config):
         changed = True
     if _migrate_search_instances_default(config):
+        changed = True
+    if _migrate_target_blocked_users_to_list(config):
         changed = True
     if parse_config_bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False), False):
         save_config = getattr(config, "save_config", None)
@@ -865,4 +868,43 @@ def _migrate_search_instances_default(config) -> bool:
             config["search_instances"] = list(current)
 
     config[SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY] = True
+    return True
+
+
+def _migrate_target_blocked_users_to_list(config) -> bool:
+    """Convert dict-format target blacklists to the AstrBot-persistable list.
+
+    AstrBot's `check_config_integrity` prunes dynamic keys from `object`-typed
+    config values whose schema `items` is empty, so a UMO-keyed dict would be
+    wiped on reload. The list-of-dict shape is kept as-is and is already read
+    by `parse_target_blocked_users`.
+    """
+    if parse_config_bool(
+        _dict_get(config, TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY, False), False
+    ):
+        return False
+
+    changed = False
+    for key in ("target_blocked_users",):
+        group = _dict_get(config, CONFIG_GROUP_BY_KEY[key], {})
+        if isinstance(group, dict) and key in group:
+            if _migrate_target_blocked_users_value(group, key):
+                config[CONFIG_GROUP_BY_KEY[key]] = group
+                changed = True
+        if _dict_has(config, key):
+            if _migrate_target_blocked_users_value(config, key):
+                changed = True
+
+    config[TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY] = True
+    return changed
+
+
+def _migrate_target_blocked_users_value(container: dict, key: str) -> bool:
+    value = container.get(key)
+    if not isinstance(value, dict):
+        return False
+    container[key] = [
+        {"target_umo": str(target), "blocked_users": list(users)}
+        for target, users in value.items()
+    ]
     return True

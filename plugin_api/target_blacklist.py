@@ -64,9 +64,14 @@ class WebAPITargetBlacklistMixin:
                 next_mapping[target] = users
             else:
                 next_mapping.pop(target, None)
-            config_set(self.config, "target_blocked_users", next_mapping)
+            serialized = reader.serialize_target_blocked_users(next_mapping)
+            config_set(self.config, "target_blocked_users", serialized)
             save_error = save_subscription_config(self.config)
             if save_error:
-                config_set(self.config, "target_blocked_users", previous)
+                config_set(
+                    self.config,
+                    "target_blocked_users",
+                    reader.serialize_target_blocked_users(previous),
+                )
                 return self._error(f"配置保存失败：{save_error}")
         return self._ok(target_umo=target, blocked_users=users)
