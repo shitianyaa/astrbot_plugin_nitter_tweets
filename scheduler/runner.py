@@ -1170,8 +1170,9 @@ class NitterTweetScheduler(
                         history_source="scheduled",
                     )
                     # Buffered/merge targets are not marked as seen during prepare.
-                    # Write seen after every target handled the batch; failed
-                    # targets are intentionally skipped to avoid retry duplicates.
+                    # Write seen after every target reaches a terminal outcome.
+                    # Explicitly handled send failures also mark seen; preparation
+                    # failures and cancellation paths do not.
                     for batch in pending_batches:
                         # A group-level seen key is shared by all push targets.
                         # Preparation/cancellation paths may still leave this
