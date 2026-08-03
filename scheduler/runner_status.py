@@ -69,13 +69,13 @@ class SchedulerStatusMixin:
         total_targets = sum(len(item.targets) for item in groups)
         total_invalid_targets = sum(len(item.invalid_targets) for item in groups)
         config_reader = getattr(self, "config_reader", None)
-        target_blacklist_error = ""
+        target_blacklist_failed = False
         if config_reader is not None:
             try:
                 target_blacklist_info = config_reader.parse_target_blocked_users()
             except Exception as exc:
                 target_blacklist_info = None
-                target_blacklist_error = str(exc)
+                target_blacklist_failed = True
                 logger.warning(
                     "[NitterTweets] 读取目标作者黑名单失败，"
                     f"状态汇总未统计: error={type(exc).__name__}: {exc}"
@@ -124,7 +124,7 @@ class SchedulerStatusMixin:
             f"全部分组推送目标项: {total_targets} 个（无效 {total_invalid_targets} 个）",
             (
                 "目标作者黑名单: 读取失败（请查看 AstrBot 日志）"
-                if target_blacklist_error
+                if target_blacklist_failed
                 else (
                     "目标作者黑名单: "
                     f"{len(target_blacklist_info.blocked_users) if target_blacklist_info else 0} 个目标，"
