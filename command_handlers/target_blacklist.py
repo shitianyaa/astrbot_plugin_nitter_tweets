@@ -17,7 +17,7 @@ class TargetBlacklistCommandMixin:
     """管理员命令：维护按推送目标共享的作者黑名单。"""
 
     async def _cmd_target_blacklist_impl(self, event: AstrMessageEvent, args=GreedyStr):
-        event.stop_event()
+        """兼容旧的单命令入口，实际注册入口使用原生指令组子命令。"""
         tokens = self._command_tokens(event, args)
         action = tokens.pop(0).lower() if tokens else "list"
         aliases = {
@@ -34,7 +34,35 @@ class TargetBlacklistCommandMixin:
             "查看": "list",
             "查询": "list",
         }
-        action = aliases.get(action, "")
+        return await self._run_target_blacklist_action(
+            event, aliases.get(action, ""), tokens
+        )
+
+    async def _cmd_target_blacklist_add_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        return await self._run_target_blacklist_action(
+            event, "add", self._command_tokens(event, args)
+        )
+
+    async def _cmd_target_blacklist_remove_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        return await self._run_target_blacklist_action(
+            event, "remove", self._command_tokens(event, args)
+        )
+
+    async def _cmd_target_blacklist_list_impl(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        return await self._run_target_blacklist_action(
+            event, "list", self._command_tokens(event, args)
+        )
+
+    async def _run_target_blacklist_action(
+        self, event: AstrMessageEvent, action: str, tokens: list[str]
+    ):
+        event.stop_event()
         if not action:
             await event.send(event.plain_result(self._target_blacklist_usage()))
             return
