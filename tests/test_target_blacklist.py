@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -156,3 +157,51 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         seen = await scheduler.storage.get_seen_ids("target_blacklist", "source")
         self.assertIn("101", seen)
         self.assertIn("102", seen)
+
+    async def test_blacklist_parse_failure_does_not_abort_delivery(self):
+        target = "telegram:FriendMessage:3"
+        scheduler = self._create_scheduler(
+            {"target_blocked_users": {}},
+            base._SchedulerNitter({}),
+            base._Sender(),
+        )
+        scheduler.config_reader.target_blocked_users = lambda: (_ for _ in ()).throw(
+            RuntimeError("invalid blacklist")
+        )
+        batch = SimpleNamespace(
+            username="source",
+            tweets=[base.TweetItem("source", "https://x.com/source/status/1", "")],
+        )
+        result = SimpleNamespace(target_blocked_filtered=0)
+
+        allowed, filtered = scheduler._tweets_for_target(batch, target, result)
+
+        self.assertEqual(allowed, batch.tweets)
+        self.assertEqual(filtered, 0)
+        self.assertEqual(result.target_blocked_filtered, 0)
+
+    async def test_status_reports_blacklist_parse_failure(self):
+        config = {
+            "tweet_groups": [
+                {
+                    "name": "状态黑名单",
+                    "group_id": "blacklist_status",
+                    "group_type": "blogger",
+                    "watch_users": ["source"],
+                    "push_targets": ["telegram:FriendMessage:3"],
+                    "enabled": True,
+                }
+            ]
+        }
+        scheduler = self._create_scheduler(
+            config,
+            base._SchedulerNitter({}),
+            base._Sender(),
+        )
+        scheduler.config_reader.parse_target_blocked_users = lambda: (
+            _ for _ in ()
+        ).throw(RuntimeError("invalid blacklist"))
+
+        summary = await scheduler.status_summary()
+
+        self.assertIn("目标作者黑名单: 读取失败", summary)

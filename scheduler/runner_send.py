@@ -65,9 +65,17 @@ class SchedulerSendMixin:
         reader = getattr(self, "config_reader", None)
         blocked_users_cache = getattr(self, "_target_blocked_users_cache", None)
         if blocked_users_cache is None:
-            blocked_users_cache = (
-                reader.target_blocked_users() if reader is not None else {}
-            )
+            try:
+                blocked_users_cache = (
+                    reader.target_blocked_users() if reader is not None else {}
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[NitterTweets] 读取目标作者黑名单失败，"
+                    "本轮跳过目标黑名单过滤: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                blocked_users_cache = {}
             self._target_blocked_users_cache = blocked_users_cache
         blocked_users = {
             str(username).casefold()

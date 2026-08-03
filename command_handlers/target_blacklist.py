@@ -81,37 +81,15 @@ class TargetBlacklistCommandMixin:
             await event.send(event.plain_result(self._target_blacklist_usage()))
             return
 
-        info = self.scheduler.config_reader.parse_target_blocked_users()
-        current = {target: list(users) for target, users in info.blocked_users.items()}
-        users = current.setdefault(target_umo, [])
-        seen = {username.casefold() for username in users}
-        normalized: list[str] = []
+        parsed_users: list[tuple[str, str]] = []
         invalid: list[str] = []
-        duplicates: list[str] = []
         for raw_value in values:
             username = self.scheduler.config_reader.parse_watch_users([raw_value])
             if username.invalid_entries:
                 invalid.extend(username.invalid_entries)
                 continue
-            if not username.users:
-                continue
-            normalized_username = username.users[0]
-            key = normalized_username.casefold()
-            if action == "add":
-                if key in seen:
-                    duplicates.append(raw_value)
-                    continue
-                seen.add(key)
-                users.append(normalized_username)
-                normalized.append(normalized_username)
-            else:
-                if key not in seen:
-                    duplicates.append(raw_value)
-                    continue
-                users[:] = [item for item in users if item.casefold() != key]
-                seen.remove(key)
-                normalized.append(normalized_username)
-
+            if username.users:
+                parsed_users.append((raw_value, username.users[0]))
         if invalid:
             await event.send(
                 event.plain_result(
@@ -119,13 +97,45 @@ class TargetBlacklistCommandMixin:
                 )
             )
             return
-        if action == "remove" and not users:
-            current.pop(target_umo, None)
-        previous = {target: list(items) for target, items in info.blocked_users.items()}
-        config_set(self.config, "target_blocked_users", current)
-        save_error = save_subscription_config(self.config)
+
+        normalized: list[str] = []
+        duplicates: list[str] = []
+        async with self.scheduler._target_blacklist_lock:
+            info = self.scheduler.config_reader.parse_target_blocked_users()
+            current = {
+                target: list(users) for target, users in info.blocked_users.items()
+            }
+            users = current.setdefault(target_umo, [])
+            seen = {username.casefold() for username in users}
+            for raw_value, normalized_username in parsed_users:
+                key = normalized_username.casefold()
+                if action == "add":
+                    if key in seen:
+                        duplicates.append(raw_value)
+                        continue
+                    seen.add(key)
+                    users.append(normalized_username)
+                    normalized.append(normalized_username)
+                else:
+                    if key not in seen:
+                        duplicates.append(raw_value)
+                        continue
+                    users[:] = [item for item in users if item.casefold() != key]
+                    seen.remove(key)
+                    normalized.append(normalized_username)
+            if action == "remove" and not users:
+                current.pop(target_umo, None)
+            previous = {
+                target: list(items) for target, items in info.blocked_users.items()
+            }
+            config_set(self.config, "target_blocked_users", current)
+            save_error = save_subscription_config(self.config)
+            if save_error:
+                config_set(self.config, "target_blocked_users", previous)
+            else:
+                save_error = ""
+
         if save_error:
-            config_set(self.config, "target_blocked_users", previous)
             await event.send(event.plain_result(f"保存失败：{save_error}"))
             return
 

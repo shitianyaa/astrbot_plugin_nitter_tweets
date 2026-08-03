@@ -118,6 +118,7 @@ class NitterTweetScheduler(
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
         self._storage_init_lock = asyncio.Lock()
+        self._target_blacklist_lock = asyncio.Lock()
         self._storage_ready = asyncio.Event()
         self._storage_init_error = ""
         self._migration_done = False

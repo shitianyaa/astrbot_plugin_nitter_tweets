@@ -56,16 +56,17 @@ class WebAPITargetBlacklistMixin:
         if invalid:
             return self._error("无效博主用户名：" + ", ".join(invalid[:5]))
 
-        info = reader.parse_target_blocked_users()
-        previous = {key: list(value) for key, value in info.blocked_users.items()}
-        next_mapping = {key: list(value) for key, value in previous.items()}
-        if users:
-            next_mapping[target] = users
-        else:
-            next_mapping.pop(target, None)
-        config_set(self.config, "target_blocked_users", next_mapping)
-        save_error = save_subscription_config(self.config)
-        if save_error:
-            config_set(self.config, "target_blocked_users", previous)
-            return self._error(f"配置保存失败：{save_error}")
+        async with self.scheduler._target_blacklist_lock:
+            info = reader.parse_target_blocked_users()
+            previous = {key: list(value) for key, value in info.blocked_users.items()}
+            next_mapping = {key: list(value) for key, value in previous.items()}
+            if users:
+                next_mapping[target] = users
+            else:
+                next_mapping.pop(target, None)
+            config_set(self.config, "target_blocked_users", next_mapping)
+            save_error = save_subscription_config(self.config)
+            if save_error:
+                config_set(self.config, "target_blocked_users", previous)
+                return self._error(f"配置保存失败：{save_error}")
         return self._ok(target_umo=target, blocked_users=users)
