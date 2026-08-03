@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -63,6 +64,22 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info.blocked_users["telegram:FriendMessage:9"], ["OpenAI"])
         self.assertEqual(info.invalid_users["aiocqhttp:GroupMessage:123"], ["bad-name"])
         self.assertEqual(info.duplicate_users["aiocqhttp:GroupMessage:123"], ["nasa"])
+
+    def test_plugin_schema_defines_items_for_object_nodes(self):
+        schema_path = _ROOT / "_conf_schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        def assert_object_items(node, path="schema"):
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "object":
+                self.assertIn("items", node, path)
+                assert_object_items(node["items"], f"{path}.items")
+            for key, value in node.items():
+                if key != "items":
+                    assert_object_items(value, f"{path}.{key}")
+
+        assert_object_items(schema)
 
     async def test_scheduler_filters_per_target_and_keeps_seen_shared(self):
         target_one = "telegram:FriendMessage:1"
