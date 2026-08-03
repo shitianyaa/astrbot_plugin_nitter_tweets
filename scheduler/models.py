@@ -104,7 +104,7 @@ class PendingBaselineRebuild:
     `max_tweets_per_check > 0` still delivers up to that many tweets, so the
     rebuild has to wait until sending finishes: `selected_ids` collects what
     was queued, and the baseline is only rewritten once every one of those IDs
-    made it into seen (i.e. all targets accepted the batch).
+    made it into seen (i.e. all targets reached a terminal handled state).
     """
 
     baseline_ids: list[str]

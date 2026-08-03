@@ -625,10 +625,8 @@ class NitterTweetScheduler(
                             batch,
                             target,
                             "replay",
-                            delivery_status=getattr(
-                                outcome, "delivery_status", "success"
-                            ),
-                            delivery_error=getattr(outcome, "delivery_error", ""),
+                            delivery_status=self._delivery_history_status(outcome),
+                            delivery_error=self._delivery_history_error(outcome),
                             status_ids=history_status_ids,
                         )
                     if delivery_complete:
@@ -1172,13 +1170,13 @@ class NitterTweetScheduler(
                         history_source="scheduled",
                     )
                     # Buffered/merge targets are not marked as seen during prepare.
-                    # Write seen only after at least one target accepted the batch.
+                    # Write seen after every target handled the batch; failed
+                    # targets are intentionally skipped to avoid retry duplicates.
                     for batch in pending_batches:
-                        # A group-level seen key is shared by all push
-                        # targets.  Advance it only after every target for
-                        # this batch accepted the delivery; recording after a
-                        # partial success would permanently hide the tweet
-                        # from a failed target on the next round.
+                        # A group-level seen key is shared by all push targets.
+                        # Preparation/cancellation paths may still leave this
+                        # guard false even though ordinary send outcomes mark
+                        # every target terminally handled.
                         if not self._all_targets_delivered(targets, batch):
                             continue
                         status_ids = [
@@ -1202,7 +1200,7 @@ class NitterTweetScheduler(
                     result.source_statuses[username] = (
                         SourceStatus.BASELINE_REBUILD_FAILED
                     )
-                    rebuild_error = "本轮推送未全部成功，保留旧水位"
+                    rebuild_error = "本轮推送仍有内容未处理，保留旧水位"
                     result.baseline_rebuild_failed_users[username] = rebuild_error
                     logger.warning(
                         f"[NitterTweets] 定时抓取 {source_label} "

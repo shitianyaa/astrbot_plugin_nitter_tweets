@@ -92,6 +92,21 @@ def test_history_group_keeps_partial_status_when_error_text_is_empty():
     assert grouped[0]["delivery_error"] == ""
 
 
+def test_history_group_exposes_failed_status_and_error():
+    record = _history_record(
+        record_id=1,
+        target="qq:GroupMessage:1",
+        pushed_at=100,
+        status="failed",
+        error="消息内容违规",
+    )
+
+    grouped = NitterWebAPI._group_history_records([record], {}, {})
+
+    assert grouped[0]["delivery_status"] == "failed"
+    assert grouped[0]["delivery_error"] == "消息内容违规"
+
+
 def test_history_group_exposes_tag_type_for_query_display():
     record = _history_record(
         record_id=1,
@@ -114,6 +129,8 @@ def test_dashboard_history_uses_generic_partial_and_query_labels():
     src = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
 
     assert 'text: "部分送达"' in src
+    assert 'className: "badge badge-danger"' in src
+    assert 'text: "发送失败"' in src
     assert 'text: "订阅源"' in src
     assert 'text: "账号/查询"' not in src
     assert "function historyAccountLabel(row)" in src

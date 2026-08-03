@@ -1,7 +1,8 @@
 """发送阶段：即时/合并推送、缓存清理、push history 与目标拆分。
 
 `NitterTweetScheduler` 的 mixin：只通过 `self` 协作，不 import 宿主类。
-seen 写入仍走 `runner.py` 的 seen 接口，这里不直接决定 seen 推进时机。
+这里负责为每个目标标记终态（成功、失败或过滤跳过）；共享 seen 仍由
+`runner.py` 在所有目标处理完成后统一写入。
 """
 
 from __future__ import annotations
@@ -182,6 +183,9 @@ class SchedulerSendMixin:
                     history_source="scheduled",
                 )
                 if (
+                    # Normal send outcomes are terminally marked in the sender;
+                    # keep this guard for preparation/cancellation paths that
+                    # can leave a target unhandled.
                     self._all_targets_delivered(immediate_targets, batch)
                     and batch.tweets[0].status_id
                 ):
@@ -252,6 +256,8 @@ class SchedulerSendMixin:
                     )
                     continue
                 attempted += 1
+                send_attempted = False
+                send_settled = False
                 try:
                     header_text = self._scheduled_update_header(batch, batch_progress)
                     target_batch_summary = (
@@ -297,6 +303,7 @@ class SchedulerSendMixin:
                     send_kwargs["hide_original_when_translated"] = bool(
                         getattr(batch, "hide_original_when_translated", False)
                     )
+                    send_attempted = True
                     outcome = await self.sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
@@ -306,10 +313,12 @@ class SchedulerSendMixin:
                         **send_kwargs,
                     )
                     delivery_complete = self._delivery_is_complete(outcome)
-                    if delivery_complete:
-                        await self._mark_batch_target_delivered(
-                            batch, umo, on_target_delivered
-                        )
+                    # A failed send is terminal for this scheduled batch. Mark
+                    # the target handled so successful targets are not sent the
+                    # same tweet again on the next interval.
+                    await self._mark_batch_target_delivered(
+                        batch, umo, on_target_delivered
+                    )
                     history_status_ids = self._delivery_history_status_ids(
                         outcome, target_tweets
                     )
@@ -319,12 +328,11 @@ class SchedulerSendMixin:
                             batch,
                             umo,
                             history_source,
-                            delivery_status=getattr(
-                                outcome, "delivery_status", "success"
-                            ),
-                            delivery_error=getattr(outcome, "delivery_error", ""),
+                            delivery_status=self._delivery_history_status(outcome),
+                            delivery_error=self._delivery_history_error(outcome),
                             status_ids=history_status_ids,
                         )
+                    send_settled = True
                     if delivery_complete:
                         success += 1
                     if outcome.warning:
@@ -335,6 +343,18 @@ class SchedulerSendMixin:
                         f"source={format_subscription_source(batch.username, result.group_type)}, "
                         f"target={umo}, error={exc}"
                     )
+                    if send_attempted and not send_settled:
+                        await self._mark_batch_target_delivered(
+                            batch, umo, on_target_delivered
+                        )
+                        await self._record_failed_batch_push_history(
+                            history_group_id,
+                            batch,
+                            umo,
+                            history_source,
+                            target_tweets,
+                            str(exc),
+                        )
                 if target_index < len(targets) - 1 and target_interval > 0:
                     await asyncio.sleep(target_interval)
             self._record_scheduled_push(
@@ -474,6 +494,28 @@ class SchedulerSendMixin:
                     f"status={tweet.status_id}, target={target_umo}, error={exc}"
                 )
 
+    async def _record_failed_batch_push_history(
+        self,
+        group_id: str,
+        batch: PendingTweetBatch,
+        target_umo: str,
+        source: str,
+        tweets,
+        error: str,
+    ) -> None:
+        status_ids = self._status_ids_for_history(tweets)
+        if not status_ids:
+            return
+        await self._record_batch_push_history(
+            group_id,
+            batch,
+            target_umo,
+            source,
+            delivery_status="failed",
+            delivery_error=str(error or "send failed"),
+            status_ids=status_ids,
+        )
+
     async def _send_merged_updates(
         self,
         batches: list[PendingTweetBatch],
@@ -507,6 +549,8 @@ class SchedulerSendMixin:
             if not target_batches:
                 continue
             attempts += 1
+            send_attempted = False
+            send_settled = False
             try:
                 target_batch_objects = [item[0] for item in target_batches]
                 merge_kwargs = {
@@ -521,6 +565,7 @@ class SchedulerSendMixin:
                 }
                 if any(batch.media_only for batch in target_batch_objects):
                     merge_kwargs["media_only"] = True
+                send_attempted = True
                 outcome = await self.sender.send_merged_to_umo(
                     self.context,
                     umo,
@@ -533,11 +578,12 @@ class SchedulerSendMixin:
                     **merge_kwargs,
                 )
                 delivery_complete = self._delivery_is_complete(outcome)
-                if delivery_complete:
-                    for batch, _ in target_batches:
-                        await self._mark_batch_target_delivered(
-                            batch, umo, on_target_delivered
-                        )
+                # A failed merge is also terminal for this scheduled batch;
+                # otherwise successful targets receive the same tweets again.
+                for batch, _ in target_batches:
+                    await self._mark_batch_target_delivered(
+                        batch, umo, on_target_delivered
+                    )
                 history_status_ids = self._delivery_history_status_ids(
                     outcome,
                     [
@@ -562,12 +608,11 @@ class SchedulerSendMixin:
                             batch,
                             umo,
                             history_source,
-                            delivery_status=getattr(
-                                outcome, "delivery_status", "success"
-                            ),
-                            delivery_error=getattr(outcome, "delivery_error", ""),
+                            delivery_status=self._delivery_history_status(outcome),
+                            delivery_error=self._delivery_history_error(outcome),
                             status_ids=batch_status_ids,
                         )
+                send_settled = True
                 if delivery_complete:
                     success += 1
                 if outcome.success:
@@ -592,6 +637,19 @@ class SchedulerSendMixin:
                 logger.warning(
                     f"[NitterTweets] 定时合并推送失败: target={umo}, error={exc}"
                 )
+                if send_attempted and not send_settled:
+                    for batch, target_tweets in target_batches:
+                        await self._mark_batch_target_delivered(
+                            batch, umo, on_target_delivered
+                        )
+                        await self._record_failed_batch_push_history(
+                            history_group_id,
+                            batch,
+                            umo,
+                            history_source,
+                            target_tweets,
+                            str(exc),
+                        )
             if target_index < len(targets) - 1 and target_interval > 0:
                 await asyncio.sleep(target_interval)
 
@@ -687,6 +745,7 @@ class SchedulerSendMixin:
         target: str,
         on_target_delivered=None,
     ) -> None:
+        """Mark a target handled, whether delivery succeeded or was skipped."""
         if on_target_delivered is None:
             batch.delivered_targets.add(target)
             return
@@ -697,27 +756,66 @@ class SchedulerSendMixin:
 
     @classmethod
     def _delivery_history_status_ids(cls, outcome, tweets) -> tuple[str, ...]:
-        """Return only tweet IDs confirmed delivered by this outcome."""
-        available = tuple(
-            str(getattr(tweet, "status_id", "") or "")
-            for tweet in tweets
-            if str(getattr(tweet, "status_id", "") or "")
-        )
+        """Return the tweet IDs that should be persisted for this outcome."""
+        available = cls._status_ids_for_history(tweets)
         if cls._delivery_is_complete(outcome):
             return available
         status = str(getattr(outcome, "delivery_status", "") or "").strip().lower()
         if status != "partial_failed":
-            return ()
+            return available
         delivered = {
             str(status_id or "")
             for status_id in getattr(outcome, "delivered_status_ids", ()) or ()
             if str(status_id or "")
         }
+        if not delivered:
+            return available
         return tuple(status_id for status_id in available if status_id in delivered)
 
     @staticmethod
+    def _status_ids_for_history(tweets) -> tuple[str, ...]:
+        return tuple(
+            str(getattr(tweet, "status_id", "") or "")
+            for tweet in tweets
+            if str(getattr(tweet, "status_id", "") or "")
+        )
+
+    @staticmethod
+    def _delivery_history_status(outcome) -> str:
+        status = str(getattr(outcome, "delivery_status", "") or "").strip().lower()
+        if status == "partial_failed":
+            if not SchedulerSendMixin._delivery_is_complete(outcome) and not getattr(
+                outcome, "delivered_status_ids", ()
+            ):
+                return "failed"
+            return status
+        return (
+            "success" if SchedulerSendMixin._delivery_is_complete(outcome) else "failed"
+        )
+
+    @staticmethod
+    def _delivery_history_error(outcome) -> str:
+        status = str(getattr(outcome, "delivery_status", "") or "").strip().lower()
+        if (
+            SchedulerSendMixin._delivery_is_complete(outcome)
+            and status != "partial_failed"
+        ):
+            return ""
+        if status == "partial_failed":
+            return str(
+                getattr(outcome, "delivery_error", "")
+                or getattr(outcome, "error", "")
+                or ""
+            )
+        return str(
+            getattr(outcome, "delivery_error", "")
+            or getattr(outcome, "error", "")
+            or "send failed"
+        )
+
+    @staticmethod
     def _delivery_is_complete(outcome) -> bool:
-        """Return whether an outcome is safe to advance the shared seen key."""
+        """Return whether an outcome counts as a successful delivery."""
         return (
             bool(getattr(outcome, "success", False))
             and str(getattr(outcome, "delivery_status", "success") or "success")
@@ -728,7 +826,7 @@ class SchedulerSendMixin:
 
     @staticmethod
     def _all_targets_delivered(targets: list[str], batch: PendingTweetBatch) -> bool:
-        """Reject vacuous success when a delivery path has no targets."""
+        """Check that every target reached a terminal handled state."""
         return bool(targets) and set(targets).issubset(batch.delivered_targets)
 
     def _merge_tweet_threshold(self) -> int:

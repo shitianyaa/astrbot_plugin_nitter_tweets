@@ -91,7 +91,7 @@ const viewMeta = {
 
   history: {
     title: "最近推送历史",
-    desc: "查看成功或部分送达记录，按分组和订阅源筛选，并选择当前推送目标重新推送。",
+    desc: "查看成功、部分送达或发送失败记录，按分组和订阅源筛选，并选择当前推送目标重新推送。",
   },
   mirror: {
     title: "Nitter 镜像连通诊断",
@@ -483,6 +483,14 @@ function historyTargetChips(row) {
 }
 
 function historyDeliveryStatus(row) {
+  if (row.delivery_status === "failed") {
+    const error = row.delivery_error || "发送失败，可手动重新推送";
+    return el("span", {
+      className: "badge badge-danger",
+      attrs: { title: error },
+      text: "发送失败",
+    });
+  }
   if (row.delivery_status === "partial_failed") {
     const error = row.delivery_error || "部分内容未完整送达";
     return el("span", {
@@ -1658,7 +1666,7 @@ function renderHistory() {
   const records = payload.records || [];
   if (!records.length) {
     els.historyContent.replaceChildren(
-      emptyState("暂无推送历史，成功或部分送达的推送会显示在这里。"),
+      emptyState("暂无推送历史，成功、部分送达或发送失败的推送会显示在这里。"),
     );
     return;
   }

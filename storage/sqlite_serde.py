@@ -101,6 +101,6 @@ class SQLiteSerdeMixin:
     @staticmethod
     def _normalize_delivery_status(value: object) -> str:
         status = str(value or "").strip()
-        if status in {"success", "partial_failed"}:
+        if status in {"success", "partial_failed", "failed"}:
             return status
         return "success"

@@ -251,20 +251,31 @@ class WebAPIHistoryMixin:
                     option["historical"] = True
         for key, item in grouped.items():
             latest_states = list(latest_delivery_by_key[key].values())
+            has_failed = any(
+                status == "failed"
+                for _pushed_at, _record_id, status, _error in latest_states
+            )
             has_partial = any(
                 status == "partial_failed"
                 for _pushed_at, _record_id, status, _error in latest_states
             )
-            partial_errors = list(
+            has_success = any(
+                status == "success"
+                for _pushed_at, _record_id, status, _error in latest_states
+            )
+            delivery_errors = list(
                 dict.fromkeys(
                     str(error).strip()
                     for _pushed_at, _record_id, status, error in latest_states
-                    if status == "partial_failed" and str(error).strip()
+                    if status in {"failed", "partial_failed"} and str(error).strip()
                 )
             )
-            if has_partial:
+            if has_failed and not has_partial and not has_success:
+                item["delivery_status"] = "failed"
+                item["delivery_error"] = "; ".join(delivery_errors)
+            elif has_failed or has_partial:
                 item["delivery_status"] = "partial_failed"
-                item["delivery_error"] = "; ".join(partial_errors)
+                item["delivery_error"] = "; ".join(delivery_errors)
             else:
                 item["delivery_status"] = "success"
                 item["delivery_error"] = ""
