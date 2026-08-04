@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import re
+
 try:
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -201,7 +204,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "send_target_interval",
     "send_user_interval",
     "manual_send_interval",
-    "target_blocked_users",
     "watch_users",
     "push_targets",
     "tweet_groups",
@@ -872,31 +874,38 @@ def _migrate_search_instances_default(config) -> bool:
 
 
 def _migrate_target_blocked_users_to_list(config) -> bool:
-    """Convert dict-format target blacklists to the AstrBot-persistable list.
+    """Move target blacklists to the canonical persistable list once.
 
     AstrBot's `check_config_integrity` prunes dynamic keys from `object`-typed
     config values whose schema `items` is empty, so a UMO-keyed dict would be
-    wiped on reload. The list-of-dict shape is kept as-is and is already read
-    by `parse_target_blocked_users`.
+    wiped on reload. Prefer an existing canonical value; otherwise promote the
+    legacy top-level value before marking the migration complete.
     """
     if parse_config_bool(
         _dict_get(config, TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY, False), False
     ):
         return False
 
-    changed = False
-    for key in ("target_blocked_users",):
-        group = _dict_get(config, CONFIG_GROUP_BY_KEY[key], {})
-        if isinstance(group, dict) and key in group:
-            if _migrate_target_blocked_users_value(group, key):
-                config[CONFIG_GROUP_BY_KEY[key]] = group
-                changed = True
-        if _dict_has(config, key):
-            if _migrate_target_blocked_users_value(config, key):
-                changed = True
+    key = "target_blocked_users"
+    group_name = CONFIG_GROUP_BY_KEY[key]
+    group = _dict_get(config, group_name, {})
+    if isinstance(group, dict) and key in group:
+        _migrate_target_blocked_users_value(group, key)
+        config[group_name] = group
+
+    if _dict_has(config, key):
+        _migrate_target_blocked_users_value(config, key)
+
+    canonical_value = group.get(key) if isinstance(group, dict) else None
+    legacy_value = _dict_get(config, key, None)
+    if _is_empty_value(canonical_value) and not _is_empty_value(legacy_value):
+        if not isinstance(group, dict):
+            group = {}
+        group[key] = copy.deepcopy(legacy_value)
+        config[group_name] = group
 
     config[TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY] = True
-    return changed
+    return True
 
 
 def _migrate_target_blocked_users_value(container: dict, key: str) -> bool:
@@ -906,8 +915,20 @@ def _migrate_target_blocked_users_value(container: dict, key: str) -> bool:
     container[key] = [
         {
             "target_umo": str(target),
-            "blocked_users": _normalize_list(users),
+            "blocked_users": _normalize_target_blocked_users(users),
         }
         for target, users in value.items()
     ]
     return True
+
+
+def _normalize_target_blocked_users(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = re.split(r"[\n,，]+", value)
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]

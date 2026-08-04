@@ -117,6 +117,8 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
             schema["push"]["items"]["target_blocked_users"]["type"], "list"
         )
         self.assertEqual(schema["target_blocked_users"]["type"], "list")
+        self.assertEqual(schema["_target_blocked_users_list_migrated"]["type"], "bool")
+        self.assertTrue(schema["_target_blocked_users_list_migrated"]["invisible"])
 
     def test_serialize_target_blocked_users_round_trips_through_parser(self):
         reader = SchedulerConfigReader({}, context=None)
@@ -195,7 +197,7 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         config = {
             "push": {
                 "target_blocked_users": {
-                    "aiocqhttp:GroupMessage:123": "NASA,OpenAI",
+                    "aiocqhttp:GroupMessage:123": "NASA\nOpenAI，SpaceX",
                     "telegram:FriendMessage:9": None,
                     "lark:GroupMessage:chat-1": "NASA",
                     "weixin_oc:FriendMessage:8": ["A", "B"],
@@ -209,7 +211,7 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "target_umo": "aiocqhttp:GroupMessage:123",
-                    "blocked_users": ["NASA", "OpenAI"],
+                    "blocked_users": ["NASA", "OpenAI", "SpaceX"],
                 },
                 {
                     "target_umo": "telegram:FriendMessage:9",
@@ -225,6 +227,100 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
+
+    def test_migrate_target_blacklist_promotes_non_empty_legacy_value(self):
+        from config.compat import (
+            LEGACY_CONFIG_MIGRATION_KEY,
+            MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
+            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
+            TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
+            config_get,
+            migrate_legacy_grouped_config,
+        )
+
+        class SavingConfig(dict):
+            save_calls = 0
+
+            def save_config(self):
+                self.save_calls += 1
+
+        config = SavingConfig(
+            {
+                "push": {"target_blocked_users": []},
+                "target_blocked_users": {"aiocqhttp:GroupMessage:123": "NASA\nOpenAI"},
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
+                SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
+            }
+        )
+
+        self.assertTrue(migrate_legacy_grouped_config(config))
+        expected = [
+            {
+                "target_umo": "aiocqhttp:GroupMessage:123",
+                "blocked_users": ["NASA", "OpenAI"],
+            }
+        ]
+        self.assertEqual(config["push"]["target_blocked_users"], expected)
+        self.assertEqual(config_get(config, "target_blocked_users"), expected)
+        self.assertTrue(config[TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY])
+        self.assertEqual(config.save_calls, 1)
+
+    def test_migrate_target_blacklist_keeps_non_empty_canonical_value(self):
+        from config.compat import (
+            MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
+            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
+            migrate_legacy_grouped_config,
+        )
+
+        canonical = [
+            {
+                "target_umo": "aiocqhttp:GroupMessage:123",
+                "blocked_users": ["NASA"],
+            }
+        ]
+        config = {
+            "push": {"target_blocked_users": list(canonical)},
+            "target_blocked_users": {
+                "aiocqhttp:GroupMessage:123": ["OpenAI"],
+            },
+            MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
+            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
+        }
+
+        self.assertTrue(migrate_legacy_grouped_config(config))
+        self.assertEqual(config["push"]["target_blocked_users"], canonical)
+
+    def test_migrate_target_blacklist_persists_marker_for_current_list(self):
+        from config.compat import (
+            LEGACY_CONFIG_MIGRATION_KEY,
+            MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
+            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
+            TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
+            migrate_legacy_grouped_config,
+        )
+
+        class SavingConfig(dict):
+            save_calls = 0
+
+            def save_config(self):
+                self.save_calls += 1
+
+        config = SavingConfig(
+            {
+                "push": {"target_blocked_users": []},
+                "target_blocked_users": [],
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
+                SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
+            }
+        )
+
+        self.assertTrue(migrate_legacy_grouped_config(config))
+        self.assertTrue(config[TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY])
+        self.assertEqual(config.save_calls, 1)
+        self.assertFalse(migrate_legacy_grouped_config(config))
+        self.assertEqual(config.save_calls, 1)
 
     def test_bare_digit_is_not_treated_as_target_umo(self):
         """Bare digits stay usernames, not group targets (no ambiguity)."""

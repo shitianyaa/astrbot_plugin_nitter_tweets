@@ -92,6 +92,14 @@ class _Filter:
         return decorator
 
     @staticmethod
+    def command_group(*args, **kwargs):
+        def decorator(func):
+            func.command = _Filter.command
+            return func
+
+        return decorator
+
+    @staticmethod
     def permission_type(*args, **kwargs):
         def decorator(func):
             return func
