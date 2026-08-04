@@ -79,7 +79,15 @@ class TargetBlacklistCommandMixin:
         normalized: list[str] = []
         duplicates: list[str] = []
         async with self.scheduler._target_blacklist_lock:
-            info = self.scheduler.config_reader.parse_target_blocked_users()
+            try:
+                info = self.scheduler.config_reader.parse_target_blocked_users()
+            except Exception as exc:
+                await event.send(
+                    event.plain_result(
+                        f"读取目标作者黑名单失败：{type(exc).__name__}: {exc}"
+                    )
+                )
+                return
             current = {
                 target: list(users) for target, users in info.blocked_users.items()
             }

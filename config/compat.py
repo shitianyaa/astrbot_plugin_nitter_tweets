@@ -638,7 +638,7 @@ def _normalize_list(value) -> list:
     if value is None:
         return []
     if isinstance(value, str):
-        items = value.replace("，", ",").split(",")
+        items = value.replace("\uFF0C", ",").split(",")
     elif isinstance(value, list):
         items = value
     else:
@@ -926,7 +926,7 @@ def _normalize_target_blocked_users(value) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        items = re.split(r"[\n,，]+", value)
+        items = re.split(r"[\n,\uFF0C]+", value)
     elif isinstance(value, list):
         items = value
     else:

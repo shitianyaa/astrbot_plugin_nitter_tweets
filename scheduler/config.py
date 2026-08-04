@@ -46,6 +46,12 @@ class TargetBlockedUsersInfo:
     invalid_targets: list[str] = field(default_factory=list)
     invalid_users: dict[str, list[str]] = field(default_factory=dict)
     duplicate_users: dict[str, list[str]] = field(default_factory=dict)
+    # (normalized_umo, persist_text, raw_users) per entry, preserving invalid
+    # targets, invalid usernames, and duplicates so writes can rebuild the
+    # full configuration instead of dropping unrelated malformed entries.
+    raw_entries: list[tuple[str | None, str, list[str]]] = field(
+        default_factory=list
+    )
 
 
 @dataclass(slots=True)
@@ -713,6 +719,11 @@ class SchedulerConfigReader:
         for raw_target, raw_users in entries:
             target_text = str(raw_target or "").strip().replace("：", ":")
             target = self.parse_target_to_umo(target_text, default_platform)
+            raw_users = self.config_list(raw_users)
+            if target_text:
+                info.raw_entries.append(
+                    (target, target if target else target_text, raw_users)
+                )
             if not target:
                 if target_text:
                     info.invalid_targets.append(target_text)
@@ -722,7 +733,7 @@ class SchedulerConfigReader:
             seen_users = {user.casefold() for user in target_users}
             invalid_users = info.invalid_users.setdefault(target, [])
             duplicate_users = info.duplicate_users.setdefault(target, [])
-            for raw_user in self.config_list(raw_users):
+            for raw_user in raw_users:
                 username = normalize_username(raw_user)
                 if not username:
                     invalid_users.append(raw_user)
@@ -748,9 +759,12 @@ class SchedulerConfigReader:
 
     @staticmethod
     def serialize_target_blocked_users(
-        blocked_users: dict[str, list[str]],
+        blocked_users: dict[str, list[str]] | list[tuple[str, list[str]]],
     ) -> list[dict[str, object]]:
         """Serialize to the AstrBot-persistable list-of-dict shape.
+
+        Accepts either a UMO-keyed dict or a list of (target, users) tuples
+        (e.g. `TargetBlockedUsersInfo.raw_entries`), sorted by target text.
 
         AstrBot's `check_config_integrity` recurses into `object`-typed config
         values and prunes keys missing from the schema's `items`; a dynamic
@@ -758,9 +772,14 @@ class SchedulerConfigReader:
         and `parse_target_blocked_users` already accepts this list-of-dict
         shape.
         """
+        items = (
+            blocked_users.items()
+            if isinstance(blocked_users, dict)
+            else blocked_users
+        )
         return [
             {"target_umo": target, "blocked_users": list(users)}
-            for target, users in sorted(blocked_users.items())
+            for target, users in sorted(items)
         ]
 
     def parse_push_targets(

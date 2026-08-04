@@ -58,20 +58,37 @@ class WebAPITargetBlacklistMixin:
 
         async with self.scheduler._target_blacklist_lock:
             info = reader.parse_target_blocked_users()
-            previous = {key: list(value) for key, value in info.blocked_users.items()}
-            next_mapping = {key: list(value) for key, value in previous.items()}
-            if users:
-                next_mapping[target] = users
-            else:
-                next_mapping.pop(target, None)
-            serialized = reader.serialize_target_blocked_users(next_mapping)
+            previous = reader.serialize_target_blocked_users(
+                [
+                    (persist_text, raw_users)
+                    for _, persist_text, raw_users in info.raw_entries
+                ]
+            )
+            next_entries: list[tuple[str, list[str]]] = []
+            matched = False
+            for normalized, persist_text, raw_users in info.raw_entries:
+                if normalized == target and not matched:
+                    # Only replace the target being updated; empty users means
+                    # clearing that target's blacklist, so drop its entry.
+                    # Duplicate entries for the same target collapse into one.
+                    matched = True
+                    if users:
+                        next_entries.append((target, users))
+                elif normalized == target:
+                    # Skip duplicate entries for the same target; the first
+                    # match already replaced it.
+                    continue
+                else:
+                    # Preserve unrelated entries verbatim, including invalid
+                    # targets, invalid usernames, and duplicates.
+                    next_entries.append((persist_text, raw_users))
+            if not matched and users:
+                # Brand-new target: add it instead of dropping it silently.
+                next_entries.append((target, users))
+            serialized = reader.serialize_target_blocked_users(next_entries)
             config_set(self.config, "target_blocked_users", serialized)
             save_error = save_subscription_config(self.config)
             if save_error:
-                config_set(
-                    self.config,
-                    "target_blocked_users",
-                    reader.serialize_target_blocked_users(previous),
-                )
+                config_set(self.config, "target_blocked_users", previous)
                 return self._error(f"配置保存失败：{save_error}")
         return self._ok(target_umo=target, blocked_users=users)

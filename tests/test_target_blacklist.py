@@ -17,8 +17,25 @@ if str(_TESTS_DIR) not in sys.path:
 
 import test_scheduler_delivery as base  # noqa: E402
 
+from plugin_api.target_blacklist import WebAPITargetBlacklistMixin  # noqa: E402
 from scheduler.config import SchedulerConfigReader  # noqa: E402
 from storage import SQLiteStorage, StorageAdapter  # noqa: E402
+
+
+class _WebAPITargetBlacklist(WebAPITargetBlacklistMixin):
+    """Minimal mixin host with the scheduler/config wiring the real API uses."""
+
+    def __init__(self, scheduler, config):
+        self.scheduler = scheduler
+        self.config = config
+
+    @staticmethod
+    def _ok(**payload):
+        return {"success": True, "error": "", **payload}
+
+    @staticmethod
+    def _error(error):
+        return {"success": False, "error": str(error or "操作失败")}
 
 
 def _check_config_integrity(refer_conf: dict, conf: dict) -> bool:
@@ -94,6 +111,65 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info.blocked_users["telegram:FriendMessage:9"], ["OpenAI"])
         self.assertEqual(info.invalid_users["aiocqhttp:GroupMessage:123"], ["bad-name"])
         self.assertEqual(info.duplicate_users["aiocqhttp:GroupMessage:123"], ["nasa"])
+
+    def test_raw_entries_preserves_invalid_and_duplicate_items(self):
+        config = {
+            "target_blocked_users": {
+                "group:123": ["@NASA", "nasa", "bad-name"],
+                "not-a-target": ["user_ok"],
+                "telegram:FriendMessage:9": ["OpenAI"],
+            }
+        }
+        reader = SchedulerConfigReader(config, context=None)
+        info = reader.parse_target_blocked_users()
+
+        # raw_entries keeps every entry, including the invalid target.
+        self.assertEqual(len(info.raw_entries), 3)
+        raw_by_target = {
+            persist_text: (normalized, raw_users)
+            for normalized, persist_text, raw_users in info.raw_entries
+        }
+        self.assertEqual(
+            raw_by_target["aiocqhttp:GroupMessage:123"],
+            ("aiocqhttp:GroupMessage:123", ["@NASA", "nasa", "bad-name"]),
+        )
+        # Invalid target: normalized is None, raw users preserved verbatim.
+        self.assertIn("not-a-target", raw_by_target)
+        self.assertEqual(
+            raw_by_target["not-a-target"],
+            (None, ["user_ok"]),
+        )
+        self.assertEqual(
+            raw_by_target["telegram:FriendMessage:9"],
+            ("telegram:FriendMessage:9", ["OpenAI"]),
+        )
+
+        # Serializing raw_entries rebuilds the full configuration (sorting by
+        # target text), including the invalid target and duplicate users.
+        serialized = reader.serialize_target_blocked_users(
+            [(persist_text, raw_users) for _, persist_text, raw_users in info.raw_entries]
+        )
+        self.assertEqual(
+            serialized,
+            [
+                {
+                    "target_umo": "aiocqhttp:GroupMessage:123",
+                    "blocked_users": ["@NASA", "nasa", "bad-name"],
+                },
+                {"target_umo": "not-a-target", "blocked_users": ["user_ok"]},
+                {"target_umo": "telegram:FriendMessage:9", "blocked_users": ["OpenAI"]},
+            ],
+        )
+        # Round-trips back through the parser, still preserving the invalid
+        # target and the duplicate/invalid usernames.
+        reparsed = reader.parse_target_blocked_users(serialized)
+        self.assertEqual(reparsed.invalid_targets, ["not-a-target"])
+        self.assertEqual(
+            reparsed.invalid_users["aiocqhttp:GroupMessage:123"], ["bad-name"]
+        )
+        self.assertEqual(
+            reparsed.duplicate_users["aiocqhttp:GroupMessage:123"], ["nasa"]
+        )
 
     def test_plugin_schema_defines_items_for_object_nodes(self):
         schema_path = _ROOT / "_conf_schema.json"
@@ -333,6 +409,180 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                 "aiocqhttp:GroupMessage:123"
             )
         )
+
+    async def test_dashboard_update_preserves_unrelated_invalid_entries(self):
+        class SavingConfig(dict):
+            def save_config(self):
+                pass
+
+        config = SavingConfig(
+            {
+                "push": {
+                    "target_blocked_users": [
+                        {
+                            "target_umo": "telegram:FriendMessage:1",
+                            "blocked_users": ["user1"],
+                        },
+                        {
+                            "target_umo": "not-a-target",
+                            "blocked_users": ["user_ok"],
+                        },
+                        {
+                            "target_umo": "telegram:FriendMessage:2",
+                            "blocked_users": ["bad user", "user2"],
+                        },
+                    ]
+                }
+            }
+        )
+        scheduler = self._create_scheduler(
+            config, base._SchedulerNitter({}), base._Sender()
+        )
+        api = _WebAPITargetBlacklist(scheduler, config)
+
+        result = await api.update_target_blacklist(
+            {
+                "target_umo": "telegram:FriendMessage:1",
+                "blocked_users": ["user1", "user3"],
+            }
+        )
+        self.assertTrue(result["success"])
+
+        stored = config["push"]["target_blocked_users"]
+        by_target = {
+            item["target_umo"]: item["blocked_users"] for item in stored
+        }
+        # Updated target keeps its new normalized users.
+        self.assertEqual(
+            by_target["telegram:FriendMessage:1"], ["user1", "user3"]
+        )
+        # Unrelated invalid target and invalid usernames survive.
+        self.assertIn("not-a-target", by_target)
+        self.assertEqual(by_target["not-a-target"], ["user_ok"])
+        self.assertEqual(by_target["telegram:FriendMessage:2"], ["bad user", "user2"])
+
+    async def test_dashboard_update_adds_new_target(self):
+        class SavingConfig(dict):
+            def save_config(self):
+                pass
+
+        config = SavingConfig(
+            {
+                "push": {
+                    "target_blocked_users": [
+                        {
+                            "target_umo": "telegram:FriendMessage:1",
+                            "blocked_users": ["user1"],
+                        },
+                    ]
+                }
+            }
+        )
+        scheduler = self._create_scheduler(
+            config, base._SchedulerNitter({}), base._Sender()
+        )
+        api = _WebAPITargetBlacklist(scheduler, config)
+
+        result = await api.update_target_blacklist(
+            {
+                "target_umo": "telegram:FriendMessage:9",
+                "blocked_users": ["newuser"],
+            }
+        )
+        self.assertTrue(result["success"])
+
+        stored = config["push"]["target_blocked_users"]
+        by_target = {
+            item["target_umo"]: item["blocked_users"] for item in stored
+        }
+        self.assertIn("telegram:FriendMessage:9", by_target)
+        self.assertEqual(by_target["telegram:FriendMessage:9"], ["newuser"])
+        self.assertEqual(by_target["telegram:FriendMessage:1"], ["user1"])
+
+    async def test_dashboard_update_collapses_duplicate_target_entries(self):
+        class SavingConfig(dict):
+            def save_config(self):
+                pass
+
+        config = SavingConfig(
+            {
+                "push": {
+                    "target_blocked_users": [
+                        {
+                            "target_umo": "telegram:FriendMessage:1",
+                            "blocked_users": ["user1"],
+                        },
+                        {
+                            "target_umo": "telegram:FriendMessage:1",
+                            "blocked_users": ["user2"],
+                        },
+                    ]
+                }
+            }
+        )
+        scheduler = self._create_scheduler(
+            config, base._SchedulerNitter({}), base._Sender()
+        )
+        api = _WebAPITargetBlacklist(scheduler, config)
+
+        result = await api.update_target_blacklist(
+            {
+                "target_umo": "telegram:FriendMessage:1",
+                "blocked_users": ["user1", "user3"],
+            }
+        )
+        self.assertTrue(result["success"])
+
+        stored = config["push"]["target_blocked_users"]
+        matches = [
+            item for item in stored if item["target_umo"] == "telegram:FriendMessage:1"
+        ]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["blocked_users"], ["user1", "user3"])
+
+    async def test_dashboard_update_rollback_restores_original_config(self):
+        class FailingConfig(dict):
+            def save_config(self):
+                raise RuntimeError("disk full")
+
+        config = FailingConfig(
+            {
+                "push": {
+                    "target_blocked_users": [
+                        {
+                            "target_umo": "telegram:FriendMessage:1",
+                            "blocked_users": ["user1"],
+                        },
+                        {
+                            "target_umo": "not-a-target",
+                            "blocked_users": ["user_ok"],
+                        },
+                    ]
+                }
+            }
+        )
+        scheduler = self._create_scheduler(
+            config, base._SchedulerNitter({}), base._Sender()
+        )
+        api = _WebAPITargetBlacklist(scheduler, config)
+
+        result = await api.update_target_blacklist(
+            {
+                "target_umo": "telegram:FriendMessage:1",
+                "blocked_users": ["user1", "user3"],
+            }
+        )
+        self.assertFalse(result["success"])
+        self.assertIn("保存失败", result["error"])
+
+        # Rollback restores the original full configuration, invalid entries
+        # included.
+        stored = config["push"]["target_blocked_users"]
+        by_target = {
+            item["target_umo"]: item["blocked_users"] for item in stored
+        }
+        self.assertEqual(by_target["telegram:FriendMessage:1"], ["user1"])
+        self.assertIn("not-a-target", by_target)
 
     async def test_scheduler_filters_per_target_and_keeps_seen_shared(self):
         target_one = "telegram:FriendMessage:1"
