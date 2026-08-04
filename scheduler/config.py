@@ -40,6 +40,21 @@ class PushTargetParseResult:
 
 
 @dataclass(slots=True)
+class TargetBlockedUsersInfo:
+    blocked_users: dict[str, list[str]] = field(default_factory=dict)
+    raw_target_count: int = 0
+    invalid_targets: list[str] = field(default_factory=list)
+    invalid_users: dict[str, list[str]] = field(default_factory=dict)
+    duplicate_users: dict[str, list[str]] = field(default_factory=dict)
+    # (normalized_umo, persist_text, raw_users) per entry, preserving invalid
+    # targets, invalid usernames, and duplicates so writes can rebuild the
+    # full configuration instead of dropping unrelated malformed entries.
+    raw_entries: list[tuple[str | None, str, list[str]]] = field(
+        default_factory=list
+    )
+
+
+@dataclass(slots=True)
 class WatchUsersInfo:
     raw_count: int
     users: list[str] = field(default_factory=list)
@@ -675,6 +690,97 @@ class SchedulerConfigReader:
 
     def push_targets(self) -> list[str]:
         return self.parse_push_targets().targets
+
+    def parse_target_blocked_users(
+        self, raw_blocked_users=None
+    ) -> TargetBlockedUsersInfo:
+        """Normalize target-scoped author blacklists without changing config."""
+        if raw_blocked_users is None:
+            raw_blocked_users = (
+                config_get(self.config, "target_blocked_users", {}) or {}
+            )
+
+        entries: list[tuple[object, object]] = []
+        if isinstance(raw_blocked_users, dict):
+            entries = list(raw_blocked_users.items())
+        elif isinstance(raw_blocked_users, list):
+            for item in raw_blocked_users:
+                if not isinstance(item, dict):
+                    continue
+                entries.append(
+                    (
+                        item.get("target_umo") or item.get("target"),
+                        item.get("blocked_users") or item.get("users", []),
+                    )
+                )
+
+        info = TargetBlockedUsersInfo(raw_target_count=len(entries))
+        default_platform = self.platform()
+        for raw_target, raw_users in entries:
+            target_text = str(raw_target or "").strip().replace("：", ":")
+            target = self.parse_target_to_umo(target_text, default_platform)
+            raw_users = self.config_list(raw_users)
+            if target_text:
+                info.raw_entries.append(
+                    (target, target if target else target_text, raw_users)
+                )
+            if not target:
+                if target_text:
+                    info.invalid_targets.append(target_text)
+                continue
+
+            target_users = info.blocked_users.setdefault(target, [])
+            seen_users = {user.casefold() for user in target_users}
+            invalid_users = info.invalid_users.setdefault(target, [])
+            duplicate_users = info.duplicate_users.setdefault(target, [])
+            for raw_user in raw_users:
+                username = normalize_username(raw_user)
+                if not username:
+                    invalid_users.append(raw_user)
+                    continue
+                key = username.casefold()
+                if key in seen_users:
+                    duplicate_users.append(raw_user)
+                    continue
+                seen_users.add(key)
+                target_users.append(username)
+
+            if not invalid_users:
+                info.invalid_users.pop(target, None)
+            if not duplicate_users:
+                info.duplicate_users.pop(target, None)
+            if not target_users:
+                info.blocked_users.pop(target, None)
+
+        return info
+
+    def target_blocked_users(self) -> dict[str, list[str]]:
+        return self.parse_target_blocked_users().blocked_users
+
+    @staticmethod
+    def serialize_target_blocked_users(
+        blocked_users: dict[str, list[str]] | list[tuple[str, list[str]]],
+    ) -> list[dict[str, object]]:
+        """Serialize to the AstrBot-persistable list-of-dict shape.
+
+        Accepts either a UMO-keyed dict or a list of (target, users) tuples
+        (e.g. `TargetBlockedUsersInfo.raw_entries`), sorted by target text.
+
+        AstrBot's `check_config_integrity` recurses into `object`-typed config
+        values and prunes keys missing from the schema's `items`; a dynamic
+        UMO-keyed dict would be wiped on reload. A `list` value is kept as-is,
+        and `parse_target_blocked_users` already accepts this list-of-dict
+        shape.
+        """
+        items = (
+            blocked_users.items()
+            if isinstance(blocked_users, dict)
+            else blocked_users
+        )
+        return [
+            {"target_umo": target, "blocked_users": list(users)}
+            for target, users in sorted(items)
+        ]
 
     def parse_push_targets(
         self,

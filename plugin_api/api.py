@@ -22,6 +22,7 @@ try:
     from .api_probe import WebAPIProbeMixin
     from .api_serializers import WebAPISerializersMixin
     from .api_subscriptions import WebAPISubscriptionsMixin
+    from .target_blacklist import WebAPITargetBlacklistMixin
     from .groups import WebUIGroupEditor
 except ImportError:
     from config import (
@@ -36,6 +37,7 @@ except ImportError:
     from plugin_api.api_probe import WebAPIProbeMixin
     from plugin_api.api_serializers import WebAPISerializersMixin
     from plugin_api.api_subscriptions import WebAPISubscriptionsMixin
+    from plugin_api.target_blacklist import WebAPITargetBlacklistMixin
     from plugin_api.groups import WebUIGroupEditor
     from scheduler import ScheduleGroup
 
@@ -48,6 +50,7 @@ class NitterWebAPI(
     WebAPIHistoryMixin,
     WebAPIProbeMixin,
     WebAPISubscriptionsMixin,
+    WebAPITargetBlacklistMixin,
     WebAPISerializersMixin,
 ):
     """Backend API provider for the AstrBot Plugin Pages dashboard."""
@@ -63,6 +66,12 @@ class NitterWebAPI(
             ("web/groups/update", "handle_group_update", ["POST"]),
             ("web/groups/delete", "handle_group_delete", ["POST"]),
             ("web/targets/probe", "handle_targets_probe", ["POST"]),
+            ("web/target-blacklists", "handle_target_blacklists", ["GET"]),
+            (
+                "web/target-blacklists/update",
+                "handle_target_blacklist_update",
+                ["POST"],
+            ),
             ("web/history", "handle_history", ["GET"]),
             ("web/history/orphans", "handle_history_orphans", ["GET"]),
             ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
@@ -137,6 +146,16 @@ class NitterWebAPI(
         async def action():
             data = await self._request_json()
             return await self.probe_targets(data)
+
+        return await self._json_response(action)
+
+    async def handle_target_blacklists(self):
+        return await self._json_response(self.build_target_blacklists)
+
+    async def handle_target_blacklist_update(self):
+        async def action():
+            data = await self._request_json()
+            return await self.update_target_blacklist(data)
 
         return await self._json_response(action)
 

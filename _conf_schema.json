@@ -309,6 +309,13 @@
         "hint": "旧版兼容字段。启动后会迁移到用户分组里的默认分组；新配置请在用户分组中填写推送目标。",
         "invisible": true
       },
+      "target_blocked_users": {
+        "description": "推送目标作者黑名单",
+        "type": "list",
+        "default": [],
+        "hint": "按完整 UMO 记录不希望发送到该目标的作者用户名；建议通过插件命令或 Dashboard 维护。该配置跨所有分组共享。",
+        "invisible": true
+      },
       "tweet_groups": {
         "description": "推送分组",
         "type": "template_list",
@@ -819,6 +826,13 @@
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
   },
+  "_target_blocked_users_list_migrated": {
+    "description": "Target blocked users list migration completed",
+    "type": "bool",
+    "default": false,
+    "invisible": true,
+    "hint": "Internal migration marker. Do not edit manually."
+  },
   "storage_backend": {
     "description": "存储后端",
     "type": "string",
@@ -1098,6 +1112,13 @@
     "type": "list",
     "default": [],
     "hint": "旧版兼容字段。启动后会迁移到用户分组里的默认分组；新配置请在用户分组中填写推送目标。",
+    "invisible": true
+  },
+  "target_blocked_users": {
+    "description": "推送目标作者黑名单",
+    "type": "list",
+    "default": [],
+    "hint": "旧版兼容字段；新配置请在推送设置中通过命令或 Dashboard 维护。",
     "invisible": true
   },
   "tweet_groups": {

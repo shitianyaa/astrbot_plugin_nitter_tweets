@@ -377,7 +377,7 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {key: ["103", "102", "101"]},
         )
 
-    async def test_incomplete_tag_scan_delivery_failure_keeps_old_watermark(self):
+    async def test_incomplete_tag_scan_delivery_failure_skips_and_rebuilds(self):
         query = "#foo"
         key = self._account_key(query)
         html = _HtmlBackend(
@@ -408,12 +408,12 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             reason="tag_delivery_failure", group_name="tags1"
         )
 
-        self.assertIn(key, result.baseline_rebuild_failed_users)
+        self.assertEqual(result.baseline_rebuilt_users.get(key), 1)
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("tags1"),
-            {key: ["100"]},
+            {key: ["101"]},
         )
-        self.assertNotIn("101", await scheduler.storage.get_seen_ids("tags1", key))
+        self.assertIn("101", await scheduler.storage.get_seen_ids("tags1", key))
 
     async def test_incomplete_tag_scan_without_old_watermark_keeps_state(self):
         query = "#foo"
@@ -643,7 +643,7 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sender.sent[-1][3], ["101"])
         self.assertIn("101", await scheduler.storage.get_seen_ids("tags1", key))
 
-    async def test_tag_failed_push_does_not_mark_seen(self):
+    async def test_tag_failed_push_marks_seen_and_does_not_retry(self):
         query = "#foo"
         key = self._account_key(query)
         html = _HtmlBackend(
@@ -675,7 +675,13 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         seen = await scheduler.storage.get_seen_ids("tags1", key)
         self.assertIn("100", seen)
-        self.assertNotIn("201", seen)
+        self.assertIn("201", seen)
+
+        third = await scheduler.run_check(
+            reason="tag_fail_send_again", group_name="tags1"
+        )
+        self.assertEqual(third.new_tweet_count, 0)
+        self.assertEqual(len(sender.sent), 1)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # Nitter 推文记录
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.3-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.4-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -24,6 +24,7 @@
 - [5 分钟上手](#5-分钟上手)
 - [常用命令](#常用命令)
 - [常用配置](#常用配置)
+- [常见问题](#常见问题)
 - [文档导航](#文档导航)
 - [致谢](#致谢)
 - [许可证](#许可证)
@@ -50,7 +51,7 @@
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
 | 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
-| 运维 | WebUI 面板、缓存与推送记录清理 |
+| 运维 | WebUI 面板、失败历史与手动重推、缓存与推送记录清理 |
 
 ## 5 分钟上手
 
@@ -111,6 +112,7 @@ lark:GroupMessage:oc_xxxxxxxxxxxxx
 | `/镜像测试 … 镜像站URL` | 管理员 | 临时测 Nitter 镜像 |
 | `/推文状态` | 管理员 | 调度与分组状态 |
 | `/推文检查 [分组名]` | 管理员 | 立即检查（当前会话须在该组 `push_targets`） |
+| `/推文黑名单 添加/删除/查看` | 管理员 | 按当前或指定 UMO 维护跨分组共享的作者黑名单 |
 | `/推文缓存清理` | 管理员 | 清媒体缓存 |
 | `/推文记录清理 确认` | 管理员 | 清推送记录 |
 | `/订阅导入` `/订阅删除` `/订阅列表` `/订阅导出` `/订阅去重` | 管理员 | 博主订阅 |
@@ -128,6 +130,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `search_instances` | 搜索 / List 用 HTML 镜像（**不要**默认塞 nitter.net） |
 | `default_limit` | 手动命令默认条数 |
 | `schedule_enabled` | 后台检查总开关 |
+| `push.target_blocked_users` | 按完整 UMO 保存作者黑名单；命令和 Dashboard 维护，跨分组共享 |
 | `tweet_groups` | 订阅与推送分组 |
 | `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
@@ -137,11 +140,21 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 实例架构与容错：[实例配置指南](./docs/instances-guide.md)。
 
+## 常见问题
+
+以下规则容易混淆，完整说明见 [常见问题](./docs/faq.md)：
+
+- 作者黑名单属于完整推送目标 UMO，同一目标跨分组共享。
+- 历史重推属于原分组，只能选择该分组当前目标，不自动套用目标黑名单。
+- seen 按分组和订阅源隔离，但同一分组内的多个推送目标共享 seen。
+- 发送调用失败会停止自动重试并写失败历史；发送前准备失败仍保留重试机会。
+
 ## 文档导航
 
 | 文档 | 内容 |
 | --- | --- |
 | [进阶说明](./docs/advanced.md) | 平台、流程、全配置、行为边界、诊断 |
+| [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败与水位 |
 | [List 订阅](./docs/twitter-lists.md) | Public List、导入关注、故障排查 |
 | [实例指南](./docs/instances-guide.md) | RSS vs HTML、重试与回退 |
 | [文档索引](./docs/README.md) | 全部 docs 入口 |

@@ -30,8 +30,7 @@
 
 涉及下列行为时，优先补回归测试：
 - RSS HTML 解析。
-- seen 写入。
-- seen 写入与失败不写 seen。
+- seen 写入、发送调用失败跳过并推进 seen、媒体准备失败不写 seen。
 - OneBot 合并转发。
 - Lark/Telegram 特殊发送。
 - 媒体缓存清理。

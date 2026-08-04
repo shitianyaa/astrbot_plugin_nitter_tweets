@@ -4,7 +4,7 @@
 
 ## 文档入口
 
-- 用户：`README.md`、`docs/advanced.md`、`docs/twitter-lists.md`、`docs/README.md`
+- 用户：`README.md`、`docs/advanced.md`、`docs/faq.md`、`docs/twitter-lists.md`、`docs/README.md`
 - 项目事实：`docs/project/`（架构、配置、平台发送）
 - 开发：`docs/dev/`（setup、testing、maintenance）
 - 配置真源：`_conf_schema.json`；迁移：`config/compat.py`
@@ -85,7 +85,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 ## 调度与 seen
 
 - 首次账号/查询只 init seen，不推历史；Tag/List 真空首轮可不 init。
-- **seen 仅发送成功后更新**；失败/取消须清本轮普通媒体缓存。
+- **seen 在发送成功或发送调用失败被显式处理后更新**；媒体准备失败/取消不写 seen，并须清本轮普通媒体缓存。
 - 改 `ScheduleGroup` / `ScheduledCheckResult` 时同步 status/log/message 格式与测试。
 
 ## 媒体 / 平台 / AI
@@ -120,5 +120,5 @@ ruff format --check .
 ## Review 清单
 
 - 只改任务相关文件；手动 vs 后台行为差异保留。
-- 无提前写 seen；缓存已清理；非 OneBot 平台未误用合并转发。
+- 无提前写 seen；发送调用失败有失败 history 可重推；媒体准备失败缓存已清理；非 OneBot 平台未误用合并转发。
 - 引用媒体未当作者媒体；schema/compat/docs/测试已同步；对应测试已跑。

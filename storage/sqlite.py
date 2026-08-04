@@ -593,7 +593,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         delivery_status: str = "success",
         delivery_error: str = "",
     ) -> int:
-        """Record one successful or partially delivered tweet/target pair."""
+        """Record one tweet/target delivery outcome."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
         normalized_username = (
@@ -634,7 +634,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         limit: int = 50,
         offset: int = 0,
     ) -> list[PushHistoryRecord]:
-        """Return recent successful and partially delivered push history records."""
+        """Return recent push history records for all delivery outcomes."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         params.extend(
@@ -679,7 +679,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         return [self._push_history_record_from_row(row) for row in rows]
 
     def count_push_history(self, group_id: str = "", username: str = "") -> int:
-        """Return count of grouped successful and partial push history records."""
+        """Return count of grouped push history records."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         row = self.conn.execute(
@@ -697,7 +697,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         return int(row["count"] if row is not None else 0)
 
     def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:
-        """Return successful and partial push history counts by stable group id."""
+        """Return push history counts by stable group id."""
         assert self.conn is not None
         rows = self.conn.execute(
             """

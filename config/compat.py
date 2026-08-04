@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import re
+
 try:
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -30,6 +33,7 @@ MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY = "_search_instances_default_v17_migrated"
+TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY = "_target_blocked_users_list_migrated"
 LEGACY_DEFAULT_SEARCH_INSTANCES = (
     "https://nitter.tiekoetter.com",
     "https://nitter.poast.org",
@@ -143,6 +147,7 @@ CONFIG_GROUP_BY_KEY = {
     "send_target_interval": "push",
     "send_user_interval": "push",
     "manual_send_interval": "push",
+    "target_blocked_users": "push",
     "watch_users": "push",
     "push_targets": "push",
     "tweet_groups": "push",
@@ -357,6 +362,8 @@ def migrate_legacy_grouped_config(config) -> bool:
     if _migrate_max_video_duration_grouped_config(config):
         changed = True
     if _migrate_search_instances_default(config):
+        changed = True
+    if _migrate_target_blocked_users_to_list(config):
         changed = True
     if parse_config_bool(_dict_get(config, LEGACY_CONFIG_MIGRATION_KEY, False), False):
         save_config = getattr(config, "save_config", None)
@@ -631,7 +638,7 @@ def _normalize_list(value) -> list:
     if value is None:
         return []
     if isinstance(value, str):
-        items = value.replace("，", ",").split(",")
+        items = value.replace("\uFF0C", ",").split(",")
     elif isinstance(value, list):
         items = value
     else:
@@ -864,3 +871,64 @@ def _migrate_search_instances_default(config) -> bool:
 
     config[SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY] = True
     return True
+
+
+def _migrate_target_blocked_users_to_list(config) -> bool:
+    """Move target blacklists to the canonical persistable list once.
+
+    AstrBot's `check_config_integrity` prunes dynamic keys from `object`-typed
+    config values whose schema `items` is empty, so a UMO-keyed dict would be
+    wiped on reload. Prefer an existing canonical value; otherwise promote the
+    legacy top-level value before marking the migration complete.
+    """
+    if parse_config_bool(
+        _dict_get(config, TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY, False), False
+    ):
+        return False
+
+    key = "target_blocked_users"
+    group_name = CONFIG_GROUP_BY_KEY[key]
+    group = _dict_get(config, group_name, {})
+    if isinstance(group, dict) and key in group:
+        _migrate_target_blocked_users_value(group, key)
+        config[group_name] = group
+
+    if _dict_has(config, key):
+        _migrate_target_blocked_users_value(config, key)
+
+    canonical_value = group.get(key) if isinstance(group, dict) else None
+    legacy_value = _dict_get(config, key, None)
+    if _is_empty_value(canonical_value) and not _is_empty_value(legacy_value):
+        if not isinstance(group, dict):
+            group = {}
+        group[key] = copy.deepcopy(legacy_value)
+        config[group_name] = group
+
+    config[TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY] = True
+    return True
+
+
+def _migrate_target_blocked_users_value(container: dict, key: str) -> bool:
+    value = container.get(key)
+    if not isinstance(value, dict):
+        return False
+    container[key] = [
+        {
+            "target_umo": str(target),
+            "blocked_users": _normalize_target_blocked_users(users),
+        }
+        for target, users in value.items()
+    ]
+    return True
+
+
+def _normalize_target_blocked_users(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = re.split(r"[\n,\uFF0C]+", value)
+    elif isinstance(value, list):
+        items = value
+    else:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]

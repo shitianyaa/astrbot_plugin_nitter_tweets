@@ -118,6 +118,7 @@ class NitterTweetScheduler(
         self._last_enabled_state: bool | None = None
         self._check_lock = asyncio.Lock()
         self._storage_init_lock = asyncio.Lock()
+        self._target_blacklist_lock = asyncio.Lock()
         self._storage_ready = asyncio.Event()
         self._storage_init_error = ""
         self._migration_done = False
@@ -624,10 +625,8 @@ class NitterTweetScheduler(
                             batch,
                             target,
                             "replay",
-                            delivery_status=getattr(
-                                outcome, "delivery_status", "success"
-                            ),
-                            delivery_error=getattr(outcome, "delivery_error", ""),
+                            delivery_status=self._delivery_history_status(outcome),
+                            delivery_error=self._delivery_history_error(outcome),
                             status_ids=history_status_ids,
                         )
                     if delivery_complete:
@@ -761,6 +760,7 @@ class NitterTweetScheduler(
         if group.is_blogger_group and hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
             run_host_skip_started = True
+        self._target_blocked_users_cache = None
         try:
             seen_map = await self._get_seen_map(group.group_id)
             scan_watermarks = await self._get_scan_watermarks(group.group_id, seen_map)
@@ -1170,13 +1170,14 @@ class NitterTweetScheduler(
                         history_source="scheduled",
                     )
                     # Buffered/merge targets are not marked as seen during prepare.
-                    # Write seen only after at least one target accepted the batch.
+                    # Write seen after every target reaches a terminal outcome.
+                    # Explicitly handled send failures also mark seen; preparation
+                    # failures and cancellation paths do not.
                     for batch in pending_batches:
-                        # A group-level seen key is shared by all push
-                        # targets.  Advance it only after every target for
-                        # this batch accepted the delivery; recording after a
-                        # partial success would permanently hide the tweet
-                        # from a failed target on the next round.
+                        # A group-level seen key is shared by all push targets.
+                        # Preparation/cancellation paths may still leave this
+                        # guard false even though ordinary send outcomes mark
+                        # every target terminally handled.
                         if not self._all_targets_delivered(targets, batch):
                             continue
                         status_ids = [
@@ -1200,7 +1201,7 @@ class NitterTweetScheduler(
                     result.source_statuses[username] = (
                         SourceStatus.BASELINE_REBUILD_FAILED
                     )
-                    rebuild_error = "本轮推送未全部成功，保留旧水位"
+                    rebuild_error = "本轮推送仍有内容未处理，保留旧水位"
                     result.baseline_rebuild_failed_users[username] = rebuild_error
                     logger.warning(
                         f"[NitterTweets] 定时抓取 {source_label} "
@@ -1238,6 +1239,7 @@ class NitterTweetScheduler(
                 await self._send_no_update_notice(result, target_interval)
             return result
         finally:
+            self._target_blocked_users_cache = None
             if run_host_skip_started and hasattr(self.nitter, "end_run_host_skip"):
                 self.nitter.end_run_host_skip()
 

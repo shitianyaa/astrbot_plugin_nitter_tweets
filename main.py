@@ -14,6 +14,7 @@ try:
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
+        TargetBlacklistCommandMixin,
     )
     from .config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
@@ -41,6 +42,7 @@ except ImportError:
         MaintenanceCommandMixin,
         ManualCommandMixin,
         SubscriptionCommandMixin,
+        TargetBlacklistCommandMixin,
     )
     from config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
@@ -67,13 +69,14 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.18.3",
+    "0.18.4",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
     ManualCommandMixin,
     MaintenanceCommandMixin,
     SubscriptionCommandMixin,
+    TargetBlacklistCommandMixin,
     LinkPreviewMixin,
     Star,
 ):
@@ -289,6 +292,37 @@ class NitterTweetsPlugin(
     async def cmd_tweets_list(self, event: AstrMessageEvent):
         """查看当前推文订阅账号、分组和推送目标配置。"""
         return await self._cmd_tweets_list_impl(event)
+
+    @filter.command_group("推文黑名单")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_tweets_target_blacklist(self, event: AstrMessageEvent):
+        """按推送目标维护跨分组共享的作者黑名单。"""
+
+    @cmd_tweets_target_blacklist.command("添加", alias={"add", "增加"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_tweets_target_blacklist_add(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        """将作者加入当前或指定推送目标的黑名单。"""
+        return await self._cmd_target_blacklist_add_impl(event, args)
+
+    @cmd_tweets_target_blacklist.command(
+        "删除", alias={"remove", "del", "delete", "移除"}
+    )
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_tweets_target_blacklist_remove(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        """从当前或指定推送目标的黑名单移除作者。"""
+        return await self._cmd_target_blacklist_remove_impl(event, args)
+
+    @cmd_tweets_target_blacklist.command("查看", alias={"list", "show", "查询"})
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def cmd_tweets_target_blacklist_list(
+        self, event: AstrMessageEvent, args=GreedyStr
+    ):
+        """查看当前或指定推送目标的作者黑名单。"""
+        return await self._cmd_target_blacklist_list_impl(event, args)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("订阅导出")

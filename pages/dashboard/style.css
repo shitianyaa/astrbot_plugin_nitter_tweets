@@ -2389,6 +2389,16 @@ body.light-theme .toast-message {
   min-width: 0;
 }
 
+.target-blacklist-editor {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.target-blacklist-editor .section-head {
+  margin-bottom: 8px;
+}
+
 .editable-chip-list {
   margin-bottom: 10px;
 }

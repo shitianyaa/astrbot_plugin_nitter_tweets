@@ -2,6 +2,7 @@ from .config import (
     PushTargetParseResult,
     ScheduleGroup,
     SchedulerConfigReader,
+    TargetBlockedUsersInfo,
     WatchUsersInfo,
 )
 from .models import (
@@ -21,6 +22,7 @@ __all__ = [
     "ScheduledCheckResult",
     "ScheduledPushResult",
     "SchedulerConfigReader",
+    "TargetBlockedUsersInfo",
     "WatchUsersInfo",
     "asyncio",
     "logger",

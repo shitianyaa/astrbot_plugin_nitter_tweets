@@ -92,6 +92,14 @@ class _Filter:
         return decorator
 
     @staticmethod
+    def command_group(*args, **kwargs):
+        def decorator(func):
+            func.command = _Filter.command
+            return func
+
+        return decorator
+
+    @staticmethod
     def permission_type(*args, **kwargs):
         def decorator(func):
             return func
@@ -579,7 +587,11 @@ class _Sender:
         self.media_only_flags.append(media_only)
         self.tweet_start_indexes.append((umo, username, tweet_start_index))
         success = self.success and umo not in self.failed_targets
-        return types.SimpleNamespace(success=success, warning="")
+        return types.SimpleNamespace(
+            success=success,
+            warning="",
+            error="" if success else "direct send failed",
+        )
 
     async def send_merged_to_umo(
         self,
@@ -630,6 +642,46 @@ class _FailOnceStatusSender(_Sender):
             outcome.warning = ""
             outcome.error = "send failed once"
         return outcome
+
+
+class _RaisingSender(_Sender):
+    async def send_to_umo_with_outcome(self, *args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("send crashed")
+
+
+class _RaisingMergedSender(_Sender):
+    async def send_merged_to_umo(self, *args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("merge crashed")
+
+
+class _RaisingSummarySender(_Sender):
+    async def send_summary_to_umo(self, *args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("summary crashed")
+
+
+class _RaisingPostSendOutcome:
+    success = True
+    error = ""
+    delivery_status = "success"
+    delivery_error = ""
+    mode = "full_forward"
+
+    @property
+    def warning(self):
+        raise RuntimeError("post-send bookkeeping crashed")
+
+
+class _RaisingPostSendSender(_Sender):
+    async def send_to_umo_with_outcome(self, *args, **kwargs):
+        await super().send_to_umo_with_outcome(*args, **kwargs)
+        return _RaisingPostSendOutcome()
+
+    async def send_merged_to_umo(self, *args, **kwargs):
+        await super().send_merged_to_umo(*args, **kwargs)
+        return _RaisingPostSendOutcome()
 
 
 class _PartialDeliverySender(_Sender):
@@ -1339,7 +1391,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": [str(status_id) for status_id in range(125, 105, -1)]},
         )
 
-    async def test_failed_scheduled_push_does_not_mark_seen(self):
+    async def test_failed_scheduled_push_marks_seen_and_does_not_retry(self):
         sender = _Sender(success=False)
         nitter = _MultiUserNitter(
             {
@@ -1366,9 +1418,144 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.run_check(reason="test_failed_seen")
         seen_ids = await scheduler.storage.get_seen_ids("global", "NASA")
 
-        self.assertNotIn("201", seen_ids)
+        self.assertIn("201", seen_ids)
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "failed")
+        self.assertEqual(history[0].delivery_error, "direct send failed")
+        second = await scheduler.run_check(reason="test_failed_seen_again")
+        self.assertEqual(second.new_tweet_count, 0)
+        self.assertEqual(len(sender.sent), 1)
 
-    async def test_partial_failed_push_records_history_without_marking_seen(self):
+    async def test_send_exception_marks_seen_and_does_not_retry(self):
+        sender = _RaisingSender()
+        nitter = _MultiUserNitter(
+            {
+                "NASA": [
+                    self._make_tweet("NASA", "202"),
+                ],
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_send_exception_seen")
+        self.assertIn("202", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "failed")
+        self.assertEqual(history[0].delivery_error, "send crashed")
+        second = await scheduler.run_check(reason="test_send_exception_seen_again")
+        self.assertEqual(second.new_tweet_count, 0)
+
+    async def test_summary_send_exception_keeps_batch_unhandled(self):
+        target = "telegram:FriendMessage:1"
+        sender = _RaisingSummarySender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+            },
+            nitter=_MultiUserNitter({"NASA": []}),
+            sender=sender,
+        )
+        batch = scheduler_module.PendingTweetBatch(
+            username="NASA",
+            instance="https://nitter.test",
+            tweets=[self._make_tweet("NASA", "203")],
+            fetched_ids=["203"],
+            seen_ids=["100"],
+        )
+        result = scheduler_module.ScheduledCheckResult(
+            reason="summary_exception",
+            group_id="global",
+            group_type="blogger",
+            targets=[target],
+        )
+
+        await scheduler._send_per_user_updates(
+            [batch],
+            result,
+            [target],
+            target_interval=0,
+            user_interval=0,
+            batch_summary="summary",
+            history_group_id="global",
+            history_source="scheduled",
+        )
+
+        self.assertNotIn(target, batch.delivered_targets)
+        self.assertEqual(sender.sent, [])
+
+    async def test_post_send_bookkeeping_exception_does_not_add_failed_history(self):
+        target = "telegram:FriendMessage:1"
+        sender = _RaisingPostSendSender()
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "scheduled_fetch_limit": 1,
+            },
+            nitter=_MultiUserNitter({"NASA": [self._make_tweet("NASA", "204")]}),
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_post_send_bookkeeping")
+
+        self.assertIn("204", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "success")
+        self.assertEqual(history[0].delivery_error, "")
+
+    async def test_merged_post_send_bookkeeping_exception_does_not_add_failed_history(
+        self,
+    ):
+        target = "aiocqhttp:GroupMessage:1"
+        sender = _RaisingPostSendSender(merge_targets={target})
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "scheduled_fetch_limit": 1,
+                "merge_tweet_threshold": 1,
+            },
+            nitter=_MultiUserNitter({"NASA": [self._make_tweet("NASA", "205")]}),
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_merged_post_send_bookkeeping")
+
+        self.assertIn("205", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "success")
+        self.assertEqual(history[0].delivery_error, "")
+
+    async def test_partial_failed_push_records_history_and_marks_seen(self):
         target = "lark:GroupMessage:chat-1"
         sender = _PartialDeliverySender()
         nitter = _MultiUserNitter(
@@ -1397,7 +1584,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.pushed_target_successes, 0)
         self.assertEqual(result.pushes[0].success_targets, 0)
-        self.assertNotIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
         history = await scheduler.storage.get_push_history("global", "NASA")
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0].status_id, "201")
@@ -1407,7 +1594,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_successful_partial_media_delivery_marks_seen_and_history(self):
         target = "lark:GroupMessage:chat-1"
-        sender = _SuccessfulPartialDeliverySender()
+        sender = _SuccessfulPartialDeliverySender(report_delivered_ids=False)
         nitter = _MultiUserNitter(
             {
                 "NASA": [
@@ -1440,7 +1627,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history[0].delivery_status, "partial_failed")
         self.assertEqual(history[0].delivery_error, "media failed")
 
-    async def test_partial_failed_without_delivered_ids_skips_history_and_seen(self):
+    async def test_partial_failed_without_delivered_ids_records_failed_history_and_marks_seen(
+        self,
+    ):
         target = "lark:GroupMessage:chat-1"
         sender = _PartialDeliverySender(report_delivered_ids=False)
         nitter = _MultiUserNitter(
@@ -1470,8 +1659,25 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.pushed_target_successes, 0)
-        self.assertNotIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
-        self.assertEqual(await scheduler.storage.get_push_history("global", "NASA"), [])
+        self.assertIn("201", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "failed")
+        self.assertEqual(history[0].delivery_error, "media failed")
+
+    def test_partial_failed_without_delivery_details_normalizes_to_failed(self):
+        outcome = types.SimpleNamespace(
+            success=False,
+            error="",
+            delivery_status="partial_failed",
+            delivery_error="",
+            delivered_status_ids=(),
+        )
+
+        self.assertEqual(
+            NitterTweetScheduler._delivery_history_status(outcome), "failed"
+        )
+        self.assertEqual(NitterTweetScheduler._delivery_history_error(outcome), "")
 
     async def test_merged_partial_history_only_records_delivered_status_ids(self):
         target = "aiocqhttp:GroupMessage:1"
@@ -1514,12 +1720,75 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row.status_id for row in nasa_history], ["101"])
         self.assertEqual(nasa_history[0].delivery_status, "partial_failed")
         self.assertEqual(hubble_history, [])
-        self.assertEqual(
-            await scheduler.storage.get_seen_ids("global", "NASA"), ["100"]
+        self.assertIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertIn(
+            "201", await scheduler.storage.get_seen_ids("global", "NASAHubble")
         )
-        self.assertEqual(
-            await scheduler.storage.get_seen_ids("global", "NASAHubble"), ["200"]
+
+    async def test_merged_failed_push_records_history_and_marks_seen(self):
+        target = "aiocqhttp:GroupMessage:1"
+        sender = _Sender(success=False, merge_targets={target})
+        nitter = _MultiUserNitter({"NASA": [self._make_tweet("NASA", "301")]})
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "scheduled_fetch_limit": 1,
+                "merge_tweet_threshold": 1,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
         )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        first = await scheduler.run_check(reason="test_merged_failed_history")
+
+        self.assertEqual(first.merged_push_success_targets, 0)
+        self.assertIn("301", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "failed")
+        self.assertEqual(history[0].delivery_error, "send failed")
+        second = await scheduler.run_check(reason="test_merged_failed_history_again")
+        self.assertEqual(second.new_tweet_count, 0)
+
+    async def test_merged_send_exception_records_history_and_marks_seen(self):
+        target = "aiocqhttp:GroupMessage:1"
+        sender = _RaisingMergedSender(merge_targets={target})
+        nitter = _MultiUserNitter({"NASA": [self._make_tweet("NASA", "302")]})
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "watch_users": ["NASA"],
+                "push_targets": [target],
+                "scheduled_fetch_limit": 1,
+                "merge_tweet_threshold": 1,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
+
+        await scheduler.run_check(reason="test_merged_exception_history")
+
+        self.assertIn("302", await scheduler.storage.get_seen_ids("global", "NASA"))
+        history = await scheduler.storage.get_push_history("global", "NASA")
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].delivery_status, "failed")
+        self.assertEqual(history[0].delivery_error, "merge crashed")
+        second = await scheduler.run_check(reason="test_merged_exception_history_again")
+        self.assertEqual(second.new_tweet_count, 0)
 
     async def test_media_only_ready_sends_without_translation_or_body(self):
         events = []
@@ -1895,7 +2164,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": [str(status_id) for status_id in range(110, 100, -1)]},
         )
 
-    async def test_failed_old_tweet_does_not_advance_watermark_across_gap(self):
+    async def test_failed_old_tweet_advances_watermark_without_retry(self):
         nitter = _SchedulerNitter(
             {
                 "NASA": [
@@ -1929,16 +2198,17 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("global", "NASA", "100")
 
-        await scheduler.run_check(reason="test_gap_first")
+        first = await scheduler.run_check(reason="test_gap_first")
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("global"),
-            {"NASA": ["100"]},
+            {"NASA": ["102", "101"]},
         )
-        await scheduler.run_check(reason="test_gap_retry")
+        second = await scheduler.run_check(reason="test_gap_retry")
 
+        self.assertEqual((first.new_tweet_count, second.new_tweet_count), (2, 0))
         self.assertEqual(
             [status_id for item in sender.sent for status_id in item[3]],
-            ["102", "101", "101"],
+            ["102", "101"],
         )
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("global"),
@@ -2311,7 +2581,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["telegram:GroupMessage:-1001"] * 2)
         self.assertEqual(sleep_calls, [19.0])
 
-    async def test_partial_target_failure_keeps_seen_retryable(self):
+    async def test_partial_target_failure_marks_seen_without_retrying_success(self):
         good_target = "telegram:FriendMessage:1"
         failed_target = "weixin_oc:FriendMessage:2"
         nitter = _SchedulerNitter(
@@ -2349,9 +2619,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         first = await scheduler.run_check(reason="partial_target_first")
         self.assertEqual(first.pushed_target_successes, 1)
-        self.assertNotIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
 
         sender.failed_targets.clear()
         second = await scheduler.run_check(reason="partial_target_retry")
-        self.assertEqual(second.pushed_target_successes, 2)
-        self.assertIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertEqual(second.new_tweet_count, 0)
+        self.assertEqual(second.pushed_target_attempts, 0)
+        self.assertEqual(len(sender.sent), 2)

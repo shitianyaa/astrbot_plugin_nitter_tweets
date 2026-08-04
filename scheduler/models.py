@@ -104,7 +104,7 @@ class PendingBaselineRebuild:
     `max_tweets_per_check > 0` still delivers up to that many tweets, so the
     rebuild has to wait until sending finishes: `selected_ids` collects what
     was queued, and the baseline is only rewritten once every one of those IDs
-    made it into seen (i.e. all targets accepted the batch).
+    made it into seen (i.e. all targets reached a terminal handled state).
     """
 
     baseline_ids: list[str]
@@ -156,6 +156,7 @@ class ScheduledCheckResult:
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
     plain_text_filtered: int = 0
+    target_blocked_filtered: int = 0
     media_only_skipped: int = 0
     media_only_retrying: int = 0
 
@@ -292,6 +293,11 @@ class ScheduledCheckResult:
         filtered_part = (
             f", filtered={self.plain_text_filtered}" if self.plain_text_filtered else ""
         )
+        target_blocked_part = (
+            f", target_blocked={self.target_blocked_filtered}"
+            if self.target_blocked_filtered
+            else ""
+        )
         media_part = (
             f", media_skipped={self.media_only_skipped}, "
             f"media_retrying={self.media_only_retrying}"
@@ -315,7 +321,7 @@ class ScheduledCheckResult:
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
-            f"{filtered_part}{media_part}"
+            f"{filtered_part}{target_blocked_part}{media_part}"
         )
 
     def format_brief_log_lines(self) -> list[str]:
@@ -342,6 +348,8 @@ class ScheduledCheckResult:
         ]
         if self.plain_text_filtered:
             lines[0] += f", filtered={self.plain_text_filtered}"
+        if self.target_blocked_filtered:
+            lines[0] += f", target_blocked={self.target_blocked_filtered}"
         if self.media_only_skipped or self.media_only_retrying:
             lines[0] += (
                 f", media_skipped={self.media_only_skipped},"
@@ -464,6 +472,8 @@ class ScheduledCheckResult:
         ]
         if self.fetch_limit:
             lines.append(f"后台首屏扫描: {self.fetch_limit} 条")
+        if self.target_blocked_filtered:
+            lines.append(f"目标黑名单过滤: {self.target_blocked_filtered} 条")
         if self.merge_tweet_threshold > 0:
             lines.append(f"QQ 合并阈值: {self.merge_tweet_threshold} 条及以上")
         else:
