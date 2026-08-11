@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import random
+from itertools import count
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -34,6 +34,7 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
 
     name = "qq_official"
     MARKDOWN_NOT_ALLOWED_ERROR = "不允许发送原生 markdown"
+    _msg_seq = count(1)
 
     @staticmethod
     def _message_chain(
@@ -181,7 +182,7 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
             payload = {
                 target_key: session_id,
                 "msg_type": 2 if markdown else 0,
-                "msg_seq": random.randint(1, 10000),
+                "msg_seq": next(self._msg_seq),
             }
             if markdown:
                 payload["markdown"] = {"content": text}
@@ -330,7 +331,11 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
             else []
         )
 
-        async def send_chain(components, label: str) -> SendAttempt:
+        async def send_chain(
+            components,
+            label: str,
+            _include_plain_text: bool = False,
+        ) -> SendAttempt:
             return await self._send_event_chain_with_retry(
                 event,
                 components,
@@ -416,14 +421,18 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
             else []
         )
 
-        async def send_chain(components, label: str) -> SendAttempt:
+        async def send_chain(
+            components,
+            label: str,
+            include_plain_text: bool = False,
+        ) -> SendAttempt:
             return await self._send_context_chain_with_retry(
                 context,
                 umo,
                 components,
                 label,
                 link_style=self._event_link_style(link_style),
-                plain_text=plain_text if components is text_components else None,
+                plain_text=plain_text if include_plain_text else None,
             )
 
         async def send_component(component, label: str) -> SendAttempt:
@@ -552,7 +561,7 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
     async def _send_media_parts(
         self,
         *,
-        send_chain: Callable[[list, str], Awaitable[SendAttempt]],
+        send_chain: Callable[[list, str, bool], Awaitable[SendAttempt]],
         send_component: Callable[[Any, str], Awaitable[SendAttempt]],
         text_components: list,
         image_components: list,
@@ -580,6 +589,7 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
         text_attempt = await send_chain(
             text_components,
             f"{label_prefix} text",
+            True,
         )
         collect(text_attempt)
         if text_attempt.success or text_attempt.uncertain:
@@ -631,6 +641,7 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
                 notice = await send_chain(
                     notice_components,
                     f"{label_prefix} omitted video notice",
+                    False,
                 )
                 collect(notice)
 

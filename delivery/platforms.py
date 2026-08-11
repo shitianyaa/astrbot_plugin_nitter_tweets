@@ -271,7 +271,7 @@ class PlatformResolver:
             try:
                 self._append_candidate(values, method())
             except Exception:
-                pass
+                logger.debug("[NitterTweets] event.get_platform_name failed")
         if values:
             return tuple(dict.fromkeys(values))
 

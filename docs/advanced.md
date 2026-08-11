@@ -20,7 +20,7 @@ README 只保留上手与定位；边界以本文与 `_conf_schema.json` 为准�
 | 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 | 其他平台 | default | 走 AstrBot 通用消息链发送；不使用 QQ 式合并转发。 |
 
-推送目标应使用 `/sid` 返回的完整 UMO。UMO 第一段是平台实例 ID，不一定等于真实平台类型；插件优先使用 AstrBot 平台 metadata/config 类型，只在无法解析平台实例时才用 UMO 实例 ID 兜底。
+推送目标应使用 `/sid` 返回的完整 UMO。UMO 第一段是平台实例 ID，不一定等于真实平台类型；插件优先使用 AstrBot 平台 metadata/config 类型，只在无法取得平台类型信息时才用 UMO 实例 ID 兜底。
 
 QQ Official 群主动推送的 Markdown 正文直接使用官方 `group_openid` 接口，不依赖 AstrBot 适配器的运行期群会话场景缓存；图片、视频等媒体仍由 AstrBot 负责上传和发送。
 

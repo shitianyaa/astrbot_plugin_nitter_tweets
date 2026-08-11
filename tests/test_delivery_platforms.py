@@ -48,7 +48,10 @@ def test_private_qq_platform_types_use_onebot_delivery(platform_type):
     assert adapter.should_split_direct_videos is True
 
 
-@pytest.mark.parametrize("platform_type", ["qq_official", "qq_official_webhook"])
+@pytest.mark.parametrize(
+    "platform_type",
+    ["qq_official", "qq_official_webhook", "qqofficial", "qqofficial_webhook"],
+)
 def test_qq_official_event_stays_out_of_onebot_even_with_call_action(platform_type):
     event = SimpleNamespace(
         get_platform_id=lambda: "official-bot",
@@ -75,7 +78,10 @@ def test_qq_official_event_stays_out_of_onebot_even_with_call_action(platform_ty
     assert adapter.should_split_direct_videos is True
 
 
-@pytest.mark.parametrize("platform_type", ["qq_official", "qq_official_webhook"])
+@pytest.mark.parametrize(
+    "platform_type",
+    ["qq_official", "qq_official_webhook", "qqofficial", "qqofficial_webhook"],
+)
 def test_qq_official_umo_uses_official_adapter(platform_type):
     profile = PlatformResolver().from_umo(
         None,

@@ -13,8 +13,6 @@ from shared import TweetItem, TweetMedia
 
 
 def _sender(*, images: bool = True, videos: bool = False):
-    from rendering.tweets import TweetMessageRenderer
-
     sender = SimpleNamespace(
         send_image_attachments=images,
         send_video_attachments=videos,
@@ -114,6 +112,26 @@ def test_qq_official_markdown_layout_respects_link_and_translation_policy():
     assert "查看原推" not in hidden
     assert "https://x.com" not in hidden
     assert "原文" not in hidden
+
+
+def test_qq_official_header_escapes_dynamic_markdown_fields():
+    renderer = TweetMessageRenderer()
+
+    components = renderer.build_direct_components(
+        "nasa",
+        "https://nitter.example",
+        [_tweet()],
+        notices=["notice *body*"],
+        group_label="*group*",
+        header_text="# custom\n> quoted",
+        batch_summary="- summary",
+        link_style="qq_official_md",
+    )
+
+    header = str(getattr(components[0], "text", ""))
+    assert header == (
+        "\\- summary\n\\# custom\n\\> quoted\n分组：\\*group\\*\n⚠️\n- notice \\*body\\*"
+    )
 
 
 @pytest.mark.asyncio
@@ -238,6 +256,7 @@ async def test_qq_official_umo_markdown_rejection_falls_back_to_plain_text():
     assert plain_payload["content"] == "@nasa · 2026-08-10 12:00:00\n\nline 1\nline 2"
     assert "**" not in plain_payload["content"]
     assert "markdown" not in plain_payload
+    assert plain_payload["msg_seq"] == markdown_payload["msg_seq"] + 1
 
 
 @pytest.mark.asyncio
@@ -473,7 +492,7 @@ def test_qq_official_markdown_escapes_syntax_but_leaves_html_literal():
     # The link is defused by severing the "](" seam with a zero-width space,
     # which renders as nothing but stops the syntax from being recognised.
     assert "](http" not in escaped
-    assert "![img]​(http://evil.example/x.png)" in escaped
+    assert "![img]" + "\u200b" + "(http://evil.example/x.png)" in escaped
 
     strike = TweetMessageRenderer.qq_official_markdown_text("~~strike~~")
     assert strike == "\\~\\~strike\\~\\~"
@@ -513,6 +532,15 @@ def test_qq_official_markdown_leaves_non_marker_punctuation_alone():
     assert TweetMessageRenderer.qq_official_markdown_text("  -5°C") == "  -5°C"
     assert TweetMessageRenderer.qq_official_markdown_text("1.5x") == "1.5x"
     assert TweetMessageRenderer.qq_official_markdown_text("a - b") == "a - b"
+
+
+def test_qq_official_markdown_preserves_inline_text_after_urls():
+    escape = TweetMessageRenderer.qq_official_markdown_text
+
+    assert escape("a https://x.com - item") == "a https://x.com - item"
+    assert escape("a https://x.com # title") == "a https://x.com # title"
+    assert escape("a https://x.com 1. item") == "a https://x.com 1. item"
+    assert escape("https://x.com\n- item") == "https://x.com\n\\- item"
 
 
 @pytest.mark.asyncio

@@ -39,7 +39,7 @@ TweetBatch = tuple[str, str, list[TweetItem]]
 _QQ_OFFICIAL_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 _QQ_OFFICIAL_URL_TRAILING_PUNCTUATION = frozenset(".,;:!?)]}。、！）；：，》《？")
 # Renders as nothing, but breaks up a syntax run that must not be recognised.
-_ZERO_WIDTH_SPACE = "​"
+_ZERO_WIDTH_SPACE = "\u200b"
 
 
 class TweetMessageRenderer:
@@ -120,6 +120,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             nodes.nodes.append(Node(uin=uin, name="Nitter", content=[Plain(header)]))
@@ -395,6 +396,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             components.append(Plain(header))
@@ -671,6 +673,7 @@ class TweetMessageRenderer:
     ):
         # The tweet node already carries the author and source context.
         # Repeating it on every image node creates unwanted captions.
+        # Keep the shared builder signature; caption-related arguments are unused.
         return [Image.fromFileSystem(str(media.path))]
 
     def build_onebot_nodes(
@@ -698,6 +701,7 @@ class TweetMessageRenderer:
             group_label,
             header_text,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             items.append(
@@ -835,6 +839,7 @@ class TweetMessageRenderer:
     ) -> list[dict]:
         # The tweet node already carries the author and source context.
         # Keep each attachment node media-only to avoid repeated captions.
+        # Keep the shared builder signature; caption-related arguments are unused.
         return [self.raw_media(media)]
 
     def _build_onebot_tweet_content(
@@ -929,6 +934,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             blocks.append(header)
@@ -1232,7 +1238,7 @@ class TweetMessageRenderer:
 
         value = str(text or "")
 
-        def escape_segment(segment: str) -> str:
+        def escape_segment(segment: str, *, at_line_start: bool) -> str:
             escaped = segment.replace("\\", "\\\\")
             for char in ("`", "*", "_", "~"):
                 escaped = escaped.replace(char, "\\" + char)
@@ -1243,23 +1249,32 @@ class TweetMessageRenderer:
             # Leading whitespace is preserved but must not shield the marker:
             # QQ's Markdown treats a four-space indent as list nesting, so an
             # indented ``- foo`` in a tweet body still starts a nested list.
-            escaped = re.sub(r"(^|\n)([ \t]*)([>#])", r"\1\2\\\3", escaped)
-            escaped = re.sub(r"(^|\n)([ \t]*)([-+])(?=\s)", r"\1\2\\\3", escaped)
-            escaped = re.sub(r"(^|\n)([ \t]*)(\d+)\.(?=\s)", r"\1\2\3\\.", escaped)
+            if at_line_start:
+                escaped = re.sub(r"^([ \t]*)([>#])", r"\1\\\2", escaped)
+                escaped = re.sub(r"^([ \t]*)([-+])(?=\s)", r"\1\\\2", escaped)
+                escaped = re.sub(r"^([ \t]*)(\d+)\.(?=\s)", r"\1\2\\.", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)([>#])", r"\1\\\2", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)([-+])(?=\s)", r"\1\\\2", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)(\d+)\.(?=\s)", r"\1\2\\.", escaped)
             return escaped
 
         pieces: list[str] = []
         last_end = 0
         for match in _QQ_OFFICIAL_URL_RE.finditer(value):
-            pieces.append(escape_segment(value[last_end : match.start()]))
+            pieces.append(
+                escape_segment(
+                    value[last_end : match.start()],
+                    at_line_start=last_end == 0,
+                )
+            )
             url, trailing = TweetMessageRenderer._split_url_trailing_punctuation(
                 match.group(0)
             )
             pieces.append(url.replace("(", "%28").replace(")", "%29"))
             if trailing:
-                pieces.append(escape_segment(trailing))
+                pieces.append(escape_segment(trailing, at_line_start=False))
             last_end = match.end()
-        pieces.append(escape_segment(value[last_end:]))
+        pieces.append(escape_segment(value[last_end:], at_line_start=last_end == 0))
         return "".join(pieces)
 
     @staticmethod
@@ -1363,19 +1378,44 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
-        summary = batch_summary.strip()
+        raw_summary = str(batch_summary or "").strip()
+        raw_header = str(header_text or "").strip()
+        raw_group_label = str(group_label or "").strip()
+        is_qq_official_markdown = link_style == "qq_official_md"
+        summary = (
+            cls.qq_official_markdown_text(raw_summary)
+            if is_qq_official_markdown
+            else raw_summary
+        )
+        safe_header = (
+            cls.qq_official_markdown_text(raw_header)
+            if is_qq_official_markdown
+            else raw_header
+        )
+        safe_group_label = (
+            cls.qq_official_markdown_text(raw_group_label)
+            if is_qq_official_markdown
+            else raw_group_label
+        )
         lines = []
         if summary:
             lines.append(summary)
-        if header_text.strip():
-            lines.append(header_text.strip())
+        if safe_header:
+            lines.append(safe_header)
         if (
-            group_label
-            and (summary or header_text.strip())
-            and f"分组：{group_label}" not in summary
+            raw_group_label
+            and (raw_summary or raw_header)
+            and f"分组：{raw_group_label}" not in raw_summary
         ):
-            lines.append(f"分组：{group_label}")
-        notice_text = "" if media_only else cls.format_notices(notices)
+            lines.append(f"分组：{safe_group_label}")
+        safe_notices = notices
+        if is_qq_official_markdown:
+            safe_notices = [
+                cls.qq_official_markdown_text(str(notice).strip())
+                for notice in notices or []
+                if str(notice or "").strip()
+            ]
+        notice_text = "" if media_only else cls.format_notices(safe_notices)
         if notice_text:
             lines.append(notice_text)
         return "\n".join(lines)
