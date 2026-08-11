@@ -66,6 +66,15 @@ def test_metadata_lists_only_canonical_platform_names():
     assert platforms == ["aiocqhttp", "qq_official", "telegram", "lark", "weixin_oc"]
 
 
+def test_readme_title_matches_metadata_display_name():
+    metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    match = re.search(r"^display_name:\s*(.+)$", metadata, re.MULTILINE)
+    assert match is not None
+    assert readme.startswith(f"# {match.group(1).strip()}\n")
+
+
 def test_readme_includes_qq_official_screenshot():
     asset = ROOT / "docs" / "assets" / "readme" / "qq-official-markdown.png"
     readme = (ROOT / "README.md").read_text(encoding="utf-8")

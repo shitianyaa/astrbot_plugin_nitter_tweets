@@ -1,4 +1,4 @@
-# Nitter 推文记录
+# 推文订阅
 
 <p align="center">
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.5-blue?style=for-the-badge" /></a>
@@ -10,7 +10,7 @@
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge" /></a>
   <a href="https://qm.qq.com/q/cPQnFNtdN6"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%E7%BE%A4-Bot%E6%B5%8B%E8%AF%95%E7%BE%A4-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" /></a>
   <br />
-  <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
+  <img src="./logo.png" alt="推文订阅图标" width="160" />
   <br />
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="README 浏览量计数" />
 </p>
