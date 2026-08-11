@@ -11,6 +11,8 @@
   <a href="https://qm.qq.com/q/cPQnFNtdN6"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%E7%BE%A4-Bot%E6%B5%8B%E8%AF%95%E7%BE%A4-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" /></a>
   <br />
   <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
+  <br />
+  <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="README 浏览量计数" />
 </p>
 
 通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
@@ -180,6 +182,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 ## 致谢
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- [count.getloli.com](https://count.getloli.com/)：提供 README 猫猫计数图片
 - 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
 - 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成
 

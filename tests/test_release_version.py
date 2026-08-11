@@ -72,3 +72,14 @@ def test_readme_includes_qq_official_screenshot():
 
     assert asset.is_file()
     assert "./docs/assets/readme/qq-official-markdown.png" in readme
+
+
+def test_readme_includes_cat_visitor_counter():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "https://count.getloli.com/@astrbot-plugin-nitter-tweets?"
+        "name=astrbot-plugin-nitter-tweets"
+    ) in readme
+    assert "theme=booru-jaypee" in readme
+    assert "[count.getloli.com](https://count.getloli.com/)" in readme

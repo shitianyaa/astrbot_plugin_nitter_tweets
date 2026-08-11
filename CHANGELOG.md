@@ -9,6 +9,10 @@
 - 新增 QQ Official 官方 Bot 平台支持：通过独立适配器发送普通消息，不误用私人号 OneBot 合并转发或 raw action。同时覆盖 `qq_official`（WebSocket）和 `qq_official_webhook`（Webhook）两种官方适配器。
 - README 增加 QQ Official 实际 Markdown 推送效果截图。
 
+### Docs
+
+- README 增加猫猫计数的浏览量图片，并补充计数服务来源。
+
 ### Changed
 
 - QQ Official 正文 Event/UMO 使用安全转义的官方 Markdown；包含媒体时先发正文，再独立发送图片/视频，不把 Markdown 与 `media` 混在同一条消息中。
