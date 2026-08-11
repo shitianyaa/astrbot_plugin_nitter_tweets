@@ -56,3 +56,11 @@ def test_qq_official_requires_supported_astrbot_version():
     )
 
     assert tuple(int(part) for part in minimum.split(".")) >= (4, 26, 0)
+
+
+def test_metadata_lists_only_canonical_platform_names():
+    text = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
+    section = text.split("support_platforms:", 1)[1].split("keywords:", 1)[0]
+    platforms = re.findall(r"^  - ([a-z0-9_]+)\s*$", section, re.MULTILINE)
+
+    assert platforms == ["aiocqhttp", "qq_official", "telegram", "lark", "weixin_oc"]

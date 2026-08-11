@@ -669,23 +669,9 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
-        if media_only:
-            return [Image.fromFileSystem(str(media.path))]
-        return [
-            Plain(
-                self.format_image_attachment_text(
-                    index,
-                    username,
-                    tweet,
-                    source,
-                    media_only=media_only,
-                    omit_status_url=omit_status_url,
-                    hide_original_when_translated=hide_original_when_translated,
-                    link_style=link_style,
-                )
-            ),
-            Image.fromFileSystem(str(media.path)),
-        ]
+        # The tweet node already carries the author and source context.
+        # Repeating it on every image node creates unwanted captions.
+        return [Image.fromFileSystem(str(media.path))]
 
     def build_onebot_nodes(
         self,
@@ -847,23 +833,9 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
-        if media_only:
-            return [self.raw_media(media)]
-        return [
-            self.raw_text(
-                self.format_image_attachment_text(
-                    index,
-                    username,
-                    tweet,
-                    source,
-                    media_only=media_only,
-                    omit_status_url=omit_status_url,
-                    hide_original_when_translated=hide_original_when_translated,
-                    link_style=link_style,
-                )
-            ),
-            self.raw_media(media),
-        ]
+        # The tweet node already carries the author and source context.
+        # Keep each attachment node media-only to avoid repeated captions.
+        return [self.raw_media(media)]
 
     def _build_onebot_tweet_content(
         self,
@@ -1237,7 +1209,7 @@ class TweetMessageRenderer:
         body = str(text or "")
         if not body:
             return ">"
-        return "\n".join(("> " + line) if line else ">" for line in body.split("\n"))
+        return "\n".join("> " + line for line in body.split("\n") if line.strip())
 
     @staticmethod
     def qq_official_markdown_text(text: str) -> str:
@@ -1323,7 +1295,7 @@ class TweetMessageRenderer:
         body = TweetMessageRenderer.qq_official_markdown_text(text)
         if not body:
             return ">"
-        return "\n".join(("> " + line) if line else ">" for line in body.split("\n"))
+        return "\n".join("> " + line for line in body.split("\n") if line.strip())
 
     @staticmethod
     def telegram_markdown_text(text: str) -> str:
@@ -1375,32 +1347,6 @@ class TweetMessageRenderer:
         if text:
             return f"{text}\n\n视频/GIF 附件"
         return f"{TweetMessageRenderer._source_node_name(username)}\n视频/GIF 附件"
-
-    @staticmethod
-    def format_image_attachment_text(
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        source: str = "",
-        media_only: bool = False,
-        omit_status_url: bool = True,
-        hide_original_when_translated: bool = False,
-        link_style: str = "plain",
-    ) -> str:
-        if media_only:
-            author = TweetMessageRenderer.display_username(username, tweet)
-            return f"@{author}" if author else "@unknown"
-        author = TweetMessageRenderer.display_username(username, tweet)
-        lines = [f"@{author}" if author else "@unknown", "图片附件"]
-        if not omit_status_url:
-            original_link = tweet.x_url or tweet.link
-            if original_link:
-                lines.append("原帖：" + original_link)
-        if source:
-            lines.append(
-                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
-            )
-        return "\n".join(lines)
 
     @classmethod
     def format_header(

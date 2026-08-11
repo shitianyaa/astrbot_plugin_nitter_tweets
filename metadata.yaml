@@ -8,11 +8,7 @@ astrbot_version: ">=4.26.0"
 repo: https://github.com/shitianyaa/astrbot_plugin_nitter_tweets
 support_platforms:
   - aiocqhttp
-  - onebot
-  - onebot_v11
-  - napcat
   - qq_official
-  - qq_official_webhook
   - telegram
   - lark
   - weixin_oc

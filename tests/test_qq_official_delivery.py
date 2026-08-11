@@ -372,6 +372,7 @@ async def test_qq_official_media_only_counts_delivered_video_after_image_failure
     assert outcome.success is True
     assert outcome.delivery_status == "partial_failed"
     assert outcome.delivery_error == "image failed"
+    assert outcome.delivered_status_ids == (tweet.status_id,)
 
 
 @pytest.mark.asyncio
@@ -607,3 +608,4 @@ async def test_qq_official_media_only_needs_all_images_when_no_video():
     assert outcome.success is False
     assert outcome.delivery_status == "partial_failed"
     assert outcome.delivery_error == "second image failed"
+    assert outcome.delivered_status_ids == ()

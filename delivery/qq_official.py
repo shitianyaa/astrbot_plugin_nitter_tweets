@@ -448,15 +448,22 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
         )
         delivery_error = error or ""
         media_failed = bool(delivery_error)
+        media_delivery_incomplete = media_only and not media_delivered
         success = text_delivered and (media_delivered or not media_only)
         return SendOutcome(
             success=success,
             error=delivery_error,
             warning=warning,
-            delivery_status="partial_failed" if media_failed else "success",
+            delivery_status=(
+                "partial_failed"
+                if media_failed or media_delivery_incomplete
+                else "success"
+            ),
             delivery_error=delivery_error,
             delivered_status_ids=(
-                sender._status_ids_from_tweets(tweets) if text_delivered else ()
+                sender._status_ids_from_tweets(tweets)
+                if text_delivered and (not media_only or media_delivered)
+                else ()
             ),
         )
 
