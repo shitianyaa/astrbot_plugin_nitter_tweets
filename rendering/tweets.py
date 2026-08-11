@@ -434,7 +434,9 @@ class TweetMessageRenderer:
         author_name = TweetMessageRenderer.display_username(username, tweet)
         author = f"@{author_name}" if author_name else "@unknown"
         status_url = (tweet.x_url or tweet.link or "").strip()
-        if link_style == "telegram_md" and status_url:
+        if link_style == "qq_official_md":
+            author = f"**{TweetMessageRenderer.qq_official_markdown_text(author)}**"
+        elif link_style == "telegram_md" and status_url:
             author = TweetMessageRenderer.telegram_tweet_header(author, status_url)
         components = [Plain(author)]
         for media in tweet.media:
@@ -1405,9 +1407,9 @@ class TweetMessageRenderer:
         if (
             raw_group_label
             and (raw_summary or raw_header)
-            and f"分组：{raw_group_label}" not in raw_summary
+            and f"分组\uff1a{raw_group_label}" not in raw_summary
         ):
-            lines.append(f"分组：{safe_group_label}")
+            lines.append(f"分组\uff1a{safe_group_label}")
         safe_notices = notices
         if is_qq_official_markdown:
             safe_notices = [

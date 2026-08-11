@@ -130,7 +130,7 @@ def test_qq_official_header_escapes_dynamic_markdown_fields():
 
     header = str(getattr(components[0], "text", ""))
     assert header == (
-        "\\- summary\n\\# custom\n\\> quoted\n分组：\\*group\\*\n⚠️\n- notice \\*body\\*"
+        "\\- summary\n\\# custom\n\\> quoted\n分组\uff1a\\*group\\*\n⚠️\n- notice \\*body\\*"
     )
 
 
@@ -359,6 +359,32 @@ async def test_qq_official_media_event_sends_markdown_body_before_media():
         and chain.use_markdown_ is False
         for chain in (first_image_chain, second_image_chain)
     )
+
+
+@pytest.mark.asyncio
+async def test_qq_official_media_only_event_escapes_author_markdown():
+    sender = _sender(images=True, videos=False)
+    adapter = _adapter(sender)
+    tweet = TweetItem(
+        text="",
+        link="https://x.com/nasa_user/status/1",
+        published="2026-08-10 12:00:00",
+        media=[TweetMedia("image", "https://pbs.example/1.jpg", Path("1.jpg"))],
+    )
+
+    accepted = await adapter.send_event(
+        object(),
+        "nasa_user",
+        "https://nitter.example",
+        [tweet],
+        media_only=True,
+    )
+
+    assert accepted is True
+    assert sender._send_event_chain.await_count == 2
+    text_chain = sender._send_event_chain.await_args_list[0].args[1]
+    assert text_chain.use_markdown_ is True
+    assert _plain_text(text_chain) == "**@nasa\\_user**"
 
 
 @pytest.mark.asyncio
