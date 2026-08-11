@@ -47,3 +47,12 @@ def test_release_version_is_consistent():
     }
 
     assert len(set(versions.values())) == 1, versions
+
+
+def test_qq_official_requires_supported_astrbot_version():
+    minimum = _match(
+        "metadata.yaml",
+        r'^astrbot_version:\s*["\']?>=([0-9]+\.[0-9]+\.[0-9]+)',
+    )
+
+    assert tuple(int(part) for part in minimum.split(".")) >= (4, 26, 0)

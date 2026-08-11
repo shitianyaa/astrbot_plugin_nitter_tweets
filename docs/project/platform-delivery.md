@@ -30,6 +30,7 @@ platform_id:MessageType:session_id
 
 ```text
 aiocqhttp:GroupMessage:123456
+qq_official:GroupMessage:group-openid
 telegram:FriendMessage:123456789
 lark:GroupMessage:oc_xxxxxxxxx
 weixin_oc:FriendMessage:wxid_xxx
@@ -41,19 +42,25 @@ weixin_oc:FriendMessage:wxid_xxx
 
 | 平台 | 适配器 | 文件 | 行为 |
 | --- | --- | --- | --- |
-| OneBot/QQ | `OneBotDeliveryAdapter` | `delivery/onebot.py` | 支持 Node/Nodes 合并转发、raw forward、图片拆分、视频降级 |
+| 私人号 OneBot | `OneBotDeliveryAdapter` | `delivery/onebot.py` | `aiocqhttp`、`onebot`、`onebot_v11`、`napcat` 支持 Node/Nodes 合并转发、raw forward、图片拆分、视频降级 |
+| QQ Official | `QQOfficialDeliveryAdapter` | `delivery/qq_official.py` | 正文 Event/UMO 使用安全转义的官方 Markdown；媒体独立发送，Markdown 被拒时 UMO 降级为纯文本，不使用 OneBot 合并转发 |
 | Lark/Feishu | `LarkDeliveryAdapter` | `delivery/lark.py` | 优先 native post，同框发送正文和图片，失败降级 |
 | Telegram | `TelegramDeliveryAdapter` | `delivery/telegram.py` | 使用专用发送链路关闭文本中的网页预览，保留可点击链接；额外处理 flood control retry |
 | 其他平台 | `DefaultDeliveryAdapter` | `delivery/default.py` | 使用 AstrBot `MessageChain` 普通发送 |
 
 平台识别逻辑在 `delivery/platforms.py`：
-- `ONEBOT_PLATFORM_TYPES`: OneBot-like 类型。
+- `PRIVATE_QQ_PLATFORM_TYPES`: 私人号 OneBot 类型（`aiocqhttp`、`onebot`、`onebot_v11`、`napcat`）。
+- `QQ_OFFICIAL_PLATFORM_TYPES`: 官方 Bot 类型及窄义兼容别名（`qq_official`、`qq_official_webhook`、`qqofficial`、`qqofficial_webhook`）。
+- `LEGACY_QQ_MEDIA_PLATFORM_TYPES`: 历史通用 `qq` 实例 ID，只保留直发媒体拆分，不作为 QQ Official 判定依据。
+- `QQ_DIRECT_MEDIA_SPLIT_TYPES`: 私人号 OneBot、QQ Official 和历史 `qq` 实例都需要直发媒体拆分。
 - `NON_ONEBOT_PLATFORM_TYPES`: 明确不是 OneBot 的平台。
 - `LARK_PLATFORM_TYPES`: Lark/Feishu。
 - `TELEGRAM_PLATFORM_TYPES`: Telegram。
-- `PlatformProfile.is_onebot`: 有 OneBot 类型，或存在 `call_action` 且不是已知非 OneBot。
+- `PlatformProfile.is_qq_official`: 命中官方 Bot 类型。
+- `PlatformProfile.is_onebot`: 命中私人号 OneBot 类型，或存在 `call_action` 且不是已知非 OneBot；官方 Bot 会显式排除。
+- 已解析到平台实例时，metadata/config 类型优先于 UMO 第一段的实例 ID；只有无类型信息时才用实例 ID 兜底。
 
-## OneBot/QQ
+## 私人号 OneBot
 
 触发合并转发：
 
@@ -73,6 +80,21 @@ sender._should_use_merge_for_count(tweet_count)
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
+
+## QQ Official
+
+规则：
+- 需要 AstrBot `>=4.26.0`。
+- `qq_official` 和 `qq_official_webhook` 走 `QQOfficialDeliveryAdapter`；Event 和媒体沿 AstrBot 公共 `MessageChain`，UMO 正文在 client 可用时直驱 botpy 官方接口。AstrBot 的 webhook 事件类继承自 WebSocket 事件类且未覆写发送逻辑，两者共用同一条投递路径。
+- 文本 Event 使用 `MessageChain.use_markdown(True)`，UMO 正文通过平台实例的 botpy client 调用官方 `post_group_message` / `post_c2c_message`，使用 `msg_type=2`、`markdown.content` 和主动消息 `msg_seq`；正文中的用户内容会转义 Markdown 特殊字符，原推链接放在作者头部。
+- UMO Markdown 被 QQ 拒绝时，适配器用同一官方接口改发 `msg_type=0` + `content` 纯文本；取不到 botpy client 时也走不泄漏 Markdown 标记的纯文本公共路径。
+- 带媒体时先发正文，再逐张发送图片和视频；Markdown 与 `media` 不混在同一条消息中。正文成功但媒体失败时保留“部分送达”状态。
+- 不使用 `Node/Nodes`、raw forward 或 OneBot action；媒体上传和附件发送仍由 AstrBot 官方适配器负责。
+- `merge_tweet_threshold` 只对私人号 OneBot 生效。
+- Markdown 正文主动发送直接使用 UMO 中的 `group_openid` / `openid`，不依赖上游 `_session_scene` 或 `_session_last_message_id` 缓存；媒体附件仍遵循 AstrBot 适配器的上传能力和平台限制。
+
+测试入口：
+- `tests/test_qq_official_delivery.py`
 
 ## Lark/Feishu
 
@@ -124,7 +146,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 是否通过 `PlatformResolver` 获取平台能力。
 - 是否保留 Event 和 UMO 两条发送路径。
 - 是否保留不确定送达保护。
-- 是否保留 QQ/OneBot 图片独立消息或独立节点行为。
+- 是否保留私人号 OneBot 图片独立消息或独立节点行为。
 - 是否保留视频失败后的去视频重试或文本 fallback。
 - 是否保留 Lark post 降级。
 - 是否补对应平台测试。

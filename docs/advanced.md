@@ -13,13 +13,16 @@ README 只保留上手与定位；边界以本文与 `_conf_schema.json` 为准�
 
 | 平台 | 适配器类型 | 特殊要求/说明 |
 | --- | --- | --- |
-| QQ | `aiocqhttp` / OneBot-like | 支持文本、图片、视频拆分和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会按规则降级重试。 |
+| 私人号 OneBot | `aiocqhttp` / `onebot` / `onebot_v11` / `napcat` | 支持文本、图片、视频拆分和 OneBot v11 `Node/Nodes` 合并转发；合并转发失败时会按规则降级重试。 |
+| QQ Official | `qq_official` / `qq_official_webhook` | 需要 AstrBot `>=4.26.0`；WebSocket 和 Webhook 两种官方适配器共用同一条投递路径。正文 Event/UMO 使用官方 Markdown，图片和视频独立发送；不使用私人号 OneBot 的 `Node/Nodes` 合并转发。 |
 | Feishu / Lark | `lark` | 普通逐订阅源发送；优先使用飞书原生 `post` 将正文和本地图片放在同一条消息中，失败时降级为 `text` 正文加普通媒体附件。 |
 | Telegram | `telegram` | 走 AstrBot 通用消息链发送；在群聊中使用前建议确认 BotFather 隐私模式和群内权限。 |
 | 微信 OC | `weixin_oc` | 走 AstrBot 通用消息链发送；媒体附件是否可用取决于微信 OC 适配器的上传能力、会话 token 和平台限制。 |
 | 其他平台 | default | 走 AstrBot 通用消息链发送；不使用 QQ 式合并转发。 |
 
-推送目标应使用 `/sid` 返回的完整 UMO。UMO 第一段是平台实例 ID，不一定等于真实平台类型；插件会结合 AstrBot 平台 metadata 和平台能力识别 OneBot-like 目标。
+推送目标应使用 `/sid` 返回的完整 UMO。UMO 第一段是平台实例 ID，不一定等于真实平台类型；插件优先使用 AstrBot 平台 metadata/config 类型，只在无法解析平台实例时才用 UMO 实例 ID 兜底。
+
+QQ Official 群主动推送的 Markdown 正文直接使用官方 `group_openid` 接口，不依赖 AstrBot 适配器的运行期群会话场景缓存；图片、视频等媒体仍由 AstrBot 负责上传和发送。
 
 ## 工作流程
 
@@ -51,11 +54,11 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["准备好的推文批次"] --> B["解析并去重 push_targets"]
-    B --> C{"目标支持 QQ 合并转发？"}
+    B --> C{"目标支持私人号 OneBot 合并转发？"}
     C -->|否| D["普通目标逐条发送"]
     C -->|是| E{"新推文总数达到 merge_tweet_threshold？"}
     E -->|否| D
-    E -->|是| F["QQ/OneBot 目标缓冲到本轮最后"]
+    E -->|是| F["私人号 OneBot 目标缓冲到本轮最后"]
     D --> G["按 send_target_interval 间隔发送"]
     F --> H["统一发送 Node/Nodes 合并转发"]
     H --> I{"合并转发失败？"}
@@ -146,7 +149,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 | 配置 | 说明 |
 | --- | --- |
-| `merge_tweet_threshold` | QQ/OneBot 新推文总数达到多少条时启用合并转发；`0` 关闭，默认 `2`。 |
+| `merge_tweet_threshold` | 私人号 OneBot 新推文总数达到多少条时启用合并转发；QQ Official 不使用该阈值；`0` 关闭，默认 `2`。 |
 | `send_target_interval` | 同一订阅源发送到多个目标之间的发送间隔。 |
 | `send_user_interval` | 多个订阅源之间的发送间隔；Tag/List 查询抓取也按该间隔串行等待。 |
 | `manual_send_interval` | 手动 `/推文`、`/推文搜索`、`/镜像测试` 非合并转发时，逐条消息间隔（秒），默认 `0`；在平台适配前 sleep，多平台生效。 |
@@ -231,7 +234,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
 并发拉取只使用 `concurrent_fetch_instances`。每个账号会按账号索引轮转首选镜像，避免所有账号先打同一个镜像；单个镜像遇到 SSL、HTTP 5xx、429、超时等临时错误时总请求尝试 3 次，仍失败才尝试专用池内下一个镜像。
 
-并发拉取仍按账号配置顺序收集发现结果；并发准备则按每条推文实际完成准备的顺序进入普通目标发送，不再恢复输入顺序。串行路径按 RSS 返回顺序逐条准备和发送；每条推文内部仍先翻译、后下载媒体。QQ/OneBot 合并目标在准备结束后按完成顺序组包发送。
+并发拉取仍按账号配置顺序收集发现结果；并发准备则按每条推文实际完成准备的顺序进入普通目标发送，不再恢复输入顺序。串行路径按 RSS 返回顺序逐条准备和发送；每条推文内部仍先翻译、后下载媒体。私人号 OneBot 合并目标在准备结束后按完成顺序组包发送。
 
 ### 隐藏迁移字段
 
@@ -270,8 +273,9 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 翻译只处理去除 URL 后的正文，避免重复链接。
 - 手动 `/推文` 会按单条推文处理：一条推文完成翻译和媒体下载后就发送这一条。
 - 后台推送会先完成本轮账号发现，以便计算第一条概括；随后串行路径按 RSS 顺序逐条发送，并发准备路径按完成顺序发送。用户消息不显示“所有账号 x/总数”或“该账号推文 x/y”。
-- QQ 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 OneBot v11/`aiocqhttp` 使用 `Node/Nodes` 合并转发。
-- QQ/OneBot 图片附件会从推文正文中拆出：普通直发先发正文再逐张发图，单张图片发送失败会重试一次，合并转发中图片会成为独立节点；非 QQ 平台仍按平台适配能力发送图文同消息。
+- 私人号 OneBot 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 `aiocqhttp`、`onebot`、`onebot_v11`、`napcat` 使用 `Node/Nodes` 合并转发。
+- 私人号 OneBot 图片附件会从推文正文中拆出：普通直发先发正文再逐张发图，单张图片发送失败会重试一次，合并转发中图片会成为独立节点；非私人号 OneBot 平台仍按平台适配能力发送图文同消息。
+- QQ Official 走 `QQOfficialDeliveryAdapter`：正文 Event/UMO 使用安全转义的官方 Markdown；QQ API 拒绝 Markdown 时，UMO 自动改用 `msg_type=0` 纯文本重发。带媒体时先发正文，再逐张发送图片和视频，不使用 OneBot 合并转发；正文送达而媒体失败时记录“部分送达”。
 - 如果主体文本或 post 已送达，但图片、视频/GIF 等媒体附件最终失败，插件会把该次历史标记为“部分送达”并保留错误摘要；OneBot 分块发送只有部分推文确认送达时也使用该状态，WebUI 可通过错误提示区分原因并手动重发。
 - OneBot 合并转发单次推文较多时会按每批最多 8 条自动分批，避免大合并包漏节点。
 - 分组“仅媒体”有效时，消息只包含 `@作者` 和已准备附件；正文、翻译、原帖链接、媒体 warning 和 AI 提示都不会进入消息。媒体准备结果：`ready` 发送；`policy_skipped`（全局禁用类型或大小/时长/分辨率/数量等策略排除）本轮不发送并允许扫描基准推进；`transient_failure` 与 `no_candidate`（解析后仍无候选）本轮不发送、不写 seen，下轮重试。
@@ -379,13 +383,14 @@ HTML 全局串行节流；Tag/List 查询在组内也会按 `send_user_interval`
 
 ### 翻译与原文
 
-- 全局 `ai_translation.show_original_when_translated`（默认 `true`）：有 AI 译文时是否显示原文。关闭后手动与定时一致只发译文（QQ/Telegram/Lark 等共用渲染层）。
+- 全局 `ai_translation.show_original_when_translated`（默认 `true`）：有 AI 译文时是否显示原文。关闭后手动与定时一致只发译文（私人号 OneBot、QQ Official、Telegram、Lark 等共用渲染层）；QQ Official 文本 Event 会同时对译文和引用原文做 Markdown 特殊字符转义。
 - 分组 `hide_original_when_translated`：仅在全局显示原文时，可再对定时分组单独隐藏原文。
 - 无译文时始终显示原文。仅媒体模式不调用翻译，上述项无效。
 
 ### 消息布局
 
 - Telegram：首行为 `@作者 · [🔗 查看推文](链接) · 时间`，正文/翻译在后续块中；发送时关闭该链接的网页预览，避免视频推文卡片重复显示作者和 HLS 播放文案。
+- QQ Official：正文首行为加粗作者、时间和 `[查看原推](链接)`；译文为主文，原文使用引用块，用户内容中的 Markdown 特殊字符会转义。主动推送通过官方 Markdown API 发送；图片和视频独立发送，Markdown 被拒时降级为纯文本。
 - 正文与译文中的 http(s) 会剥离；关闭「去除推文链接」时，非 TG 平台在底部保留「原文链接」行。
 - 空正文不显示占位文案，只保留作者/时间和媒体摘要。有译文时「翻译」块在「原文」之前。
 - 转推：`/推文` 与 `/镜像测试` 不过滤转发；`/推文搜索` 固定去掉纯转推。Blogger、Tag、List 分组定时检查仅在全局与分组的 `filter_reposts_enabled` 都开启时过滤。

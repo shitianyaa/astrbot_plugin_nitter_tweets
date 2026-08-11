@@ -13,7 +13,7 @@
   <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
 </p>
 
-通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.16.0`。
+通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
 
 > 首页只保留**上手与定位**。边界行为、平台差异、完整配置见 [进阶说明](./docs/advanced.md)。
 
@@ -49,7 +49,7 @@
 | 手动 | `/推文`、`/推文搜索`、`/镜像测试` |
 | 链接 | 可选被动解析聊天中的 status 链接（默认关） |
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
-| 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
+| 发送 | 私人号 OneBot 合并转发；QQ Official 正文使用官方 Markdown API，媒体独立发送；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
 | 运维 | WebUI 面板、失败历史与手动重推、缓存与推送记录清理 |
 
@@ -97,9 +97,12 @@ tweet_groups:
 
 ```text
 aiocqhttp:GroupMessage:123456
+qq_official:GroupMessage:group-openid
 telegram:GroupMessage:-1001234567890
 lark:GroupMessage:oc_xxxxxxxxxxxxx
 ```
+
+QQ Official 群主动推送需要 AstrBot `>=4.26.0`。正文 Markdown 主动发送直接使用官方 `group_openid` 接口，不依赖 AstrBot 的群场景缓存；图片、视频仍由 AstrBot 负责上传和发送，具体媒体能力以适配器为准。
 
 以 `/sid` 返回为准，不要手猜平台 ID。
 
@@ -136,7 +139,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
 | `translate_enabled` | 是否翻译 |
-| `merge_tweet_threshold` | QQ 合并转发条数阈值；`0` 关 |
+| `merge_tweet_threshold` | 私人号 OneBot 合并转发条数阈值；QQ Official 不使用该阈值；`0` 关 |
 
 实例架构与容错：[实例配置指南](./docs/instances-guide.md)。
 

@@ -9,20 +9,42 @@ from .base import DeliveryAdapter
 from .default import DefaultDeliveryAdapter
 from .lark import LarkDeliveryAdapter
 from .onebot import OneBotDeliveryAdapter
+from .qq_official import QQOfficialDeliveryAdapter
 from .telegram import TelegramDeliveryAdapter
 
-ONEBOT_PLATFORM_TYPES = {
+PRIVATE_QQ_PLATFORM_TYPES = {
     "aiocqhttp",
     "onebot",
     "onebot_v11",
     "napcat",
 }
 
-QQ_DIRECT_VIDEO_SPLIT_TYPES = ONEBOT_PLATFORM_TYPES | {
-    "qq",
+# AstrBot registers the WebSocket and webhook adapters under separate names, but
+# ``QQOfficialWebhookMessageEvent`` subclasses ``QQOfficialMessageEvent`` without
+# overriding delivery, so both share one adapter here.  Unrecognised webhook
+# instances would fall back to the default adapter, which never sets
+# ``use_markdown_`` and therefore lets AstrBot send unescaped bodies as native
+# Markdown.
+QQ_OFFICIAL_PLATFORM_TYPES = {
     "qq_official",
+    "qq_official_webhook",
     "qqofficial",
+    "qqofficial_webhook",
 }
+
+# Historical generic QQ instance IDs still need direct media splitting, but
+# they are not sufficient evidence that the adapter is QQ Official.
+LEGACY_QQ_MEDIA_PLATFORM_TYPES = {"qq"}
+
+ONEBOT_PLATFORM_TYPES = PRIVATE_QQ_PLATFORM_TYPES
+QQ_DIRECT_MEDIA_SPLIT_TYPES = (
+    PRIVATE_QQ_PLATFORM_TYPES
+    | QQ_OFFICIAL_PLATFORM_TYPES
+    | LEGACY_QQ_MEDIA_PLATFORM_TYPES
+)
+# Keep the old internal name for third-party imports while using the precise name
+# in this module and documentation.
+QQ_DIRECT_VIDEO_SPLIT_TYPES = QQ_DIRECT_MEDIA_SPLIT_TYPES
 
 NON_ONEBOT_PLATFORM_TYPES = {
     "discord",
@@ -35,7 +57,7 @@ NON_ONEBOT_PLATFORM_TYPES = {
     "wechat",
     "weixin",
     "weixin_oc",
-}
+} | QQ_OFFICIAL_PLATFORM_TYPES
 
 LARK_PLATFORM_TYPES = {"lark", "feishu"}
 TELEGRAM_PLATFORM_TYPES = {"telegram"}
@@ -64,11 +86,15 @@ class PlatformProfile:
 
     @property
     def normalized_types(self) -> set[str]:
-        return {
+        resolved_types = {
             normalized
-            for value in (self.platform_id, *self.platform_types)
+            for value in self.platform_types
             if (normalized := normalize_platform(value))
         }
+        if resolved_types:
+            return resolved_types
+        fallback = normalize_platform(self.platform_id)
+        return {fallback} if fallback else set()
 
     @property
     def is_lark(self) -> bool:
@@ -83,7 +109,15 @@ class PlatformProfile:
         return bool(self.normalized_types & NON_ONEBOT_PLATFORM_TYPES)
 
     @property
+    def is_qq_official(self) -> bool:
+        return bool(self.normalized_types & QQ_OFFICIAL_PLATFORM_TYPES)
+
+    @property
     def is_onebot(self) -> bool:
+        # QQ Official has a separate API and must not be routed through raw
+        # OneBot actions even if a wrapper happens to expose call_action.
+        if self.is_qq_official:
+            return False
         if self.normalized_types & ONEBOT_PLATFORM_TYPES:
             return True
         return callable(self.call_action) and not self.is_known_non_onebot
@@ -91,13 +125,13 @@ class PlatformProfile:
     @property
     def should_split_qq_direct_videos(self) -> bool:
         return self.is_onebot or bool(
-            self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES
+            self.normalized_types & QQ_DIRECT_MEDIA_SPLIT_TYPES
         )
 
     @property
     def should_split_qq_direct_images(self) -> bool:
         return self.is_onebot or bool(
-            self.normalized_types & QQ_DIRECT_VIDEO_SPLIT_TYPES
+            self.normalized_types & QQ_DIRECT_MEDIA_SPLIT_TYPES
         )
 
 
@@ -105,7 +139,7 @@ class PlatformResolver:
     def from_umo(self, context: Any, umo: str) -> PlatformProfile:
         platform_id, message_type, session_id = parse_umo(umo)
         platform = self.platform_inst_from_context(context, platform_id)
-        platform_types = self._platform_type_candidates(platform, platform_id)
+        platform_types = self._platform_type_candidates(platform)
         call_action = self.call_action_from_platform(platform)
         return PlatformProfile(
             platform_id=platform_id,
@@ -129,9 +163,7 @@ class PlatformResolver:
         platform = getattr(event, "platform", None) or getattr(
             event, "platform_inst", None
         )
-        platform_types = self._event_platform_type_candidates(
-            event, platform, platform_id
-        )
+        platform_types = self._event_platform_type_candidates(event, platform)
         bot = getattr(event, "bot", None)
         call_action = self.call_action_from_platform(
             platform
@@ -228,9 +260,11 @@ class PlatformResolver:
         return ""
 
     def _event_platform_type_candidates(
-        self, event: Any, platform: Any, platform_id: str
+        self, event: Any, platform: Any
     ) -> tuple[str, ...]:
-        values = list(self._platform_type_candidates(platform, platform_id))
+        values = list(self._platform_type_candidates(platform))
+        if values:
+            return tuple(dict.fromkeys(values))
 
         method = getattr(event, "get_platform_name", None)
         if callable(method):
@@ -238,38 +272,43 @@ class PlatformResolver:
                 self._append_candidate(values, method())
             except Exception:
                 pass
+        if values:
+            return tuple(dict.fromkeys(values))
 
         meta = getattr(event, "platform_meta", None)
-        for attr in ("type", "name", "id"):
+        for attr in ("type", "name"):
             self._append_candidate(values, getattr(meta, attr, None))
         if isinstance(meta, dict):
-            for key in ("type", "name", "id"):
+            for key in ("type", "name"):
                 self._append_candidate(values, meta.get(key))
+        if values:
+            return tuple(dict.fromkeys(values))
 
         for attr in ("platform_type", "platform_name"):
             self._append_candidate(values, getattr(event, attr, None))
 
         return tuple(dict.fromkeys(values))
 
-    def _platform_type_candidates(
-        self, platform: Any, platform_id: str = ""
-    ) -> tuple[str, ...]:
+    def _platform_type_candidates(self, platform: Any) -> tuple[str, ...]:
         values: list[str] = []
-        self._append_candidate(values, platform_id)
 
         meta = self.safe_platform_meta(platform)
-        for attr in ("type", "name", "id"):
+        for attr in ("type", "name"):
             self._append_candidate(values, getattr(meta, attr, None))
         if isinstance(meta, dict):
-            for key in ("type", "name", "id"):
+            for key in ("type", "name"):
                 self._append_candidate(values, meta.get(key))
+        if values:
+            return tuple(dict.fromkeys(values))
 
-        for attr in ("platform_type", "platform_name", "platform", "id", "name"):
+        for attr in ("platform_type", "platform_name"):
             self._append_candidate(values, getattr(platform, attr, None))
+        if values:
+            return tuple(dict.fromkeys(values))
 
         config = getattr(platform, "config", None)
         if isinstance(config, dict):
-            for key in ("type", "name", "platform", "adapter"):
+            for key in ("type", "platform", "adapter"):
                 self._append_candidate(values, config.get(key))
 
         return tuple(dict.fromkeys(values))
@@ -297,6 +336,8 @@ class PlatformDeliveryRegistry:
             return LarkDeliveryAdapter(sender, profile)
         if profile.is_telegram:
             return TelegramDeliveryAdapter(sender, profile)
+        if profile.is_qq_official:
+            return QQOfficialDeliveryAdapter(sender, profile)
         if profile.is_onebot:
             return OneBotDeliveryAdapter(sender, profile)
         return DefaultDeliveryAdapter(sender, profile)

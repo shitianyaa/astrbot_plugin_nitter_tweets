@@ -1,13 +1,18 @@
 name: astrbot_plugin_nitter_tweets
 display_name: Nitter 推文记录
-desc: "Nitter 推文记录 - 支持 QQ (aiocqhttp)、Telegram、Feishu (Lark) 以及微信 OC (weixin_oc)；通过 Nitter RSS/HTML 获取公开推文和媒体，支持博主/标签/列表分组、按推送目标共享作者黑名单、手动查询、定时推送、可选聊天链接解析和原生 WebUI 运维面板。"
+desc: "Nitter 推文记录 - 支持私人号 OneBot（aiocqhttp/onebot/onebot_v11/napcat）、QQ Official、Telegram、Feishu (Lark) 以及微信 OC (weixin_oc)；通过 Nitter RSS/HTML 获取公开推文和媒体，支持博主/标签/列表分组、按推送目标共享作者黑名单、手动查询、定时推送、可选聊天链接解析和原生 WebUI 运维面板。"
 version: 0.18.4
-description: 通过可配置的 Nitter 实例获取指定用户 RSS、公开搜索结果或 Public List 时间线，将最近公开推文发送到聊天会话；支持手动查询、可选被动解析聊天中的公开 status 链接、当前会话作用域的手动检查、独立 Nitter 镜像站测试命令和 AstrBot 原生 WebUI 运维面板；普通目标会在单条推文完成翻译和媒体处理后即时发送，QQ/aiocqhttp 仍可按阈值使用 OneBot v11 Node/Nodes 合并转发；飞书/Lark、Telegram、微信 OC 和其他平台始终普通逐账号发送，飞书逐账号发送时会优先使用原生 post 同框发送正文和图片。可通过 xdown 解析并发送图片附件，视频/GIF 附件默认关闭并保留原帖链接；支持全局定时配置、自定义 tweet_groups 分组（blogger/tag/list）、按完整 UMO 维护跨分组共享的作者黑名单，以及 SQLite 推送历史、失败记录和手动重推；可调用 AstrBot 已配置大模型翻译非中文推文。
+description: 通过可配置的 Nitter 实例获取指定用户 RSS、公开搜索结果或 Public List 时间线，将最近公开推文发送到聊天会话；支持手动查询、可选被动解析聊天中的公开 status 链接、当前会话作用域的手动检查、独立 Nitter 镜像站测试命令和 AstrBot 原生 WebUI 运维面板；普通目标会在单条推文完成翻译和媒体处理后即时发送，私人号 OneBot（aiocqhttp/onebot/onebot_v11/napcat）仍可按阈值使用 OneBot v11 Node/Nodes 合并转发，QQ Official 正文走官方 Markdown 适配器、媒体独立发送并支持拒绝降级；飞书/Lark、Telegram、微信 OC 和其他平台始终普通逐账号发送，飞书逐账号发送时会优先使用原生 post 同框发送正文和图片。可通过 xdown 解析并发送图片附件，视频/GIF 附件默认关闭并保留原帖链接；支持全局定时配置、自定义 tweet_groups 分组（blogger/tag/list）、按完整 UMO 维护跨分组共享的作者黑名单，以及 SQLite 推送历史、失败记录和手动重推；可调用 AstrBot 已配置大模型翻译非中文推文。
 author: shitianyaa
-astrbot_version: ">=4.16.0"
+astrbot_version: ">=4.26.0"
 repo: https://github.com/shitianyaa/astrbot_plugin_nitter_tweets
 support_platforms:
   - aiocqhttp
+  - onebot
+  - onebot_v11
+  - napcat
+  - qq_official
+  - qq_official_webhook
   - telegram
   - lark
   - weixin_oc

@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 QQ Official 官方 Bot 平台支持：通过独立适配器发送普通消息，不误用私人号 OneBot 合并转发或 raw action。同时覆盖 `qq_official`（WebSocket）和 `qq_official_webhook`（Webhook）两种官方适配器。
+
+### Changed
+
+- QQ Official 正文 Event/UMO 使用安全转义的官方 Markdown；包含媒体时先发正文，再独立发送图片/视频，不把 Markdown 与 `media` 混在同一条消息中。
+- QQ Official UMO 主动推送直接调用官方群聊/C2C 消息接口；Markdown 被拒时自动用 `msg_type=0` 纯文本重发，不依赖运行期群场景缓存。
+- 最低 AstrBot 版本提高到 4.26.0，以使用 QQ Official 群 UMO 主动发送实现。
+
+### Fixed
+
+- QQ Official Markdown 转义现在会处理带缩进的行首标记：推文正文里缩进的 `- `、`> `、`# `、`1. ` 此前漏转义，会被 QQ 解析成嵌套列表导致排版错乱。
+
 ## [0.18.4] - 2026-08-03
 
 ### Added
