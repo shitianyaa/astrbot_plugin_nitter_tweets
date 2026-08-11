@@ -64,3 +64,11 @@ def test_metadata_lists_only_canonical_platform_names():
     platforms = re.findall(r"^  - ([a-z0-9_]+)\s*$", section, re.MULTILINE)
 
     assert platforms == ["aiocqhttp", "qq_official", "telegram", "lark", "weixin_oc"]
+
+
+def test_readme_includes_qq_official_screenshot():
+    asset = ROOT / "docs" / "assets" / "readme" / "qq-official-markdown.png"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert asset.is_file()
+    assert "./docs/assets/readme/qq-official-markdown.png" in readme

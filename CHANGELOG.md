@@ -2,11 +2,12 @@
 
 所有重要变更都会记录在这里。
 
-## [Unreleased]
+## [0.18.5] - 2026-08-11
 
 ### Added
 
 - 新增 QQ Official 官方 Bot 平台支持：通过独立适配器发送普通消息，不误用私人号 OneBot 合并转发或 raw action。同时覆盖 `qq_official`（WebSocket）和 `qq_official_webhook`（Webhook）两种官方适配器。
+- README 增加 QQ Official 实际 Markdown 推送效果截图。
 
 ### Changed
 
