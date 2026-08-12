@@ -10,6 +10,7 @@ from .platforms import (
     normalize_platform,
     parse_umo,
 )
+from .qq_official import QQOfficialDeliveryAdapter
 from .sender import TweetSender
 from .telegram import TelegramDeliveryAdapter
 
@@ -22,6 +23,7 @@ __all__ = [
     "PlatformDeliveryRegistry",
     "PlatformProfile",
     "PlatformResolver",
+    "QQOfficialDeliveryAdapter",
     "SendAttempt",
     "SendOutcome",
     "TelegramDeliveryAdapter",

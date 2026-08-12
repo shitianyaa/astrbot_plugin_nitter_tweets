@@ -36,6 +36,11 @@ except ImportError:
 
 TweetBatch = tuple[str, str, list[TweetItem]]
 
+_QQ_OFFICIAL_URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+_QQ_OFFICIAL_URL_TRAILING_PUNCTUATION = frozenset(".,;:!?)]}。、！）；：，》《？")
+# Renders as nothing, but breaks up a syntax run that must not be recognised.
+_ZERO_WIDTH_SPACE = "\u200b"
+
 
 class TweetMessageRenderer:
     def __init__(
@@ -115,6 +120,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             nodes.nodes.append(Node(uin=uin, name="Nitter", content=[Plain(header)]))
@@ -390,6 +396,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             components.append(Plain(header))
@@ -427,7 +434,9 @@ class TweetMessageRenderer:
         author_name = TweetMessageRenderer.display_username(username, tweet)
         author = f"@{author_name}" if author_name else "@unknown"
         status_url = (tweet.x_url or tweet.link or "").strip()
-        if link_style == "telegram_md" and status_url:
+        if link_style == "qq_official_md":
+            author = f"**{TweetMessageRenderer.qq_official_markdown_text(author)}**"
+        elif link_style == "telegram_md" and status_url:
             author = TweetMessageRenderer.telegram_tweet_header(author, status_url)
         components = [Plain(author)]
         for media in tweet.media:
@@ -664,23 +673,10 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ):
-        if media_only:
-            return [Image.fromFileSystem(str(media.path))]
-        return [
-            Plain(
-                self.format_image_attachment_text(
-                    index,
-                    username,
-                    tweet,
-                    source,
-                    media_only=media_only,
-                    omit_status_url=omit_status_url,
-                    hide_original_when_translated=hide_original_when_translated,
-                    link_style=link_style,
-                )
-            ),
-            Image.fromFileSystem(str(media.path)),
-        ]
+        # The tweet node already carries the author and source context.
+        # Repeating it on every image node creates unwanted captions.
+        # Keep the shared builder signature; caption-related arguments are unused.
+        return [Image.fromFileSystem(str(media.path))]
 
     def build_onebot_nodes(
         self,
@@ -707,6 +703,7 @@ class TweetMessageRenderer:
             group_label,
             header_text,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             items.append(
@@ -842,23 +839,10 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> list[dict]:
-        if media_only:
-            return [self.raw_media(media)]
-        return [
-            self.raw_text(
-                self.format_image_attachment_text(
-                    index,
-                    username,
-                    tweet,
-                    source,
-                    media_only=media_only,
-                    omit_status_url=omit_status_url,
-                    hide_original_when_translated=hide_original_when_translated,
-                    link_style=link_style,
-                )
-            ),
-            self.raw_media(media),
-        ]
+        # The tweet node already carries the author and source context.
+        # Keep each attachment node media-only to avoid repeated captions.
+        # Keep the shared builder signature; caption-related arguments are unused.
+        return [self.raw_media(media)]
 
     def _build_onebot_tweet_content(
         self,
@@ -952,6 +936,7 @@ class TweetMessageRenderer:
             header_text,
             batch_summary,
             media_only=media_only,
+            link_style=link_style,
         )
         if header:
             blocks.append(header)
@@ -1083,9 +1068,14 @@ class TweetMessageRenderer:
         status_url = (tweet.x_url or tweet.link or "").strip()
         author = TweetMessageRenderer.display_username(username, tweet)
         author_label = f"@{author}" if author else "@unknown"
+        is_qq_official_md = link_style == "qq_official_md"
 
         # Telegram: keep the author plain and make the status link an explicit action.
-        if link_style == "telegram_md" and status_url:
+        if is_qq_official_md:
+            author_line = (
+                f"**{TweetMessageRenderer.qq_official_markdown_text(author_label)}**"
+            )
+        elif link_style == "telegram_md" and status_url:
             author_line = TweetMessageRenderer.telegram_tweet_header(
                 author_label, status_url
             )
@@ -1096,7 +1086,20 @@ class TweetMessageRenderer:
         if tweet.published:
             published = format_tweet_published(str(tweet.published))
             if published:
-                author_line = f"{author_line} · {published}"
+                if is_qq_official_md:
+                    author_line = " · ".join((author_line, published))
+                else:
+                    author_line = f"{author_line} · {published}"
+
+        if is_qq_official_md and not omit_status_url and status_url:
+            author_line = " · ".join(
+                (
+                    author_line,
+                    TweetMessageRenderer.qq_official_markdown_link(
+                        "查看原推", status_url
+                    ),
+                )
+            )
 
         blocks: list[str] = [author_line]
 
@@ -1112,6 +1115,17 @@ class TweetMessageRenderer:
         if TweetMessageRenderer._is_blank_tweet_body(original_text):
             original_text = ""
 
+        display_translation = (
+            TweetMessageRenderer.qq_official_markdown_text(translation)
+            if is_qq_official_md
+            else translation
+        )
+        display_original = (
+            TweetMessageRenderer.qq_official_markdown_text(original_text)
+            if is_qq_official_md
+            else original_text
+        )
+
         show_original = bool(original_text)
         if hide_original_when_translated and translation and show_original:
             show_original = False
@@ -1121,21 +1135,34 @@ class TweetMessageRenderer:
         # section titles. Media-only / empty body: header only (+ media summary).
         # Telegram uses its own author header with an explicit status link.
         if translation and show_original:
-            blocks.append(translation)
-            blocks.append(TweetMessageRenderer._quote_plain_block(original_text))
+            blocks.append(display_translation)
+            if is_qq_official_md:
+                blocks.append(TweetMessageRenderer._quote_markdown_block(original_text))
+            else:
+                blocks.append(TweetMessageRenderer._quote_plain_block(original_text))
         elif translation:
-            blocks.append(translation)
+            blocks.append(display_translation)
         elif show_original:
-            blocks.append(original_text)
+            blocks.append(display_original)
         # else: media-only / empty — omit body placeholder
 
         if tweet.ai_warnings:
-            warns = "\n".join(f"- {w}" for w in tweet.ai_warnings if w)
+            warns = "\n".join(
+                f"- {TweetMessageRenderer.qq_official_markdown_text(w)}"
+                if is_qq_official_md
+                else f"- {w}"
+                for w in tweet.ai_warnings
+                if w
+            )
             if warns:
                 blocks.append("⚠️\n" + warns)
 
         # Footer status URL only for non-TG when omit is off (TG has header link).
-        if not omit_status_url and status_url and link_style != "telegram_md":
+        if (
+            not omit_status_url
+            and status_url
+            and link_style not in {"telegram_md", "qq_official_md"}
+        ):
             blocks.append("🔗\n" + status_url)
 
         if tweet.media_warnings:
@@ -1152,7 +1179,11 @@ class TweetMessageRenderer:
                 ):
                     msg = f"{msg} 🔗：{status_for_warn}"
                 if msg:
-                    processed_warns.append(msg)
+                    processed_warns.append(
+                        TweetMessageRenderer.qq_official_markdown_text(msg)
+                        if is_qq_official_md
+                        else msg
+                    )
             if processed_warns:
                 warns = "\n".join(f"- {w}" for w in processed_warns)
                 blocks.append("⚠️\n" + warns)
@@ -1186,7 +1217,102 @@ class TweetMessageRenderer:
         body = str(text or "")
         if not body:
             return ">"
-        return "\n".join(("> " + line) if line else ">" for line in body.split("\n"))
+        return "\n".join("> " + line for line in body.split("\n") if line.strip())
+
+    @staticmethod
+    def qq_official_markdown_text(text: str) -> str:
+        """Escape user-controlled text while preserving allowed plain URLs.
+
+        QQ runs a LaTeX pass *before* Markdown, with KaTeX's default delimiters
+        ``\\[..\\]``, ``\\(..\\)``, ``$$..$$`` and ``$..$``.  Escaping a bracket
+        or paren therefore builds a formula delimiter out of thin air and the
+        text between the markers is swallowed, so those four characters are
+        left bare -- verified on a real client.  Link injection still fails
+        because ``[label](url)`` needs a literal ``](`` run, which is broken up
+        below.
+
+        Only Markdown syntax is escaped.  HTML tags are left as-is: QQ's
+        official Markdown subset does not render HTML, so ``<b>`` and friends
+        reach the user as literal text rather than markup.  ``<https://...>``
+        is the one exception -- QQ auto-links it -- but that only points a URL
+        at itself, so it is not an injection vector.
+        """
+
+        value = str(text or "")
+
+        def escape_segment(segment: str, *, at_line_start: bool) -> str:
+            escaped = segment.replace("\\", "\\\\")
+            for char in ("`", "*", "_", "~"):
+                escaped = escaped.replace(char, "\\" + char)
+            # Brackets and parens cannot carry a backslash (see docstring), so
+            # sever the ``](`` seam instead: a zero-width space renders as
+            # nothing but stops the link syntax from being recognised.
+            escaped = escaped.replace("](", "]" + _ZERO_WIDTH_SPACE + "(")
+            # Leading whitespace is preserved but must not shield the marker:
+            # QQ's Markdown treats a four-space indent as list nesting, so an
+            # indented ``- foo`` in a tweet body still starts a nested list.
+            if at_line_start:
+                escaped = re.sub(r"^([ \t]*)([>#])", r"\1\\\2", escaped)
+                escaped = re.sub(r"^([ \t]*)([-+])(?=\s)", r"\1\\\2", escaped)
+                escaped = re.sub(r"^([ \t]*)(\d+)\.(?=\s)", r"\1\2\\.", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)([>#])", r"\1\\\2", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)([-+])(?=\s)", r"\1\\\2", escaped)
+            escaped = re.sub(r"(?<=\n)([ \t]*)(\d+)\.(?=\s)", r"\1\2\\.", escaped)
+            return escaped
+
+        pieces: list[str] = []
+        last_end = 0
+        for match in _QQ_OFFICIAL_URL_RE.finditer(value):
+            pieces.append(
+                escape_segment(
+                    value[last_end : match.start()],
+                    at_line_start=last_end == 0,
+                )
+            )
+            url, trailing = TweetMessageRenderer._split_url_trailing_punctuation(
+                match.group(0)
+            )
+            pieces.append(url.replace("(", "%28").replace(")", "%29"))
+            if trailing:
+                pieces.append(escape_segment(trailing, at_line_start=False))
+            last_end = match.end()
+        pieces.append(escape_segment(value[last_end:], at_line_start=last_end == 0))
+        return "".join(pieces)
+
+    @staticmethod
+    def _split_url_trailing_punctuation(url: str) -> tuple[str, str]:
+        """Split sentence punctuation that the greedy URL match swallowed.
+
+        ``见 (https://example.com)`` must not send ``https://example.com%29``:
+        the closing paren belongs to the sentence, not the link.  A paren that
+        balances one inside the URL (``/wiki/Foo_(bar)``) is kept.
+        """
+
+        end = len(url)
+        while end > 0:
+            char = url[end - 1]
+            if char not in _QQ_OFFICIAL_URL_TRAILING_PUNCTUATION:
+                break
+            if char == ")" and url.count("(", 0, end) >= url.count(")", 0, end):
+                break
+            end -= 1
+        return url[:end], url[end:]
+
+    @staticmethod
+    def qq_official_markdown_link(label: str, url: str) -> str:
+        safe_url = str(url or "").strip()
+        if safe_url and not safe_url.lower().startswith(("http://", "https://")):
+            safe_url = "https://" + safe_url.lstrip("/")
+        safe_url = safe_url.replace("(", "%28").replace(")", "%29")
+        safe_label = TweetMessageRenderer.qq_official_markdown_text(label)
+        return f"[{safe_label}]({safe_url})"
+
+    @staticmethod
+    def _quote_markdown_block(text: str) -> str:
+        body = TweetMessageRenderer.qq_official_markdown_text(text)
+        if not body:
+            return ">"
+        return "\n".join("> " + line for line in body.split("\n") if line.strip())
 
     @staticmethod
     def telegram_markdown_text(text: str) -> str:
@@ -1239,32 +1365,6 @@ class TweetMessageRenderer:
             return f"{text}\n\n视频/GIF 附件"
         return f"{TweetMessageRenderer._source_node_name(username)}\n视频/GIF 附件"
 
-    @staticmethod
-    def format_image_attachment_text(
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        source: str = "",
-        media_only: bool = False,
-        omit_status_url: bool = True,
-        hide_original_when_translated: bool = False,
-        link_style: str = "plain",
-    ) -> str:
-        if media_only:
-            author = TweetMessageRenderer.display_username(username, tweet)
-            return f"@{author}" if author else "@unknown"
-        author = TweetMessageRenderer.display_username(username, tweet)
-        lines = [f"@{author}" if author else "@unknown", "图片附件"]
-        if not omit_status_url:
-            original_link = tweet.x_url or tweet.link
-            if original_link:
-                lines.append("原帖：" + original_link)
-        if source:
-            lines.append(
-                "Nitter：" + TweetMessageRenderer.format_instance_label(source)
-            )
-        return "\n".join(lines)
-
     @classmethod
     def format_header(
         cls,
@@ -1280,19 +1380,44 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
-        summary = batch_summary.strip()
+        raw_summary = str(batch_summary or "").strip()
+        raw_header = str(header_text or "").strip()
+        raw_group_label = str(group_label or "").strip()
+        is_qq_official_markdown = link_style == "qq_official_md"
+        summary = (
+            cls.qq_official_markdown_text(raw_summary)
+            if is_qq_official_markdown
+            else raw_summary
+        )
+        safe_header = (
+            cls.qq_official_markdown_text(raw_header)
+            if is_qq_official_markdown
+            else raw_header
+        )
+        safe_group_label = (
+            cls.qq_official_markdown_text(raw_group_label)
+            if is_qq_official_markdown
+            else raw_group_label
+        )
         lines = []
         if summary:
             lines.append(summary)
-        if header_text.strip():
-            lines.append(header_text.strip())
+        if safe_header:
+            lines.append(safe_header)
         if (
-            group_label
-            and (summary or header_text.strip())
-            and f"分组：{group_label}" not in summary
+            raw_group_label
+            and (raw_summary or raw_header)
+            and f"分组\uff1a{raw_group_label}" not in raw_summary
         ):
-            lines.append(f"分组：{group_label}")
-        notice_text = "" if media_only else cls.format_notices(notices)
+            lines.append(f"分组\uff1a{safe_group_label}")
+        safe_notices = notices
+        if is_qq_official_markdown:
+            safe_notices = [
+                cls.qq_official_markdown_text(str(notice).strip())
+                for notice in notices or []
+                if str(notice or "").strip()
+            ]
+        notice_text = "" if media_only else cls.format_notices(safe_notices)
         if notice_text:
             lines.append(notice_text)
         return "\n".join(lines)

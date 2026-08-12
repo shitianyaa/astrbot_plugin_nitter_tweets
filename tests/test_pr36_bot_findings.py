@@ -470,10 +470,8 @@ def test_dashboard_query_editor_preserves_explicit_phrase_type():
 # ---------------------------------------------------------------------------
 
 
-def test_p0_format_video_is_staticmethod_like_image():
+def test_p0_format_video_is_staticmethod():
     video = inspect.getattr_static(TweetMessageRenderer, "format_video_attachment_text")
-    image = inspect.getattr_static(TweetMessageRenderer, "format_image_attachment_text")
-    assert isinstance(image, staticmethod)
     assert isinstance(video, staticmethod), (
         "format_video_attachment_text must be @staticmethod; "
         "instance call currently binds self into index/tweet slots"
@@ -536,7 +534,7 @@ def test_p1_build_video_forwards_omit_status_url_false():
     assert "1234567890" in blob or "x.com/nasa" in blob or "原文" in blob, blob
 
 
-def test_p1_build_image_forwards_omit_status_url_false():
+def test_p1_build_image_node_has_no_repeated_caption():
     renderer = TweetMessageRenderer()
     tweet = _tweet()
     media = TweetMedia(kind="image", url="https://example.com/a.jpg", path=Path("."))
@@ -547,11 +545,18 @@ def test_p1_build_image_forwards_omit_status_url_false():
         media,
         omit_status_url=False,
     )
-    plain_parts = [
-        getattr(c, "text", None) for c in components if getattr(c, "text", None)
-    ]
-    blob = "\n".join(str(p) for p in plain_parts if p)
-    assert "x.com/nasa" in blob or "1234567890" in blob, blob
+    assert len(components) == 1
+    assert "image" in type(components[0]).__name__.lower()
+
+    raw_content = renderer._build_onebot_image_content(
+        1,
+        "nasa",
+        tweet,
+        media,
+        source="https://nitter.example",
+        omit_status_url=False,
+    )
+    assert [part["type"] for part in raw_content] == ["image"]
 
 
 def test_p1_onebot_video_call_sites_pass_omit_kwargs():

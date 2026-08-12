@@ -151,6 +151,11 @@ def test_plain_r1_no_translation_no_original_label():
     assert "Hello #space world" in out
 
 
+def test_quote_blocks_skip_blank_source_lines():
+    assert R._quote_plain_block("original\n\n#cos") == "> original\n> #cos"
+    assert R._quote_markdown_block("original\n\n#cos") == "> original\n> \\#cos"
+
+
 def test_plain_r1_media_only_no_empty_placeholder():
     media = SimpleNamespace(
         kind="image",

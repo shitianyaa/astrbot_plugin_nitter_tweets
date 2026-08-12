@@ -1,7 +1,7 @@
-# Nitter 推文记录
+# 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.4-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.5-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -10,10 +10,12 @@
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge" /></a>
   <a href="https://qm.qq.com/q/cPQnFNtdN6"><img alt="QQ Group" src="https://img.shields.io/badge/QQ%E7%BE%A4-Bot%E6%B5%8B%E8%AF%95%E7%BE%A4-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" /></a>
   <br />
-  <img src="./logo.png" alt="Nitter 推文记录图标" width="160" />
+  <img src="./logo.png" alt="推文订阅图标" width="160" />
+  <br />
+  <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="README 浏览量计数" />
 </p>
 
-通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.16.0`。
+通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
 
 > 首页只保留**上手与定位**。边界行为、平台差异、完整配置见 [进阶说明](./docs/advanced.md)。
 
@@ -36,9 +38,22 @@
   <img src="./docs/assets/readme/dashboard-overview.png" alt="Nitter 推文控制台总览" />
 </p>
 
-<p align="center">
-  <img src="./docs/assets/readme/qq-delivery.png" alt="QQ 推送效果" width="360" />
-</p>
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="./docs/assets/readme/qq-delivery.png" width="380" alt="QQ 推送效果"/>
+        <br/>
+        <sub>OneBot（普通直发）</sub>
+      </td>
+      <td align="center">
+        <img src="./docs/assets/readme/qq-official-markdown.png" width="380" alt="QQ Official Markdown 推送效果"/>
+        <br/>
+        <sub>QQ Official（官方 Markdown）</sub>
+      </td>
+    </tr>
+  </table>
+</div>
 
 更多界面说明见 [进阶说明 · WebUI](./docs/advanced.md#webui-运维面板)。
 
@@ -49,7 +64,7 @@
 | 手动 | `/推文`、`/推文搜索`、`/镜像测试` |
 | 链接 | 可选被动解析聊天中的 status 链接（默认关） |
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
-| 发送 | QQ 合并转发；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
+| 发送 | 私人号 OneBot 合并转发；QQ Official 正文使用官方 Markdown API，媒体独立发送；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
 | 运维 | WebUI 面板、失败历史与手动重推、缓存与推送记录清理 |
 
@@ -97,9 +112,12 @@ tweet_groups:
 
 ```text
 aiocqhttp:GroupMessage:123456
+qq_official:GroupMessage:group-openid
 telegram:GroupMessage:-1001234567890
 lark:GroupMessage:oc_xxxxxxxxxxxxx
 ```
+
+QQ Official 群主动推送需要 AstrBot `>=4.26.0`。正文 Markdown 主动发送直接使用官方 `group_openid` 接口，不依赖 AstrBot 的群场景缓存；图片、视频仍由 AstrBot 负责上传和发送，具体媒体能力以适配器为准。
 
 以 `/sid` 返回为准，不要手猜平台 ID。
 
@@ -136,7 +154,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
 | `translate_enabled` | 是否翻译 |
-| `merge_tweet_threshold` | QQ 合并转发条数阈值；`0` 关 |
+| `merge_tweet_threshold` | 私人号 OneBot 合并转发条数阈值；QQ Official 不使用该阈值；`0` 关 |
 
 实例架构与容错：[实例配置指南](./docs/instances-guide.md)。
 
@@ -164,6 +182,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 ## 致谢
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- [count.getloli.com](https://count.getloli.com/)：提供 README 猫猫计数图片
 - 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
 - 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成
 

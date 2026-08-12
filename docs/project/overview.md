@@ -13,7 +13,7 @@
 - 订阅维护：导入、删除、导出、去重。
 - 媒体处理：图片、视频/GIF、xdown 解析、缓存。
 - AI 处理：翻译。
-- 多平台发送：OneBot/QQ、Telegram、Lark/Feishu、weixin_oc、默认 MessageChain。
+- 多平台发送：私人号 OneBot、QQ Official（官方适配器）、Telegram、Lark/Feishu、weixin_oc、默认 MessageChain。
 - 运维恢复：Dashboard 显示成功、部分送达和发送失败历史，可向原分组当前目标手动重推。
 
 ## 边界

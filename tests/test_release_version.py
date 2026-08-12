@@ -47,3 +47,48 @@ def test_release_version_is_consistent():
     }
 
     assert len(set(versions.values())) == 1, versions
+
+
+def test_qq_official_requires_supported_astrbot_version():
+    minimum = _match(
+        "metadata.yaml",
+        r'^astrbot_version:\s*["\']?>=([0-9]+\.[0-9]+\.[0-9]+)',
+    )
+
+    assert tuple(int(part) for part in minimum.split(".")) >= (4, 26, 0)
+
+
+def test_metadata_lists_only_canonical_platform_names():
+    text = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
+    section = text.split("support_platforms:", 1)[1].split("keywords:", 1)[0]
+    platforms = re.findall(r"^  - ([a-z0-9_]+)\s*$", section, re.MULTILINE)
+
+    assert platforms == ["aiocqhttp", "qq_official", "telegram", "lark", "weixin_oc"]
+
+
+def test_readme_title_matches_metadata_display_name():
+    metadata = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    match = re.search(r"^display_name:\s*(.+)$", metadata, re.MULTILINE)
+    assert match is not None
+    assert readme.startswith(f"# {match.group(1).strip()}\n")
+
+
+def test_readme_includes_qq_official_screenshot():
+    asset = ROOT / "docs" / "assets" / "readme" / "qq-official-markdown.png"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert asset.is_file()
+    assert "./docs/assets/readme/qq-official-markdown.png" in readme
+
+
+def test_readme_includes_cat_visitor_counter():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        "https://count.getloli.com/@astrbot-plugin-nitter-tweets?"
+        "name=astrbot-plugin-nitter-tweets"
+    ) in readme
+    assert "theme=booru-jaypee" in readme
+    assert "[count.getloli.com](https://count.getloli.com/)" in readme
