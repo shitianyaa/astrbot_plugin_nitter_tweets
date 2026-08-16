@@ -44,20 +44,46 @@ def resolve_mode(host: str, override: str | None = None) -> str:
 
 
 def detect_gate(body: bytes) -> str:
-    """Return anubis | poast_sha1 | cf | ok | error | empty | other."""
+    """Return anubis | poast_sha1 | cf | ok | error | empty | other.
+
+    Order matters: real content wins over CDN bot-management footers and
+    normal tweet text that happens to contain words like 'just a moment'.
+    """
     if not body:
         return "empty"
     low = body.lower()
+
+    # 1) Real content first (timeline items, RSS feeds, tweet bodies)
+    if (
+        b"timeline-item" in low
+        or b"<rss" in low
+        or b"tweet-body" in low
+        or b"tweet-content" in low
+    ):
+        return "ok"
+
+    # 2) Explicit challenge pages
     if b"anubis_challenge" in low or b"making sure you're not a bot" in low:
         return "anubis"
-    if b"verifying your browser" in low and (b"s1" in low or b"sha1" in low):
+    if (
+        b"verifying your browser" in low
+        and (b"s1" in low or b"sha1" in low or b"a0_0x2a54" in low or b"res=" in low)
+    ) or (b"js-sha1" in low and b"res=" in low):
         return "poast_sha1"
+
+    # 3) Hard Cloudflare interstitial only (when no real content exists)
     if (
         b"just a moment" in low
-        or b"challenge-platform" in low
         or b"cf-turnstile" in low
+        or b"cdn-cgi/challenge-platform/h/" in low
+        or (
+            b"challenge-platform" in low
+            and b"nitter" not in low[:4000]
+            and b"site-name" not in low
+        )
     ):
         return "cf"
+
     title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.DOTALL)
     title = title_match.group(1) if title_match else b""
     error_markers = (
@@ -89,11 +115,9 @@ def detect_gate(body: bytes) -> str:
         )
     )
     body_error = any(marker in low for marker in error_markers)
-    if title_error or (
-        body_error and b"timeline-item" not in low and b"<rss" not in low
-    ):
+    if title_error or body_error:
         return "error"
-    if b"timeline-item" in low or b"<rss" in low or b"nitter" in low:
+    if b"nitter" in low:
         return "ok"
     return "other"
 
