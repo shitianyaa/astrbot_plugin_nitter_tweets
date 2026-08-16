@@ -16,8 +16,10 @@ _COOLING_RE = re.compile(r"^(?:skip|defer)\s+cooling\s+(\S+)", re.IGNORECASE)
 _BRIEF_DROP_PREFIXES = (
     "search try ",
     "user try ",
+    "list try ",
     "search empty host=",
     "user empty host=",
+    "list empty host=",
     "ensure soft-fail ",
     "anubis: solved ",
     "poast: solved ",

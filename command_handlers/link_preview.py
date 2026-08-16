@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from astrbot.api.all import logger
@@ -19,6 +20,7 @@ try:
         StatusResolveError,
         resolve_status_tweet_async,
     )
+    from ..shared.observability import safe_task_log
 except ImportError:
     from config import (
         config_get,
@@ -30,6 +32,7 @@ except ImportError:
         StatusResolveError,
         resolve_status_tweet_async,
     )
+    from shared.observability import safe_task_log
 
 LINK_PREVIEW_MAX_LINKS = 3
 LINK_PREVIEW_DEBOUNCE_SECONDS = 60.0
@@ -132,6 +135,7 @@ class LinkPreviewMixin:
                 continue
 
             try:
+                link_started = time.perf_counter()
                 tweet = None
                 try:
                     tweet = await resolve_status_tweet_async(link)
@@ -210,6 +214,34 @@ class LinkPreviewMixin:
                     )
                     if sent:
                         self._record_link_preview_debounce(umo, link.status_id)
+                        elapsed_ms = (time.perf_counter() - link_started) * 1000
+                        media_items = getattr(tweet, "media", []) or []
+                        photo_count = sum(
+                            1 for m in media_items if getattr(m, "type", "") == "photo"
+                        )
+                        video_count = sum(
+                            1
+                            for m in media_items
+                            if getattr(m, "type", "") in ("video", "gif")
+                        )
+                        media_desc = (
+                            f"图片 {photo_count} 张"
+                            if photo_count and not video_count
+                            else f"视频 {video_count} 条"
+                            if video_count and not photo_count
+                            else f"图片 {photo_count} 张, 视频 {video_count} 条"
+                            if photo_count and video_count
+                            else "纯文本"
+                        )
+                        safe_task_log(
+                            logging.INFO,
+                            "推文链接解析完成",
+                            operation="link_preview",
+                            source=f"@{username} / {link.status_id}",
+                            media_summary=media_desc,
+                            target_success_ratio="1/1",
+                            elapsed_ms=elapsed_ms,
+                        )
                     else:
                         logger.warning(
                             "[NitterTweets] link preview send failed; "

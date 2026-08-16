@@ -179,7 +179,7 @@ class MediaCacheMixin:
                 media.path = None
 
         if result.removed or result.failed or result.skipped_active:
-            log_func = logger.warning if result.failed else logger.info
+            log_func = logger.warning if result.failed else logger.debug
             log_func(
                 "[NitterTweets] 发送后媒体清理完成: "
                 f"共删除 {result.removed} 个媒体文件"

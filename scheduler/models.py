@@ -324,6 +324,106 @@ class ScheduledCheckResult:
             f"{filtered_part}{target_blocked_part}{media_part}"
         )
 
+    def format_structured_task_log(self, duration_ms: float | None = None) -> str:
+        """Format check result as an elegant multi-line Chinese task summary block."""
+        if self.skipped_reason:
+            return (
+                f"[NitterTweets] 检查跳过: {self.group_name}({self.group_id}) · "
+                f"原因={self.skipped_reason}"
+            )
+
+        type_map = {
+            "blogger": "博主推文",
+            "tag": "标签 / 关键词",
+            "list": "Twitter List",
+        }
+        type_cn = type_map.get(self.group_type, self.group_type)
+        sources_count = len(self.users)
+
+        lines = ["[NitterTweets] 推文检查任务完成"]
+        lines.append(f"  分组名称: {self.group_name} ({self.group_id})")
+        lines.append(f"  订阅类型: {type_cn} (共 {sources_count} 个源)")
+
+        reason_display = (
+            "手动命令 (！推文检查)"
+            if self.reason.startswith("manual")
+            else f"定时检查 ({self.reason})"
+            if self.reason.startswith("interval") or self.reason.startswith("cron")
+            else self.reason
+        )
+        lines.append(f"  触发原因: {reason_display}")
+
+        # Instance & Failover
+        successful_instances: list[str] = []
+        failover_traces: list[str] = []
+        if self.source_attempts:
+            for source_name, attempts in self.source_attempts.items():
+                if not attempts:
+                    continue
+                for item in attempts:
+                    if item.endswith("=成功"):
+                        inst = item.split("=")[0]
+                        if inst not in successful_instances:
+                            successful_instances.append(inst)
+                if len(attempts) > 1:
+                    label = self._subscription_label(source_name)
+                    trace_str = " ➔ ".join(
+                        f"{x.split('=')[0]}[{x.split('=')[1]}]" if "=" in x else x
+                        for x in attempts
+                    )
+                    failover_traces.append(f"{label}: {trace_str}")
+
+        if successful_instances:
+            lines.append(f"  生效实例: {', '.join(successful_instances)}")
+        if failover_traces:
+            lines.append(f"  轮换轨迹: {'; '.join(failover_traces)}")
+
+        # Tweet stats
+        if self.new_tweet_count > 0:
+            stats = f"发现新推文 {self.new_tweet_count} 条"
+            if self.plain_text_filtered > 0:
+                stats += f" (过滤转发 {self.plain_text_filtered} 条)"
+            lines.append(f"  推文统计: {stats}")
+        elif self.plain_text_filtered > 0 or self.filtered_empty_users:
+            lines.append(
+                f"  推文统计: 无新推文 (过滤纯转发 {self.plain_text_filtered} 条)"
+            )
+        elif self.empty_users:
+            lines.append("  推文统计: 检查为空 (未获取到推文数据)")
+        elif self.failed_users:
+            lines.append(f"  推文统计: 抓取失败 ({len(self.failed_users)} 个源失败)")
+        else:
+            lines.append("  推文统计: 无新推文 (已为最新)")
+
+        # Push delivery results
+        if self.pushed_target_attempts > 0:
+            lines.append(
+                f"  推送结果: 成功推送 {self.pushed_target_successes}/{self.pushed_target_attempts} 个目标"
+            )
+        elif self.new_tweet_count > 0:
+            lines.append("  推送结果: 未配置有效推送目标或已被过滤")
+
+        # Failures detail
+        if self.failed_users:
+            failed_items = [
+                f"{self._failure_label(user)}: {error}"
+                for user, error in self.failed_users.items()
+            ]
+            lines.append(
+                "  失败详情: "
+                + _format_limited_values(failed_items, limit=3, separator="; ")
+            )
+
+        # Elapsed
+        if duration_ms is not None:
+            ms = float(duration_ms)
+            elapsed_str = (
+                f"{ms / 1000:.1f} 秒" if ms >= 1000 else f"{int(round(ms))} 毫秒"
+            )
+            lines.append(f"  任务耗时: {elapsed_str}")
+
+        return "\n".join(lines)
+
     def format_brief_log_lines(self) -> list[str]:
         if self.skipped_reason:
             return [self.format_log_summary()]
@@ -382,27 +482,6 @@ class ScheduledCheckResult:
             lines.append(
                 "[NitterTweets] 扫描未完整，自动重建基准未完成: "
                 + _format_limited_values(rebuild_items, limit=5, separator="; ")
-            )
-        if self.empty_users:
-            lines.append(
-                "[NitterTweets] 空结果详情: "
-                + _format_limited_values(
-                    [self._subscription_label(user) for user in self.empty_users],
-                    limit=5,
-                    separator="; ",
-                )
-            )
-        if self.filtered_empty_users:
-            lines.append(
-                "[NitterTweets] 过滤后为空: "
-                + _format_limited_values(
-                    [
-                        self._subscription_label(user)
-                        for user in self.filtered_empty_users
-                    ],
-                    limit=5,
-                    separator="; ",
-                )
             )
         if self.source_attempts:
             attempts = [

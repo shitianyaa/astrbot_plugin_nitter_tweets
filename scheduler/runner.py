@@ -256,14 +256,19 @@ class NitterTweetScheduler(
             )
             return True
 
-    def _log_check_result(self, result: ScheduledCheckResult) -> None:
+    def _log_check_result(
+        self, result: ScheduledCheckResult, duration_ms: float | None = None
+    ) -> None:
         if self.brief_log_enabled and not result.skipped_reason:
-            lines = result.format_brief_log_lines()
-            if not lines:
-                return
-            logger.info(lines[0])
-            for line in lines[1:]:
-                logger.warning(line)
+            structured_log = result.format_structured_task_log(duration_ms=duration_ms)
+            if (
+                result.failed_users
+                and not result.pushed_target_successes
+                and not result.new_tweet_count
+            ):
+                logger.warning(structured_log)
+            else:
+                logger.info(structured_log)
             return
 
         logger.info(result.format_log_summary())
@@ -430,16 +435,17 @@ class NitterTweetScheduler(
             return result
 
         observable = self._is_observable_check_reason(reason)
-        effective_targets = (
-            list(target_override) if target_override is not None else group.targets
-        )
         started = time.perf_counter() if observable else 0.0
         if observable:
+            type_map = {
+                "blogger": "博主",
+                "tag": "标签",
+                "list": "List",
+            }
+            type_cn = type_map.get(group.group_type, group.group_type)
             logger.info(
-                "[NitterTweets] 检查开始: "
-                f"group_id={group.group_id}, group_type={group.group_type}, "
-                f"sources={len(group.account_keys)}, targets={len(effective_targets)}, "
-                f"reason={reason}"
+                f"[NitterTweets] 开始检查: {group.name}({group.group_id}) · "
+                f"{len(group.account_keys)} 个{type_cn}"
             )
 
         try:
@@ -477,18 +483,6 @@ class NitterTweetScheduler(
                 )
             raise
 
-        if observable:
-            duration_ms = (time.perf_counter() - started) * 1000
-            logger.info(
-                "[NitterTweets] 检查结束: "
-                f"group_id={result.group_id}, group_type={result.group_type}, "
-                f"sources={len(result.users)}, targets={len(result.targets)}, "
-                f"reason={result.reason}, duration_ms={duration_ms:.1f}, "
-                f"new={result.new_tweet_count}, failed={len(result.failed_users)}, "
-                f"skipped={result.skipped_reason or 'none'}, "
-                f"push_success={result.pushed_target_successes}/"
-                f"{result.pushed_target_attempts}"
-            )
         return result
 
     @staticmethod
@@ -734,6 +728,7 @@ class NitterTweetScheduler(
         result = self._new_check_result(reason, group, target_override)
         users = result.users
         targets = result.targets
+        check_started = time.perf_counter()
         merge_threshold = self._merge_tweet_threshold()
         result.merge_tweet_threshold = merge_threshold
         pending_batches = []
@@ -1234,7 +1229,8 @@ class NitterTweetScheduler(
                 )
                 result.source_statuses[username] = SourceStatus.UPDATED
 
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             if self._should_notify_no_updates(result, notify_no_updates, group):
                 await self._send_no_update_notice(result, target_interval)
             return result

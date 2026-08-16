@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 
@@ -23,6 +24,7 @@ try:
         SearchSessionStore,
     )
     from ..shared import normalize_username, safe_call
+    from ..shared.observability import safe_task_log
 except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
@@ -38,6 +40,7 @@ except ImportError:
         SearchSessionStore,
     )
     from shared import normalize_username, safe_call
+    from shared.observability import safe_task_log
 
 
 class ManualCommandMixin:
@@ -79,6 +82,7 @@ class ManualCommandMixin:
             event.plain_result(f"正在获取 @{username} 最近最多 {limit} 条推文...")
         )
 
+        started = time.perf_counter()
         if hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
         try:
@@ -113,6 +117,17 @@ class ManualCommandMixin:
             if hasattr(self.nitter, "end_run_host_skip"):
                 self.nitter.end_run_host_skip()
         await self._send_tweets_response(event, username, instance, tweets)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        safe_task_log(
+            logging.INFO,
+            "推文查询完成",
+            operation="user_timeline",
+            source=f"@{username}",
+            instance=instance,
+            tweet_count=len(tweets),
+            target_success_ratio="1/1",
+            elapsed_ms=elapsed_ms,
+        )
 
     async def _cmd_tweet_search_impl(self, event: AstrMessageEvent, args=GreedyStr):
         """HTML 搜索公开推文：标签请带 #，短语直接写。"""
@@ -138,6 +153,7 @@ class ManualCommandMixin:
             await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
             return
 
+        search_started = time.perf_counter()
         session_id = self._search_session_id(event)
         store = self._get_search_session_store()
         query_key = self._search_query_key(query)
@@ -178,6 +194,17 @@ class ManualCommandMixin:
                 abort_reservation(reservation_token)
                 raise
             buf.finalize(reservation_token, sent_count)
+            elapsed_ms = (time.perf_counter() - search_started) * 1000
+            safe_task_log(
+                logging.INFO,
+                "推文搜索完成",
+                operation="tweet_search",
+                source=query,
+                instance=f"{instance} (会话缓存)",
+                tweet_count=len(tweets),
+                target_success_ratio="1/1",
+                elapsed_ms=elapsed_ms,
+            )
             return
 
         self._mark_cooldown(event, scope="search")
@@ -257,6 +284,17 @@ class ManualCommandMixin:
             abort_reservation(reservation_token)
             raise
         buf.finalize(reservation_token, sent_count)
+        elapsed_ms = (time.perf_counter() - search_started) * 1000
+        safe_task_log(
+            logging.INFO,
+            "推文搜索完成",
+            operation="tweet_search",
+            source=query,
+            instance=buf.instance or instance or "",
+            tweet_count=len(tweets),
+            target_success_ratio="1/1",
+            elapsed_ms=elapsed_ms,
+        )
 
     async def _fetch_user_with_html_fallback(
         self, username: str, limit: int, rss_error=None
