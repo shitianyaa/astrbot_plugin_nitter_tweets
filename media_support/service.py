@@ -56,16 +56,28 @@ except ImportError:
         MEDIA_STATUS_TRANSIENT_FAILURE,
     )
 
-from . import video_probe
-from .cache import MediaCacheMixin
-from .extensions import (
-    MEDIA_IMAGE_SUFFIXES,
-    MEDIA_TYPE_DYNAMIC,
-    MEDIA_TYPE_IMAGE,
-    MEDIA_TYPE_VIDEO,
-)
-from .network import build_request_headers, compat_urlopen
-from .xdown import XdownMediaCandidate, XdownMediaParser
+try:
+    from . import video_probe
+    from .cache import MediaCacheMixin
+    from .extensions import (
+        MEDIA_IMAGE_SUFFIXES,
+        MEDIA_TYPE_DYNAMIC,
+        MEDIA_TYPE_IMAGE,
+        MEDIA_TYPE_VIDEO,
+    )
+    from .network import build_request_headers, compat_urlopen
+    from .xdown import XdownMediaCandidate, XdownMediaParser
+except ImportError:
+    import video_probe
+    from cache import MediaCacheMixin
+    from extensions import (
+        MEDIA_IMAGE_SUFFIXES,
+        MEDIA_TYPE_DYNAMIC,
+        MEDIA_TYPE_IMAGE,
+        MEDIA_TYPE_VIDEO,
+    )
+    from network import build_request_headers, compat_urlopen
+    from xdown import XdownMediaCandidate, XdownMediaParser
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
 

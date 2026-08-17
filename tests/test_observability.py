@@ -29,6 +29,9 @@ def test_sanitize_sensitive_text_masks_credentials():
     assert "http://***@example.com" in sanitize_sensitive_text(
         "http://user:password@example.com"
     )
+    assert "https://example.com/api?***" == sanitize_sensitive_text(
+        "https://example.com/api?sig=secret123&token=abc"
+    )
 
 
 def test_sanitize_diagnostic_truncates_and_strips():
@@ -88,7 +91,7 @@ def test_safe_task_log_omits_empty_or_unlisted_fields(monkeypatch):
         instance="",
     )
 
-    level, message = mock_logger.log.call_args[0]
+    _level, message = mock_logger.log.call_args[0]
     assert "unknown_field" not in message
     assert "secret_val" not in message
     assert "生效实例" not in message

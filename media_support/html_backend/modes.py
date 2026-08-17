@@ -70,28 +70,7 @@ def detect_gate(body: bytes) -> str:
     ) or (b"js-sha1" in low and b"res=" in low):
         return "poast_sha1"
 
-    # 2) Real content wins over generic CDN markers and ordinary tweet text.
-    if (
-        b"timeline-item" in low
-        or b"<rss" in low
-        or b"tweet-body" in low
-        or b"tweet-content" in low
-    ):
-        return "ok"
-
-    # 3) Hard Cloudflare interstitial only when no real content exists.
-    if (
-        b"just a moment" in low
-        or b"cf-turnstile" in low
-        or b"cdn-cgi/challenge-platform/h/" in low
-        or (
-            b"challenge-platform" in low
-            and b"nitter" not in low[:4000]
-            and b"site-name" not in low
-        )
-    ):
-        return "cf"
-
+    # 2) Explicit error panels and maintenance markers must not be bypassed by placeholder timeline nodes.
     title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.DOTALL)
     title = title_match.group(1) if title_match else b""
     error_markers = (
@@ -125,6 +104,29 @@ def detect_gate(body: bytes) -> str:
     body_error = any(marker in low for marker in error_markers)
     if title_error or body_error:
         return "error"
+
+    # 3) Real content wins over generic CDN markers and ordinary tweet text.
+    if (
+        b"timeline-item" in low
+        or b"<rss" in low
+        or b"tweet-body" in low
+        or b"tweet-content" in low
+    ):
+        return "ok"
+
+    # 4) Hard Cloudflare interstitial only when no real content exists.
+    if (
+        b"just a moment" in low
+        or b"cf-turnstile" in low
+        or b"cdn-cgi/challenge-platform/h/" in low
+        or (
+            b"challenge-platform" in low
+            and b"nitter" not in low[:4000]
+            and b"site-name" not in low
+        )
+    ):
+        return "cf"
+
     if b"nitter" in low:
         return "ok"
     return "other"

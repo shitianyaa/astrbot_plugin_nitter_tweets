@@ -252,3 +252,42 @@ def test_media_only_telegram_header_has_explicit_status_link():
     text = getattr(comps[0], "text", None) or str(comps[0])
     assert "@nasa · [🔗 查看推文](https://x.com/nasa/status/1)" in text
     assert "Hello" not in text
+
+
+def test_build_direct_components_strips_source_instance_links():
+    tweet = _tw(
+        text="Check status at https://nitter.example.com/nasa/status/123 and extern https://example.com/page",
+        media=[],
+    )
+    r = R(send_image_attachments=False, send_video_attachments=False)
+    comps = r.build_direct_components(
+        username="nasa",
+        instance="https://nitter.example.com",
+        tweets=[tweet],
+        omit_status_url=False,
+    )
+    assert comps
+    text = getattr(comps[0], "text", "")
+    assert "https://nitter.example.com" not in text
+    assert "https://example.com/page" in text
+
+
+def test_build_nodes_for_uin_strips_source_instance_links():
+    tweet = _tw(
+        text="Check status at https://nitter.example.com/nasa/status/123 and extern https://example.com/page",
+        media=[],
+    )
+    r = R(send_image_attachments=False, send_video_attachments=False)
+    nodes = r.build_nodes_for_uin(
+        uin="10001",
+        username="nasa",
+        instance="https://nitter.example.com",
+        tweets=[tweet],
+        omit_status_url=False,
+    )
+    assert nodes and len(nodes.nodes) >= 1
+    # Check text content in node
+    node_content = nodes.nodes[0].content
+    text = "".join(getattr(c, "text", "") for c in node_content)
+    assert "https://nitter.example.com" not in text
+    assert "https://example.com/page" in text

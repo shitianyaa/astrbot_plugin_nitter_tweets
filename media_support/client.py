@@ -35,9 +35,14 @@ except ImportError:
         normalize_external_links,
     )
 
-from .host_score import HostScoreBook
-from .network import build_request_headers, compat_urlopen
-from .rss_run_skip import RssRunHostSkip
+try:
+    from .host_score import HostScoreBook
+    from .network import build_request_headers, compat_urlopen
+    from .rss_run_skip import RssRunHostSkip
+except ImportError:
+    from host_score import HostScoreBook
+    from network import build_request_headers, compat_urlopen
+    from rss_run_skip import RssRunHostSkip
 
 
 class TransientFetchError(RuntimeError):

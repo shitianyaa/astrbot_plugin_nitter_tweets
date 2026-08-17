@@ -42,14 +42,24 @@ from .utils import (
     strip_external_links,
 )
 
-from .observability import (
-    LOG_PREFIX,
-    format_elapsed,
-    safe_log,
-    safe_task_log,
-    sanitize_diagnostic,
-    sanitize_sensitive_text,
-)
+try:
+    from .observability import (
+        LOG_PREFIX,
+        format_elapsed,
+        safe_log,
+        safe_task_log,
+        sanitize_diagnostic,
+        sanitize_sensitive_text,
+    )
+except ImportError:
+    from observability import (
+        LOG_PREFIX,
+        format_elapsed,
+        safe_log,
+        safe_task_log,
+        sanitize_diagnostic,
+        sanitize_sensitive_text,
+    )
 
 __all__ = [
     "DEFAULT_GROUP_ALIASES",

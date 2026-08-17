@@ -757,11 +757,13 @@ class NitterTweetScheduler(
                 result.skipped_reason = "no_watch_lists"
             else:
                 result.skipped_reason = "no_watch_users"
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             return result
         if not targets:
             result.skipped_reason = "no_push_targets"
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             return result
 
         # S2=A: RSS host skip only for this blogger check; end only if we began.

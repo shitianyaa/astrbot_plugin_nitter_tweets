@@ -86,3 +86,14 @@ def test_explicit_poast_challenge_wins_over_placeholder_timeline_nodes():
     )
 
     assert detect_gate(html) == "poast_sha1"
+
+
+def test_explicit_error_panel_wins_over_placeholder_timeline_nodes():
+    html = (
+        b"<html><body>"
+        b'<div class="error-panel">User not found</div>'
+        b'<div class="timeline-item"><div class="tweet-content">dummy template</div></div>'
+        b"</body></html>"
+    )
+
+    assert detect_gate(html) == "error"

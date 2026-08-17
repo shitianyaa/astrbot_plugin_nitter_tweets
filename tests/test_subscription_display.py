@@ -216,6 +216,40 @@ def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
     mock_logger.info.assert_not_called()
 
 
+def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkeypatch):
+    scheduler = object.__new__(NitterTweetScheduler)
+    scheduler.config = {"brief_log_enabled": True}
+    source = "list:2081623084780671084"
+    result = ScheduledCheckResult(
+        reason="interval:20m",
+        group_id="g-success",
+        group_name="全部成功组",
+        group_type="list",
+        users=[source],
+        targets=["telegram:FriendMessage:1"],
+        invalid_targets=[],
+        pushes=[
+            ScheduledPushResult(
+                username=source,
+                new_count=1,
+                success_targets=1,
+                total_targets=1,
+            )
+        ],
+    )
+
+    assert result.needs_attention is False
+
+    mock_logger = MagicMock()
+    monkeypatch.setattr("scheduler.runner.logger", mock_logger)
+
+    scheduler._log_check_result(result, duration_ms=100)
+
+    mock_logger.info.assert_called_once()
+    mock_logger.warning.assert_not_called()
+    assert "成功推送 1/1 个目标" in mock_logger.info.call_args.args[0]
+
+
 def test_plain_list_fetch_failure_keeps_the_list_id_as_the_source():
     source = "list:2081623084780671084"
     result = ScheduledCheckResult(

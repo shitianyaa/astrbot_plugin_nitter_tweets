@@ -100,6 +100,7 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
     r"signature|credential)"
     r"([\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
 )
+_URL_QUERY_RE = re.compile(r"(https?://[^\s/?#]+(?:/[^\s?#]*)?)\?[^\s)]+")
 _WS_RE = re.compile(r"\s+")
 
 
@@ -121,6 +122,7 @@ def sanitize_sensitive_text(text: str) -> str:
     if not text:
         return ""
     text = _USERINFO_RE.sub(r"\1***@", text)
+    text = _URL_QUERY_RE.sub(r"\1?***", text)
     text = _B64_RE.sub("***", text)
     text = _KEY_RE.sub("***", text)
     text = _JWT_RE.sub("***", text)
