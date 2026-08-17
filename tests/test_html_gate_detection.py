@@ -63,3 +63,26 @@ def test_detect_gate_recognizes_poast_sha1_challenge():
         b"</body></html>"
     )
     assert detect_gate(html) == "poast_sha1"
+
+
+def test_explicit_anubis_challenge_wins_over_placeholder_timeline_nodes():
+    html = (
+        b"<html><body>"
+        b'<div class="timeline-item"><div class="tweet-content">loading</div></div>'
+        b'<script id="anubis_challenge" type="application/json">'
+        b'{"challenge":{}}</script>'
+        b"</body></html>"
+    )
+
+    assert detect_gate(html) == "anubis"
+
+
+def test_explicit_poast_challenge_wins_over_placeholder_timeline_nodes():
+    html = (
+        b"<html><head><title>Verifying your browser...</title></head><body>"
+        b'<div class="timeline-item"><div class="tweet-content">loading</div></div>'
+        b"<script>const a0_0x2a54 = ['sha1']; const res='';</script>"
+        b"</body></html>"
+    )
+
+    assert detect_gate(html) == "poast_sha1"

@@ -137,6 +137,7 @@ class LinkPreviewMixin:
             try:
                 link_started = time.perf_counter()
                 tweet = None
+                task_warnings: list[str] = []
                 try:
                     tweet = await resolve_status_tweet_async(link)
                 except StatusResolveError as exc:
@@ -145,6 +146,18 @@ class LinkPreviewMixin:
                         "status_id=%s error=%s",
                         link.status_id,
                         exc,
+                    )
+                    safe_task_log(
+                        logging.WARNING,
+                        "推文链接解析失败",
+                        operation="link_preview",
+                        source=f"@{link.username or 'unknown'} / {link.status_id}",
+                        trigger="passive_link",
+                        tweet_count=0,
+                        sent_count=0,
+                        result_status="解析失败",
+                        error_detail=str(exc),
+                        elapsed_ms=(time.perf_counter() - link_started) * 1000,
                     )
                     try:
                         await event.send(
@@ -166,6 +179,18 @@ class LinkPreviewMixin:
                         exc,
                         exc_info=True,
                     )
+                    safe_task_log(
+                        logging.WARNING,
+                        "推文链接解析失败",
+                        operation="link_preview",
+                        source=f"@{link.username or 'unknown'} / {link.status_id}",
+                        trigger="passive_link",
+                        tweet_count=0,
+                        sent_count=0,
+                        result_status="解析异常",
+                        error_detail=str(exc),
+                        elapsed_ms=(time.perf_counter() - link_started) * 1000,
+                    )
                     try:
                         await event.send(
                             event.plain_result(
@@ -183,6 +208,7 @@ class LinkPreviewMixin:
                     try:
                         await self.translator.attach_translations([tweet], umo)
                     except Exception as exc:
+                        task_warnings.append(f"翻译失败: {exc}")
                         logger.warning(
                             "[NitterTweets] link preview translate failed: "
                             "status_id=%s error=%s",
@@ -195,6 +221,7 @@ class LinkPreviewMixin:
                             [tweet], force_all_media=True
                         )
                     except Exception as exc:
+                        task_warnings.append(f"媒体准备失败: {exc}")
                         logger.warning(
                             "[NitterTweets] link preview media failed: "
                             "status_id=%s error=%s",
@@ -234,20 +261,34 @@ class LinkPreviewMixin:
                             else "纯文本"
                         )
                         safe_task_log(
-                            logging.INFO,
+                            logging.WARNING if task_warnings else logging.INFO,
                             "推文链接解析完成",
                             operation="link_preview",
                             source=f"@{username} / {link.status_id}",
+                            trigger="passive_link",
+                            tweet_count=1,
+                            sent_count=1,
                             media_summary=media_desc,
                             target_success_ratio="1/1",
+                            result_status="成功（含告警）" if task_warnings else "成功",
+                            warning_detail="; ".join(task_warnings),
                             elapsed_ms=elapsed_ms,
                         )
                     else:
-                        logger.warning(
-                            "[NitterTweets] link preview send failed; "
-                            "debounce not recorded: status_id=%s umo=%s",
-                            link.status_id,
-                            umo,
+                        safe_task_log(
+                            logging.WARNING,
+                            "推文链接解析完成",
+                            operation="link_preview",
+                            source=f"@{username} / {link.status_id}",
+                            trigger="passive_link",
+                            tweet_count=1,
+                            sent_count=0,
+                            target_success_ratio="0/1",
+                            result_status="发送失败",
+                            warning_detail="; ".join(
+                                [*task_warnings, "发送器返回未送达"]
+                            ),
+                            elapsed_ms=(time.perf_counter() - link_started) * 1000,
                         )
                 finally:
                     try:

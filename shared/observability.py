@@ -48,11 +48,14 @@ TASK_FIELDS = {
     "failover_trace",
     "scanned_count",
     "tweet_count",
+    "sent_count",
     "filtered_count",
+    "filtered_label",
     "target_success_ratio",
     "ai_translation",
     "media_summary",
     "result_status",
+    "warning_detail",
     "elapsed_ms",
     "error_detail",
 }
@@ -65,6 +68,7 @@ _GROUP_TYPE_LABELS = {
 
 _TRIGGER_LABELS = {
     "manual_command": "手动命令 (！推文检查)",
+    "passive_link": "聊天消息中的推文链接",
     "interval": "定时轮询",
     "cron": "Cron 定时",
 }
@@ -136,6 +140,7 @@ def sanitize_diagnostic(value: object) -> str:
 
 def safe_task_log(level: int, title: str, **fields: object) -> None:
     """Emit a clean, indented multi-line Chinese task summary block."""
+    fields = {key: value for key, value in fields.items() if key in TASK_FIELDS}
     lines = [f"{LOG_PREFIX} {title}"]
 
     # 1. Combined Group Name & ID
@@ -184,9 +189,10 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
 
     # 7. Tweet Summary
     tweet_count = fields.get("tweet_count")
+    sent_count = fields.get("sent_count")
     scanned_count = fields.get("scanned_count")
     filtered_count = fields.get("filtered_count")
-    if tweet_count is not None or scanned_count is not None:
+    if tweet_count is not None or sent_count is not None or scanned_count is not None:
         parts: list[str] = []
         if scanned_count is not None:
             parts.append(f"扫描 {scanned_count} 条")
@@ -195,22 +201,28 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
                 tc = int(tweet_count)
                 parts.append(f"新推文 {tc} 条" if tc > 0 else "无新推文")
             except (TypeError, ValueError):
-                parts.append(f"新推文 {tweet_count} 条")
+                parts.append(f"获取 {sanitize_diagnostic(tweet_count)} 条")
+        if sent_count is not None:
+            try:
+                parts.append(f"实际发送 {max(0, int(sent_count))} 条")
+            except (TypeError, ValueError):
+                parts.append(f"实际发送 {sanitize_diagnostic(sent_count)} 条")
         if filtered_count is not None:
             try:
                 fc = int(filtered_count)
                 if fc > 0:
-                    parts.append(f"过滤转发 {fc} 条")
+                    filtered_label = sanitize_diagnostic(
+                        fields.get("filtered_label") or "已过滤"
+                    )
+                    parts.append(f"{filtered_label} {fc} 条")
             except (TypeError, ValueError):
                 pass
         if parts:
-            lines.append(
-                f"  推文统计: {' ('.join(parts[:1]) + (' (' + ', '.join(parts[1:]) + ')' if len(parts) > 1 else '')}"
-            )
+            lines.append(f"  推文统计: {'; '.join(parts)}")
 
     # 8. Push Target Success Ratio
     target_success_ratio = fields.get("target_success_ratio")
-    if target_success_ratio:
+    if target_success_ratio is not None:
         lines.append(f"  推送结果: 成功推送 {target_success_ratio} 个目标")
 
     # 9. AI Translation
@@ -222,6 +234,14 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     media_summary = fields.get("media_summary")
     if media_summary:
         lines.append(f"  媒体附件: {sanitize_diagnostic(media_summary)}")
+
+    result_status = fields.get("result_status")
+    if result_status:
+        lines.append(f"  执行状态: {sanitize_diagnostic(result_status)}")
+
+    warning_detail = fields.get("warning_detail")
+    if warning_detail:
+        lines.append(f"  状态提示: {sanitize_diagnostic(warning_detail)}")
 
     # 11. Error Details (if any)
     error_detail = fields.get("error_detail")

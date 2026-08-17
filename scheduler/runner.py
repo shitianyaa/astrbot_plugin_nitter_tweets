@@ -4,6 +4,7 @@ import asyncio
 import copy
 import datetime as dt
 import time
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger
@@ -70,6 +71,14 @@ except ImportError:
     from shared import format_subscription_source
     from shared.group_ids import GLOBAL_GROUP_ID
     from storage import StorageAdapter
+
+
+def _instance_host(instance: str) -> str:
+    value = str(instance or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value if "://" in value else f"//{value}")
+    return (parsed.hostname or parsed.path or value).rstrip(".")
 
 
 try:
@@ -259,26 +268,31 @@ class NitterTweetScheduler(
     def _log_check_result(
         self, result: ScheduledCheckResult, duration_ms: float | None = None
     ) -> None:
-        if self.brief_log_enabled and not result.skipped_reason:
+        if self.brief_log_enabled:
             structured_log = result.format_structured_task_log(duration_ms=duration_ms)
-            if (
-                result.failed_users
-                and not result.pushed_target_successes
-                and not result.new_tweet_count
-            ):
+            if result.needs_attention:
                 logger.warning(structured_log)
             else:
                 logger.info(structured_log)
             return
 
-        logger.info(result.format_log_summary())
-        self._log_delivery_warning_count(result)
+        if result.needs_attention:
+            logger.warning(result.format_log_summary())
+        else:
+            logger.info(result.format_log_summary())
 
-    @staticmethod
-    def _log_delivery_warning_count(result: ScheduledCheckResult) -> None:
-        if result.delivery_warnings:
-            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
-            logger.warning(f"[NitterTweets] 发送状态提示：{unique_warning_count} 条")
+        warning_prefixes = (
+            "[NitterTweets] 失败详情:",
+            "[NitterTweets] 扫描未完整，自动重建基准:",
+            "[NitterTweets] 扫描未完整，自动重建基准未完成:",
+            "[NitterTweets] 无效推送目标:",
+            "[NitterTweets] 发送状态提示:",
+        )
+        for detail in result.format_brief_log_lines()[1:]:
+            if detail.startswith(warning_prefixes):
+                logger.warning(detail)
+            else:
+                logger.info(detail)
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -800,6 +814,10 @@ class NitterTweetScheduler(
                 source_label = format_subscription_source(username, group.group_type)
                 if fetch_result.host_attempts:
                     result.source_attempts[username] = list(fetch_result.host_attempts)
+                elif fetch_result.instance:
+                    instance_host = _instance_host(fetch_result.instance)
+                    if instance_host:
+                        result.source_attempts[username] = [f"{instance_host}=成功"]
                 if fetch_result.error:
                     result.source_statuses[username] = SourceStatus.FAILED
                     result.failed_users[username] = fetch_result.error.message

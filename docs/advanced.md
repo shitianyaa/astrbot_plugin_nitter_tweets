@@ -215,6 +215,8 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 `brief_log_enabled` 只影响 AstrBot 后台 logger 输出，不影响聊天消息、推送内容、命令返回或发送行为。
 
+后台检查完成时会输出一条结构化任务摘要，包含分组、分组类型、订阅源、触发原因、生效实例、实例轮换轨迹、抓取状态、水位状态、纯文本/黑名单/媒体过滤统计、实际发送比、无效目标、基准重建、warning/error 明细和耗时。发送未完成、目标无效、基准重建或媒体待重试时使用 warning 级别；失败时优先看摘要，再按需关闭简略模式查看过程日志。
+
 HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
 - 始终抑制：`session load`（cookie 重载刷屏）
@@ -269,7 +271,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 普通 RSS 抓取遇到 SSL EOF、HTTP 5xx、429 等临时错误时，同一实例初次请求失败后最多再重试 1 次；仍失败则按配置顺序尝试下一个实例。
 - 后台并发拉取启用时只使用 `concurrent_fetch_instances`，不会回退到 `instances`；专用池内每个镜像总请求尝试 3 次，仍失败才尝试下一个专用镜像。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
-- 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`。
+- 推文正文里的普通外部链接会保留在原文位置；当前来源 Nitter 实例改写出的同站镜像链接会清理，避免把 `nitter.../status/...` 混入正文；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`。
 - 翻译只处理去除 URL 后的正文，避免重复链接。
 - 手动 `/推文` 会按单条推文处理：一条推文完成翻译和媒体下载后就发送这一条。
 - 后台推送会先完成本轮账号发现，以便计算第一条概括；随后串行路径按 RSS 顺序逐条发送，并发准备路径按完成顺序发送。用户消息不显示“所有账号 x/总数”或“该账号推文 x/y”。
@@ -351,7 +353,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 ```
 
 因此 Tag/List「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已有水位时一轮内可能扫描并发现超过 20 条新推文，但首次基准和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量。若页数用尽仍找不到旧基准，日志会明确提示扫描未完整和自动重建基准，旧积压可能被跳过。
-HTTP 层可能有 Anubis 门禁与限流。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
+HTTP 层可能有 Anubis、Poast、Cloudflare 门禁与限流。带明确 Anubis/Poast 挑战结构的页面优先判定为对应 gate；没有明确挑战结构时，真实时间线内容不会被通用门禁文案或 Cloudflare beacon 覆盖。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与结构化检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
 **空结果与全量过滤：** Tag/List 都走 `search_instances`；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。
 

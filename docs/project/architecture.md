@@ -10,6 +10,7 @@ main.py
   -> ai.TweetTranslator
   -> scheduler.NitterTweetScheduler
   -> plugin_api.NitterWebAPI
+  -> shared.observability
 
 NitterTweetScheduler
   -> scheduler.config.SchedulerConfigReader
@@ -38,6 +39,7 @@ NitterTweetScheduler
 - `manual.py`: 手动查询和镜像测试。
 - `maintenance.py`: 状态、检查、缓存、seen。
 - `subscriptions.py`: 订阅导入、删除、导出、去重。
+- `link_preview.py`: 被动 status 链接解析入口；只处理合法白名单链接，成功后才记录防抖状态。
 
 命令必须调用 `event.stop_event()`。管理员命令必须加 AstrBot admin 权限装饰器。
 
@@ -52,6 +54,8 @@ NitterTweetScheduler
 7. 手动路径按请求数量停止；后台 Blogger 扫描首屏约 20 条并按 `Min-Id` 分页；Tag 最多保留 20 条候选；List 首轮最多 20 条，后续本轮扫描可超过 20 条并按旧水位分页到边界或游标结束
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
+
+HTML 门禁检测先识别明确的 Anubis/Poast 挑战结构；没有明确挑战结构时，真实时间线内容优先于通用 Cloudflare 文案和 beacon。
 
 ## 后台检查链路
 
@@ -117,3 +121,4 @@ NitterTweetScheduler
 - `rendering/`: 推文文本、平台安全 Markdown、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。
+- `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数。

@@ -46,14 +46,31 @@ def resolve_mode(host: str, override: str | None = None) -> str:
 def detect_gate(body: bytes) -> str:
     """Return anubis | poast_sha1 | cf | ok | error | empty | other.
 
-    Order matters: real content wins over CDN bot-management footers and
-    normal tweet text that happens to contain words like 'just a moment'.
+    Order matters: explicit Anubis/Poast challenge structures require solving,
+    while real content wins over generic CDN footers and challenge wording.
     """
     if not body:
         return "empty"
     low = body.lower()
 
-    # 1) Real content first (timeline items, RSS feeds, tweet bodies)
+    # 1) Explicit challenge structures must not be bypassed by placeholder
+    # timeline nodes included in a challenge/interstitial response.
+    if (
+        b'id="anubis_challenge"' in low
+        or b"id='anubis_challenge'" in low
+        or (
+            b"making sure you're not a bot" in low
+            and (b"anubis" in low or b"application/json" in low)
+        )
+    ):
+        return "anubis"
+    if (
+        b"verifying your browser" in low
+        and (b"s1" in low or b"sha1" in low or b"a0_0x2a54" in low or b"res=" in low)
+    ) or (b"js-sha1" in low and b"res=" in low):
+        return "poast_sha1"
+
+    # 2) Real content wins over generic CDN markers and ordinary tweet text.
     if (
         b"timeline-item" in low
         or b"<rss" in low
@@ -62,16 +79,7 @@ def detect_gate(body: bytes) -> str:
     ):
         return "ok"
 
-    # 2) Explicit challenge pages
-    if b"anubis_challenge" in low or b"making sure you're not a bot" in low:
-        return "anubis"
-    if (
-        b"verifying your browser" in low
-        and (b"s1" in low or b"sha1" in low or b"a0_0x2a54" in low or b"res=" in low)
-    ) or (b"js-sha1" in low and b"res=" in low):
-        return "poast_sha1"
-
-    # 3) Hard Cloudflare interstitial only (when no real content exists)
+    # 3) Hard Cloudflare interstitial only when no real content exists.
     if (
         b"just a moment" in low
         or b"cf-turnstile" in low

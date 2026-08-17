@@ -8,12 +8,14 @@
 - 搜索：`/推文搜索 查询 [数量]`（`#` 为标签，否则短语）
 - 镜像测试：`/镜像测试 [用户名] [数量] 镜像站URL`；Dashboard 按模式使用 `instances` 或 `search_instances`，留空 URL 时串行测试全部配置实例。
 - 后台检查：按 `tweet_groups` 分组扫描 Blogger RSS 或 Tag/List HTML，以独立扫描基准和 seen 识别并推送全部新推文。
+- 被动链接预览：可选解析聊天中的公开 status 链接，复用翻译、媒体和平台发送链路。
 - 分组类型：Blogger（`watch_users`）、Tag（`watch_queries`）和 List（`watch_lists`）；摘要分别使用“n 位博主”“n 个搜索订阅”“n 个 List”。
 - 目标作者黑名单：按完整 UMO 保存，同一目标跨分组共享，只过滤后台分组推送。
 - 订阅维护：导入、删除、导出、去重。
 - 媒体处理：图片、视频/GIF、xdown 解析、缓存。
 - AI 处理：翻译。
 - 多平台发送：私人号 OneBot、QQ Official（官方适配器）、Telegram、Lark/Feishu、weixin_oc、默认 MessageChain。
+- 可观测性：统一输出脱敏的结构化检查摘要，记录来源、实例轮换、统计和失败原因。
 - 运维恢复：Dashboard 显示成功、部分送达和发送失败历史，可向原分组当前目标手动重推。
 
 ## 边界
@@ -35,10 +37,12 @@
 - 用户命令：`command_handlers/`
 - 后台调度：`scheduler/`
 - Nitter RSS：`media_support/client.py`；HTML 搜索与旧兼容实现：`media_support/html_backend/`
+- 被动链接：`command_handlers/link_preview.py`、`media_support/status_link.py`、`media_support/status_resolve.py`
 - 媒体：`media_support/service.py`
 - 发送：`delivery/`
 - 配置：`_conf_schema.json`、`config/`、`scheduler/config.py`
 - 存储：`storage/`
+- 通用日志与模型：`shared/observability.py`、`shared/`
 
 ## 真源
 

@@ -77,6 +77,25 @@ def test_omit_false_keeps_inline_urls_and_footer_link():
     assert "https://x.com/nasa/status/1" in out
 
 
+def test_omit_false_removes_current_nitter_mirror_links_only():
+    out = R.format_tweet(
+        0,
+        "nasa",
+        _tw(
+            text=(
+                "RT @AsumuInori: 名古屋...哭 https://nitter.top/t.co/abc "
+                "https://example.com/keep"
+            )
+        ),
+        source="https://nitter.top",
+        omit_status_url=False,
+        link_style="qq_official_md",
+    )
+
+    assert "https://nitter.top/t.co/abc" not in out
+    assert "https://example.com/keep" in out
+
+
 def test_empty_body_plain_omits_placeholder():
     out = R.format_tweet(
         0,

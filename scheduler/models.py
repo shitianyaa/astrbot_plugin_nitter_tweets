@@ -8,12 +8,18 @@ try:
         TweetItem,
         format_subscription_count,
         format_subscription_source,
+        sanitize_diagnostic,
     )
     from ..shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
     from .formatting import _format_limited_values
 except ImportError:
     from scheduler.formatting import _format_limited_values
-    from shared import TweetItem, format_subscription_count, format_subscription_source
+    from shared import (
+        TweetItem,
+        format_subscription_count,
+        format_subscription_source,
+        sanitize_diagnostic,
+    )
     from shared.group_ids import DEFAULT_GROUP_NAME, GLOBAL_GROUP_ID
 
 if TYPE_CHECKING:
@@ -183,6 +189,21 @@ class ScheduledCheckResult:
         return per_user_attempts
 
     @property
+    def needs_attention(self) -> bool:
+        """Return whether the result contains an operational warning or failure."""
+        return bool(
+            self.failed_users
+            or self.baseline_rebuilt_users
+            or self.baseline_rebuild_failed_users
+            or self.invalid_targets
+            or self.delivery_warnings
+            or self.media_only_retrying
+            or self.pushed_target_successes < self.pushed_target_attempts
+            or self.skipped_reason
+            in {"storage_not_ready", "unknown_group", "no_push_targets"}
+        )
+
+    @property
     def checked_user_count(self) -> int:
         return (
             len(self.initialized_users)
@@ -291,7 +312,9 @@ class ScheduledCheckResult:
             else ""
         )
         filtered_part = (
-            f", filtered={self.plain_text_filtered}" if self.plain_text_filtered else ""
+            f", filtered_plain_text={self.plain_text_filtered}"
+            if self.plain_text_filtered
+            else ""
         )
         target_blocked_part = (
             f", target_blocked={self.target_blocked_filtered}"
@@ -325,13 +348,7 @@ class ScheduledCheckResult:
         )
 
     def format_structured_task_log(self, duration_ms: float | None = None) -> str:
-        """Format check result as an elegant multi-line Chinese task summary block."""
-        if self.skipped_reason:
-            return (
-                f"[NitterTweets] 检查跳过: {self.group_name}({self.group_id}) · "
-                f"原因={self.skipped_reason}"
-            )
-
+        """Format a complete, sanitized multi-line check summary."""
         type_map = {
             "blogger": "博主推文",
             "tag": "标签 / 关键词",
@@ -340,8 +357,10 @@ class ScheduledCheckResult:
         type_cn = type_map.get(self.group_type, self.group_type)
         sources_count = len(self.users)
 
-        lines = ["[NitterTweets] 推文检查任务完成"]
-        lines.append(f"  分组名称: {self.group_name} ({self.group_id})")
+        title = "检查跳过" if self.skipped_reason else "推文检查任务完成"
+        lines = [f"[NitterTweets] {title}"]
+        group_display = sanitize_diagnostic(f"{self.group_name} ({self.group_id})")
+        lines.append(f"  分组名称: {group_display}")
         lines.append(f"  订阅类型: {type_cn} (共 {sources_count} 个源)")
 
         reason_display = (
@@ -351,7 +370,15 @@ class ScheduledCheckResult:
             if self.reason.startswith("interval") or self.reason.startswith("cron")
             else self.reason
         )
-        lines.append(f"  触发原因: {reason_display}")
+        lines.append(f"  触发原因: {sanitize_diagnostic(reason_display)}")
+        if self.skipped_reason:
+            lines.append(
+                f"  执行状态: 已跳过 ({sanitize_diagnostic(self.skipped_reason)})"
+            )
+            lines.append(
+                f"  目标统计: 有效 {len(self.targets)} 个, "
+                f"无效 {len(self.invalid_targets)} 个"
+            )
 
         # Instance & Failover
         successful_instances: list[str] = []
@@ -361,39 +388,53 @@ class ScheduledCheckResult:
                 if not attempts:
                     continue
                 for item in attempts:
-                    if item.endswith("=成功"):
-                        inst = item.split("=")[0]
+                    inst, separator, status = str(item).partition("=")
+                    if separator and status == "成功":
                         if inst not in successful_instances:
                             successful_instances.append(inst)
                 if len(attempts) > 1:
-                    label = self._subscription_label(source_name)
-                    trace_str = " ➔ ".join(
-                        f"{x.split('=')[0]}[{x.split('=')[1]}]" if "=" in x else x
-                        for x in attempts
-                    )
+                    label = sanitize_diagnostic(self._subscription_label(source_name))
+                    trace_parts: list[str] = []
+                    for item in attempts:
+                        host, separator, status = str(item).partition("=")
+                        trace_parts.append(
+                            f"{sanitize_diagnostic(host)}[{sanitize_diagnostic(status)}]"
+                            if separator
+                            else sanitize_diagnostic(item)
+                        )
+                    trace_str = " ➔ ".join(trace_parts)
                     failover_traces.append(f"{label}: {trace_str}")
 
         if successful_instances:
-            lines.append(f"  生效实例: {', '.join(successful_instances)}")
+            lines.append(
+                "  生效实例: "
+                + ", ".join(sanitize_diagnostic(x) for x in successful_instances)
+            )
         if failover_traces:
             lines.append(f"  轮换轨迹: {'; '.join(failover_traces)}")
 
-        # Tweet stats
-        if self.new_tweet_count > 0:
-            stats = f"发现新推文 {self.new_tweet_count} 条"
-            if self.plain_text_filtered > 0:
-                stats += f" (过滤转发 {self.plain_text_filtered} 条)"
-            lines.append(f"  推文统计: {stats}")
-        elif self.plain_text_filtered > 0 or self.filtered_empty_users:
-            lines.append(
-                f"  推文统计: 无新推文 (过滤纯转发 {self.plain_text_filtered} 条)"
-            )
-        elif self.empty_users:
-            lines.append("  推文统计: 检查为空 (未获取到推文数据)")
-        elif self.failed_users:
-            lines.append(f"  推文统计: 抓取失败 ({len(self.failed_users)} 个源失败)")
-        else:
-            lines.append("  推文统计: 无新推文 (已为最新)")
+        if self.users:
+            lines.append(f"  抓取状态: {self._source_status_message()}")
+            lines.append(f"  水位状态: {self._watermark_message()}")
+
+        stats = [
+            f"发现新推文 {self.new_tweet_count} 条"
+            if self.new_tweet_count
+            else "无新推文"
+        ]
+        if self.initialized_users:
+            stats.append(f"首次初始化 {len(self.initialized_users)} 个源")
+        if self.no_new_users:
+            stats.append(f"正常无更新 {len(self.no_new_users)} 个源")
+        if self.empty_users:
+            stats.append(f"返回空结果 {len(self.empty_users)} 个源")
+        if self.filtered_empty_users:
+            stats.append(f"过滤后为空 {len(self.filtered_empty_users)} 个源")
+        if self.failed_users:
+            stats.append(f"抓取失败 {len(self.failed_users)} 个源")
+        if self.plain_text_filtered:
+            stats.append(f"过滤纯文本 {self.plain_text_filtered} 条")
+        lines.append(f"  推文统计: {'; '.join(stats)}")
 
         # Push delivery results
         if self.pushed_target_attempts > 0:
@@ -401,12 +442,67 @@ class ScheduledCheckResult:
                 f"  推送结果: 成功推送 {self.pushed_target_successes}/{self.pushed_target_attempts} 个目标"
             )
         elif self.new_tweet_count > 0:
-            lines.append("  推送结果: 未配置有效推送目标或已被过滤")
+            lines.append("  推送结果: 未调用发送（无有效目标或全部被过滤）")
+        else:
+            lines.append("  推送结果: 未触发推送（无新推文）")
+
+        filter_stats: list[str] = []
+        if self.target_blocked_filtered:
+            filter_stats.append(f"目标黑名单过滤 {self.target_blocked_filtered} 条")
+        if self.media_only_skipped:
+            filter_stats.append(f"仅媒体策略跳过 {self.media_only_skipped} 条")
+        if self.media_only_retrying:
+            filter_stats.append(f"媒体待重试 {self.media_only_retrying} 条")
+        if filter_stats:
+            lines.append(f"  过滤统计: {'; '.join(filter_stats)}")
+
+        if self.baseline_rebuilt_users:
+            rebuilt_items = [
+                sanitize_diagnostic(
+                    f"{self._subscription_label(user)} ({count} 个第一页基准 ID)"
+                )
+                for user, count in self.baseline_rebuilt_users.items()
+            ]
+            lines.append(
+                "  基准重建: "
+                + _format_limited_values(rebuilt_items, limit=5, separator="; ")
+                + sanitize_diagnostic(self._baseline_rebuild_notice())
+            )
+
+        if self.baseline_rebuild_failed_users:
+            failed_rebuilds = [
+                sanitize_diagnostic(f"{self._subscription_label(user)}: {error}")
+                for user, error in self.baseline_rebuild_failed_users.items()
+            ]
+            lines.append(
+                "  基准重建失败: "
+                + _format_limited_values(failed_rebuilds, limit=5, separator="; ")
+            )
+
+        if self.invalid_targets:
+            invalid_targets = [
+                sanitize_diagnostic(value)
+                for value in dict.fromkeys(self.invalid_targets)
+            ]
+            lines.append(
+                "  无效推送目标: "
+                + _format_limited_values(invalid_targets, limit=5, separator="; ")
+            )
+
+        if self.delivery_warnings:
+            warning_items = [
+                sanitize_diagnostic(value)
+                for value in dict.fromkeys(self.delivery_warnings)
+            ]
+            lines.append(
+                "  发送状态提示: "
+                + _format_limited_values(warning_items, limit=5, separator="; ")
+            )
 
         # Failures detail
         if self.failed_users:
             failed_items = [
-                f"{self._failure_label(user)}: {error}"
+                sanitize_diagnostic(f"{self._failure_label(user)}: {error}")
                 for user, error in self.failed_users.items()
             ]
             lines.append(
@@ -416,7 +512,10 @@ class ScheduledCheckResult:
 
         # Elapsed
         if duration_ms is not None:
-            ms = float(duration_ms)
+            try:
+                ms = max(0.0, float(duration_ms))
+            except (TypeError, ValueError):
+                ms = 0.0
             elapsed_str = (
                 f"{ms / 1000:.1f} 秒" if ms >= 1000 else f"{int(round(ms))} 毫秒"
             )
@@ -447,7 +546,7 @@ class ScheduledCheckResult:
             )
         ]
         if self.plain_text_filtered:
-            lines[0] += f", filtered={self.plain_text_filtered}"
+            lines[0] += f", filtered_plain_text={self.plain_text_filtered}"
         if self.target_blocked_filtered:
             lines[0] += f", target_blocked={self.target_blocked_filtered}"
         if self.media_only_skipped or self.media_only_retrying:
@@ -457,7 +556,7 @@ class ScheduledCheckResult:
             )
         if self.failed_users:
             failed_items = [
-                f"{self._failure_label(user)}: {error}"
+                sanitize_diagnostic(f"{self._failure_label(user)}: {error}")
                 for user, error in self.failed_users.items()
             ]
             lines.append(
@@ -466,7 +565,9 @@ class ScheduledCheckResult:
             )
         if self.baseline_rebuilt_users:
             rebuilt_items = [
-                f"{self._subscription_label(user)}({count} 个第一页基线 ID)"
+                sanitize_diagnostic(
+                    f"{self._subscription_label(user)}({count} 个第一页基线 ID)"
+                )
                 for user, count in self.baseline_rebuilt_users.items()
             ]
             lines.append(
@@ -476,7 +577,7 @@ class ScheduledCheckResult:
             )
         if self.baseline_rebuild_failed_users:
             rebuild_items = [
-                f"{self._subscription_label(user)}: {error}"
+                sanitize_diagnostic(f"{self._subscription_label(user)}: {error}")
                 for user, error in self.baseline_rebuild_failed_users.items()
             ]
             lines.append(
@@ -485,7 +586,9 @@ class ScheduledCheckResult:
             )
         if self.source_attempts:
             attempts = [
-                f"{self._subscription_label(user)}: {'；'.join(details)}"
+                sanitize_diagnostic(
+                    f"{self._subscription_label(user)}: {'；'.join(details)}"
+                )
                 for user, details in self.source_attempts.items()
                 if details
             ]
@@ -498,7 +601,10 @@ class ScheduledCheckResult:
             lines.append(
                 "[NitterTweets] 无效推送目标: "
                 + _format_limited_values(
-                    list(dict.fromkeys(self.invalid_targets)),
+                    [
+                        sanitize_diagnostic(value)
+                        for value in dict.fromkeys(self.invalid_targets)
+                    ],
                     limit=5,
                     separator="; ",
                 )
@@ -507,7 +613,10 @@ class ScheduledCheckResult:
             lines.append(
                 "[NitterTweets] 发送状态提示: "
                 + _format_limited_values(
-                    list(dict.fromkeys(self.delivery_warnings)),
+                    [
+                        sanitize_diagnostic(value)
+                        for value in dict.fromkeys(self.delivery_warnings)
+                    ],
                     limit=5,
                     separator="; ",
                 )
