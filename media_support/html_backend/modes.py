@@ -44,20 +44,33 @@ def resolve_mode(host: str, override: str | None = None) -> str:
 
 
 def detect_gate(body: bytes) -> str:
-    """Return anubis | poast_sha1 | cf | ok | error | empty | other."""
+    """Return anubis | poast_sha1 | cf | ok | error | empty | other.
+
+    Order matters: explicit Anubis/Poast challenge structures require solving,
+    while real content wins over generic CDN footers and challenge wording.
+    """
     if not body:
         return "empty"
     low = body.lower()
-    if b"anubis_challenge" in low or b"making sure you're not a bot" in low:
-        return "anubis"
-    if b"verifying your browser" in low and (b"s1" in low or b"sha1" in low):
-        return "poast_sha1"
+
+    # 1) Explicit challenge structures must not be bypassed by placeholder
+    # timeline nodes included in a challenge/interstitial response.
     if (
-        b"just a moment" in low
-        or b"challenge-platform" in low
-        or b"cf-turnstile" in low
+        b'id="anubis_challenge"' in low
+        or b"id='anubis_challenge'" in low
+        or (
+            b"making sure you're not a bot" in low
+            and (b"anubis" in low or b"application/json" in low)
+        )
     ):
-        return "cf"
+        return "anubis"
+    if (
+        b"verifying your browser" in low
+        and (b"s1" in low or b"sha1" in low or b"a0_0x2a54" in low or b"res=" in low)
+    ) or (b"js-sha1" in low and b"res=" in low):
+        return "poast_sha1"
+
+    # 2) Explicit error panels and maintenance markers must not be bypassed by placeholder timeline nodes.
     title_match = re.search(rb"<title[^>]*>(.*?)</title>", low, re.DOTALL)
     title = title_match.group(1) if title_match else b""
     error_markers = (
@@ -89,11 +102,32 @@ def detect_gate(body: bytes) -> str:
         )
     )
     body_error = any(marker in low for marker in error_markers)
-    if title_error or (
-        body_error and b"timeline-item" not in low and b"<rss" not in low
-    ):
+    if title_error or body_error:
         return "error"
-    if b"timeline-item" in low or b"<rss" in low or b"nitter" in low:
+
+    # 3) Real content wins over generic CDN markers and ordinary tweet text.
+    if (
+        b"timeline-item" in low
+        or b"<rss" in low
+        or b"tweet-body" in low
+        or b"tweet-content" in low
+    ):
+        return "ok"
+
+    # 4) Hard Cloudflare interstitial only when no real content exists.
+    if (
+        b"just a moment" in low
+        or b"cf-turnstile" in low
+        or b"cdn-cgi/challenge-platform/h/" in low
+        or (
+            b"challenge-platform" in low
+            and b"nitter" not in low[:4000]
+            and b"site-name" not in low
+        )
+    ):
+        return "cf"
+
+    if b"nitter" in low:
         return "ok"
     return "other"
 

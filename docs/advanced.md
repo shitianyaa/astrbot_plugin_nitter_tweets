@@ -130,9 +130,10 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
-| `user_agent` | 请求 Nitter RSS 时使用的 User-Agent。 |
 | `filter_reposts_enabled` | Blogger、Tag、List 后台转发过滤总开关，默认开启。只有总开关与分组同名子开关都开启时才过滤；全局关闭时所有分组保留转发。Blogger 会比较 RSS item 主链接作者和订阅源，博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。 |
 | `auto_parse_tweet_links_enabled` | 是否被动解析聊天中的公开 X/Twitter status 链接，默认关闭。开启后无需命令；忽略 Bot 自身消息；翻译与「有译文时显示原文」跟随全局；不写 seen/push history；不受订阅、冷却和全局图/视频开关限制。同会话同帖约 60 秒防抖，单条消息最多 3 个不同链接。勿与同类链接解析插件同时开启以免重复回复。 |
+
+插件对 RSS、HTML/List、状态解析、媒体解析和下载统一使用内置浏览器请求标识；User-Agent 不再作为配置项，避免不同请求链路使用互相冲突的身份。各协议所需的 `Accept`、`Referer`、`Origin` 和 `Content-Type` 仍分别设置。
 
 ### 后台检查与推送
 
@@ -192,7 +193,6 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `media_timeout` | 媒体解析和下载超时秒数。 |
 | `media_max_size_mb` | 单个媒体大小上限。 |
 | `xdown_api_url` | Twitter/X 媒体解析 API。 |
-| `media_user_agent` | 解析和下载媒体时使用的 User-Agent。 |
 
 ### AI
 
@@ -214,6 +214,8 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `brief_log_enabled` | 后台日志简略模式；默认开启。开启后正常流程只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；**同时收敛 HTML 过程日志**（见下）。关闭后输出详细处理过程日志。 |
 
 `brief_log_enabled` 只影响 AstrBot 后台 logger 输出，不影响聊天消息、推送内容、命令返回或发送行为。
+
+后台检查完成时会输出一条结构化任务摘要，包含分组、分组类型、订阅源、触发原因、生效实例、实例轮换轨迹、抓取状态、水位状态、纯文本/黑名单/媒体过滤统计、实际发送比、无效目标、基准重建、warning/error 明细和耗时。发送未完成、目标无效、基准重建或媒体待重试时使用 warning 级别；失败时优先看摘要，再按需关闭简略模式查看过程日志。
 
 HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
@@ -269,7 +271,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 普通 RSS 抓取遇到 SSL EOF、HTTP 5xx、429 等临时错误时，同一实例初次请求失败后最多再重试 1 次；仍失败则按配置顺序尝试下一个实例。
 - 后台并发拉取启用时只使用 `concurrent_fetch_instances`，不会回退到 `instances`；专用池内每个镜像总请求尝试 3 次，仍失败才尝试下一个专用镜像。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
-- 推文正文里的普通链接会保留在原文位置；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`。
+- 推文正文里的普通外部链接会保留在原文位置；当前来源 Nitter 实例改写出的同站镜像链接会清理，避免把 `nitter.../status/...` 混入正文；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`。
 - 翻译只处理去除 URL 后的正文，避免重复链接。
 - 手动 `/推文` 会按单条推文处理：一条推文完成翻译和媒体下载后就发送这一条。
 - 后台推送会先完成本轮账号发现，以便计算第一条概括；随后串行路径按 RSS 顺序逐条发送，并发准备路径按完成顺序发送。用户消息不显示“所有账号 x/总数”或“该账号推文 x/y”。
@@ -351,7 +353,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 ```
 
 因此 Tag/List「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已有水位时一轮内可能扫描并发现超过 20 条新推文，但首次基准和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量。若页数用尽仍找不到旧基准，日志会明确提示扫描未完整和自动重建基准，旧积压可能被跳过。
-HTTP 层可能有 Anubis 门禁与限流。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
+HTTP 层可能有 Anubis、Poast、Cloudflare 门禁与限流。带明确 Anubis/Poast 挑战结构的页面优先判定为对应 gate；没有明确挑战结构时，真实时间线内容不会被通用门禁文案或 Cloudflare beacon 覆盖。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与结构化检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
 **空结果与全量过滤：** Tag/List 都走 `search_instances`；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。
 

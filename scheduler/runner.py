@@ -4,6 +4,7 @@ import asyncio
 import copy
 import datetime as dt
 import time
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from astrbot.api import logger
@@ -70,6 +71,14 @@ except ImportError:
     from shared import format_subscription_source
     from shared.group_ids import GLOBAL_GROUP_ID
     from storage import StorageAdapter
+
+
+def _instance_host(instance: str) -> str:
+    value = str(instance or "").strip()
+    if not value:
+        return ""
+    parsed = urlparse(value if "://" in value else f"//{value}")
+    return (parsed.hostname or parsed.path or value).rstrip(".")
 
 
 try:
@@ -256,24 +265,34 @@ class NitterTweetScheduler(
             )
             return True
 
-    def _log_check_result(self, result: ScheduledCheckResult) -> None:
-        if self.brief_log_enabled and not result.skipped_reason:
-            lines = result.format_brief_log_lines()
-            if not lines:
-                return
-            logger.info(lines[0])
-            for line in lines[1:]:
-                logger.warning(line)
+    def _log_check_result(
+        self, result: ScheduledCheckResult, duration_ms: float | None = None
+    ) -> None:
+        if self.brief_log_enabled:
+            structured_log = result.format_structured_task_log(duration_ms=duration_ms)
+            if result.needs_attention:
+                logger.warning(structured_log)
+            else:
+                logger.info(structured_log)
             return
 
-        logger.info(result.format_log_summary())
-        self._log_delivery_warning_count(result)
+        if result.needs_attention:
+            logger.warning(result.format_log_summary())
+        else:
+            logger.info(result.format_log_summary())
 
-    @staticmethod
-    def _log_delivery_warning_count(result: ScheduledCheckResult) -> None:
-        if result.delivery_warnings:
-            unique_warning_count = len(dict.fromkeys(result.delivery_warnings))
-            logger.warning(f"[NitterTweets] 发送状态提示：{unique_warning_count} 条")
+        warning_prefixes = (
+            "[NitterTweets] 失败详情:",
+            "[NitterTweets] 扫描未完整，自动重建基准:",
+            "[NitterTweets] 扫描未完整，自动重建基准未完成:",
+            "[NitterTweets] 无效推送目标:",
+            "[NitterTweets] 发送状态提示:",
+        )
+        for detail in result.format_brief_log_lines()[1:]:
+            if detail.startswith(warning_prefixes):
+                logger.warning(detail)
+            else:
+                logger.info(detail)
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -430,16 +449,17 @@ class NitterTweetScheduler(
             return result
 
         observable = self._is_observable_check_reason(reason)
-        effective_targets = (
-            list(target_override) if target_override is not None else group.targets
-        )
         started = time.perf_counter() if observable else 0.0
         if observable:
+            type_map = {
+                "blogger": "博主",
+                "tag": "标签",
+                "list": "List",
+            }
+            type_cn = type_map.get(group.group_type, group.group_type)
             logger.info(
-                "[NitterTweets] 检查开始: "
-                f"group_id={group.group_id}, group_type={group.group_type}, "
-                f"sources={len(group.account_keys)}, targets={len(effective_targets)}, "
-                f"reason={reason}"
+                f"[NitterTweets] 开始检查: {group.name}({group.group_id}) · "
+                f"{len(group.account_keys)} 个{type_cn}"
             )
 
         try:
@@ -477,18 +497,6 @@ class NitterTweetScheduler(
                 )
             raise
 
-        if observable:
-            duration_ms = (time.perf_counter() - started) * 1000
-            logger.info(
-                "[NitterTweets] 检查结束: "
-                f"group_id={result.group_id}, group_type={result.group_type}, "
-                f"sources={len(result.users)}, targets={len(result.targets)}, "
-                f"reason={result.reason}, duration_ms={duration_ms:.1f}, "
-                f"new={result.new_tweet_count}, failed={len(result.failed_users)}, "
-                f"skipped={result.skipped_reason or 'none'}, "
-                f"push_success={result.pushed_target_successes}/"
-                f"{result.pushed_target_attempts}"
-            )
         return result
 
     @staticmethod
@@ -734,6 +742,7 @@ class NitterTweetScheduler(
         result = self._new_check_result(reason, group, target_override)
         users = result.users
         targets = result.targets
+        check_started = time.perf_counter()
         merge_threshold = self._merge_tweet_threshold()
         result.merge_tweet_threshold = merge_threshold
         pending_batches = []
@@ -748,11 +757,13 @@ class NitterTweetScheduler(
                 result.skipped_reason = "no_watch_lists"
             else:
                 result.skipped_reason = "no_watch_users"
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             return result
         if not targets:
             result.skipped_reason = "no_push_targets"
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             return result
 
         # S2=A: RSS host skip only for this blogger check; end only if we began.
@@ -805,6 +816,10 @@ class NitterTweetScheduler(
                 source_label = format_subscription_source(username, group.group_type)
                 if fetch_result.host_attempts:
                     result.source_attempts[username] = list(fetch_result.host_attempts)
+                elif fetch_result.instance:
+                    instance_host = _instance_host(fetch_result.instance)
+                    if instance_host:
+                        result.source_attempts[username] = [f"{instance_host}=成功"]
                 if fetch_result.error:
                     result.source_statuses[username] = SourceStatus.FAILED
                     result.failed_users[username] = fetch_result.error.message
@@ -1234,7 +1249,8 @@ class NitterTweetScheduler(
                 )
                 result.source_statuses[username] = SourceStatus.UPDATED
 
-            self._log_check_result(result)
+            duration_ms = (time.perf_counter() - check_started) * 1000
+            self._log_check_result(result, duration_ms=duration_ms)
             if self._should_notify_no_updates(result, notify_no_updates, group):
                 await self._send_no_update_notice(result, target_interval)
             return result

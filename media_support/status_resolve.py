@@ -10,10 +10,10 @@ from urllib.request import Request
 
 try:
     from ..shared.utils import TweetItem, TweetMedia, format_tweet_published
-    from .network import safe_urlopen
+    from .network import build_request_headers, safe_urlopen
     from .status_link import StatusLink
 except ImportError:
-    from media_support.network import safe_urlopen
+    from media_support.network import build_request_headers, safe_urlopen
     from media_support.status_link import StatusLink
     from shared.utils import TweetItem, TweetMedia, format_tweet_published
 
@@ -21,10 +21,6 @@ logger = logging.getLogger("astrbot")
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_RESPONSE_BYTES = 1_500_000
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
 
 
 class StatusResolveError(RuntimeError):
@@ -191,10 +187,7 @@ def _media_from_syndication(payload: dict[str, Any]) -> list[TweetMedia]:
 def _fetch_json(url: str, *, timeout: float) -> dict[str, Any]:
     request = Request(
         url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json,text/plain,*/*",
-        },
+        headers=build_request_headers(accept="application/json,text/plain,*/*"),
         method="GET",
     )
     with safe_urlopen(request, timeout=timeout) as response:

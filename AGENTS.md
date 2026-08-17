@@ -30,7 +30,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 | `scheduler/` | 高风险：检查、seen、推送编排 |
 | `media_support/` | RSS client、`html_backend`、媒体、**`status_link` / `status_resolve`** |
 | `delivery/` | 多平台发送；`force_media` 仅链接预览等显式路径 |
-| `rendering/`、`ai/`、`storage/`、`plugin_api/`、`shared/` | 渲染、翻译、SQLite、WebUI API、模型 |
+| `rendering/`、`ai/`、`storage/`、`plugin_api/`、`shared/` | 渲染、翻译、SQLite、WebUI API、模型；`shared/observability.py` 负责脱敏日志和结构化任务摘要 |
 
 完整模块关系：`docs/project/architecture.md`。
 
@@ -40,6 +40,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 管理命令：`@filter.permission_type(ADMIN)`，并继续做场景校验。
 - 双导入：`try: from .x import ... except ImportError: from x import ...`。
 - 不硬编码 provider、token、群号、实例、本机路径；不提交 `data/`、缓存、DB、下载物。
+- 日志只通过现有安全日志辅助函数输出；不得写入 token、Cookie、响应正文、完整私有 URL 或其他会话材料。结构化任务摘要应保留分组、类型、来源、生效实例、轮换轨迹、统计、耗时和 warning/error。
 - 不改用户未要求的行为/文案；优先兼容现有测试。
 - 提交只用真实变更描述；无 AI 署名、`Co-Authored-By`、`Generated with ...`。
 - 禁止丢改动的 git 命令（`reset --hard` 等），除非用户明确要求。
@@ -81,6 +82,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 纯文本过滤只影响后台：作者上传媒体才算；`card_img`、Article 封面、**引用推媒体**不算。
 - 整页被滤但仍有 cursor 须翻页；真·空 feed 才 empty。
 - 诊断：`python scripts/probe_nitter_fetch.py nasa 5`（可加 `--skip-plain-text` / `--include-reposts`）。
+- HTML 门禁判定先识别明确的 Anubis/Poast 挑战结构，避免占位 timeline 节点绕过解算；没有明确挑战结构时，真实时间线内容优先于通用 Cloudflare 文案和 beacon。
 
 ## 调度与 seen
 
@@ -100,6 +102,9 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 
 用户可见变更同步：`README.md`、`docs/advanced.md`（及 List 专题）、`_conf_schema.json`、`CHANGELOG.md`、`metadata.yaml`（版本/能力）。
 
+临时测试、代理探测和一次性脚本统一放在 `testignore/`；不要把这类文件留在仓库根目录。`testignore/` 已加入 `.gitignore`，测试脚本仍应记录使用的代理和目标，但不得包含凭据。
+正式 pytest 只收集 `tests/`（见 `pytest.ini`）；不要把需要进入持续回归的测试留在 `testignore/`。
+
 ## 测试与工具
 
 ```powershell
@@ -113,6 +118,8 @@ ruff format --check .
 - List：`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`
 - 标签调度：`tests/test_scheduler_tag_delivery.py`
 - HTML/搜索：`tests/test_html_backend_query.py`、`tests/test_watch_queries_config.py`
+- 日志与门禁：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
+- 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。
 
 完整矩阵：`docs/dev/testing.md`。

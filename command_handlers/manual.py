@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 
@@ -23,6 +24,7 @@ try:
         SearchSessionStore,
     )
     from ..shared import normalize_username, safe_call
+    from ..shared.observability import safe_task_log
 except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
@@ -38,9 +40,65 @@ except ImportError:
         SearchSessionStore,
     )
     from shared import normalize_username, safe_call
+    from shared.observability import safe_task_log
 
 
 class ManualCommandMixin:
+    @staticmethod
+    def _log_manual_send_task(
+        title: str,
+        *,
+        operation: str,
+        source: str,
+        instance: str,
+        tweet_count: int,
+        sent_count: int,
+        started: float,
+    ) -> None:
+        total = max(0, int(tweet_count))
+        sent = max(0, min(total, int(sent_count)))
+        fully_sent = total > 0 and sent == total
+        status = "成功" if fully_sent else "部分完成" if sent else "发送失败"
+        safe_task_log(
+            logging.INFO if fully_sent else logging.WARNING,
+            title,
+            operation=operation,
+            source=source,
+            trigger="manual_command",
+            instance=instance,
+            tweet_count=total,
+            sent_count=sent,
+            target_success_ratio=f"{int(fully_sent)}/1",
+            result_status=status,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
+
+    @staticmethod
+    def _log_manual_no_send_task(
+        title: str,
+        *,
+        operation: str,
+        source: str,
+        started: float,
+        status: str,
+        instance: str = "",
+        error_detail: str = "",
+        warning: bool = False,
+    ) -> None:
+        safe_task_log(
+            logging.WARNING if warning else logging.INFO,
+            title,
+            operation=operation,
+            source=source,
+            trigger="manual_command",
+            instance=instance,
+            tweet_count=0,
+            sent_count=0,
+            result_status=status,
+            error_detail=error_detail,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
+
     async def _cmd_tweets_impl(
         self,
         event: AstrMessageEvent,
@@ -79,6 +137,7 @@ class ManualCommandMixin:
             event.plain_result(f"正在获取 @{username} 最近最多 {limit} 条推文...")
         )
 
+        started = time.perf_counter()
         if hasattr(self.nitter, "begin_run_host_skip"):
             self.nitter.begin_run_host_skip()
         try:
@@ -92,6 +151,16 @@ class ManualCommandMixin:
                     username, limit, rss_error=exc
                 )
                 if not tweets:
+                    self._log_manual_no_send_task(
+                        "推文查询失败",
+                        operation="user_timeline",
+                        source=f"@{username}",
+                        instance=instance,
+                        started=started,
+                        status="抓取失败",
+                        error_detail=f"RSS 与 HTML 回退均不可用: {exc}",
+                        warning=True,
+                    )
                     await event.send(
                         event.plain_result(
                             f"获取 @{username} 推文失败：Nitter RSS 与 HTML 回退均不可用。"
@@ -104,6 +173,14 @@ class ManualCommandMixin:
                         username, limit, rss_error=None
                     )
                     if not tweets:
+                        self._log_manual_no_send_task(
+                            "推文查询完成",
+                            operation="user_timeline",
+                            source=f"@{username}",
+                            instance=instance,
+                            started=started,
+                            status="无公开推文",
+                        )
                         await event.send(
                             event.plain_result(f"没有找到 @{username} 的公开推文。")
                         )
@@ -112,7 +189,16 @@ class ManualCommandMixin:
         finally:
             if hasattr(self.nitter, "end_run_host_skip"):
                 self.nitter.end_run_host_skip()
-        await self._send_tweets_response(event, username, instance, tweets)
+        sent_count = await self._send_tweets_response(event, username, instance, tweets)
+        self._log_manual_send_task(
+            "推文查询完成",
+            operation="user_timeline",
+            source=f"@{username}",
+            instance=instance,
+            tweet_count=len(tweets),
+            sent_count=sent_count,
+            started=started,
+        )
 
     async def _cmd_tweet_search_impl(self, event: AstrMessageEvent, args=GreedyStr):
         """HTML 搜索公开推文：标签请带 #，短语直接写。"""
@@ -130,11 +216,27 @@ class ManualCommandMixin:
             )
             return
 
+        search_started = time.perf_counter()
         html_backend = getattr(self, "html_backend", None)
         if html_backend is None:
+            self._log_manual_no_send_task(
+                "推文搜索失败",
+                operation="tweet_search",
+                source=query,
+                started=search_started,
+                status="搜索后端未初始化",
+                warning=True,
+            )
             await event.send(event.plain_result("搜索后端未初始化。"))
             return
         if not getattr(html_backend.config, "search_enabled", True):
+            self._log_manual_no_send_task(
+                "推文搜索跳过",
+                operation="tweet_search",
+                source=query,
+                started=search_started,
+                status="搜索已关闭",
+            )
             await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
             return
 
@@ -178,6 +280,15 @@ class ManualCommandMixin:
                 abort_reservation(reservation_token)
                 raise
             buf.finalize(reservation_token, sent_count)
+            self._log_manual_send_task(
+                "推文搜索完成",
+                operation="tweet_search",
+                source=query,
+                instance=f"{instance} (会话缓存)",
+                tweet_count=len(tweets),
+                sent_count=sent_count,
+                started=search_started,
+            )
             return
 
         self._mark_cooldown(event, scope="search")
@@ -213,12 +324,30 @@ class ManualCommandMixin:
                 )
             except Exception as exc:
                 logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
+                self._log_manual_no_send_task(
+                    "推文搜索失败",
+                    operation="tweet_search",
+                    source=query,
+                    started=search_started,
+                    status="抓取失败",
+                    error_detail=str(exc),
+                    warning=True,
+                )
                 await event.send(
                     event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
                 )
                 return
         except Exception as exc:
             logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
+            self._log_manual_no_send_task(
+                "推文搜索失败",
+                operation="tweet_search",
+                source=query,
+                started=search_started,
+                status="抓取失败",
+                error_detail=str(exc),
+                warning=True,
+            )
             await event.send(
                 event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
             )
@@ -233,6 +362,14 @@ class ManualCommandMixin:
         reservation_token, tweets = buf.reserve(limit)
         if not tweets:
             buf.rollback(reservation_token)
+            self._log_manual_no_send_task(
+                "推文搜索完成",
+                operation="tweet_search",
+                source=query,
+                instance=buf.instance or instance or "",
+                started=search_started,
+                status="无新增结果",
+            )
             if had_known or (fetched and added == 0):
                 await event.send(
                     event.plain_result(
@@ -257,6 +394,15 @@ class ManualCommandMixin:
             abort_reservation(reservation_token)
             raise
         buf.finalize(reservation_token, sent_count)
+        self._log_manual_send_task(
+            "推文搜索完成",
+            operation="tweet_search",
+            source=query,
+            instance=buf.instance or instance or "",
+            tweet_count=len(tweets),
+            sent_count=sent_count,
+            started=search_started,
+        )
 
     async def _fetch_user_with_html_fallback(
         self, username: str, limit: int, rss_error=None

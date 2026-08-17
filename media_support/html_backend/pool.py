@@ -36,7 +36,6 @@ except ImportError:  # pragma: no cover
 class PoolConfig:
     instances: list[str] = field(default_factory=list)
     proxy: str | None = None
-    user_agent: str = ""
     timeout: float = 35.0
     session_dir: str | Path | None = None
     rate: RateLimitConfig = field(default_factory=RateLimitConfig)
@@ -143,13 +142,8 @@ class HtmlNitterPool:
         self.log = log or (lambda _m: None)
         self.limiter = shared_limiter or RateLimiter(config.rate)
         self.scores = score_book or HostScoreBook()
-        default_ua = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        )
         self.session = shared_session or HttpSession(
             proxy=config.proxy,
-            user_agent=(config.user_agent or default_ua),
             timeout=config.timeout,
             session_dir=Path(config.session_dir) if config.session_dir else None,
             log=self.log,

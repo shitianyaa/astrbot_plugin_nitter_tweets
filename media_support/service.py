@@ -56,16 +56,28 @@ except ImportError:
         MEDIA_STATUS_TRANSIENT_FAILURE,
     )
 
-from . import video_probe
-from .cache import MediaCacheMixin
-from .extensions import (
-    MEDIA_IMAGE_SUFFIXES,
-    MEDIA_TYPE_DYNAMIC,
-    MEDIA_TYPE_IMAGE,
-    MEDIA_TYPE_VIDEO,
-)
-from .network import compat_urlopen
-from .xdown import XdownMediaCandidate, XdownMediaParser
+try:
+    from . import video_probe
+    from .cache import MediaCacheMixin
+    from .extensions import (
+        MEDIA_IMAGE_SUFFIXES,
+        MEDIA_TYPE_DYNAMIC,
+        MEDIA_TYPE_IMAGE,
+        MEDIA_TYPE_VIDEO,
+    )
+    from .network import build_request_headers, compat_urlopen
+    from .xdown import XdownMediaCandidate, XdownMediaParser
+except ImportError:
+    import video_probe
+    from cache import MediaCacheMixin
+    from extensions import (
+        MEDIA_IMAGE_SUFFIXES,
+        MEDIA_TYPE_DYNAMIC,
+        MEDIA_TYPE_IMAGE,
+        MEDIA_TYPE_VIDEO,
+    )
+    from network import build_request_headers, compat_urlopen
+    from xdown import XdownMediaCandidate, XdownMediaParser
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
 
@@ -136,14 +148,6 @@ class MediaService(MediaCacheMixin):
         # 普通媒体不长期缓存；发送流程结束后由 cleanup_after_send 删除。
         self.xdown_url = str(
             config_get(config, "xdown_api_url", "https://xdown.app/api/ajaxSearch")
-        )
-        self.user_agent = str(
-            config_get(
-                config,
-                "media_user_agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-            )
         )
         self.cache_dir = _plugin_data_dir() / "cache"
         self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
@@ -363,13 +367,14 @@ class MediaService(MediaCacheMixin):
         request = Request(
             self.xdown_url,
             data=data,
-            headers={
-                "User-Agent": self.user_agent,
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": "https://xdown.app",
-                "Referer": "https://xdown.app/",
-            },
+            headers=build_request_headers(
+                accept="application/json, text/plain, */*",
+                referer="https://xdown.app/",
+                extra={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": "https://xdown.app",
+                },
+            ),
         )
         try:
             with compat_urlopen(request, self.timeout) as response:
@@ -671,17 +676,13 @@ class MediaService(MediaCacheMixin):
 
     def _media_request_headers(self, url: str) -> dict[str, str]:
         """Headers for media bytes. Twitter CDN 403s Referer xdown.app on twimg hosts."""
-        headers = {
-            "User-Agent": self.user_agent,
-            "Accept": "*/*",
-        }
         host = (urlparse(str(url or "")).hostname or "").lower()
         if host.endswith("xdown.app"):
-            headers["Referer"] = "https://xdown.app/"
+            referer = "https://xdown.app/"
         else:
             # video.twimg.com / pbs.twimg.com accept x.com (or empty), not xdown.app
-            headers["Referer"] = "https://x.com/"
-        return headers
+            referer = "https://x.com/"
+        return build_request_headers(accept="*/*", referer=referer)
 
     @classmethod
     def _is_retryable_download_error(cls, exc: Exception) -> bool:

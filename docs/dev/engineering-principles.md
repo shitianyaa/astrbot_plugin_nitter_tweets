@@ -9,6 +9,9 @@
 - 调度行为放 `scheduler/`。
 - 平台差异放 `delivery/` 和 `PlatformResolver`。
 - 输出格式放 `rendering/tweets.py`。
+- 被动 status 链接放 `command_handlers/link_preview.py` 与 `media_support/status_*`；不要在 `main.py` 或 Sender 中重新实现 URL 白名单。
+- 结构化日志和脱敏放 `shared/observability.py`；业务模块只提供字段，不拼接敏感响应正文。
+- HTML 门禁检测必须以真实时间线内容优先，避免通用挑战文案覆盖有效结果。
 
 ## 兼容优先
 

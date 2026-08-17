@@ -17,6 +17,7 @@ delivery/            # 平台发送适配器
 media_support/       # RSS、媒体、缓存
 tests/               # 回归测试
 scripts/             # 本地诊断脚本
+testignore/          # 被 .gitignore 忽略的一次性测试和网络探测
 docs/                # 项目和开发文档
 ```
 
@@ -29,6 +30,8 @@ python scripts/probe_nitter_fetch.py nasa 5
 python scripts/probe_nitter_fetch.py nasa 5 --include-reposts
 python scripts/probe_nitter_fetch.py nasa 5 --skip-plain-text
 ```
+
+List/HTML 探测脚本、代理测试和临时输出放在 `testignore/`。需要本地代理时，在脚本或命令中显式使用 `http://127.0.0.1:3067` 等代理地址；不要把 Cookie、token 或完整会话响应写入文件。测试脚本应记录目标 URL、实例、代理和结果摘要，便于复现。
 
 视频下载：
 
@@ -49,3 +52,4 @@ python scripts/test_video_download.py
 - `tests/downloads/`
 - `.pytest_cache/`
 - `.ruff_cache/`
+- 仓库根目录的一次性测试脚本（请移入 `testignore/`）

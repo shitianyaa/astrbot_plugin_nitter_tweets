@@ -1,6 +1,6 @@
 # Nitter 实例配置指南
 
-本文档详细说明插件的 RSS vs HTML 双路架构、默认实例配置、回退机制和最佳实践。
+本文档详细说明插件的 RSS vs HTML 双路架构、默认候选实例、回退机制和最佳实践。公共实例的可用性会随时间、地区、限流和门禁变化；文中的默认列表不是稳定性或成功率保证。
 
 - 返回 [README](../README.md)
 - 查看 [进阶说明](./advanced.md)
@@ -21,7 +21,7 @@
 ### 为什么分离？
 
 **RSS 路径（博主订阅）：**
-- ✅ `nitter.net` 的 RSS 非常稳定
+- ✅ `nitter.net` 常作为 RSS 候选
 - ✅ XML 解析简单可靠
 - ✅ 适合定时轮询
 - ❌ **不支持搜索**（只能获取用户时间线）
@@ -29,8 +29,8 @@
 
 **HTML 路径（标签搜索）：**
 - ✅ 支持标签和短语搜索
-- ✅ 3 个实例冗余（容错能力强）
-- ✅ 自动门禁解算（Anubis PoW、Poast SHA1）
+- ✅ 默认提供多个候选实例（便于轮换）
+- ✅ 支持常见门禁检测/解算（Anubis PoW、Poast SHA1）
 - ❌ 需要解析 HTML（比 RSS 复杂）
 - ❌ 部分实例 RSS 路径返回 403
 
@@ -82,10 +82,9 @@
 ```
 
 **特点：**
-- 3x 实例冗余
-- CF 实验验证通过
-- 自动门禁解算
-- **不要添加 `nitter.net`**（它的搜索已不可用）
+- 默认提供多个候选站点，运行时按成功率和冷却状态选择并轮换
+- 自动处理代码已识别的门禁；具体耗时和是否可用取决于实例当前响应
+- **不要添加 `nitter.net`**（其搜索路径可能返回空页面）
 
 **门禁类型说明：**
 
@@ -95,7 +94,7 @@
 | `poast.org` | Poast SHA1 | ~5-50ms | 基于 SHA1 迭代验证 |
 | `kareem.one` | 轻量门禁 | <5ms | 简单验证或无门禁 |
 
-插件会自动检测并解算这些门禁，用户无需手动操作。
+插件会自动检测并解算已支持的门禁，用户无需手动操作。明确 Anubis/Poast 挑战结构优先进入解算；没有明确挑战结构时，真实时间线内容优先于通用门禁文字和 Cloudflare beacon。HTTP 403、429、超时或未支持的门禁仍可能导致轮换。
 
 ---
 
@@ -309,20 +308,23 @@ instances: ["A", "B", "C"]
 
 **日志关键字：**
 ```
-# 成功
-[NitterTweets] RSS fetch ok: instance=nitter.net, username=NASA, tweets=5
+# 后台检查成功/无更新/有告警均使用同一结构化摘要；实际字段按任务类型出现
+[NitterTweets] 推文检查任务完成
+  分组名称: 科技订阅 (default)
+  订阅类型: 博主推文 (共 1 个源)
+  生效实例: nitter.net
+  抓取状态: 正常无更新 1 个
+  水位状态: 已推进 1 个
+  推文统计: 无新推文
+  推送结果: 未触发推送（无新推文）
+  任务耗时: 450 毫秒
 
-# 冷却
-[NitterTweets] defer cooling nitter.net remain=45s
-
-# 失败
-[NitterTweets] RSS 轮换失败: username=NASA, tried=3, errors=[...]
-
-# HTML 搜索成功
-[NitterTweets][html] search ok host=poast.org query=#NASA
-
-# HTML 门禁解算
-[NitterTweets][html] anubis: solved challenge=abc123 in 45ms
+# 轮换、无效目标、基准重建失败和发送部分失败会附加明细，并提升到 warning
+[NitterTweets] 推文检查任务完成
+  轮换轨迹: 博主 @NASA: nitter.top[HTTP 403] ➔ nitter.net[成功]
+  推送结果: 成功推送 1/2 个目标
+  无效推送目标: bad-target
+  发送状态提示: 媒体部分失败
 ```
 
 ---

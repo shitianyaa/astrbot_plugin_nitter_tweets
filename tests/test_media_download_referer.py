@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
+from media_support.network import BUILTIN_USER_AGENT
 from media_support.service import MediaService
 
 
 def _service() -> MediaService:
-    service = object.__new__(MediaService)
-    service.user_agent = "test-agent"
-    return service
+    return object.__new__(MediaService)
 
 
 def test_twimg_video_uses_x_com_referer_not_xdown():
     headers = _service()._media_request_headers(
         "https://video.twimg.com/amplify_video/1/vid/avc1/720x1280/a.mp4?tag=29"
     )
-    assert headers["User-Agent"] == "test-agent"
+    assert headers["User-Agent"] == BUILTIN_USER_AGENT
     assert headers["Referer"] == "https://x.com/"
 
 

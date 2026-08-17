@@ -48,12 +48,6 @@
         "default": 15.0,
         "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。"
       },
-      "user_agent": {
-        "description": "Nitter 请求 User-Agent",
-        "type": "string",
-        "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
-        "hint": "发送给 Nitter 实例的 User-Agent。"
-      },
       "filter_reposts_enabled": {
         "description": "转发过滤总开关",
         "type": "bool",
@@ -177,11 +171,6 @@
         "type": "string",
         "default": "https://xdown.app/api/ajaxSearch",
         "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
-      },
-      "media_user_agent": {
-        "description": "媒体解析/下载 User-Agent",
-        "type": "string",
-        "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
       }
     }
   },
@@ -398,7 +387,7 @@
                 "description": "发送时去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文/译文中的链接会保留；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文/译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
                     "hide_original_when_translated": {
                         "description": "有翻译时只发译文（隐藏原文）",
@@ -535,7 +524,7 @@
                 "description": "发送时去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文/译文中的链接会保留；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文/译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
               },
                     "hide_original_when_translated": {
                         "description": "有翻译时只发译文（隐藏原文）",
@@ -671,7 +660,7 @@
                 "description": "发送时去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时正文和译文中的链接会保留。默认开启。"
+                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文和译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理。默认开启。"
               },
               "hide_original_when_translated": {
                 "description": "有翻译时只发译文（隐藏原文）",
@@ -743,7 +732,7 @@
         "description": "后台日志简略模式",
         "type": "bool",
         "default": true,
-        "hint": "开启后只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；同时收敛 HTML 搜索/回退过程日志（session load、每次 try、冷却跳过、重复 gate ok 等）。关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
+        "hint": "开启后只保留结构化任务摘要（分组、类型、来源、生效实例、轮换轨迹、抓取/水位状态、过滤统计、实际发送比、无效目标、基准重建、耗时）以及失败详情和关键 warning/error；发送未完成、无效目标、基准重建或媒体待重试会使用 warning 级别。同时收敛 HTML 搜索/回退过程日志（session load、每次 try、冷却跳过、重复 gate ok 等）。关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
       }
     }
   },
@@ -870,13 +859,6 @@
     "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。",
     "invisible": true
   },
-  "user_agent": {
-    "description": "Nitter 请求 User-Agent",
-    "type": "string",
-    "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
-    "hint": "发送给 Nitter 实例的 User-Agent。",
-    "invisible": true
-  },
   "send_image_attachments": {
     "description": "发送图片附件",
     "type": "bool",
@@ -930,12 +912,6 @@
     "type": "string",
     "default": "https://xdown.app/api/ajaxSearch",
     "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。",
-    "invisible": true
-  },
-  "media_user_agent": {
-    "description": "媒体解析/下载 User-Agent",
-    "type": "string",
-    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     "invisible": true
   },
   "translate_enabled": {

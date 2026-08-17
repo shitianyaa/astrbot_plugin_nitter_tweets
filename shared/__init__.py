@@ -42,6 +42,25 @@ from .utils import (
     strip_external_links,
 )
 
+try:
+    from .observability import (
+        LOG_PREFIX,
+        format_elapsed,
+        safe_log,
+        safe_task_log,
+        sanitize_diagnostic,
+        sanitize_sensitive_text,
+    )
+except ImportError:
+    from observability import (
+        LOG_PREFIX,
+        format_elapsed,
+        safe_log,
+        safe_task_log,
+        sanitize_diagnostic,
+        sanitize_sensitive_text,
+    )
+
 __all__ = [
     "DEFAULT_GROUP_ALIASES",
     "DEFAULT_GROUP_ID",
@@ -49,6 +68,7 @@ __all__ = [
     "DEFAULT_INSTANCES",
     "GLOBAL_GROUP_ID",
     "LEGACY_GLOBAL_GROUP_ID",
+    "LOG_PREFIX",
     "MEDIA_SIZE_LIMIT_ERROR",
     "MEDIA_STATUS_NO_CANDIDATE",
     "MEDIA_STATUS_POLICY_SKIPPED",
@@ -65,6 +85,7 @@ __all__ = [
     "clean_text",
     "extract_external_links",
     "file_uri",
+    "format_elapsed",
     "format_subscription_count",
     "format_subscription_source",
     "format_tweet_published",
@@ -79,5 +100,9 @@ __all__ = [
     "normalize_stable_group_id",
     "normalize_username",
     "safe_call",
+    "safe_log",
+    "safe_task_log",
+    "sanitize_diagnostic",
+    "sanitize_sensitive_text",
     "strip_external_links",
 ]

@@ -35,9 +35,14 @@ except ImportError:
         normalize_external_links,
     )
 
-from .host_score import HostScoreBook
-from .network import compat_urlopen
-from .rss_run_skip import RssRunHostSkip
+try:
+    from .host_score import HostScoreBook
+    from .network import build_request_headers, compat_urlopen
+    from .rss_run_skip import RssRunHostSkip
+except ImportError:
+    from host_score import HostScoreBook
+    from network import build_request_headers, compat_urlopen
+    from rss_run_skip import RssRunHostSkip
 
 
 class TransientFetchError(RuntimeError):
@@ -236,11 +241,6 @@ class NitterClient:
         self.instances = load_instances(config_get(config, "instances"))
         self.timeout = clamp_float(
             config_get(config, "request_timeout", 12.0), 3.0, 60.0
-        )
-        self.user_agent = config_get(
-            config,
-            "user_agent",
-            "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.3)",
         )
         self.retry_attempts = clamp_int(config_get(config, "retry_attempts", 2), 1, 5)
         self.retry_delay_seconds = clamp_float(
@@ -1095,10 +1095,11 @@ class NitterClient:
         rss_url = self._rss_url(instance, username, cursor)
         request = Request(
             rss_url,
-            headers={
-                "User-Agent": self.user_agent,
-                "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
-            },
+            headers=build_request_headers(
+                accept=(
+                    "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
+                )
+            ),
         )
         try:
             with compat_urlopen(request, self.timeout) as response:

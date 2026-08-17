@@ -22,7 +22,6 @@ docs/dev/module-split-plan.md
 docs/dev/phase1-release-prep.md
 Progress/
 
-# Ad-hoc debug scripts and their captured output at the repo root (keep on
-# disk; the real suite lives under tests/)
-/test_*.py
-/test_*.txt
+# Ad-hoc debug scripts and captured output (keep on disk; the real suite lives
+# under tests/)
+/testignore/

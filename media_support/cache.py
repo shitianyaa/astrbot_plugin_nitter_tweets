@@ -11,8 +11,10 @@ from .extensions import MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, classify_media_path
 
 try:
     from ..shared import TweetItem, TweetMedia
+    from ..shared.observability import LOG_PREFIX
 except ImportError:
     from shared import TweetItem, TweetMedia
+    from shared.observability import LOG_PREFIX
 
 
 @dataclass(slots=True)
@@ -179,14 +181,17 @@ class MediaCacheMixin:
                 media.path = None
 
         if result.removed or result.failed or result.skipped_active:
-            log_func = logger.warning if result.failed else logger.info
-            log_func(
-                "[NitterTweets] 发送后媒体清理完成: "
+            message = (
+                f"{LOG_PREFIX} 发送后媒体清理完成: "
                 f"共删除 {result.removed} 个媒体文件"
                 f"（图片 {result.removed_images}，视频 {result.removed_videos}，"
                 f"其他 {result.removed_other}），失败 {result.failed} 个，"
                 f"活跃跳过 {result.skipped_active} 个"
             )
+            if result.failed:
+                logger.warning(message)
+            else:
+                logger.debug(message)
 
     def clear_cache(self) -> MediaCacheCleanupResult:
         result = MediaCacheCleanupResult()

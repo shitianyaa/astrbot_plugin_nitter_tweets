@@ -2,9 +2,13 @@
 
 ## 基础命令
 
+`pytest.ini` 将默认收集范围限制为 `tests/`，因此 `testignore/` 中的临时探测脚本不会被全量测试误执行。
+
 ```powershell
 python -m pytest -q
 ruff check .
+ruff format --check .
+git diff --check
 python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler/config.py scheduler/models.py media_support/client.py media_support/service.py delivery/sender.py
 ```
 
@@ -20,6 +24,8 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 缓存清理 | `python -m pytest -q tests/test_media_cleanup.py` | 递归清理、类型统计、空目录 |
 | 存储适配和旧 KV 迁移 | `python -m pytest -q tests/test_storage_adapter.py` | KV 到 SQLite |
 | SQLite 线程安全 | `python -m pytest -q tests/test_sqlite_threading.py` | `asyncio.to_thread` 调用 |
+| 结构化日志与 HTML 门禁 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、显式 Anubis/Poast 优先，真实时间线优先于通用门禁文案 |
+| 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
 
 ## 高风险改动
 
@@ -34,3 +40,5 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 配置迁移 | 老用户配置丢失 | 补 `config/compat.py` 相关测试 |
 
 改公共模型、`scheduler/`、`delivery/sender.py`、`storage/` 或 `config/compat.py` 后，优先跑全量测试。
+
+网络探测属于显式集成测试，不纳入默认 pytest；临时脚本统一放在 `testignore/`，并通过 `http_proxy`/`https_proxy` 或脚本参数记录代理配置。代理、Cookie 和响应正文不得进入提交或日志。

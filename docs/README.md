@@ -8,6 +8,7 @@
 - `docs/advanced.md`: 用户侧进阶说明、平台差异、完整配置参考。
 - `docs/faq.md`: 黑名单、历史重推、seen、发送失败和扫描水位的常见问题。
 - `docs/twitter-lists.md`: List 分组配置、调度、镜像测试和故障排查。
+- `docs/instances-guide.md`: RSS 与 HTML 实例池、轮换、门禁和回退策略。
 - `docs/project/overview.md`: 插件定位、能力边界、入口。
 - `docs/project/architecture.md`: 模块关系、数据流、发送链路、存储边界。
 - `docs/project/configuration.md`: 配置字段来源、迁移规则、同步要求。
