@@ -114,7 +114,6 @@ def test_download_registers_lease_before_return_and_cleanup_releases_it(
     service.cache_dir.mkdir()
     service.max_bytes = 1024
     service.timeout = 5.0
-    service.user_agent = "test"
 
     class _Response:
         headers: ClassVar[dict] = {}
@@ -153,7 +152,6 @@ def test_concurrent_same_url_downloads_share_one_final_file(tmp_path, monkeypatc
     service.cache_dir.mkdir()
     service.max_bytes = 1024
     service.timeout = 5.0
-    service.user_agent = "test"
     barrier = Barrier(2)
 
     class _Response:

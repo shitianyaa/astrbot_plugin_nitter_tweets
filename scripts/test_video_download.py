@@ -54,7 +54,6 @@ def _build_config(args: argparse.Namespace) -> dict:
         "media_max_size_mb": args.max_size_mb,
         "max_video_duration_minutes": args.max_duration_minutes,
         "xdown_api_url": args.xdown_url,
-        "media_user_agent": args.user_agent,
         "video_resolution_preference": args.resolution,
     }
 
@@ -202,14 +201,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--xdown-url",
         default="https://xdown.app/api/ajaxSearch",
-    )
-    parser.add_argument(
-        "--user-agent",
-        default=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0 Safari/537.36"
-        ),
     )
     return parser.parse_args()
 

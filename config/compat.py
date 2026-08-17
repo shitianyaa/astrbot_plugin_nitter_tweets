@@ -85,6 +85,8 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "deferred_media_retention_hours",
         "deferred_media_download_interval_seconds",
         "scheduled_fetch_limit",
+        "user_agent",
+        "media_user_agent",
     }
 )
 REMOVED_FEATURE_CONFIG_NAMES = (
@@ -99,7 +101,6 @@ CONFIG_GROUP_BY_KEY = {
     "retry_attempts": "basic",
     "retry_delay_seconds": "basic",
     "cooldown_seconds": "basic",
-    "user_agent": "basic",
     "filter_reposts_enabled": "basic",
     "auto_parse_tweet_links_enabled": "basic",
     "user_html_fallback": "basic",
@@ -119,7 +120,6 @@ CONFIG_GROUP_BY_KEY = {
     "media_timeout": "media",
     "media_max_size_mb": "media",
     "xdown_api_url": "media",
-    "media_user_agent": "media",
     "translate_enabled": "ai_translation",
     "translation_provider_id": "ai_translation",
     "translate_min_chars": "ai_translation",
@@ -162,7 +162,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "retry_attempts",
     "retry_delay_seconds",
     "cooldown_seconds",
-    "user_agent",
     "auto_parse_tweet_links_enabled",
     "user_html_fallback",
     "search_enabled",
@@ -180,7 +179,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "media_timeout",
     "media_max_size_mb",
     "xdown_api_url",
-    "media_user_agent",
     "translate_enabled",
     "translation_provider_id",
     "translate_min_chars",
@@ -638,7 +636,7 @@ def _normalize_list(value) -> list:
     if value is None:
         return []
     if isinstance(value, str):
-        items = value.replace("\uFF0C", ",").split(",")
+        items = value.replace("\uff0c", ",").split(",")
     elif isinstance(value, list):
         items = value
     else:

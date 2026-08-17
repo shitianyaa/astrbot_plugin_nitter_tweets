@@ -48,12 +48,6 @@
         "default": 15.0,
         "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。"
       },
-      "user_agent": {
-        "description": "Nitter 请求 User-Agent",
-        "type": "string",
-        "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
-        "hint": "发送给 Nitter 实例的 User-Agent。"
-      },
       "filter_reposts_enabled": {
         "description": "转发过滤总开关",
         "type": "bool",
@@ -177,11 +171,6 @@
         "type": "string",
         "default": "https://xdown.app/api/ajaxSearch",
         "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
-      },
-      "media_user_agent": {
-        "description": "媒体解析/下载 User-Agent",
-        "type": "string",
-        "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
       }
     }
   },
@@ -870,13 +859,6 @@
     "hint": "同一会话同一用户的命令冷却，降低公共实例压力。设为 0 可关闭。",
     "invisible": true
   },
-  "user_agent": {
-    "description": "Nitter 请求 User-Agent",
-    "type": "string",
-    "default": "Mozilla/5.0 (compatible; AstrBotNitterTweets/0.4)",
-    "hint": "发送给 Nitter 实例的 User-Agent。",
-    "invisible": true
-  },
   "send_image_attachments": {
     "description": "发送图片附件",
     "type": "bool",
@@ -930,12 +912,6 @@
     "type": "string",
     "default": "https://xdown.app/api/ajaxSearch",
     "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。",
-    "invisible": true
-  },
-  "media_user_agent": {
-    "description": "媒体解析/下载 User-Agent",
-    "type": "string",
-    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     "invisible": true
   },
   "translate_enabled": {

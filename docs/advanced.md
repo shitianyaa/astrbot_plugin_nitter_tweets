@@ -130,9 +130,10 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
-| `user_agent` | 请求 Nitter RSS 时使用的 User-Agent。 |
 | `filter_reposts_enabled` | Blogger、Tag、List 后台转发过滤总开关，默认开启。只有总开关与分组同名子开关都开启时才过滤；全局关闭时所有分组保留转发。Blogger 会比较 RSS item 主链接作者和订阅源，博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。 |
 | `auto_parse_tweet_links_enabled` | 是否被动解析聊天中的公开 X/Twitter status 链接，默认关闭。开启后无需命令；忽略 Bot 自身消息；翻译与「有译文时显示原文」跟随全局；不写 seen/push history；不受订阅、冷却和全局图/视频开关限制。同会话同帖约 60 秒防抖，单条消息最多 3 个不同链接。勿与同类链接解析插件同时开启以免重复回复。 |
+
+插件对 RSS、HTML/List、状态解析、媒体解析和下载统一使用内置浏览器请求标识；User-Agent 不再作为配置项，避免不同请求链路使用互相冲突的身份。各协议所需的 `Accept`、`Referer`、`Origin` 和 `Content-Type` 仍分别设置。
 
 ### 后台检查与推送
 
@@ -192,7 +193,6 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `media_timeout` | 媒体解析和下载超时秒数。 |
 | `media_max_size_mb` | 单个媒体大小上限。 |
 | `xdown_api_url` | Twitter/X 媒体解析 API。 |
-| `media_user_agent` | 解析和下载媒体时使用的 User-Agent。 |
 
 ### AI
 

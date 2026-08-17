@@ -23,6 +23,30 @@ from urllib.request import (
 )
 
 
+BUILTIN_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+BUILTIN_ACCEPT_LANGUAGE = "en-US,en;q=0.9,zh-CN;q=0.8"
+
+
+def build_request_headers(
+    *,
+    accept: str | None = None,
+    referer: str | None = None,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build a fresh header mapping with the plugin's fixed browser identity."""
+    headers = dict(extra or {})
+    headers["User-Agent"] = BUILTIN_USER_AGENT
+    headers["Accept-Language"] = BUILTIN_ACCEPT_LANGUAGE
+    if accept:
+        headers["Accept"] = accept
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
 class UnsafeUrlError(ValueError):
     """Raised when a remote URL is not safe for server-side fetching."""
 
@@ -342,6 +366,14 @@ def safe_urlopen(
     resolve_dns: bool = True,
 ):
     """Open a public HTTP(S) URL with per-hop redirect validation."""
+
+    if isinstance(request, Request):
+        request.add_header("User-Agent", BUILTIN_USER_AGENT)
+        request.add_header("Accept-Language", BUILTIN_ACCEPT_LANGUAGE)
+    else:
+        request = Request(str(getattr(request, "full_url", request)))
+        for key, value in build_request_headers().items():
+            request.add_header(key, value)
 
     target = (
         request.full_url

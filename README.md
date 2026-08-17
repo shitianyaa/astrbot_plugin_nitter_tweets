@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.5-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.6-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -24,6 +24,7 @@
 - [预览](#预览)
 - [能做什么](#能做什么)
 - [5 分钟上手](#5-分钟上手)
+- [一键部署 Nitter](#一键部署-nitter)
 - [常用命令](#常用命令)
 - [常用配置](#常用配置)
 - [常见问题](#常见问题)
@@ -120,6 +121,18 @@ lark:GroupMessage:oc_xxxxxxxxxxxxx
 QQ Official 群主动推送需要 AstrBot `>=4.26.0`。正文 Markdown 主动发送直接使用官方 `group_openid` 接口，不依赖 AstrBot 的群场景缓存；图片、视频仍由 AstrBot 负责上传和发送，具体媒体能力以适配器为准。
 
 以 `/sid` 返回为准，不要手猜平台 ID。
+
+## 一键部署 Nitter
+
+如果你没有可用的公共镜像，也可以在 Linux VPS 上使用 [nitter-installer](https://github.com/shitianyaa/nitter-installer) 快速部署一个自建实例。该脚本使用 Docker Compose 编排 Nitter 和 Redis，并可选配置端口、域名、Nginx 反代、代理和账号凭证：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/nitter.sh -o nitter.sh && chmod +x nitter.sh && ./nitter.sh
+```
+
+部署完成后，将 `http://<服务器IP>:8080`（或你的域名）填入本插件的 `instances` / `search_instances`。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
+
+> 资源说明：一次测试中，若只统计脚本和静态配置文件，观测到约 **10 MB**。这只是特定环境和版本下的静态文件观测值，不代表完整部署的磁盘或内存占用；Docker 镜像、Redis 数据、日志、缓存、系统依赖和 Nginx 都会额外占用资源。实际用量请在 VPS 上用 `du -sh ~/nitter`、`docker system df` 和 `free -h` 自行确认。
 
 ## 常用命令
 

@@ -13,14 +13,14 @@ except ImportError:  # pragma: no cover
 
 try:
     from ..host_score import HostScoreBook
-    from .http_session import DEFAULT_UA, HttpSession
+    from .http_session import HttpSession
     from .logging_util import QuietHtmlLog
     from .pool import HtmlNitterPool, HtmlSearchResult, PoolConfig
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
     from media_support.host_score import HostScoreBook
-    from media_support.html_backend.http_session import DEFAULT_UA, HttpSession
+    from media_support.html_backend.http_session import HttpSession
     from media_support.html_backend.logging_util import QuietHtmlLog
     from media_support.html_backend.pool import (
         HtmlNitterPool,
@@ -88,7 +88,6 @@ class HtmlNitterService:
         self.limiter = RateLimiter(rate)
         self.session = HttpSession(
             proxy=self.config.proxy,
-            user_agent=DEFAULT_UA,
             timeout=self.config.html_timeout,
             session_dir=Path(session_dir) if session_dir else None,
             log=self.log,

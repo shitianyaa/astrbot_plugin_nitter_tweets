@@ -9,7 +9,13 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 from command_handlers.manual import ManualCommandMixin
-from config.compat import migrate_legacy_grouped_config
+from config.compat import (
+    LEGACY_CONFIG_MIGRATION_KEY,
+    MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
+    SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
+    TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
+    migrate_legacy_grouped_config,
+)
 from main import NitterTweetsPlugin
 from media_support.client import NitterClient
 from media_support.html_backend.service import (
@@ -46,6 +52,10 @@ def test_schema_no_blogger_html_instances_key():
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     basic = schema["basic"]["items"]
     assert "blogger_html_instances" not in basic
+    assert "user_agent" not in basic
+    assert "user_agent" not in schema
+    assert "media_user_agent" not in schema["media"]["items"]
+    assert "media_user_agent" not in schema
     assert basic["instances"]["default"] == ["https://nitter.net"]
     assert basic["search_instances"]["default"] == [
         "https://nitter.tiekoetter.com",
@@ -67,6 +77,34 @@ def test_schema_no_blogger_html_instances_key():
     assert marker["type"] == "bool"
     assert marker["default"] is False
     assert marker.get("invisible") is True
+
+
+def test_removed_user_agent_config_is_persisted_by_startup_migration():
+    class SavingConfig(dict):
+        save_calls = 0
+
+        def save_config(self):
+            self.save_calls += 1
+
+    config = SavingConfig(
+        {
+            "basic": {"user_agent": "legacy-rss", "request_timeout": 12.0},
+            "media": {"media_user_agent": "legacy-media", "media_timeout": 25.0},
+            "user_agent": "legacy-top-level-rss",
+            "media_user_agent": "legacy-top-level-media",
+            LEGACY_CONFIG_MIGRATION_KEY: True,
+            MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
+            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
+            TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY: True,
+        }
+    )
+
+    assert migrate_legacy_grouped_config(config) is True
+    assert config["basic"] == {"request_timeout": 12.0}
+    assert config["media"] == {"media_timeout": 25.0}
+    assert "user_agent" not in config
+    assert "media_user_agent" not in config
+    assert config.save_calls == 1
 
 
 def test_html_backend_builder_parses_legacy_string_values_safely():

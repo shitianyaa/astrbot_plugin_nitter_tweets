@@ -24,23 +24,25 @@ from urllib.request import (
 
 try:
     from ..network import (
+        BUILTIN_USER_AGENT,
         SafeHTTPHandler,
         SafeHTTPSHandler,
         SafeRedirectHandler,
+        build_request_headers,
         validate_http_url,
     )
 except ImportError:  # pragma: no cover
     from media_support.network import (
+        BUILTIN_USER_AGENT,
         SafeHTTPHandler,
         SafeHTTPSHandler,
         SafeRedirectHandler,
+        build_request_headers,
         validate_http_url,
     )
 
-DEFAULT_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
+# Backward-compatible name for integrations which imported the old HTML constant.
+DEFAULT_UA = BUILTIN_USER_AGENT
 HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 _SAFE_COOKIE_HOST_RE = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 _WINDOWS_RESERVED_BASENAMES = {
@@ -143,13 +145,11 @@ class HttpSession:
         self,
         *,
         proxy: str | None = None,
-        user_agent: str = DEFAULT_UA,
         timeout: float = 35.0,
         session_dir: Path | None = None,
         log: Callable[[str], None] | None = None,
     ):
         self.proxy = (proxy or "").strip() or None
-        self.user_agent = user_agent
         self.timeout = timeout
         self.session_dir = Path(session_dir) if session_dir else None
         self.log = log or (lambda _m: None)
@@ -187,13 +187,7 @@ class HttpSession:
             validate_http_url(url, resolve_dns=not bool(self.proxy))
         except Exception as exc:
             return RawResponse(-1, url, b"", 0.0, f"{type(exc).__name__}: {exc}")
-        headers = {
-            "User-Agent": self.user_agent,
-            "Accept": accept,
-            "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
-        }
-        if referer:
-            headers["Referer"] = referer
+        headers = build_request_headers(accept=accept, referer=referer)
         req = Request(url, headers=headers)
         t0 = time.time()
         try:
