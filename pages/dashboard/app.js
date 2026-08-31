@@ -55,9 +55,9 @@ const els = {
   historyOrphanResult: document.getElementById("historyOrphanResult"),
   historyContent: document.getElementById("historyContent"),
   mirrorForm: document.getElementById("mirrorForm"),
-  mirrorMode: document.getElementById("mirrorMode"),
   mirrorUsername: document.getElementById("mirrorUsername"),
-  mirrorQueryLabel: document.getElementById("mirrorQueryLabel"),
+  mirrorQuery: document.getElementById("mirrorQuery"),
+  mirrorListId: document.getElementById("mirrorListId"),
   mirrorLimit: document.getElementById("mirrorLimit"),
   mirrorInstance: document.getElementById("mirrorInstance"),
   mirrorProbeBtn: document.getElementById("mirrorProbeBtn"),
@@ -94,8 +94,8 @@ const viewMeta = {
     desc: "查看成功、部分送达或发送失败记录，按分组和订阅源筛选，并选择当前推送目标重新推送。",
   },
   mirror: {
-    title: "Nitter 镜像连通诊断",
-    desc: "按模式测试博主 RSS 或标签/短语搜索；实例从配置同步（去重），不写推送记录。",
+    title: "Nitter 实例能力诊断",
+    desc: "一次测试用户 RSS、用户 HTML、搜索和可选 List；实例从配置同步，不写推送记录。",
   },
   cleanup: {
     title: "系统维护清理",
@@ -1805,64 +1805,22 @@ function renderHistoryPager(payload = state.history) {
   els.historyNextBtn.disabled = state.loading || state.actionBusy || !payload?.has_next;
 }
 
-function mirrorModeValue() {
-  return String(els.mirrorMode?.value || "blogger_rss").trim() || "blogger_rss";
-}
-
-function instancesForMirrorMode(mode) {
+function configuredMirrorInstances() {
   const lists = state.overview?.instance_lists || {};
-  const rss = Array.isArray(lists.rss)
-    ? lists.rss
+  return Array.isArray(lists.instances)
+    ? lists.instances
     : Array.isArray(state.overview?.instances)
       ? state.overview.instances
       : [];
-  if (mode === "search") {
-    return Array.isArray(lists.search) ? lists.search : [];
-  }
-  // blogger_html mode removed; always use RSS list for non-search probes.
-  return rss;
-}
-
-function syncMirrorModeUi() {
-  const mode = mirrorModeValue();
-  const isSearch = mode === "search";
-  if (els.mirrorQueryLabel) {
-    els.mirrorQueryLabel.textContent = isSearch ? "搜索内容" : "用户名";
-  }
-  if (els.mirrorUsername) {
-    els.mirrorUsername.placeholder = isSearch
-      ? "#标签 或 短语（不自动加 #）"
-      : "nasa";
-    if (isSearch && String(els.mirrorUsername.value || "").toLowerCase() === "nasa") {
-      els.mirrorUsername.value = "";
-    }
-    if (!isSearch && !String(els.mirrorUsername.value || "").trim()) {
-      els.mirrorUsername.value = "nasa";
-    }
-  }
-  const titles = {
-    blogger_rss: "配置实例（RSS）",
-    search: "配置实例（搜索）",
-  };
-  if (els.mirrorInstanceListTitle) {
-    els.mirrorInstanceListTitle.textContent = titles[mode] || titles.blogger_rss;
-  }
-  if (els.mirrorInstanceListHint) {
-    els.mirrorInstanceListHint.textContent = isSearch
-      ? "点击填入左侧 URL；留空将按顺序测试全部 search_instances"
-      : "点击填入左侧 URL；留空将按顺序测试全部 RSS instances";
-  }
 }
 
 function renderMirrorBase() {
-  syncMirrorModeUi();
-  const mode = mirrorModeValue();
-  const instances = instancesForMirrorMode(mode);
+  const instances = configuredMirrorInstances();
   if (!instances.length) {
     els.instanceList.replaceChildren(
       el("span", {
         className: "muted",
-        text: "当前模式未配置实例，可手填临时 URL",
+        text: "当前未配置实例，可手填临时 URL",
       }),
     );
     return;
@@ -2615,30 +2573,17 @@ async function probeMirror(event) {
   setBusy(true);
   hideAlert();
   try {
-    const mode = mirrorModeValue();
-    const query = els.mirrorUsername.value.trim();
+    const username = els.mirrorUsername.value.trim();
+    const query = els.mirrorQuery.value.trim();
     const instance = els.mirrorInstance.value.trim();
     const payload = {
-      mode,
+      username,
+      query,
+      list_id: els.mirrorListId.value.trim(),
       limit: Number(els.mirrorLimit.value || 5),
       instance,
-      probe_all: !instance,
     };
-    if (mode === "search") {
-      payload.query = query;
-    } else {
-      payload.username = query;
-    }
     const result = await apiPost("web/mirror/probe", payload);
-    const modeLabel = result.mode === "search" ? "搜索" : "博主 RSS";
-    const subject =
-      result.mode === "search"
-        ? result.query || result.subject || query
-        : `@${result.username || query}`;
-    const kindHint =
-      result.mode === "search" && result.kind
-        ? ` · ${result.kind === "tag" ? "标签" : "短语"}`
-        : "";
     const renderTweets = (tweets) =>
       (tweets || []).map((tweet) => {
         const link = externalLink(tweet.link, tweet.status_id || tweet.link || "");
@@ -2647,8 +2592,34 @@ async function probeMirror(event) {
       });
     if (Array.isArray(result.results)) {
       const summary = result.summary || {};
-      const cards = result.results.map((item) =>
-        el("div", { className: "panel mirror-probe-card" }, [
+      const checkLabels = {
+        rss_user: "用户 RSS",
+        html_user: "用户 HTML",
+        search: "搜索",
+        list: "List",
+      };
+      const cards = result.results.map((item) => {
+        const checks = Object.entries(item.checks || {}).map(([name, check]) =>
+          el("div", { className: "panel mirror-probe-card" }, [
+            el("div", { className: "panel-head" }, [
+              el("h3", { text: checkLabels[name] || name }),
+              el("span", {
+                className: `badge ${check.success ? "ok" : "warning"}`,
+                text: check.skipped ? "已关闭" : check.success ? "成功" : "失败",
+              }),
+            ]),
+            el("p", {
+              className: "muted",
+              text: check.success
+                ? `${formatNumber(check.tweet_count)} 条 · ${formatNumber(check.duration_ms)} ms`
+                : check.error || "实例测试失败",
+            }),
+            check.success && check.tweets?.length
+              ? el("div", { className: "probe-list" }, renderTweets(check.tweets))
+              : null,
+          ]),
+        );
+        return el("div", { className: "panel" }, [
           el("div", { className: "panel-head" }, [
             el("h3", { text: item.instance || "未知实例" }),
             el("span", {
@@ -2656,20 +2627,12 @@ async function probeMirror(event) {
               text: item.success ? "成功" : "失败",
             }),
           ]),
-          el("p", {
-            className: "muted",
-            text: item.success
-              ? `获取 ${formatNumber(item.tweet_count)} 条 · ${formatNumber(item.duration_ms)} ms`
-              : `${item.error || "实例测试失败"} · ${formatNumber(item.duration_ms)} ms`,
-          }),
-          item.success
-            ? el("div", { className: "probe-list" }, renderTweets(item.tweets))
-            : el("p", { className: "helper-text", text: item.error || "-" }),
-        ]),
-      );
+          ...checks,
+        ]);
+      });
       els.mirrorResult.replaceChildren(
         el("div", { className: "panel" }, [
-          el("h2", { text: `${modeLabel}${kindHint} · ${subject} · 多站测试` }),
+          el("h2", { text: `实例能力测试 · @${result.username}` }),
           el("p", {
             className: "muted",
             text: `共 ${formatNumber(summary.total)} 个实例，成功 ${formatNumber(summary.succeeded)} 个，失败 ${formatNumber(summary.failed)} 个`,
@@ -2677,22 +2640,9 @@ async function probeMirror(event) {
         ]),
         el("div", { className: "stack mirror-probe-results" }, cards),
       );
-    } else {
-      els.mirrorResult.replaceChildren(
-        el("div", { className: "panel" }, [
-          el("h2", {
-            text: `${modeLabel}${kindHint} · ${subject} · ${result.instance}`,
-          }),
-          el("p", {
-            className: "muted",
-            text: `获取 ${formatNumber(result.tweet_count)} 条`,
-          }),
-          el("div", { className: "probe-list" }, renderTweets(result.tweets)),
-        ]),
-      );
     }
   } catch (error) {
-    showAlert(error.message || "镜像测试失败", "error");
+    showAlert(error.message || "实例测试失败", "error");
   } finally {
     state.actionBusy = false;
     setBusy(false);
@@ -2966,12 +2916,6 @@ function bindEvents() {
     }
   });
   els.mirrorForm.addEventListener("submit", probeMirror);
-  if (els.mirrorMode) {
-    els.mirrorMode.addEventListener("change", () => {
-      if (els.mirrorInstance) els.mirrorInstance.value = "";
-      renderMirrorBase();
-    });
-  }
   if (els.instanceList) {
     els.instanceList.addEventListener("click", (event) => {
       const target = event.target.closest("button");

@@ -1,84 +1,63 @@
-"""Test user_html_fallback: RSS failure → HTML blogger fallback."""
+"""Unified user timeline: RSS first, HTML automatic fallback."""
 
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
 from media_support.html_backend.service import HtmlBackendConfig, HtmlNitterService
+from media_support.nitter import NitterService
+from shared.utils import TweetItem
 
 
-def test_user_html_fallback_disabled_by_default():
-    """Default: user_html_fallback=false, blogger_html pool empty."""
-    config = HtmlBackendConfig(
-        user_html_fallback=False,
-        search_instances=["https://a.example", "https://b.example"],
+def _tweet(status_id: str) -> TweetItem:
+    return TweetItem(
+        text="tweet",
+        link=f"https://x.com/test/status/{status_id}",
+        published="",
     )
-    service = HtmlNitterService(config)
-
-    assert service.config.user_html_fallback is False
-    assert service.blogger_html.instances == []
-    assert len(service.search_pool.instances) == 2
 
 
-def test_user_html_fallback_enabled_shares_search_instances():
-    """user_html_fallback=true → blogger_html shares search_instances."""
-    config = HtmlBackendConfig(
-        user_html_fallback=True,
-        search_instances=["https://a.example", "https://b.example"],
+def test_html_service_has_one_shared_instance_pool():
+    service = HtmlNitterService(
+        HtmlBackendConfig(instances=["https://a.example", "https://b.example"])
     )
-    service = HtmlNitterService(config)
 
-    assert service.config.user_html_fallback is True
-    assert service.blogger_html.instances == [
+    assert service.pool.instances == ["https://a.example", "https://b.example"]
+    assert service.pool.limiter is service.limiter
+    assert service.pool.session is service.session
+
+
+def test_html_fetch_user_always_uses_the_shared_pool():
+    service = HtmlNitterService(HtmlBackendConfig(instances=["https://a.example"]))
+    service.pool.fetch_user = MagicMock(return_value=("https://a.example", []))
+
+    assert service.fetch_user("testuser", limit=5) == ("https://a.example", [])
+    service.pool.fetch_user.assert_called_once_with(
+        "testuser", 5, instance=None, filter_reposts=None
+    )
+
+
+def test_unified_user_fetch_returns_rss_without_html_request():
+    service = NitterService({"instances": ["https://a.example"]})
+    tweet = _tweet("1")
+    service.fetch_tweets = AsyncMock(return_value=("https://a.example", [tweet]))
+    service.fetch_user_html = MagicMock(side_effect=AssertionError("unexpected HTML"))
+
+    assert asyncio.run(service.fetch_user("testuser", 5)) == (
         "https://a.example",
-        "https://b.example",
-    ]
-    assert service.search_pool.instances == ["https://a.example", "https://b.example"]
-
-
-def test_fetch_user_returns_empty_when_disabled():
-    """user_html_fallback=false → fetch_user returns empty immediately."""
-    config = HtmlBackendConfig(
-        user_html_fallback=False,
-        search_instances=["https://a.example"],
+        [tweet],
     )
-    service = HtmlNitterService(config)
-
-    base, tweets = service.fetch_user("testuser", limit=5)
-    assert base == ""
-    assert tweets == []
 
 
-def test_fetch_user_attempts_pool_when_enabled():
-    """user_html_fallback=true → fetch_user uses blogger_html pool."""
-    config = HtmlBackendConfig(
-        user_html_fallback=True,
-        search_instances=["https://a.example"],
+def test_unified_user_fetch_falls_back_to_html_automatically():
+    service = NitterService({"instances": ["https://a.example"]})
+    tweet = _tweet("2")
+    service.fetch_tweets = AsyncMock(return_value=("https://a.example", []))
+    service.fetch_user_html = MagicMock(return_value=("https://a.example", [tweet]))
+
+    assert asyncio.run(service.fetch_user("testuser", 5)) == (
+        "https://a.example",
+        [tweet],
     )
-    service = HtmlNitterService(config)
-
-    # Mock _fetch_user_once to verify it's called
-    call_count = 0
-
-    def mock_fetch(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return "https://a.example", []
-
-    service.blogger_html._fetch_user_once = mock_fetch
-
-    base, _tweets = service.fetch_user("testuser", limit=5)
-    assert call_count == 1  # Pool was used
-    assert base == "https://a.example"
-
-
-def test_shared_limiter_and_session():
-    """blogger_html and search_pool share limiter and session."""
-    config = HtmlBackendConfig(
-        user_html_fallback=True,
-        search_instances=["https://a.example"],
-    )
-    service = HtmlNitterService(config)
-
-    assert service.blogger_html.limiter is service.limiter
-    assert service.blogger_html.session is service.session
-    assert service.search_pool.limiter is service.limiter
-    assert service.search_pool.session is service.session
+    service.fetch_user_html.assert_called_once_with("testuser", 5, filter_reposts=None)

@@ -45,9 +45,9 @@ NitterTweetScheduler
 
 ## RSS 链路
 
-1. 手动路径调用 `NitterClient.fetch_tweets()` / `fetch_tweets_with_stats()`；后台 Blogger 路径调用 watermark-aware scheduler API，Tag/List 路径调用 HTML backend。
-2. Blogger 按实例顺序请求 `/<username>/rss`；Tag/List 按 `search_instances` 串行请求搜索或 List 页面。
-3. 处理 HTTP/SSL/timeout/门禁重试
+1. 手动和后台都通过 `NitterService`；内部 RSS parser 处理用户 feed，HTML parser 处理用户后备、搜索和 List。
+2. Blogger 按 `instances` 顺序请求 `/<username>/rss`；Tag/List 使用同一列表串行请求搜索或 List 页面。
+3. 处理 HTTP/SSL/timeout、限流和普通错误页
 4. 解析 RSS item 或 HTML item
 5. 过滤转发（Blogger、Tag、List 均按“全局总开关 && 分组子开关”的有效值处理）
 6. 可选过滤纯文本
@@ -55,7 +55,7 @@ NitterTweetScheduler
 
 纯文本过滤只认当前作者区域的 `/pic/media`、`<video>` 和 Nitter 视频缩略图。引用推文和 `card_img` 不算当前作者媒体。
 
-HTML 门禁检测先识别明确的 Anubis/Poast 挑战结构；没有明确挑战结构时，真实时间线内容优先于通用 Cloudflare 文案和 beacon。
+HTML 只分类真实时间线、空页、登录/维护/挑战错误页和异常页面，不实现公共实例挑战解算。
 
 ## 后台检查链路
 

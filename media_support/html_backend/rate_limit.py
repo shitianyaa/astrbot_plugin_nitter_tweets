@@ -1,4 +1,4 @@
-"""Global + per-host rate limiting and cooldown (shared by all modes)."""
+"""Global rate limiting and per-host cooldown."""
 
 from __future__ import annotations
 
@@ -13,14 +13,7 @@ from urllib.parse import urlparse
 class RateLimitConfig:
     global_min_interval: float = 3.0
     jitter: float = 0.8
-    # extra floor per host keyword
-    host_extra: dict[str, float] = field(
-        default_factory=lambda: {
-            "kareem.one": 8.0,
-            "poast.org": 0.5,
-            "tiekoetter.com": 0.0,
-        }
-    )
+    host_extra: dict[str, float] = field(default_factory=dict)
     cooldown_base: float = 30.0  # 30s start (2026-07-23)
     cooldown_cap: float = 300.0  # 5min cap (2026-07-23)
 

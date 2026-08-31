@@ -151,15 +151,16 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         return seen_account_key_for_query(q)
 
     def _create_scheduler(self, config, *, html_backend, sender=None, media=None):
+        nitter = base._Nitter()
+        nitter.search = html_backend.search
         scheduler = base.NitterTweetScheduler(
             base._Owner(),
             context=None,
             config=config,
-            nitter=base._Nitter(),
+            nitter=nitter,
             media=media or base._Media(),
             sender=sender or base._Sender(),
             translator=base._Translator(),
-            html_backend=html_backend,
         )
         self.schedulers.append(scheduler)
         return scheduler

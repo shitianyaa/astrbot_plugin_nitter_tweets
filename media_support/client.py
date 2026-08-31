@@ -21,6 +21,7 @@ try:
         clamp_float,
         clamp_int,
         clean_text,
+        filter_retired_instances,
         load_instances,
         normalize_external_links,
     )
@@ -31,6 +32,7 @@ except ImportError:
         clamp_float,
         clamp_int,
         clean_text,
+        filter_retired_instances,
         load_instances,
         normalize_external_links,
     )
@@ -238,7 +240,17 @@ class NitterClient:
     RSS_RESPONSE_LIMIT = 2_000_000
 
     def __init__(self, config):
-        self.instances = load_instances(config_get(config, "instances"))
+        raw_instances = config_get(config, "instances")
+        self.instances, self.retired_instances = filter_retired_instances(raw_instances)
+        self.ignored_legacy_instances = {
+            key: load_instances(self._legacy_instance_value(config, key))
+            for key in (
+                "search_instances",
+                "blogger_html_instances",
+                "concurrent_fetch_instances",
+            )
+            if self._legacy_instance_value(config, key)
+        }
         self.timeout = clamp_float(
             config_get(config, "request_timeout", 12.0), 3.0, 60.0
         )
@@ -252,7 +264,7 @@ class NitterClient:
         self.brief_log_enabled = parse_config_bool(
             config_get(config, "brief_log_enabled", True), True
         )
-        # In-memory RSS mirror scores (not shared with HTML pools).
+        # In-memory instance scores; NitterService shares this book with HTML.
         self.host_scores = HostScoreBook()
         # S2=A: set only for one check/command via begin_run_host_skip().
         # Context-local state prevents overlapping manual and scheduled tasks
@@ -264,6 +276,14 @@ class NitterClient:
         self._run_host_skip_stack_var = contextvars.ContextVar(
             f"nitter_run_host_skip_stack_{id(self)}", default=()
         )
+
+    @staticmethod
+    def _legacy_instance_value(config, key: str):
+        """Read deleted instance fields for diagnostics without migrating them."""
+        basic = config.get("basic", {}) if hasattr(config, "get") else {}
+        if isinstance(basic, dict) and key in basic:
+            return basic.get(key)
+        return config.get(key) if hasattr(config, "get") else None
 
     @property
     def _run_host_skip(self) -> RssRunHostSkip | None:
@@ -400,17 +420,17 @@ class NitterClient:
         retry_attempts: int = 3,
         filter_reposts: bool | None = None,
     ) -> tuple[str, list[TweetItem], int]:
-        """Fetch using a dedicated instance pool rotated by ``start_index``.
+        """Fetch using an instance pool rotated by ``start_index``.
 
         ``retry_attempts`` is the total attempt budget for each instance in this
-        dedicated pool, shared across first-page and pagination requests. This
+        pool, shared across first-page and pagination requests. This
         differs from ``fetch_tweets_with_stats()``, where the default instance
         list gives each RSS page its own retry allowance.
         """
 
         ordered_instances = self._rotate_instances(instances, start_index)
         if not ordered_instances:
-            raise RuntimeError("未配置并发专用 Nitter 实例")
+            raise RuntimeError("未配置 Nitter 实例")
         return await self._fetch_tweets_with_stats_from_instances(
             username,
             limit,
@@ -447,7 +467,7 @@ class NitterClient:
         retry_attempts: int = 3,
         filter_reposts: bool | None = None,
     ) -> tuple[str, SchedulerFetchResult]:
-        """Fetch a complete scheduler scan from a dedicated instance pool.
+        """Fetch a complete scheduler scan from an instance pool.
 
         Scheduler pagination can legitimately span many successful pages, so
         ``retry_attempts`` applies to each page. The separate 300-item scan
@@ -457,7 +477,7 @@ class NitterClient:
 
         ordered_instances = self._rotate_instances(instances, start_index)
         if not ordered_instances:
-            raise RuntimeError("未配置并发专用 Nitter 实例")
+            raise RuntimeError("未配置 Nitter 实例")
         return await self._fetch_tweets_for_scheduler_from_instances(
             username,
             anchor_ids,

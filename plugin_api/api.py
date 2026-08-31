@@ -386,11 +386,8 @@ class NitterWebAPI(
         instance_lists: dict[str, list[str]] | None = None,
     ) -> dict[str, Any]:
         effective_group = self._effective_config_group(groups or [])
-        lists = instance_lists or {}
         return {
             "nitter_instance_count": len(instances),
-            "blogger_html_instance_count": len(lists.get("blogger_html") or []),
-            "search_instance_count": len(lists.get("search") or []),
             "default_limit": self._default_limit(),
             "check_interval_minutes": self._group_value(
                 effective_group, "check_interval_minutes", 30

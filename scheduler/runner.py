@@ -106,7 +106,6 @@ class NitterTweetScheduler(
         media,
         sender,
         translator,
-        html_backend=None,
     ):
         self.owner = owner
         self.context = context
@@ -115,7 +114,6 @@ class NitterTweetScheduler(
         self.media = media
         self.sender = sender
         self.translator = translator
-        self.html_backend = html_backend
         migrate_default_group_config(config)
         self.config_reader = SchedulerConfigReader(config, context)
         self.storage = StorageAdapter(owner, config, context)
@@ -800,7 +798,7 @@ class NitterTweetScheduler(
                 f"skip_plain_text={skip_plain_text}, "
                 f"拉取并发={'开' if use_fetch_parallel else '关'}, "
                 f"拉取数={group.fetch_concurrency}, "
-                f"专用镜像={len(group.concurrent_fetch_instances)}, "
+                f"实例数={len(getattr(self.nitter, 'instances', []))}, "
                 f"准备并发={'开' if use_prepare_parallel else '关'}, "
                 f"准备数={group.prepare_concurrency}"
             )

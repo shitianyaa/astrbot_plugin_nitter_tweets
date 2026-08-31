@@ -9,8 +9,6 @@ import types
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_URL = "https://nitter.net/JuanEgg18/status/2064692617242448015#m"
-
 
 def _install_astrbot_logger_stub() -> None:
     """Allow running the plugin media module outside AstrBot."""
@@ -175,7 +173,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Test the existing Nitter video resolve/download logic.",
     )
-    parser.add_argument("url", nargs="?", default=DEFAULT_URL)
+    parser.add_argument("url", help="Public X/Twitter status URL to test.")
     parser.add_argument("--resolve-only", action="store_true")
     parser.add_argument(
         "--output-dir",

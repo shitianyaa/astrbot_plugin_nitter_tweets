@@ -99,7 +99,7 @@ class WebAPIOverviewMixin:
             ),
         }
         instance_lists = self._configured_instance_lists()
-        instances = list(instance_lists["rss"])
+        instances = list(instance_lists["instances"])
         return self._ok(
             scheduler=scheduler_state,
             counts=counts,

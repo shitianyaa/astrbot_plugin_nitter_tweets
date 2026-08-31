@@ -66,7 +66,7 @@
           <button class="tab" type="button" data-view="mirror">
             <span class="nav-label">
               <span class="icon" data-icon="probe"></span>
-              镜像连通诊断
+              实例能力诊断
             </span>
           </button>
           <button class="tab" type="button" data-view="cleanup">
@@ -160,42 +160,43 @@
           <div id="historyContent" class="stack"></div>
         </section>
 
-        <section id="mirrorView" class="view" aria-label="镜像测试">
+        <section id="mirrorView" class="view" aria-label="实例测试">
           <div class="split">
             <form id="mirrorForm" class="panel form-panel">
-              <h2>镜像测试</h2>
+              <h2>实例测试</h2>
               <p class="helper-text">
-                 不改配置、不写推送记录。按模式使用配置中的实例列表（已去重）；URL 留空会按顺序测试全部实例，填写 URL 则只测这一站。
+                不改配置、不写推送记录。一次检查用户 RSS、用户 HTML 和搜索；填写 List ID 时同时检查 List。URL 留空会按顺序测试全部已配置实例。
               </p>
               <div class="form-grid">
                 <label class="field">
-                  <span>测试模式</span>
-                  <select id="mirrorMode">
-                    <option value="blogger_rss" selected>博主 RSS</option>
-                    <option value="search">搜索（标签/短语）</option>
-                  </select>
+                  <span>用户名</span>
+                  <input id="mirrorUsername" type="text" value="nasa" placeholder="nasa" />
                 </label>
                 <label class="field">
-                  <span id="mirrorQueryLabel">用户名</span>
-                  <input id="mirrorUsername" type="text" value="nasa" placeholder="nasa 或 #标签 / 短语" />
+                  <span>搜索内容</span>
+                  <input id="mirrorQuery" type="text" value="nasa" placeholder="#标签 或短语" />
+                </label>
+                <label class="field">
+                  <span>List ID（可选）</span>
+                  <input id="mirrorListId" type="text" inputmode="numeric" placeholder="纯数字" />
                 </label>
                 <label class="field">
                   <span>数量</span>
                   <input id="mirrorLimit" type="number" min="1" max="50" value="5" />
                 </label>
                 <label class="field wide">
-                  <span>镜像 URL</span>
-                  <input id="mirrorInstance" type="url" placeholder="https://nitter.example" />
+                  <span>实例 URL</span>
+                  <input id="mirrorInstance" type="url" placeholder="http://nitter:8080" />
                 </label>
               </div>
               <button id="mirrorProbeBtn" class="button primary" type="submit">
                 <span class="icon" data-icon="probe"></span>
-                测试镜像
+                测试实例
               </button>
             </form>
             <div class="panel">
-              <h2 id="mirrorInstanceListTitle">配置实例（RSS）</h2>
-              <p id="mirrorInstanceListHint" class="helper-text">点击填入左侧 URL</p>
+              <h2 id="mirrorInstanceListTitle">已配置实例</h2>
+              <p id="mirrorInstanceListHint" class="helper-text">点击填入左侧 URL；留空测试全部实例</p>
               <div id="instanceList" class="chip-list"></div>
             </div>
           </div>

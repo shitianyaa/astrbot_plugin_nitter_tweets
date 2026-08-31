@@ -24,7 +24,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 缓存清理 | `python -m pytest -q tests/test_media_cleanup.py` | 递归清理、类型统计、空目录 |
 | 存储适配和旧 KV 迁移 | `python -m pytest -q tests/test_storage_adapter.py` | KV 到 SQLite |
 | SQLite 线程安全 | `python -m pytest -q tests/test_sqlite_threading.py` | `asyncio.to_thread` 调用 |
-| 结构化日志与 HTML 门禁 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、显式 Anubis/Poast 优先，真实时间线优先于通用门禁文案 |
+| 结构化日志与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、时间线/空页/登录维护/异常页分类 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
 
 ## 高风险改动

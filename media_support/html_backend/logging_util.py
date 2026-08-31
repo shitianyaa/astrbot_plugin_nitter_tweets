@@ -6,10 +6,6 @@ import re
 from collections.abc import Callable
 
 _SESSION_LOAD_RE = re.compile(r"^session load\s+(\S+)", re.IGNORECASE)
-_GATE_LINE_RE = re.compile(
-    r"^gate\s+(?P<host>\S+)\s+mode=\S+\s+http=(?P<code>\d+)\s+detect=(?P<detect>\S+)",
-    re.IGNORECASE,
-)
 _COOLING_RE = re.compile(r"^(?:skip|defer)\s+cooling\s+(\S+)", re.IGNORECASE)
 
 # Brief mode: drop routine per-attempt chatter; keep failures / summaries.
@@ -20,23 +16,18 @@ _BRIEF_DROP_PREFIXES = (
     "search empty host=",
     "user empty host=",
     "list empty host=",
-    "ensure soft-fail ",
-    "anubis: solved ",
-    "poast: solved ",
 )
 
 
 class QuietHtmlLog:
     """Callable log sink: ``log(msg)`` with optional brief filtering.
 
-    Always (even when verbose):
-    - suppress ``session load`` entirely (cookie reload noise)
-    - emit each distinct ``gate host ... detect=...`` at most once
+    Always suppress ``session load`` entirely (cookie reload noise).
 
     When ``brief=True`` (default, follows ``brief_log_enabled``):
-    - drop per-attempt try/empty/soft-fail/solve chatter
+    - drop per-attempt try/empty chatter
     - drop cooling skip/defer lines
-    - keep punish / fail / ok-after-rotate / empty-after-rotate / hard gate errors
+    - keep punish / fail / ok-after-rotate / empty-after-rotate errors
     """
 
     def __init__(
@@ -47,7 +38,6 @@ class QuietHtmlLog:
     ) -> None:
         self.emit = emit or (lambda _m: None)
         self.brief = brief
-        self._gate_seen: set[str] = set()
         self._cooling_hosts: set[str] = set()
 
     def __call__(self, msg: str) -> None:
@@ -60,25 +50,8 @@ class QuietHtmlLog:
 
     def _should_drop(self, text: str) -> bool:
         if _SESSION_LOAD_RE.match(text):
-            # Cookie reload fires on nearly every ensure(); never useful at info.
+            # Cookie reload can fire on every request; never useful at info.
             return True
-
-        m = _GATE_LINE_RE.match(text)
-        if m:
-            key = (
-                f"{m.group('host').lower()}|"
-                f"{m.group('code')}|"
-                f"{m.group('detect').lower()}"
-            )
-            if key in self._gate_seen:
-                return True
-            self._gate_seen.add(key)
-            # Successful plain gate is pure noise in brief mode.
-            return bool(
-                self.brief
-                and m.group("code") == "200"
-                and m.group("detect").lower() == "ok"
-            )
 
         m = _COOLING_RE.match(text)
         if m:
@@ -90,8 +63,7 @@ class QuietHtmlLog:
             self._cooling_hosts.add(host)
             return False
 
-        # Keep: punish, fail rotate, ok after rotate, empty after rotate,
-        # cloudflare unsupported, anubis/poast missing challenge, etc.
+        # Keep punish, rotation summaries and hard response errors.
         return bool(self.brief and text.startswith(_BRIEF_DROP_PREFIXES))
 
 

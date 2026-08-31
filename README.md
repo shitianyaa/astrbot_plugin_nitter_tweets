@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.18.6-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -76,7 +76,7 @@
 ```text
 /推文 nasa
 /推文搜索 #标签
-/镜像测试 https://nitter.net
+/镜像测试 https://your-nitter.example.com
 ```
 
 数量可省略（用 `default_limit`）。`/镜像测试` 仅管理员。说明与边界见 [进阶说明](./docs/advanced.md)。
@@ -107,7 +107,7 @@ tweet_groups:
 | --- | --- |
 | 聊天里自动解析推文链接 | 打开 `auto_parse_tweet_links_enabled` |
 | 批量把关注加入 Public List | 见 [List 指南](./docs/twitter-lists.md)（第三方扩展；X 约 24h ~100 次量级限额） |
-| WebUI 管分组 / 历史 / 镜像 | AstrBot 插件页「Nitter 推文面板」 |
+| WebUI 管分组 / 历史 / 实例诊断 | AstrBot 插件页「Nitter 推文面板」 |
 
 ### 推送目标示例
 
@@ -124,13 +124,17 @@ QQ Official 群主动推送需要 AstrBot `>=4.26.0`。正文 Markdown 主动发
 
 ## 一键部署 Nitter
 
-如果你没有可用的公共镜像，也可以在 Linux VPS 上使用 [nitter-installer](https://github.com/shitianyaa/nitter-installer) 快速部署一个自建实例。该脚本使用 Docker Compose 编排 Nitter 和 Redis，并可选配置端口、域名、Nginx 反代、代理和账号凭证：
+由于公共 Nitter 实例已不再作为可靠依赖，建议先在 Linux VPS 上使用 [nitter-installer](https://github.com/shitianyaa/nitter-installer) 部署自建实例。该脚本使用 Docker Compose 编排 Nitter 和 Redis，并可选配置端口、域名、Nginx 反代、代理和账号凭证：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/nitter.sh -o nitter.sh && chmod +x nitter.sh && ./nitter.sh
 ```
 
-部署完成后，将 `http://<服务器IP>:8080`（或你的域名）填入本插件的 `instances` / `search_instances`。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
+部署完成后，将 Nitter 地址填入本插件的 `instances`。同一列表同时用于用户 RSS、用户 HTML、搜索、List 和后台并发抓取。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
+
+实例地址按部署拓扑填写：AstrBot 与 Nitter 同一 Docker network 使用 `http://nitter:8080`；AstrBot 在容器、Nitter 在宿主机时使用宿主机可达地址（如 `http://host.docker.internal:8080`）；两者都在宿主机进程时可使用 `http://127.0.0.1:8080`；跨机器使用 Nitter 服务器的公网 IP 或域名。AstrBot 容器内的 `127.0.0.1` 只指向 AstrBot 容器本身。
+
+只填写你自己控制且信任的 Nitter。插件允许访问本地、Docker 和私网 HTTP(S) 地址，并会继续访问实例响应中提供的媒体 URL 与重定向目标；请用 Docker network、防火墙和反向代理隔离 Redis、AstrBot/NapCat 管理面及其他内部服务。
 
 > 资源说明：一次测试中，若只统计脚本和静态配置文件，观测到约 **10 MB**。这只是特定环境和版本下的静态文件观测值，不代表完整部署的磁盘或内存占用；Docker 镜像、Redis 数据、日志、缓存、系统依赖和 Nginx 都会额外占用资源。实际用量请在 VPS 上用 `du -sh ~/nitter`、`docker system df` 和 `free -h` 自行确认。
 
@@ -140,7 +144,7 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 | --- | --- | --- |
 | `/推文 用户名 [数量]` | 普通 | 查公开用户最近推文 |
 | `/推文搜索 关键词 [数量]` | 普通 | HTML 搜索；标签请带 `#` |
-| `/镜像测试 … 镜像站URL` | 管理员 | 临时测 Nitter 镜像 |
+| `/镜像测试 … 实例URL` | 管理员 | 临时测试一个自建 Nitter 实例（RSS 优先，HTML 自动后备） |
 | `/推文状态` | 管理员 | 调度与分组状态 |
 | `/推文检查 [分组名]` | 管理员 | 立即检查（当前会话须在该组 `push_targets`） |
 | `/推文黑名单 添加/删除/查看` | 管理员 | 按当前或指定 UMO 维护跨分组共享的作者黑名单 |
@@ -157,8 +161,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 | 配置 | 说明 |
 | --- | --- |
-| `instances` | 博主 RSS 镜像列表 |
-| `search_instances` | 搜索 / List 用 HTML 镜像（**不要**默认塞 nitter.net） |
+| `instances` | 唯一 Nitter 实例列表，同时用于用户 RSS/HTML、搜索、List 和后台并发抓取 |
 | `default_limit` | 手动命令默认条数 |
 | `schedule_enabled` | 后台检查总开关 |
 | `push.target_blocked_users` | 按完整 UMO 保存作者黑名单；命令和 Dashboard 维护，跨分组共享 |
@@ -189,7 +192,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | [进阶说明](./docs/advanced.md) | 平台、流程、全配置、行为边界、诊断 |
 | [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败与水位 |
 | [List 订阅](./docs/twitter-lists.md) | Public List、导入关注、故障排查 |
-| [实例指南](./docs/instances-guide.md) | RSS vs HTML、重试与回退 |
+| [实例指南](./docs/instances-guide.md) | 容器地址、统一实例、协议行为与可信来源提醒 |
 | [文档索引](./docs/README.md) | 全部 docs 入口 |
 | [CHANGELOG](./CHANGELOG.md) | 版本记录 |
 | [`_conf_schema.json`](./_conf_schema.json) | 配置真源 |

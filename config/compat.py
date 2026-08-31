@@ -32,19 +32,7 @@ MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
-SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY = "_search_instances_default_v17_migrated"
 TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY = "_target_blocked_users_list_migrated"
-LEGACY_DEFAULT_SEARCH_INSTANCES = (
-    "https://nitter.tiekoetter.com",
-    "https://nitter.poast.org",
-    "https://nitter.kareem.one",
-)
-# Current defaults match CF-tested instances for search stability.
-CURRENT_DEFAULT_SEARCH_INSTANCES = (
-    "https://nitter.tiekoetter.com",
-    "https://nitter.poast.org",
-    "https://nitter.kareem.one",
-)
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
 # Legacy single template name used by pre-tag-group configs.
 TWEET_GROUP_TEMPLATE_KEY_LEGACY = "group"
@@ -77,7 +65,6 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "vision_prompt",
         "vision_max_images",
         "vision_max_total",
-        "blogger_html_instances",
         "deferred_publish_enabled",
         "deferred_publish_times",
         "deferred_publish_batch_limit",
@@ -103,9 +90,7 @@ CONFIG_GROUP_BY_KEY = {
     "cooldown_seconds": "basic",
     "filter_reposts_enabled": "basic",
     "auto_parse_tweet_links_enabled": "basic",
-    "user_html_fallback": "basic",
     "search_enabled": "basic",
-    "search_instances": "basic",
     "search_cooldown_seconds": "basic",
     "search_default_limit": "basic",
     "search_max_limit": "basic",
@@ -139,7 +124,6 @@ CONFIG_GROUP_BY_KEY = {
     "brief_log_enabled": "logging",
     "concurrent_fetch_enabled": "performance",
     "fetch_concurrency": "performance",
-    "concurrent_fetch_instances": "performance",
     "concurrent_prepare_enabled": "performance",
     "prepare_concurrency": "performance",
     "merge_tweet_threshold": "push",
@@ -163,9 +147,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "retry_delay_seconds",
     "cooldown_seconds",
     "auto_parse_tweet_links_enabled",
-    "user_html_fallback",
     "search_enabled",
-    "search_instances",
     "search_cooldown_seconds",
     "search_default_limit",
     "search_max_limit",
@@ -195,7 +177,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "daily_check_times",
     "concurrent_fetch_enabled",
     "fetch_concurrency",
-    "concurrent_fetch_instances",
     "concurrent_prepare_enabled",
     "prepare_concurrency",
     "merge_tweet_threshold",
@@ -358,8 +339,6 @@ def sanitize_removed_feature_group(group: dict) -> bool:
 def migrate_legacy_grouped_config(config) -> bool:
     changed = sanitize_removed_feature_config(config)
     if _migrate_max_video_duration_grouped_config(config):
-        changed = True
-    if _migrate_search_instances_default(config):
         changed = True
     if _migrate_target_blocked_users_to_list(config):
         changed = True
@@ -835,40 +814,6 @@ def _ensure_tweet_group_template_key(group: dict) -> bool:
                 group["watch_lists"] = []
                 changed = True
     return changed
-
-
-def _migrate_search_instances_default(config) -> bool:
-    """Drop retired public search defaults without overwriting custom lists."""
-    if parse_config_bool(
-        _dict_get(config, SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY, False), False
-    ):
-        return False
-
-    legacy = tuple(
-        item.rstrip("/").casefold() for item in LEGACY_DEFAULT_SEARCH_INSTANCES
-    )
-    current = list(CURRENT_DEFAULT_SEARCH_INSTANCES)
-    basic = _dict_get(config, "basic", {})
-    if isinstance(basic, dict) and "search_instances" in basic:
-        values = tuple(
-            str(item or "").strip().rstrip("/").casefold()
-            for item in _normalize_list(basic.get("search_instances"))
-        )
-        if values == legacy:
-            basic["search_instances"] = list(current)
-            config["basic"] = basic
-
-    if _dict_has(config, "search_instances"):
-        raw = _dict_get(config, "search_instances")
-        values = tuple(
-            str(item or "").strip().rstrip("/").casefold()
-            for item in _normalize_list(raw)
-        )
-        if values == legacy:
-            config["search_instances"] = list(current)
-
-    config[SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY] = True
-    return True
 
 
 def _migrate_target_blocked_users_to_list(config) -> bool:

@@ -1,8 +1,8 @@
 """In-memory per-host success scores for mirror selection.
 
 Simple availability-first ordering: higher score first, failure penalizes hard.
-Scores live in process memory only (reset on restart). Pools must not share
-books across RSS / blogger-HTML / search instance lists.
+Scores live in process memory only (reset on restart). The unified Nitter
+service shares one book across RSS and HTML capabilities for the same hosts.
 """
 
 from __future__ import annotations

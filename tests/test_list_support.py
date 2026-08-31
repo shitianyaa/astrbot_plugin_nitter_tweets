@@ -476,15 +476,11 @@ def test_list_empty_host_rotates_to_later_hit():
 
 
 def test_list_pool_inherits_global_repost_filter():
-    enabled = HtmlNitterService(
-        HtmlBackendConfig(search_instances=[], filter_reposts=True)
-    )
-    disabled = HtmlNitterService(
-        HtmlBackendConfig(search_instances=[], filter_reposts=False)
-    )
+    enabled = HtmlNitterService(HtmlBackendConfig(instances=[], filter_reposts=True))
+    disabled = HtmlNitterService(HtmlBackendConfig(instances=[], filter_reposts=False))
 
-    assert enabled.search_pool.config.filter_reposts is True
-    assert disabled.search_pool.config.filter_reposts is False
+    assert enabled.pool.config.filter_reposts is True
+    assert disabled.pool.config.filter_reposts is False
 
 
 class _Config(dict):
@@ -578,7 +574,8 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "全局转发过滤总开关" in source
     assert "List ID 必须是 1-20 位正整数" in source
     assert "List ID 已存在" in source
-    assert "probe_all: !instance" in source
+    assert "list_id: els.mirrorListId.value.trim()" in source
+    assert 'rss_user: "用户 RSS"' in source
 
 
 def test_status_and_export_render_list_group():

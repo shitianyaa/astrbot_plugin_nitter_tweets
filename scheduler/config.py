@@ -49,9 +49,7 @@ class TargetBlockedUsersInfo:
     # (normalized_umo, persist_text, raw_users) per entry, preserving invalid
     # targets, invalid usernames, and duplicates so writes can rebuild the
     # full configuration instead of dropping unrelated malformed entries.
-    raw_entries: list[tuple[str | None, str, list[str]]] = field(
-        default_factory=list
-    )
+    raw_entries: list[tuple[str | None, str, list[str]]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -112,7 +110,6 @@ class ScheduleGroup:
     notify_no_updates: bool
     concurrent_fetch_enabled: bool
     fetch_concurrency: int
-    concurrent_fetch_instances: list[str]
     concurrent_prepare_enabled: bool
     prepare_concurrency: int
     filter_plain_text_enabled: bool
@@ -192,7 +189,6 @@ class SchedulerConfigReader:
             notify_no_updates=False,
             concurrent_fetch_enabled=False,
             fetch_concurrency=3,
-            concurrent_fetch_instances=[],
             concurrent_prepare_enabled=False,
             prepare_concurrency=2,
             filter_plain_text_enabled=False,
@@ -424,9 +420,6 @@ class SchedulerConfigReader:
             ),
             fetch_concurrency=clamp_int(
                 config_get(self.config, "fetch_concurrency", 3), 1, 8
-            ),
-            concurrent_fetch_instances=self.parse_instances(
-                config_get(self.config, "concurrent_fetch_instances", [])
             ),
             concurrent_prepare_enabled=self.parse_bool(
                 config_get(self.config, "concurrent_prepare_enabled", False),
@@ -773,9 +766,7 @@ class SchedulerConfigReader:
         shape.
         """
         items = (
-            blocked_users.items()
-            if isinstance(blocked_users, dict)
-            else blocked_users
+            blocked_users.items() if isinstance(blocked_users, dict) else blocked_users
         )
         return [
             {"target_umo": target, "blocked_users": list(users)}

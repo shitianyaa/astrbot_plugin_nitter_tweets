@@ -227,7 +227,7 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
         url = unescape(url).strip()
         if not url or url in seen:
             return
-        if not is_safe_http_url(url, resolve_dns=False):
+        if not is_safe_http_url(url):
             return
         if "profile_images" in url or "profile_banners" in url:
             return

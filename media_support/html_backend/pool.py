@@ -18,14 +18,14 @@ try:
     from ..host_score import HostScoreBook
     from ..network import UnsafeUrlError, validate_http_url
     from .http_session import HTML_ACCEPT, HttpSession
-    from .modes import GateKeeper, detect_gate
+    from .modes import classify_page
     from .parser import parse_timeline_html
     from .query import normalize_query, query_kind
     from .rate_limit import RateLimitConfig, RateLimiter
 except ImportError:  # pragma: no cover
     from media_support.host_score import HostScoreBook
     from media_support.html_backend.http_session import HTML_ACCEPT, HttpSession
-    from media_support.html_backend.modes import GateKeeper, detect_gate
+    from media_support.html_backend.modes import classify_page
     from media_support.html_backend.parser import parse_timeline_html
     from media_support.html_backend.query import normalize_query, query_kind
     from media_support.html_backend.rate_limit import RateLimitConfig, RateLimiter
@@ -73,10 +73,6 @@ def _format_host_failure(exc: Exception) -> str:
         return "HTTP 403"
     if "login/maintenance/error page" in lowered:
         return "登录/维护/错误页"
-    if "gate failed" in lowered or "still gated" in lowered:
-        return "网关验证失败"
-    if "cloudflare unsupported" in lowered:
-        return "Cloudflare 不支持"
     return type(exc).__name__
 
 
@@ -127,7 +123,7 @@ class HtmlSearchResult(list[TweetItem]):
 
 
 class HtmlNitterPool:
-    """One pool = one ordered list of HTML instances (blogger fallback OR search)."""
+    """Ordered self-hosted instances shared by all HTML capabilities."""
 
     def __init__(
         self,
@@ -148,7 +144,6 @@ class HtmlNitterPool:
             session_dir=Path(config.session_dir) if config.session_dir else None,
             log=self.log,
         )
-        self.gates = GateKeeper(self.session, log=self.log)
         self.instances = []
         for raw in config.instances:
             if not str(raw or "").strip():
@@ -156,17 +151,14 @@ class HtmlNitterPool:
             try:
                 self.instances.append(self._norm(raw))
             except UnsafeUrlError as exc:
-                # A stale/private configured mirror must not make plugin
-                # startup fail. Explicit probe URLs are rejected by
-                # _hosts_for_rotation instead of silently falling back.
-                self.log(f"skip unsafe HTML instance ({type(exc).__name__})")
+                self.log(f"skip invalid HTML instance ({type(exc).__name__})")
 
     @staticmethod
     def _norm(url: str) -> str:
         u = str(url).strip().rstrip("/")
         if not u.lower().startswith(("http://", "https://")):
             u = "https://" + u
-        return validate_http_url(u, resolve_dns=False).rstrip("/")
+        return validate_http_url(u).rstrip("/")
 
     @staticmethod
     def _page_count(value) -> int:
@@ -221,7 +213,7 @@ class HtmlNitterPool:
 
     @contextmanager
     def _session_transaction(self):
-        """Serialize gate + fetch sequences for a shared CookieJar/session."""
+        """Serialize requests sharing one CookieJar/session."""
         lock = getattr(self.session, "serial_lock", None)
         if lock is None:
             with nullcontext():
@@ -240,30 +232,15 @@ class HtmlNitterPool:
         scored_failure = False
         try:
             self.limiter.wait(host)
-            if not self.gates.ensure(base, seed_path="/NASA"):
-                self.log(f"ensure soft-fail {host}, trying path anyway")
-            self.limiter.wait(host)
             url = f"{base}{path}"
             resp = self.session.request(url, accept=HTML_ACCEPT)
-            gate = detect_gate(resp.body)
-            if resp.code == 429 or (
-                resp.code == 503 and gate not in {"anubis", "poast_sha1"}
-            ):
+            page_kind = classify_page(resp.body)
+            if resp.code in {429, 503}:
                 sec = self.limiter.punish(host)
                 self.scores.record_failure(host)
                 scored_failure = True
                 self.log(f"punish {host} http={resp.code} cooldown={sec:.0f}s")
                 raise HtmlFetchError(f"{host} HTTP {resp.code}", f"HTTP {resp.code}")
-            if gate in {"anubis", "poast_sha1"}:
-                if not self.gates.ensure(
-                    base, seed_path=path if path.startswith("/") else "/NASA"
-                ):
-                    self.scores.record_failure(host)
-                    scored_failure = True
-                    raise HtmlFetchError(f"{host} gate failed", "网关验证失败")
-                self.limiter.wait(host)
-                resp = self.session.request(url, accept=HTML_ACCEPT)
-                gate = detect_gate(resp.body)
             if resp.code != 200:
                 self.scores.record_failure(host)
                 scored_failure = True
@@ -271,21 +248,15 @@ class HtmlNitterPool:
                     f"{host} HTTP {resp.code} {resp.error or ''}".strip(),
                     f"HTTP {resp.code}",
                 )
-            if gate in {"cf", "error", "other"}:
+            if page_kind in {"error", "other"}:
                 self.scores.record_failure(host)
                 scored_failure = True
                 reason, status = (
-                    ("cloudflare unsupported", "Cloudflare 不支持")
-                    if gate == "cf"
-                    else ("login/maintenance/error page", "登录/维护/错误页")
-                    if gate == "error"
+                    ("login/maintenance/error page", "登录/维护/错误页")
+                    if page_kind == "error"
                     else ("unexpected HTML page", "异常页面")
                 )
                 raise HtmlFetchError(f"{host} {reason}", status)
-            if gate in {"anubis", "poast_sha1"}:
-                self.scores.record_failure(host)
-                scored_failure = True
-                raise HtmlFetchError(f"{host} still gated", "网关验证失败")
             self.limiter.reward(host)
             self.session.save_cookies(host)
             return resp.body

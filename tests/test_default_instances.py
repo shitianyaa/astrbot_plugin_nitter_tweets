@@ -1,82 +1,71 @@
-"""Shipped defaults: RSS=net, search=tie+poast+kareem; no blogger HTML list."""
+"""Self-hosted instance defaults and deleted-field behavior."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from typing import ClassVar
 
-from command_handlers.manual import ManualCommandMixin
 from config.compat import (
     LEGACY_CONFIG_MIGRATION_KEY,
     MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
-    SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
     TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
     migrate_legacy_grouped_config,
 )
 from main import NitterTweetsPlugin
 from media_support.client import NitterClient
-from media_support.html_backend.service import (
-    DEFAULT_HTML_INSTANCES,
-    DEFAULT_SEARCH_INSTANCES,
-    DEFAULT_TIEKOETTER,
-    HtmlBackendConfig,
-)
-from shared.utils import DEFAULT_INSTANCES
+from media_support.html_backend.service import HtmlBackendConfig
+from media_support.nitter import NitterService
+from shared.utils import DEFAULT_INSTANCES, filter_retired_instances
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_code_defaults_rss_net_search_tie_poast_kareem():
-    """Code defaults: RSS nitter.net, search tiekoetter+poast+kareem."""
-    assert DEFAULT_INSTANCES == ["https://nitter.net"]
-    assert DEFAULT_TIEKOETTER == "https://nitter.tiekoetter.com"
-    assert DEFAULT_SEARCH_INSTANCES == [
-        "https://nitter.tiekoetter.com",
-        "https://nitter.poast.org",
-        "https://nitter.kareem.one",
+def test_code_defaults_are_empty_for_self_hosted_only():
+    assert DEFAULT_INSTANCES == []
+    assert HtmlBackendConfig().instances == []
+
+
+def test_retired_public_instances_are_filtered_without_mutating_input():
+    configured = [
+        "https://nitter.net",
+        "http://nitter:8080",
+        "https://nitter.tiekoetter.com/",
     ]
-    assert DEFAULT_HTML_INSTANCES == DEFAULT_SEARCH_INSTANCES
-    blob = " ".join(DEFAULT_SEARCH_INSTANCES)
-    assert "poast" in blob and "kareem" in blob and "tiekoetter" in blob
-    assert "nitter.net" not in blob  # RSS only, not for search
-    cfg = HtmlBackendConfig()
-    assert cfg.user_html_fallback is False
-    assert cfg.blogger_html_instances == []
-    assert cfg.search_instances == DEFAULT_SEARCH_INSTANCES
+    active, removed = filter_retired_instances(configured)
+    assert active == ["http://nitter:8080"]
+    assert removed == ["https://nitter.net", "https://nitter.tiekoetter.com"]
+    assert configured[0] == "https://nitter.net"
 
 
-def test_schema_no_blogger_html_instances_key():
+def test_deleted_instance_fields_are_not_migrated_or_removed():
+    config = {
+        "basic": {
+            "instances": ["http://nitter:8080"],
+            "search_instances": ["http://old-search:8080"],
+            "blogger_html_instances": ["http://old-user:8080"],
+        }
+    }
+    before = json.loads(json.dumps(config))
+
+    migrate_legacy_grouped_config(config)
+
+    assert config["basic"] == before["basic"]
+
+
+def test_schema_exposes_only_instances():
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     basic = schema["basic"]["items"]
-    assert "blogger_html_instances" not in basic
-    assert "user_agent" not in basic
-    assert "user_agent" not in schema
-    assert "media_user_agent" not in schema["media"]["items"]
-    assert "media_user_agent" not in schema
-    assert basic["instances"]["default"] == ["https://nitter.net"]
-    assert basic["search_instances"]["default"] == [
-        "https://nitter.tiekoetter.com",
-        "https://nitter.poast.org",
-        "https://nitter.kareem.one",
-    ]
-    assert basic["user_html_fallback"]["default"] is False
+    assert basic["instances"]["default"] == []
+    for key in (
+        "search_instances",
+        "blogger_html_instances",
+        "concurrent_fetch_instances",
+        "user_html_fallback",
+    ):
+        assert key not in basic
+        assert key not in schema
     assert basic["filter_reposts_enabled"]["default"] is True
     assert basic["filter_reposts_enabled"]["description"] == "转发过滤总开关"
-    templates = schema["push"]["items"]["tweet_groups"]["templates"]
-    for template_key in ("blogger", "tag", "list"):
-        group_filter = templates[template_key]["items"]["filter_reposts_enabled"]
-        assert group_filter["default"] is True
-        assert group_filter["description"] == "过滤转发"
-    # user_html_fallback is now visible (invisible removed) for user choice
-    joined = " ".join(basic["search_instances"]["default"])
-    assert "poast" in joined and "kareem" in joined and "tiekoetter" in joined
-    marker = schema["_search_instances_default_v17_migrated"]
-    assert marker["type"] == "bool"
-    assert marker["default"] is False
-    assert marker.get("invisible") is True
 
 
 def test_removed_user_agent_config_is_persisted_by_startup_migration():
@@ -94,7 +83,6 @@ def test_removed_user_agent_config_is_persisted_by_startup_migration():
             "media_user_agent": "legacy-top-level-media",
             LEGACY_CONFIG_MIGRATION_KEY: True,
             MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
-            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
             TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY: True,
         }
     )
@@ -107,91 +95,45 @@ def test_removed_user_agent_config_is_persisted_by_startup_migration():
     assert config.save_calls == 1
 
 
-def test_html_backend_builder_parses_legacy_string_values_safely():
-    plugin = NitterTweetsPlugin.__new__(NitterTweetsPlugin)
-    plugin.config = {
-        "user_html_fallback": "false",
-        "search_enabled": "0",
-        "filter_reposts_enabled": "off",
-        "brief_log_enabled": "no",
-        "html_max_pages": "not-a-number",
-    }
-
-    backend = plugin._build_html_backend()
-
-    assert backend.config.user_html_fallback is False
-    assert backend.config.search_enabled is False
-    assert backend.config.filter_reposts is False
-    assert backend.config.html_max_pages == 1
-    assert backend.log.brief is False
-
-
-def test_html_backend_builder_passes_list_page_budget_to_service():
-    plugin = NitterTweetsPlugin.__new__(NitterTweetsPlugin)
-    plugin.config = {
-        "html_max_pages": "4",
-        "search_instances": ["https://search.example"],
-    }
-
-    backend = plugin._build_html_backend()
-
-    assert backend.config.html_max_pages == 4
-    assert backend.search_pool.config.max_pages == 4
-
-
-def test_html_backend_builder_clamps_list_page_budget():
-    for raw_value, expected in (("0", 1), ("99", 5)):
-        plugin = NitterTweetsPlugin.__new__(NitterTweetsPlugin)
-        plugin.config = {"html_max_pages": raw_value}
-
-        backend = plugin._build_html_backend()
-
-        assert backend.config.html_max_pages == expected
-        assert backend.search_pool.config.max_pages == expected
-
-
-def test_rss_client_and_manual_fallback_parse_string_false_values():
-    client = NitterClient(
+def test_unified_service_uses_instances_for_rss_and_html():
+    service = NitterService(
         {
-            "filter_reposts_enabled": "false",
-            "brief_log_enabled": "off",
+            "instances": ["http://nitter:8080"],
+            "search_enabled": "0",
+            "filter_reposts_enabled": "off",
+            "brief_log_enabled": "no",
+            "html_max_pages": "4",
         }
     )
-    assert client.filter_reposts_enabled is False
-    assert client.brief_log_enabled is False
 
-    class Host(ManualCommandMixin):
-        config: ClassVar[dict] = {"user_html_fallback": "false"}
-        html_backend = SimpleNamespace(
-            fetch_user=lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                AssertionError("disabled fallback must not fetch")
-            )
-        )
-
-    assert asyncio.run(Host()._fetch_user_with_html_fallback("nasa", 5)) == ("", [])
+    assert service.instances == ["http://nitter:8080"]
+    assert service.html.config.instances == service.instances
+    assert service.search_enabled is False
+    assert service.html.config.filter_reposts is False
+    assert service.html.config.max_pages == 4
+    assert service.html.log.brief is False
 
 
-def test_migration_keeps_current_default_list_unchanged():
-    """Migration no longer replaces the current default (now all three mirrors)."""
-    config = {
-        "basic": {
-            "blogger_html_instances": ["https://retired.example"],
-            "search_instances": [
-                "https://nitter.tiekoetter.com",
-                "https://nitter.poast.org",
-                "https://nitter.kareem.one",
-            ],
+def test_legacy_instances_are_diagnostic_only():
+    client = NitterClient(
+        {
+            "basic": {
+                "instances": [],
+                "search_instances": ["http://old-search:8080"],
+                "blogger_html_instances": ["http://old-user:8080"],
+            }
         }
-    }
-    migrate_legacy_grouped_config(config)
-    # Current default matches legacy, so no replacement happens
-    assert config["basic"]["search_instances"] == [
-        "https://nitter.tiekoetter.com",
-        "https://nitter.poast.org",
-        "https://nitter.kareem.one",
-    ]
-    assert "blogger_html_instances" not in config["basic"]
+    )
 
-    custom = {"basic": {"search_instances": ["https://self-hosted.example"]}}
-    migrate_legacy_grouped_config(custom)
-    assert custom["basic"]["search_instances"] == ["https://self-hosted.example"]
+    assert client.instances == []
+    assert client.ignored_legacy_instances == {
+        "search_instances": ["http://old-search:8080"],
+        "blogger_html_instances": ["http://old-user:8080"],
+    }
+
+
+def test_instance_log_label_omits_path_and_query():
+    assert (
+        NitterTweetsPlugin._instance_log_label("http://nitter:8080/private?q=1")
+        == "http://nitter:8080"
+    )

@@ -18,6 +18,7 @@ from .media_status import (
 )
 from .utils import (
     DEFAULT_INSTANCES,
+    RETIRED_PUBLIC_INSTANCES,
     PIPED_SHORT_RE,
     PIPED_WATCH_RE,
     TRAILING_URL_PUNCT,
@@ -34,6 +35,7 @@ from .utils import (
     format_tweet_published,
     generate_file_name,
     load_instances,
+    filter_retired_instances,
     node_uin,
     normalize_external_links,
     normalize_seen_account_key,
@@ -66,6 +68,7 @@ __all__ = [
     "DEFAULT_GROUP_ID",
     "DEFAULT_GROUP_NAME",
     "DEFAULT_INSTANCES",
+    "RETIRED_PUBLIC_INSTANCES",
     "GLOBAL_GROUP_ID",
     "LEGACY_GLOBAL_GROUP_ID",
     "LOG_PREFIX",
@@ -93,6 +96,7 @@ __all__ = [
     "infer_legacy_group_id_from_name",
     "is_default_group",
     "load_instances",
+    "filter_retired_instances",
     "node_uin",
     "normalize_external_links",
     "normalize_group_id",
