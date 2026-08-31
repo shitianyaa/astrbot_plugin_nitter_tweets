@@ -279,11 +279,21 @@ class NitterClient:
 
     @staticmethod
     def _legacy_instance_value(config, key: str):
-        """Read deleted instance fields for diagnostics without migrating them."""
-        basic = config.get("basic", {}) if hasattr(config, "get") else {}
-        if isinstance(basic, dict) and key in basic:
-            return basic.get(key)
-        return config.get(key) if hasattr(config, "get") else None
+        """Read deleted instance fields for diagnostics without migrating them.
+
+        Legacy instance keys lived under different groups before deletion
+        (``search_instances``/``blogger_html_instances`` in ``basic``,
+        ``concurrent_fetch_instances`` in ``performance``).  Check each group
+        so the startup warning surfaces every ignored value instead of
+        silently dropping those stored under ``performance``.
+        """
+        if not hasattr(config, "get"):
+            return None
+        for group in ("basic", "performance"):
+            section = config.get(group, {})
+            if isinstance(section, dict) and key in section:
+                return section.get(key)
+        return config.get(key)
 
     @property
     def _run_host_skip(self) -> RssRunHostSkip | None:

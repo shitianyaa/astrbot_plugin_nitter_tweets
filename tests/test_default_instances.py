@@ -121,7 +121,10 @@ def test_legacy_instances_are_diagnostic_only():
                 "instances": [],
                 "search_instances": ["http://old-search:8080"],
                 "blogger_html_instances": ["http://old-user:8080"],
-            }
+            },
+            "performance": {
+                "concurrent_fetch_instances": ["http://old-concurrent:8080"],
+            },
         }
     )
 
@@ -129,6 +132,7 @@ def test_legacy_instances_are_diagnostic_only():
     assert client.ignored_legacy_instances == {
         "search_instances": ["http://old-search:8080"],
         "blogger_html_instances": ["http://old-user:8080"],
+        "concurrent_fetch_instances": ["http://old-concurrent:8080"],
     }
 
 
