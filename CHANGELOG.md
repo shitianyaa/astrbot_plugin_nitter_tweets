@@ -12,6 +12,7 @@
 - 网络层允许合法 HTTP(S) 的 loopback、Docker 服务名、私网 IP、媒体 URL 和重定向；继续保留 URL 协议/语法、超时、响应/媒体大小、数量和时长限制。
 - Dashboard “镜像测试”重做为统一实例能力测试，一次报告用户 RSS、用户 HTML、搜索和可选 List 结果。
 - 文档增加容器内地址选择和可信来源提醒：插件会访问实例响应中的媒体与重定向，部署者应通过 Docker network、防火墙和反向代理隔离内部管理面。
+- HTML 搜索/List 的全局重试不再独立硬编码，改由 `retry_attempts` / `retry_delay_seconds` 统一驱动（全部实例冷却时延迟为基础延迟的两倍）；移除 advanced.md 中失真的 `max_global_retries` / `retry_delay_base` / `retry_delay_on_cooldown` 配置条目。
 
 ## [0.18.6] - 2026-08-17
 

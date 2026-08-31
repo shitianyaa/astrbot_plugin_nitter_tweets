@@ -123,9 +123,6 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | 配置 | 说明 |
 | --- | --- |
 | `instances` | 自建 Nitter 实例列表，同时用于 RSS、HTML 搜索和 List；默认空，必须由用户填写。 |
-| `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试（5s → 10s → 15s 渐进式），提升容错能力。 |
-| `retry_delay_base` | 全局重试基础延迟秒数（默认 `5.0`）。第 N 轮延迟 = N × retry_delay_base。 |
-| `retry_delay_on_cooldown` | 全部实例冷却时的重试延迟秒数（默认 `10.0`）。 |
 | `storage_backend` | 存储后端；运行期固定使用本地 SQLite 数据库。旧 KV 推送记录只会在启动迁移时自动导入，不再作为运行后端。 |
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
@@ -376,7 +373,7 @@ HTML 全局串行节流；Tag/List 查询在组内也会按 `send_user_interval`
 
 ## RSS 重试与本轮跳过（第二刀）
 
-- `retry_attempts` / `retry_delay_seconds`：全局 basic 配置，默认 2 / 5s。
+- `retry_attempts` / `retry_delay_seconds`：全局 basic 配置，默认 2 / 5s。同时用于 HTML 搜索/List 的全局重试：所有实例失败后按此延迟重试，全部实例冷却时延迟为该值的两倍。
 - 一次定时检查或一次手动 `/推文` 期间，若某 RSS 镜像出现 429/可重试失败，本轮后续账号跳过该 host；检查结束即丢弃（不写盘、不跨 tick）。
 - HTML 搜索使用统一服务内的 host 冷却（30s 起、封顶 5min），并已加线程锁。
 

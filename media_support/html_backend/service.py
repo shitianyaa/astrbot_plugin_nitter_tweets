@@ -40,6 +40,11 @@ class HtmlBackendConfig:
     min_interval: float = 3.0
     max_pages: int = 1
     filter_reposts: bool = True
+    # HTML retry policy.  Populated from the RSS retry config by NitterService
+    # so a single retry setting governs both fetch paths.
+    max_global_retries: int = 2
+    retry_delay_base: float = 5.0
+    retry_delay_on_cooldown: float = 10.0
 
 
 class HtmlNitterService:
@@ -79,6 +84,9 @@ class HtmlNitterService:
                 rate=rate,
                 max_pages=self.config.max_pages,
                 filter_reposts=self.config.filter_reposts,
+                max_global_retries=self.config.max_global_retries,
+                retry_delay_base=self.config.retry_delay_base,
+                retry_delay_on_cooldown=self.config.retry_delay_on_cooldown,
             ),
             log=self.log,
             shared_limiter=self.limiter,

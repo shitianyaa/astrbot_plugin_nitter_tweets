@@ -43,6 +43,9 @@ class NitterService(NitterClient):
                 filter_reposts=parse_config_bool(
                     config_get(config, "filter_reposts_enabled", True), True
                 ),
+                max_global_retries=self.retry_attempts,
+                retry_delay_base=self.retry_delay_seconds,
+                retry_delay_on_cooldown=float(self.retry_delay_seconds) * 2,
             ),
             log=log or (lambda message: logger.info(f"[NitterTweets][html] {message}")),
             brief_log=self.brief_log_enabled,
