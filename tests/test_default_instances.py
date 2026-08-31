@@ -99,7 +99,6 @@ def test_unified_service_uses_instances_for_rss_and_html():
     service = NitterService(
         {
             "instances": ["http://nitter:8080"],
-            "search_enabled": "0",
             "filter_reposts_enabled": "off",
             "brief_log_enabled": "no",
             "html_max_pages": "4",
@@ -108,7 +107,6 @@ def test_unified_service_uses_instances_for_rss_and_html():
 
     assert service.instances == ["http://nitter:8080"]
     assert service.html.config.instances == service.instances
-    assert service.search_enabled is False
     assert service.html.config.filter_reposts is False
     assert service.html.config.max_pages == 4
     assert service.html.log.brief is False

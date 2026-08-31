@@ -34,7 +34,6 @@ except ImportError:  # pragma: no cover
 @dataclass
 class HtmlBackendConfig:
     instances: list[str] = field(default_factory=list)
-    search_enabled: bool = True
     proxy: str | None = None
     session_dir: str | Path | None = None
     timeout: float = 35.0
@@ -115,8 +114,6 @@ class HtmlNitterService:
         filter_reposts: bool | None = None,
         anchor_ids: list[str] | None = None,
     ) -> tuple[str, HtmlSearchResult]:
-        if not self.config.search_enabled:
-            raise RuntimeError("search_enabled is false")
         q = normalize_query(query)
         resolved = kind or query_kind(q)
         return self.pool.search(
@@ -139,8 +136,6 @@ class HtmlNitterService:
         anchor_ids: list[str] | None = None,
     ) -> tuple[str, HtmlSearchResult]:
         """Fetch a Twitter List timeline through the shared HTML pool."""
-        if not self.config.search_enabled:
-            raise RuntimeError("search_enabled is false")
         return self.pool.fetch_list(
             list_id,
             limit,

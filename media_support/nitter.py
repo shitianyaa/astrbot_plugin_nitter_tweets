@@ -28,13 +28,9 @@ class NitterService(NitterClient):
         log: Callable[[str], None] | None = None,
     ):
         super().__init__(config)
-        self.search_enabled = parse_config_bool(
-            config_get(config, "search_enabled", True), True
-        )
         self.html = HtmlNitterService(
             HtmlBackendConfig(
                 instances=list(self.instances),
-                search_enabled=self.search_enabled,
                 proxy=None,
                 session_dir=session_dir,
                 timeout=clamp_float(

@@ -58,12 +58,6 @@
         "default": false,
         "hint": "开启后无需命令：识别消息里的公开 X/Twitter 推文链接并发送正文与媒体。默认关闭。忽略 Bot 自己的消息。翻译与「有译文时显示原文」跟随全局 AI 翻译设置。不受订阅、冷却、seen 和全局图/视频开关限制；仍受大小、时长、超时等安全限制。勿与同类链接解析插件同时对同一会话开启以免重复回复。"
       },
-      "search_enabled": {
-        "description": "启用 HTML 搜索",
-        "type": "bool",
-        "default": true,
-        "hint": "关闭后 /推文搜索、Tag 分组和 List 分组的 HTML 抓取均不可用。"
-      },
       "search_cooldown_seconds": {
         "description": "搜索命令冷却秒数",
         "type": "float",

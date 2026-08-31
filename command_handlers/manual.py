@@ -205,16 +205,6 @@ class ManualCommandMixin:
             return
 
         search_started = time.perf_counter()
-        if not getattr(self.nitter, "search_enabled", True):
-            self._log_manual_no_send_task(
-                "推文搜索跳过",
-                operation="tweet_search",
-                source=query,
-                started=search_started,
-                status="搜索已关闭",
-            )
-            await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
-            return
 
         session_id = self._search_session_id(event)
         store = self._get_search_session_store()

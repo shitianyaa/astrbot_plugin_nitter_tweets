@@ -265,17 +265,7 @@ class WebAPIProbeMixin:
 
         await run_check("rss_user", rss_call)
         await run_check("html_user", user_html_call)
-        if getattr(self.plugin.nitter, "search_enabled", True):
-            await run_check("search", search_call)
-        else:
-            checks["search"] = {
-                "success": False,
-                "skipped": True,
-                "error": "search_enabled=false",
-                "tweets": [],
-                "tweet_count": 0,
-                "duration_ms": 0,
-            }
+        await run_check("search", search_call)
         if list_id:
 
             async def list_call():

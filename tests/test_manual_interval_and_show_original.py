@@ -332,7 +332,6 @@ async def test_manual_search_cancel_keeps_only_unsent_suffix(monkeypatch):
             self.media.cleanup_after_send = MagicMock()
             self.calls = 0
             self.nitter = SimpleNamespace(
-                search_enabled=True,
                 search=lambda query, limit, max_pages=3: (
                     "https://nitter.example",
                     [
@@ -402,7 +401,6 @@ async def test_manual_search_merged_error_keeps_only_unsent_suffix(monkeypatch):
             self.media = MagicMock()
             self.media.cleanup_after_send = MagicMock()
             self.nitter = SimpleNamespace(
-                search_enabled=True,
                 search=lambda query, limit, max_pages=3: (
                     "https://nitter.example",
                     [

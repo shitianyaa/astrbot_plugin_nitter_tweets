@@ -120,7 +120,6 @@ def test_web_probe_all_rss_instances_is_serial_and_keeps_partial_failures():
             "https://rss-b.example",
             "https://rss-a.example",
         ],
-        search_enabled=True,
         fetch_tweets_from_instance=AsyncMock(
             side_effect=[
                 ("https://rss-a.example", [_probe_tweet("1")]),
@@ -173,7 +172,6 @@ def test_web_probe_all_rss_instances_is_serial_and_keeps_partial_failures():
 def test_web_probe_all_search_instances_returns_all_failed_rows():
     nitter = SimpleNamespace(
         instances=["https://search-a.example"],
-        search_enabled=True,
         fetch_tweets_from_instance=AsyncMock(side_effect=RuntimeError("rss")),
         fetch_user_html=MagicMock(side_effect=RuntimeError("html")),
         search=MagicMock(side_effect=RuntimeError("429")),
@@ -225,7 +223,6 @@ def test_web_probe_all_requires_configured_instances_but_single_url_stays_compat
     plugin.nitter.search = MagicMock(
         return_value=("https://single.example", [_probe_tweet("2")])
     )
-    plugin.nitter.search_enabled = True
     single = asyncio.run(
         api.probe_mirror(
             {
