@@ -270,7 +270,9 @@ class SenderTransportMixin:
         """在拆分等有损降级之前，用其他编码重建整份节点数组重试。
 
         payload 被显式拒绝（retcode 1200 / res_id）是体积问题，换 base64 只会更大，
-        那种情况直接让位给既有的拆分机制。
+        那种情况直接让位给既有的拆分机制；但 NapCat 因本地文件读不到而回的 1200
+        （ENOENT copyfile）不属于此类，由 `_is_forward_payload_rejected_error`
+        放行走这里的无损重试。
 
         ``adapter_factory`` 是惰性的：没有配置传输策略时（例如绕过 ``__init__``
         构造的 sender）根本不去解析适配器，行为与改动前完全一致。

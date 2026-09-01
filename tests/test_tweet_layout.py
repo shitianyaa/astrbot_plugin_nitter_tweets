@@ -379,7 +379,39 @@ def test_forward_exclude_videos_notice_stays_in_tweet_node():
     )
     assert len(nodes.nodes) == 1
     texts = "".join(getattr(c, "text", "") for c in nodes.nodes[0].content)
-    assert "视频/GIF 发送已关闭" in texts
+    # 降级去视频是发送失败被省略，不是用户关掉了发送开关
+    assert "视频/GIF 附件发送失败，本次已省略" in texts
+    assert "已关闭" not in texts
+
+
+def test_video_disabled_notice_keeps_disabled_wording():
+    tweet = _tw(media=[_vid_media()])
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    nodes = r.build_nodes_for_uin(
+        uin="10000",
+        username="nasa",
+        instance="",
+        tweets=[tweet],
+    )
+    assert len(nodes.nodes) == 1
+    texts = "".join(getattr(c, "text", "") for c in nodes.nodes[0].content)
+    assert "视频/GIF 发送已关闭，已跳过下载" in texts
+    assert "发送失败" not in texts
+
+
+def test_video_omitted_notice_uses_failed_wording():
+    tweet = _tw(
+        media=[_vid_media()],
+        username="nasa",
+        x_url="https://x.com/nasa/status/1",
+        link="https://x.com/nasa/status/1",
+    )
+    r = R(send_image_attachments=True, send_video_attachments=True)
+    comps = r.build_video_omitted_notice_components([tweet])
+    assert len(comps) == 1
+    text = getattr(comps[0], "text", "")
+    assert "视频/GIF 附件发送失败，本次已省略" in text
+    assert "已关闭" not in text
 
 
 def test_merged_onebot_nodes_merge_images_and_use_author_identity():

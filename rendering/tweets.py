@@ -540,7 +540,7 @@ class TweetMessageRenderer:
             if original_link in seen_links:
                 continue
             seen_links.add(original_link)
-            lines.append("视频/GIF 发送已关闭，已跳过下载")
+            lines.append("视频/GIF 附件发送失败，本次已省略。")
         if not lines:
             return []
         return [Plain("\n".join(lines))]
@@ -593,6 +593,7 @@ class TweetMessageRenderer:
                             TweetMessageRenderer.video_not_sent_notice(
                                 omit_status_url=omit_status_url,
                                 status_url=status_url,
+                                reason="failed",
                             )
                         )
                     )
@@ -842,6 +843,7 @@ class TweetMessageRenderer:
                             TweetMessageRenderer.video_not_sent_notice(
                                 omit_status_url=omit_status_url,
                                 status_url=(tweet.x_url or tweet.link or "").strip(),
+                                reason="failed",
                             )
                         )
                     )
@@ -1176,8 +1178,13 @@ class TweetMessageRenderer:
         *,
         omit_status_url: bool = True,
         status_url: str = "",
+        reason: str = "disabled",
     ) -> str:
-        base = "视频/GIF 发送已关闭，已跳过下载。"
+        """Skip notice. ``reason="failed"`` separates delivery-degraded from disabled."""
+        if reason == "failed":
+            base = "视频/GIF 附件发送失败，本次已省略。"
+        else:
+            base = "视频/GIF 发送已关闭，已跳过下载。"
         url = (status_url or "").strip()
         if omit_status_url or not url:
             return base

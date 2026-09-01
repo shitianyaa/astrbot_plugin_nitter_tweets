@@ -508,8 +508,17 @@ class TweetSender(
 
     @classmethod
     def _is_forward_payload_rejected_error(cls, exc: Exception | None) -> bool:
-        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200)."""
+        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200).
+
+        NapCat also wraps per-element local-file failures as 1200 (ENOENT
+        copyfile); those are transport problems the lossless encoding ladder
+        can fix, so they are not payload rejects here.
+        """
         if exc is None:
+            return False
+        text = str(exc or "")
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("no such file", "enoent", "copyfile")):
             return False
         if ActionFailed is not None and isinstance(exc, ActionFailed):
             retcode = getattr(exc, "retcode", None)
@@ -518,8 +527,6 @@ class TweetSender(
                     return True
             except (TypeError, ValueError):
                 pass
-        text = str(exc or "")
-        lowered = text.lower()
         if "retcode=1200" in lowered or "retcode': 1200" in lowered:
             return True
         if "res_id" in lowered and ("失败" in text or "fail" in lowered):
