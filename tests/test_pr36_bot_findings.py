@@ -499,28 +499,36 @@ def test_p1_build_video_forwards_omit_status_url_false():
 
 
 def test_p1_build_image_node_has_no_repeated_caption():
+    """Images ride in the tweet node; the caption text stays single and leading."""
     renderer = TweetMessageRenderer()
     tweet = _tweet()
-    media = TweetMedia(kind="image", url="https://example.com/a.jpg", path=Path("."))
-    components = renderer.build_image_node_components(
-        1,
-        "nasa",
-        tweet,
-        media,
-        omit_status_url=False,
+    tweet.media.append(
+        TweetMedia(kind="image", url="https://example.com/a.jpg", path=Path("a.jpg"))
     )
-    assert len(components) == 1
-    assert "image" in type(components[0]).__name__.lower()
-
-    raw_content = renderer._build_onebot_image_content(
+    components = renderer.build_components(
         1,
         "nasa",
         tweet,
-        media,
         source="https://nitter.example",
+        include_images=True,
+        include_videos=False,
         omit_status_url=False,
     )
-    assert [part["type"] for part in raw_content] == ["image"]
+    plains = [c for c in components if "plain" in type(c).__name__.lower()]
+    assert len(plains) == 1
+    images = [c for c in components if "image" in type(c).__name__.lower()]
+    assert len(images) == 1
+
+    raw_content = renderer._build_onebot_tweet_content(
+        1,
+        "nasa",
+        "https://nitter.example",
+        tweet,
+        include_videos=False,
+        include_images=True,
+        omit_status_url=False,
+    )
+    assert [part["type"] for part in raw_content] == ["text", "image"]
 
 
 # ---------------------------------------------------------------------------

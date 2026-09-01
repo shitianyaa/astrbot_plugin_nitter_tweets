@@ -72,13 +72,13 @@ sender._should_use_merge_for_count(tweet_count)
 - `merge_tweet_threshold=0` 关闭合并。
 - 达到阈值且目标支持 merged forward 时使用合并。
 - 单次合并过大时按 chunk 分批。
-- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片成为独立节点。
+- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片并入推文正文节点、视频/GIF 保持独立节点，节点昵称与 uin 显示该条推文的实际作者（取不到时回退分组标识）。
 - 合并中有视频时优先 raw OneBot 节点。
 - raw 合并转发因非 payload 拒绝的原因失败时，先换传输编码重建整份节点数组重试，再考虑拆分或去视频。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
 - 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
-- `media_only_enabled` 有效时每个推文节点只保留作者和附件；附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
+- `media_only_enabled` 有效时每个推文节点只保留作者和图片附件；视频附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
@@ -176,7 +176,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 是否通过 `PlatformResolver` 获取平台能力。
 - 是否保留 Event 和 UMO 两条发送路径。
 - 是否保留不确定送达保护。
-- 是否保留私人号 OneBot 图片独立消息或独立节点行为。
+- 是否保留私人号 OneBot 直发图片独立消息行为、合并转发图片并入正文节点与视频独立节点、节点身份为推文实际作者。
 - 是否保留视频失败后的去视频重试或文本 fallback。
 - **是否保留传输降级排在内容降级之前的顺序**，以及 `uncertain` 不推进梯度。
 - 是否保留 Lark post 降级，且 Lark 仍拿到文件系统路径而不是 base64。
