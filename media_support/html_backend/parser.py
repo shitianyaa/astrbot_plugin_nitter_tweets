@@ -196,13 +196,22 @@ def _without_nested_media_sections(chunk: str) -> str:
     return masked
 
 
-def prefer_orig_pbs(url: str) -> str:
+_PBS_QUALITY_NAME = {"high": "orig", "medium": "large", "low": "small"}
+
+
+def prefer_pbs_quality(url: str, quality: str = "high") -> str:
+    """Rewrite a pbs.twimg.com/media/ URL to the requested quality tier.
+
+    high=orig (原图), medium=large, low=small. Non-pbs URLs are returned
+    unchanged; only media thumbnails are affected.
+    """
     if "pbs.twimg.com/media/" not in url:
         return url
+    name = _PBS_QUALITY_NAME.get(str(quality or "").strip().lower(), "orig")
     if "name=" in url:
-        return re.sub(r"([?&])name=[^&]*", r"\1name=orig", url)
+        return re.sub(r"([?&])name=[^&]*", rf"\1name={name}", url)
     sep = "&" if "?" in url else "?"
-    return f"{url}{sep}name=orig"
+    return f"{url}{sep}name={name}"
 
 
 def extract_next_cursor(html: str) -> str:
@@ -217,7 +226,9 @@ def extract_next_cursor(html: str) -> str:
     return ""
 
 
-def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
+def _extract_media(
+    chunk: str, instance: str, *, quality: str = "high"
+) -> list[TweetMedia]:
     media: list[TweetMedia] = []
     seen: set[str] = set()
     scan_chunk = _without_nested_media_sections(chunk)
@@ -236,7 +247,7 @@ def _extract_media(chunk: str, instance: str) -> list[TweetMedia]:
         ):
             return
         if kind == "image" and "pbs.twimg.com" in url:
-            url = prefer_orig_pbs(url)
+            url = prefer_pbs_quality(url, quality)
         seen.add(url)
         media.append(TweetMedia(kind=kind, url=url))
 
@@ -313,7 +324,13 @@ def is_pure_retweet_chunk(chunk: str) -> bool:
     return bool(re.search(r"(转推了|转推自)", head[:800]))
 
 
-def parse_timeline_html(html: str, instance: str, *, source: str = "") -> TimelinePage:
+def parse_timeline_html(
+    html: str,
+    instance: str,
+    *,
+    source: str = "",
+    quality: str = "high",
+) -> TimelinePage:
     del source  # plugin TweetItem has no source field; keep API compatible
     if "timeline-item" not in html:
         return TimelinePage(tweets=[], next_cursor=extract_next_cursor(html))
@@ -346,7 +363,7 @@ def parse_timeline_html(html: str, instance: str, *, source: str = "") -> Timeli
                 text=text or "(无正文)",
                 link=link,
                 published=published,
-                media=_extract_media(chunk, instance),
+                media=_extract_media(chunk, instance, quality=quality),
                 is_retweet=is_pure_retweet_chunk(chunk),
             )
         )
@@ -365,6 +382,6 @@ __all__ = [
     "is_pure_retweet_chunk",
     "normalize_query",
     "parse_timeline_html",
-    "prefer_orig_pbs",
+    "prefer_pbs_quality",
     "query_kind",
 ]

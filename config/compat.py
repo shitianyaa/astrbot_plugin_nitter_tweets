@@ -31,6 +31,7 @@ MEDIA_CACHE_CLEANUP_MIGRATION_KEY = "_media_cache_cleanup_v16_migrated"
 # longer used as the guard for the current cleanup pass.
 MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY = "_media_cache_send_delete_migrated"
 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY = "_max_video_duration_grouped_config_migrated"
+VIDEO_RESOLUTION_PREFERENCE_MIGRATION_KEY = "_video_resolution_preference_migrated"
 DEFAULT_MAX_VIDEO_DURATION_MINUTES = 8.0
 TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY = "_target_blocked_users_list_migrated"
 TWEET_GROUP_TEMPLATE_KEY_FIELD = "__template_key"
@@ -74,6 +75,7 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "scheduled_fetch_limit",
         "user_agent",
         "media_user_agent",
+        "xdown_api_url",
     }
 )
 REMOVED_FEATURE_CONFIG_NAMES = (
@@ -98,12 +100,14 @@ CONFIG_GROUP_BY_KEY = {
     "html_request_timeout": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
-    "video_resolution_preference": "media",
+    "media_quality": "media",
     "max_video_duration_minutes": "media",
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
-    "xdown_api_url": "media",
+    "media_transport_mode": "media",
+    "media_transport_base64_max_mb": "media",
+    "media_transport_url_fallback": "media",
     "translate_enabled": "ai_translation",
     "translation_provider_id": "ai_translation",
     "translate_min_chars": "ai_translation",
@@ -154,11 +158,10 @@ MIGRATABLE_CONFIG_KEYS = {
     "html_request_timeout",
     "send_image_attachments",
     "send_video_attachments",
-    "video_resolution_preference",
+    "media_quality",
     "max_media_per_tweet",
     "media_timeout",
     "media_max_size_mb",
-    "xdown_api_url",
     "translate_enabled",
     "translation_provider_id",
     "translate_min_chars",
@@ -263,6 +266,44 @@ def resolve_send_video_attachments(config) -> bool:
     return parse_config_bool(config_get(config, "send_video_attachments", False), False)
 
 
+def resolve_media_transport_mode(config) -> str:
+    """How media bytes reach the protocol backend.
+
+    ``auto`` tries the local path first and falls back to base64 (and optionally a
+    backend-fetchable URL). ``base64_first`` skips the doomed path attempt when the
+    filesystem is known not to be shared. ``path_only`` keeps the pre-transport
+    behaviour.
+    """
+    value = (
+        str(config_get(config, "media_transport_mode", "auto") or "").strip().lower()
+    )
+    return value if value in {"auto", "path_only", "base64_first"} else "auto"
+
+
+def resolve_media_transport_base64_max_mb(config) -> float:
+    """Per-file ceiling for base64 delivery, in MB.
+
+    One number governs both images and video: the 8 MB default keeps video off
+    base64, and raising it is an explicit opt-in to the memory and payload cost.
+    """
+    try:
+        value = float(config_get(config, "media_transport_base64_max_mb", 8.0) or 8.0)
+    except (TypeError, ValueError):
+        value = 8.0
+    return max(0.5, min(32.0, value))
+
+
+def resolve_media_transport_url_fallback(config) -> bool:
+    """Allow handing a Twitter CDN URL to the backend to download itself.
+
+    Off by default: the backend would reach Twitter directly, bypassing the
+    plugin's proxy and exposing its egress IP.
+    """
+    return parse_config_bool(
+        config_get(config, "media_transport_url_fallback", False), False
+    )
+
+
 def resolve_show_original_when_translated(config) -> bool:
     """Global AI toggle: show original body when a translation exists."""
     return parse_config_bool(
@@ -336,6 +377,8 @@ def sanitize_removed_feature_group(group: dict) -> bool:
 
 def migrate_legacy_grouped_config(config) -> bool:
     changed = sanitize_removed_feature_config(config)
+    if _migrate_video_resolution_preference(config):
+        changed = True
     if _migrate_max_video_duration_grouped_config(config):
         changed = True
     if _migrate_target_blocked_users_to_list(config):
@@ -421,6 +464,48 @@ def _migrate_max_video_duration_grouped_config(config) -> bool:
 
     config["media"] = media
     config[MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY] = True
+    return True
+
+
+def _migrate_video_resolution_preference(config) -> bool:
+    if parse_config_bool(
+        _dict_get(config, VIDEO_RESOLUTION_PREFERENCE_MIGRATION_KEY, False), False
+    ):
+        return False
+
+    media = _dict_get(config, "media", {})
+    if not isinstance(media, dict):
+        media = {}
+
+    legacy_value = None
+    if "video_resolution_preference" in media:
+        legacy_value = media.get("video_resolution_preference")
+    elif _dict_has(config, "video_resolution_preference"):
+        legacy_value = _dict_get(config, "video_resolution_preference")
+
+    if legacy_value is not None:
+        preference = str(legacy_value).strip().lower()
+        if preference in {"highest", "high"}:
+            quality = "high"
+        elif preference in {"lowest", "low"}:
+            quality = "low"
+        elif re.search(r"\d{3,4}\s*p?", preference):
+            quality = "medium"
+        else:
+            quality = "high"
+        if not media.get("media_quality") or media.get("media_quality") == "high":
+            media["media_quality"] = quality
+
+    if "video_resolution_preference" in media:
+        del media["video_resolution_preference"]
+    if _dict_has(config, "video_resolution_preference"):
+        try:
+            del config["video_resolution_preference"]
+        except (KeyError, TypeError):
+            pass
+
+    config["media"] = media
+    config[VIDEO_RESOLUTION_PREFERENCE_MIGRATION_KEY] = True
     return True
 
 

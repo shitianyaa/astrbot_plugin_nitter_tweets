@@ -74,12 +74,41 @@ sender._should_use_merge_for_count(tweet_count)
 - 单次合并过大时按 chunk 分批。
 - 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片成为独立节点。
 - 合并中有视频时优先 raw OneBot 节点。
+- raw 合并转发因非 payload 拒绝的原因失败时，先换传输编码重建整份节点数组重试，再考虑拆分或去视频。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
+- 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
 - `media_only_enabled` 有效时每个推文节点只保留作者和附件；附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
+- `tests/test_media_transport.py`
+
+## 媒体传输编码
+
+媒体默认以本地文件路径交给平台（直发用 `Image/Video.fromFileSystem`，OneBot 合并转发节点用
+`file:///` URI）。这隐含假设 AstrBot 与协议端共享文件系统；分容器或分机器部署时协议端读不到该路径。
+
+`delivery/media_transport.py` 提供一条**无损**的编码降级梯度，`delivery/sender_transport.py`
+负责执行：
+
+- **顺序不变量**：传输降级（换编码，无损）必须跑在内容降级（丢视频、退纯文本，有损）之前。
+  路径档失败先换 base64 重试，成功则视频从未被丢弃。
+- 编码档：`path` / `base64` / `url` / `skip`。`skip` 只有视频有，复用既有的
+  `TweetMessageRenderer.video_not_sent_notice`；图片没有对应文案，失败交给内容降级链。
+- `base64` 档受 `media_transport_base64_max_mb` 单文件上限约束，同一个数字同时管住图片和视频。
+- `url` 档需要 `media_transport_url_fallback=true` 且主机在 twimg 白名单内；xdown 直链带 token、
+  时效短且对 Referer 敏感，永不交给协议端。
+- `uncertain`（超时）**不推进梯度**，否则会重复投递。
+- `TransportMemo` 记住每个平台最近一次成功的档作为下次起步提示；失败时仍会回落到更早的档。
+
+**作用域只有 OneBot。** 其余适配器的 `media_transport_ladder` 恒为 `(path,)`：它们都在 AstrBot
+进程内从本地路径上传，Lark 甚至会把组件反解回 `Path` 再读字节
+（`delivery/lark_support.py` 的 `_local_image_path` 明确跳过 `base64://` 和 `http(s)://`），
+换编码会直接打断它。
+
+渲染层不 import `delivery/`：`build_onebot_nodes` / `build_merged_onebot_nodes_for_uin` /
+`raw_media` 接受一个可选的 `segment_builder` 回调，由发送层注入编码。
 
 ## QQ Official
 
@@ -140,6 +169,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 纯文本 fallback。
 
 新增平台时优先新增/调整 `delivery/` adapter，不要在 `rendering/tweets.py` 写平台发送逻辑。
+传输编码同理：渲染层只接受注入的 `segment_builder`，不自己决定编码。
 
 ## 修改发送逻辑检查
 
@@ -148,5 +178,6 @@ sender._should_use_merge_for_count(tweet_count)
 - 是否保留不确定送达保护。
 - 是否保留私人号 OneBot 图片独立消息或独立节点行为。
 - 是否保留视频失败后的去视频重试或文本 fallback。
-- 是否保留 Lark post 降级。
+- **是否保留传输降级排在内容降级之前的顺序**，以及 `uncertain` 不推进梯度。
+- 是否保留 Lark post 降级，且 Lark 仍拿到文件系统路径而不是 base64。
 - 是否补对应平台测试。

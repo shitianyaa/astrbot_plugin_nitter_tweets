@@ -89,11 +89,11 @@
         "default": false,
         "hint": "默认关闭。开启后会下载视频/GIF 并随消息发送，可能受平台大小、格式、上传与本地文件权限限制；关闭时跳过视频下载。检测到视频/GIF 时会忽略图片附件（含封面）。"
       },
-      "video_resolution_preference": {
-        "description": "视频分辨率偏好",
+      "media_quality": {
+        "description": "媒体画质",
         "type": "string",
-        "default": "highest",
-        "hint": "视频/GIF 有多个分辨率时只下载一个。填写 highest 使用最高分辨率，lowest 使用最低分辨率，也可填写 1280p、852p、568p 等目标分辨率；目标不存在时选择不超过目标的最接近分辨率。"
+        "default": "high",
+        "hint": "图片和视频共用的三档画质。high：图片用原图（twimg name=orig）、视频取候选最高分辨率；medium：图片 name=large、视频取候选中位数档（偶数取偏低）；low：图片 name=small、视频取候选最低档。视频按候选实际存在的档位选取，不重编码。"
       },
       "max_video_duration_minutes": {
         "description": "视频最长下载分钟数",
@@ -118,11 +118,23 @@
         "default": 25.0,
         "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。"
       },
-      "xdown_api_url": {
-        "description": "xdown 解析 API",
+      "media_transport_mode": {
+        "description": "媒体传输编码策略",
         "type": "string",
-        "default": "https://xdown.app/api/ajaxSearch",
-        "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。"
+        "default": "auto",
+        "hint": "只影响私人号 OneBot。auto 先试本地路径，失败再用 base64 重试；base64_first 直接从 base64 开始，适合 AstrBot 与 NapCat 不共享文件系统（分容器/分机器）的部署；path_only 只用本地路径，等价于旧行为。"
+      },
+      "media_transport_base64_max_mb": {
+        "description": "base64 传输单文件上限 MB",
+        "type": "float",
+        "default": 8.0,
+        "hint": "超过该大小的媒体不会走 base64，避免把大文件塞进单条消息造成内存和 payload 压力。默认 8MB 已把绝大多数视频排除在 base64 之外；调高即表示接受相应开销。范围 0.5-32。"
+      },
+      "media_transport_url_fallback": {
+        "description": "允许后端自行下载媒体直链",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，本地路径与 base64 都失败时会把 twimg 直链交给 NapCat 自己下载。注意这会让协议端直连 Twitter CDN，绕过插件的代理配置并暴露其出口 IP；网络隔离的部署请保持关闭。"
       }
     }
   },
@@ -796,11 +808,11 @@
     "hint": "默认关闭。开启后会下载视频/GIF 并随消息发送，可能受平台大小、格式、上传与本地文件权限限制；关闭时跳过视频下载。检测到视频/GIF 时会忽略图片附件（含封面）。",
     "invisible": true
   },
-  "video_resolution_preference": {
-    "description": "视频分辨率偏好",
+  "media_quality": {
+    "description": "媒体画质",
     "type": "string",
-    "default": "highest",
-    "hint": "视频/GIF 有多个分辨率时只下载一个。填写 highest 使用最高分辨率，lowest 使用最低分辨率，也可填写 1280p、852p、568p 等目标分辨率；目标不存在时选择不超过目标的最接近分辨率。",
+    "default": "high",
+    "hint": "图片和视频共用的三档画质。high：图片用原图（twimg name=orig）、视频取候选最高分辨率；medium：图片 name=large、视频取候选中位数档（偶数取偏低）；low：图片 name=small、视频取候选最低档。视频按候选实际存在的档位选取，不重编码。",
     "invisible": true
   },
   "max_video_duration_minutes": {
@@ -828,13 +840,6 @@
     "type": "float",
     "default": 25.0,
     "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。",
-    "invisible": true
-  },
-  "xdown_api_url": {
-    "description": "xdown 解析 API",
-    "type": "string",
-    "default": "https://xdown.app/api/ajaxSearch",
-    "hint": "参考 astrbot_plugin_parser-main 的 TwitterParser。",
     "invisible": true
   },
   "translate_enabled": {

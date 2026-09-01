@@ -45,6 +45,7 @@ class PoolConfig:
     max_global_retries: int = 2  # Retry all instances N times before giving up
     retry_delay_base: float = 5.0  # Base delay between global retries (seconds)
     retry_delay_on_cooldown: float = 10.0  # Delay when all instances cooling
+    media_quality: str = "high"  # pbs.twimg image quality tier (high/medium/low)
 
 
 class HtmlFetchError(RuntimeError):
@@ -711,7 +712,10 @@ class HtmlNitterPool:
 
             body = self._get_html(base, path)
             page = parse_timeline_html(
-                body.decode("utf-8", "replace"), base, source=f"list:{base}"
+                body.decode("utf-8", "replace"),
+                base,
+                source=f"list:{base}",
+                quality=self.config.media_quality,
             )
 
             raw_count += int(getattr(page, "raw_item_count", len(page.tweets)) or 0)
@@ -796,7 +800,11 @@ class HtmlNitterPool:
             if cursor:
                 path += "?" + urlencode({"cursor": cursor})
             body = self._get_html(base, path)
-            page = parse_timeline_html(body.decode("utf-8", "replace"), base)
+            page = parse_timeline_html(
+                body.decode("utf-8", "replace"),
+                base,
+                quality=self.config.media_quality,
+            )
             batch = page.tweets
             if use_filter_reposts:
                 batch = [t for t in batch if (t.username or "").lower() == user.lower()]
@@ -854,7 +862,11 @@ class HtmlNitterPool:
                     body = self._get_html(base, path)
                 else:
                     raise
-            page = parse_timeline_html(body.decode("utf-8", "replace"), base)
+            page = parse_timeline_html(
+                body.decode("utf-8", "replace"),
+                base,
+                quality=self.config.media_quality,
+            )
             raw_item_count += int(
                 getattr(page, "raw_item_count", len(page.tweets)) or 0
             )
@@ -866,7 +878,11 @@ class HtmlNitterPool:
             ):
                 path = f"/hashtag/{quote(query.lstrip('#'), safe='')}"
                 body = self._get_html(base, path)
-                page = parse_timeline_html(body.decode("utf-8", "replace"), base)
+                page = parse_timeline_html(
+                    body.decode("utf-8", "replace"),
+                    base,
+                    quality=self.config.media_quality,
+                )
                 raw_item_count += int(
                     getattr(page, "raw_item_count", len(page.tweets)) or 0
                 )

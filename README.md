@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.0.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.2.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -173,6 +173,9 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `brief_log_enabled` | 后台日志简略模式；开启时输出结构化检查摘要和关键失败信息 |
 | `omit_status_url` | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
+| `media_transport_mode` | 媒体交给私人号 OneBot 的编码策略；`auto` 路径失败自动换 base64，`base64_first` 适合 AstrBot 与 NapCat 不共享文件系统的部署，`path_only` 为旧行为 |
+| `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8；默认值已把绝大多数视频排除在外 |
+| `media_transport_url_fallback` | 是否允许协议端自行下载 twimg 直链，默认关；开启会让协议端直连 Twitter CDN |
 | `translate_enabled` | 是否翻译 |
 | `merge_tweet_threshold` | 私人号 OneBot 合并转发条数阈值；QQ Official 不使用该阈值；`0` 关 |
 

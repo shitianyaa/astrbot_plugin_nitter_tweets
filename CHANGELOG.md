@@ -2,6 +2,36 @@
 
 所有重要变更都会记录在这里。
 
+## [1.2.0] - 2026-09-01
+
+### Added
+
+- 新增 `media_quality`（`high`/`medium`/`low`）三档媒体画质，图片和视频共用：图片映射 twimg `name=orig/large/small`，视频取候选最高/中位数/最低档，不重编码。
+- xdown 候选下载改用 token 内编码的原始 twimg 直链作主 URL、snapcdn 代理作兜底；twimg 直链下载失败自动切 snapcdn 重试。
+- 视频下载前 Range 预检完整大小，选中档超 `media_max_size_mb` 时自动降到下一低分辨率档，避免选了超大最高档却下载失败导致整条视频丢失。
+
+### Changed
+
+- `video_resolution_preference` 被 `media_quality` 取代；迁移 highest→high、lowest→low、精确档（如 1280p）→medium。三档按候选内排序选档，绕过横竖屏判定。
+- `xdown_api_url` 配置项移除（API 地址固定为常量）。
+- `prefer_orig_pbs` 改名为 `prefer_pbs_quality(url, quality)`，按 `media_quality` 选 twimg name 档；HTML 后端与 xdown token 直链统一生效。
+- `_probe_remote_video_duration` 升级为 `_probe_remote_media`，一次 Range 请求同时返回时长和完整大小。
+
+## [1.1.0] - 2026-09-01
+
+### Added
+
+- 新增媒体传输编码层：私人号 OneBot 发送图片和视频时，本地路径失败会自动换 base64 重试，再失败才轮到既有的去视频/纯文本降级。解决 AstrBot 与 NapCat 不共享文件系统（分容器、分机器）时 `file:///` 读不到导致媒体全丢的问题。
+- 新增 `media_transport_mode`（`auto` / `path_only` / `base64_first`）、`media_transport_base64_max_mb`（默认 8）和 `media_transport_url_fallback`（默认关闭）三项媒体配置。
+- 传输层会记住每个平台最近一次成功的编码档作为下次的起步提示，避免非共享文件系统的部署每条消息都先白试一次路径档；记住的档失败时仍会回落到更早的档。
+
+### Changed
+
+- 传输降级是无损的（同一份媒体换编码），排在有损的内容降级之前：路径档失败先换编码重试，视频不再被提前丢弃。
+- 超过 `media_transport_base64_max_mb` 的视频不会走 base64；梯度耗尽时复用既有的「视频未发送」提示，而不是让整条消息失败。
+- 合并转发在拆分之前也会先换编码重建整份节点数组重试；payload 被显式拒绝（retcode 1200）属于体积问题，仍直接交给拆分。
+- 超时等「可能已送达」的失败不会推进编码梯度，避免重复投递。
+
 ## [1.0.0] - 2026-08-31
 
 ### Changed

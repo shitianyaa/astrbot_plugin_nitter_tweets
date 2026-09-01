@@ -1,8 +1,8 @@
 name: astrbot_plugin_nitter_tweets
 display_name: 推文订阅
 desc: "仅使用可信自建 Nitter，通过统一实例列表的 RSS/HTML 获取公开推文和媒体；支持 OneBot、QQ Official、Telegram、飞书、微信 OC、博主/标签/列表分组、手动查询、定时推送、可选聊天链接解析和原生 WebUI。"
-version: 1.0.0
-description: 通过统一的可信自建 Nitter 实例列表获取指定用户 RSS/HTML、公开搜索结果或 Public List 时间线，将最近公开推文发送到聊天会话；支持手动查询、可选被动解析聊天中的公开 status 链接、当前会话作用域的手动检查、单实例测试命令和 AstrBot 原生 WebUI 实例能力诊断；普通目标会在单条推文完成翻译和媒体处理后即时发送，私人号 OneBot 仍可按阈值使用 OneBot v11 Node/Nodes 合并转发，QQ Official 正文走官方 Markdown 适配器、媒体独立发送并支持拒绝降级；飞书、Telegram、微信 OC 和其他平台始终普通逐账号发送，飞书逐账号发送时会优先使用原生 post 同框发送正文和图片。可通过 xdown 解析并发送图片附件，视频/GIF 附件默认关闭并保留原帖链接；支持全局定时配置、自定义 tweet_groups 分组（blogger/tag/list）、按完整 UMO 维护跨分组共享的作者黑名单，以及 SQLite 推送历史、失败记录和手动重推；可调用 AstrBot 已配置大模型翻译非中文推文。
+version: 1.2.0
+description: 通过统一的可信自建 Nitter 实例列表获取指定用户 RSS/HTML、公开搜索结果或 Public List 时间线，将最近公开推文发送到聊天会话；支持手动查询、可选被动解析聊天中的公开 status 链接、当前会话作用域的手动检查、单实例测试命令和 AstrBot 原生 WebUI 实例能力诊断；普通目标会在单条推文完成翻译和媒体处理后即时发送，私人号 OneBot 仍可按阈值使用 OneBot v11 Node/Nodes 合并转发，QQ Official 正文走官方 Markdown 适配器、媒体独立发送并支持拒绝降级；飞书、Telegram、微信 OC 和其他平台始终普通逐账号发送，飞书逐账号发送时会优先使用原生 post 同框发送正文和图片。可通过 xdown 解析并发送图片附件（走 twimg 原始直链并按 `media_quality` 三档画质 high/medium/low），视频/GIF 附件默认关闭并保留原帖链接；支持全局定时配置、自定义 tweet_groups 分组（blogger/tag/list）、按完整 UMO 维护跨分组共享的作者黑名单，以及 SQLite 推送历史、失败记录和手动重推；可调用 AstrBot 已配置大模型翻译非中文推文。
 author: shitianyaa
 astrbot_version: ">=4.26.0"
 repo: https://github.com/shitianyaa/astrbot_plugin_nitter_tweets

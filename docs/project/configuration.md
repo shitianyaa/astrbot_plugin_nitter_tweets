@@ -8,7 +8,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 旧版单一模板 `group`（用户分组）启动时迁移为 `blogger`。
 
 - `basic`: 自建 Nitter 实例、默认数量、冷却和基础平台字段。
-- `media`: 图片、视频、xdown、缓存。
+- `media`: 图片、视频、传输编码、xdown、缓存。
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
 - `push`: `tweet_groups`、推送间隔、合并阈值和目标级作者黑名单。
@@ -90,6 +90,24 @@ Dashboard 实例测试一次检查统一 `instances` 的用户 RSS、用户 HTML
 - `tests/test_subscription_import.py`
 
 如果字段只属于某个 `tweet_groups` 项，不要加入全局 `CONFIG_GROUP_BY_KEY`，除非还需要旧顶层字段迁移。
+
+全新的字段没有旧扁平形态可迁移，只需进 `CONFIG_GROUP_BY_KEY`，**不要**加入 `MIGRATABLE_CONFIG_KEYS`，
+也不必在 schema 里补 `invisible` 扁平镜像。`media_transport_*` 三项即按此处理。
+
+## 媒体传输编码
+
+`media` 分组下的三项只影响私人号 OneBot 的媒体投递，行为见
+[平台发送指南](./platform-delivery.md#媒体传输编码)：
+
+| 配置键 | 默认 | 说明 |
+| --- | --- | --- |
+| `media_transport_mode` | `auto` | `auto` / `path_only` / `base64_first`；非法值回落 `auto` |
+| `media_transport_base64_max_mb` | `8.0` | clamp 到 `0.5-32`；同时约束图片和视频 |
+| `media_transport_url_fallback` | `false` | 开启会让协议端直连 Twitter CDN |
+
+解析函数在 `config/compat.py`：`resolve_media_transport_mode`、
+`resolve_media_transport_base64_max_mb`、`resolve_media_transport_url_fallback`；
+`TransportConfig.from_config()` 负责组装。
 
 ## 兼容规则
 

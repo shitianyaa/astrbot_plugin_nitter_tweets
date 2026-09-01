@@ -34,6 +34,7 @@ class TweetMedia:
     url: str
     path: Path | None = None
     duration_seconds: float | None = None
+    fallback_url: str = ""
 
     @property
     def is_image(self) -> bool:

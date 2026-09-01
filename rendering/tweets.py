@@ -281,6 +281,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        media_segment_builder=None,
     ) -> list[dict]:
         items = []
         header = self.format_merged_header(batches, group_label, batch_summary)
@@ -308,6 +309,7 @@ class TweetMessageRenderer:
                     omit_status_url=omit_status_url,
                     hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
+                    segment_builder=media_segment_builder,
                 )
                 items.append(
                     {
@@ -332,6 +334,7 @@ class TweetMessageRenderer:
                                     omit_status_url=omit_status_url,
                                     hide_original_when_translated=hide_original_when_translated,
                                     link_style=link_style,
+                                    segment_builder=media_segment_builder,
                                 ),
                             }
                         )
@@ -352,6 +355,7 @@ class TweetMessageRenderer:
                                         omit_status_url=omit_status_url,
                                         hide_original_when_translated=hide_original_when_translated,
                                         link_style=link_style,
+                                        segment_builder=media_segment_builder,
                                     ),
                                 }
                             )
@@ -527,23 +531,38 @@ class TweetMessageRenderer:
         if components[0].text:
             components[0].text = "\n\n" + components[0].text
 
-    def build_direct_image_components(self, tweets: list[TweetItem]):
-        components = []
+    def build_direct_image_items(self, tweets: list[TweetItem]):
+        """``(media, component)`` pairs.
+
+        Delivery needs the ``TweetMedia`` alongside the component so it can rebuild
+        a failed item at another wire encoding.
+        """
         if not self.send_image_attachments:
-            return components
-        for tweet in tweets:
-            for media in tweet.media:
-                if media.path and media.is_image:
-                    components.append(Image.fromFileSystem(str(media.path)))
-        return components
+            return []
+        return [
+            (media, Image.fromFileSystem(str(media.path)))
+            for tweet in tweets
+            for media in tweet.media
+            if media.path and media.is_image
+        ]
+
+    def build_direct_video_items(self, tweets: list[TweetItem]):
+        return [
+            (media, Video.fromFileSystem(str(media.path)))
+            for tweet in tweets
+            for media in tweet.media
+            if media.path and media.is_video
+        ]
+
+    def build_direct_image_components(self, tweets: list[TweetItem]):
+        return [
+            component for _media, component in self.build_direct_image_items(tweets)
+        ]
 
     def build_direct_video_components(self, tweets: list[TweetItem]):
-        components = []
-        for tweet in tweets:
-            for media in tweet.media:
-                if media.path and media.is_video:
-                    components.append(Video.fromFileSystem(str(media.path)))
-        return components
+        return [
+            component for _media, component in self.build_direct_video_items(tweets)
+        ]
 
     def build_video_omitted_notice_components(self, tweets: list[TweetItem]):
         lines = []
@@ -694,6 +713,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        media_segment_builder=None,
     ) -> list[dict]:
         uin = str(node_uin(event))
         items = []
@@ -728,6 +748,7 @@ class TweetMessageRenderer:
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
+                segment_builder=media_segment_builder,
             )
             items.append(
                 {
@@ -752,6 +773,7 @@ class TweetMessageRenderer:
                                 omit_status_url=omit_status_url,
                                 hide_original_when_translated=hide_original_when_translated,
                                 link_style=link_style,
+                                segment_builder=media_segment_builder,
                             ),
                         }
                     )
@@ -772,6 +794,7 @@ class TweetMessageRenderer:
                                     omit_status_url=omit_status_url,
                                     hide_original_when_translated=hide_original_when_translated,
                                     link_style=link_style,
+                                    segment_builder=media_segment_builder,
                                 ),
                             }
                         )
@@ -793,7 +816,17 @@ class TweetMessageRenderer:
         return {"type": "text", "data": {"text": text}}
 
     @staticmethod
-    def raw_media(media: TweetMedia) -> dict:
+    def raw_media(media: TweetMedia, segment_builder=None) -> dict:
+        """Build one OneBot media segment.
+
+        ``segment_builder`` lets ``delivery/`` swap the wire encoding (base64 or a
+        backend-fetchable URL) without this module importing the delivery layer.
+        Returning ``None`` from it falls back to the local-path segment.
+        """
+        if segment_builder is not None:
+            segment = segment_builder(media)
+            if segment is not None:
+                return segment
         uri = file_uri(media.path)
         if media.is_image:
             return {"type": "image", "data": {"file": uri}}
@@ -810,9 +843,10 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        segment_builder=None,
     ) -> list[dict]:
         if media_only:
-            return [self.raw_media(media)]
+            return [self.raw_media(media, segment_builder)]
         return [
             self.raw_text(
                 self.format_video_attachment_text(
@@ -826,7 +860,7 @@ class TweetMessageRenderer:
                     link_style=link_style,
                 )
             ),
-            self.raw_media(media),
+            self.raw_media(media, segment_builder),
         ]
 
     def _build_onebot_image_content(
@@ -840,11 +874,12 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        segment_builder=None,
     ) -> list[dict]:
         # The tweet node already carries the author and source context.
         # Keep each attachment node media-only to avoid repeated captions.
         # Keep the shared builder signature; caption-related arguments are unused.
-        return [self.raw_media(media)]
+        return [self.raw_media(media, segment_builder)]
 
     def _build_onebot_tweet_content(
         self,
@@ -859,6 +894,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        segment_builder=None,
     ) -> list[dict]:
         if media_only:
             content = [
@@ -909,7 +945,7 @@ class TweetMessageRenderer:
                     and include_videos
                 )
             ):
-                content.append(self.raw_media(media))
+                content.append(self.raw_media(media, segment_builder))
         return content
 
     def format_plain(

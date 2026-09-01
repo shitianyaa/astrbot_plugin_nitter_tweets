@@ -340,38 +340,47 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     warning=text_attempt.warning,
                 )
 
-        image_components = sender.renderer.build_direct_image_components(tweets)
+        image_items = sender.renderer.build_direct_image_items(tweets)
         image_error = ""
         image_warning = ""
-        for offset, image_component in enumerate(image_components, start=1):
-            image_attempt = await self._send_context_component_with_retry(
-                sender,
+        for offset, (media, image_component) in enumerate(image_items, start=1):
+            label = f"QQ direct scheduled tweet image {offset}/{len(image_items)}"
+            outcome = await self._send_umo_media_item(
                 context,
                 umo,
-                image_component,
-                f"QQ direct scheduled tweet image {offset}/{len(image_components)}",
+                media,
+                component_send=self._umo_component_sender(
+                    sender, context, umo, image_component, label, retry=True
+                ),
+                label=label,
             )
+            image_attempt = outcome.attempt
             if image_attempt.success or image_attempt.uncertain:
                 image_warning = image_warning or image_attempt.warning
                 continue
             image_error = image_attempt.error
             logger.warning(
                 "[NitterTweets] QQ 直发图片附件失败，主体文本已发送: "
-                f"target={umo}, image={offset}/{len(image_components)}, "
+                f"target={umo}, image={offset}/{len(image_items)}, "
                 f"error={image_error}"
             )
             break
 
-        video_components = sender.renderer.build_direct_video_components(tweets)
+        video_items = sender.renderer.build_direct_video_items(tweets)
         video_error = ""
         video_warning = ""
-        for offset, video_component in enumerate(video_components, start=1):
-            video_attempt = await sender._send_context_message(
+        for offset, (media, video_component) in enumerate(video_items, start=1):
+            label = f"QQ direct scheduled tweet video {offset}/{len(video_items)}"
+            outcome = await self._send_umo_media_item(
                 context,
                 umo,
-                self._message_chain([video_component], link_style=link_style),
-                f"QQ direct scheduled tweet video {offset}/{len(video_components)}",
+                media,
+                component_send=self._umo_component_sender(
+                    sender, context, umo, video_component, label, link_style
+                ),
+                label=label,
             )
+            video_attempt = outcome.attempt
             if video_attempt.success or video_attempt.uncertain:
                 video_warning = video_warning or video_attempt.warning
                 continue
@@ -382,8 +391,8 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             # 视频全部送达时，图片失败不应让整批重发。但没有视频组件且图片全部
             # 失败时 media_only 没有任何媒体送达，不能算完成，否则会推进 seen 漏推。
             # 一个媒体组件都没有时同理：不能凭“没有失败”判定完成。
-            has_media = bool(video_components) or bool(image_components)
-            media_delivered = has_media and (bool(video_components) or not image_error)
+            has_media = bool(video_items) or bool(image_items)
+            media_delivered = has_media and (bool(video_items) or not image_error)
             return SendOutcome(
                 success=not (media_only and not media_delivered),
                 error=delivery_error,
@@ -487,37 +496,47 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                     link_style=link_style,
                 )
 
-        image_components = sender.renderer.build_direct_image_components(tweets)
+        image_items = sender.renderer.build_direct_image_items(tweets)
         image_failed = False
-        for offset, image_component in enumerate(image_components, start=1):
-            image_attempt = await self._send_event_component_with_retry(
-                sender,
+        for offset, (media, image_component) in enumerate(image_items, start=1):
+            label = f"manual QQ direct image {offset}/{len(image_items)}"
+            outcome = await self._send_event_media_item(
                 event,
-                image_component,
-                f"manual QQ direct image {offset}/{len(image_components)}",
+                media,
+                component_send=self._event_component_sender(
+                    sender, event, image_component, label, retry=True
+                ),
+                label=label,
             )
+            image_attempt = outcome.attempt
             if image_attempt.success or image_attempt.uncertain:
                 continue
             logger.warning(
                 "[NitterTweets] QQ 手动直发图片附件失败，正文已发送: "
-                f"image={offset}/{len(image_components)}, error={image_attempt.error}"
+                f"image={offset}/{len(image_items)}, error={image_attempt.error}"
             )
             image_failed = True
             break
 
-        video_components = sender.renderer.build_direct_video_components(tweets)
-        if not video_components:
+        video_items = sender.renderer.build_direct_video_items(tweets)
+        if not video_items:
             # media_only 必须真的送出媒体：没有图片组件时不能凭“没有失败”判定完成。
-            return (bool(image_components) and not image_failed) or not media_only
+            return (bool(image_items) and not image_failed) or not media_only
 
-        for offset, video_component in enumerate(video_components, start=1):
-            video_attempt = await sender._send_event_chain(
+        for offset, (media, video_component) in enumerate(video_items, start=1):
+            label = f"manual QQ direct video {offset}/{len(video_items)}"
+            outcome = await self._send_event_media_item(
                 event,
-                self._message_chain([video_component], link_style=link_style),
-                f"manual QQ direct video {offset}/{len(video_components)}",
+                media,
+                component_send=self._event_component_sender(
+                    sender, event, video_component, label, link_style
+                ),
+                label=label,
             )
+            video_attempt = outcome.attempt
             if video_attempt.success or video_attempt.uncertain:
                 continue
+            # 梯度耗尽后放弃的视频是可重试失败，走下面的省略提示而不是整条失败。
             if not video_attempt.retryable:
                 return False
             break
@@ -538,6 +557,91 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             "manual QQ direct video omitted notice",
         )
         return notice_attempt.success or notice_attempt.uncertain
+
+    def _event_component_sender(
+        self,
+        sender,
+        event,
+        component,
+        label: str,
+        link_style: str = "plain",
+        retry: bool = False,
+    ):
+        """The unchanged component path, as a zero-arg awaitable factory."""
+
+        async def send():
+            if retry:
+                return await self._send_event_component_with_retry(
+                    sender, event, component, label, link_style
+                )
+            return await sender._send_event_chain(
+                event,
+                self._message_chain([component], link_style=link_style),
+                label,
+            )
+
+        return send
+
+    def _umo_component_sender(
+        self,
+        sender,
+        context,
+        umo: str,
+        component,
+        label: str,
+        link_style: str = "plain",
+        retry: bool = False,
+    ):
+        async def send():
+            if retry:
+                return await self._send_context_component_with_retry(
+                    sender, context, umo, component, label, link_style
+                )
+            return await sender._send_context_message(
+                context,
+                umo,
+                self._message_chain([component], link_style=link_style),
+                label,
+            )
+
+        return send
+
+    async def _send_event_media_item(
+        self,
+        event,
+        media,
+        *,
+        component_send,
+        label: str,
+    ):
+        async def segment_send(segment):
+            return await self.send_event_media_segment(event, segment, label)
+
+        return await self._send_media_with_transport(
+            media,
+            component_send=component_send,
+            segment_send=segment_send,
+            label=label,
+        )
+
+    async def _send_umo_media_item(
+        self,
+        context,
+        umo: str,
+        media,
+        *,
+        component_send,
+        label: str,
+    ):
+        async def segment_send(segment):
+            return await self.send_umo_media_segment(context, umo, segment, label)
+
+        return await self._send_media_with_transport(
+            media,
+            component_send=component_send,
+            segment_send=segment_send,
+            label=label,
+        )
 
     async def _send_context_component_with_retry(
         self,

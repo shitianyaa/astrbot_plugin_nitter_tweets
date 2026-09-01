@@ -234,6 +234,42 @@ class SenderMergedForwardMixin:
                     warning=attempt.warning,
                 )
 
+            # 换传输编码重发是无损的，排在下面的去视频降级之前。
+            merged_tweets = [tweet for _u, _i, tweets in batches for tweet in tweets]
+
+            async def rebuild_and_send(builder, _encoding):
+                retry_nodes = self.renderer.build_merged_onebot_nodes_for_uin(
+                    10000,
+                    batches,
+                    start_index=tweet_start_index,
+                    group_label=group_label,
+                    batch_summary=batch_summary,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                    media_segment_builder=builder,
+                )
+                retry_attempt = await self._send_onebot_umo_forward(
+                    context, umo, retry_nodes, "merged scheduled tweets transport retry"
+                )
+                if retry_attempt.success or retry_attempt.uncertain:
+                    return retry_attempt
+                return None
+
+            retried = await self._retry_forward_with_transport(
+                lambda: self._delivery_adapter_for_umo(context, umo),
+                merged_tweets,
+                rebuild_and_send=rebuild_and_send,
+                last_error=Exception(str(attempt.error)) if attempt.error else None,
+            )
+            if retried is not None:
+                return MergedSendOutcome(
+                    success=True,
+                    mode=("uncertain_delivery" if retried.uncertain else "raw_forward"),
+                    warning=retried.warning,
+                )
+
         if not raw_forward_available:
             nodes = self.renderer.build_merged_nodes_for_uin(
                 10000,

@@ -184,12 +184,37 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | --- | --- |
 | `send_image_attachments` | 是否发送图片附件；默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件；默认关闭。开启后可能受平台大小/格式限制；关闭时跳过视频下载。检测到视频/GIF 时会忽略图片附件（含封面）。 |
-| `video_resolution_preference` | 视频分辨率偏好；默认 `highest`，也可填 `lowest`、`1280p`、`852p`、`568p` 等。 |
+| `media_quality` | 媒体画质，图片和视频共用三档；默认 `high`（图片 twimg `name=orig`、视频取候选最高档），`medium`（图片 `name=large`、视频中位数档），`low`（图片 `name=small`、视频最低档）。 |
 | `max_video_duration_minutes` | 视频/GIF 最长下载分钟数，范围 `1-8`；能读取到时长且超过上限时会跳过下载并保留原文链接。 |
 | `max_media_per_tweet` | 单条推文最多发送多少个媒体。 |
 | `media_timeout` | 媒体解析和下载超时秒数。 |
 | `media_max_size_mb` | 单个媒体大小上限。 |
-| `xdown_api_url` | Twitter/X 媒体解析 API。 |
+| `media_transport_mode` | 媒体交给协议端的编码策略，只影响私人号 OneBot。`auto`（默认）先试本地路径，失败再用 base64 重试；`base64_first` 直接从 base64 起步；`path_only` 只用本地路径。 |
+| `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8，范围 `0.5-32`。同时约束图片和视频——默认值已把绝大多数视频排除在 base64 之外。 |
+| `media_transport_url_fallback` | 是否允许把 twimg 直链交给协议端自行下载；默认关闭。 |
+
+#### 媒体传输编码
+
+插件把媒体交给平台时默认使用本地文件路径，这要求 AstrBot 与协议端（NapCat / LLOneBot / Lagrange）
+能读到同一个文件系统。分容器或分机器部署时协议端读不到 `file:///`，媒体会失败。
+
+传输编码层为此提供一条**无损**的降级梯度，排在去视频、退纯文本这些**有损**降级之前：
+
+| 类型 | `auto` 下的梯度 |
+| --- | --- |
+| 图片 | 本地路径 → base64 →（可选 URL 直传） |
+| 视频 | 本地路径 →（可选 URL 直传）→ 放弃附件并保留「视频未发送」提示 |
+
+- 视频只有小于 `media_transport_base64_max_mb` 时才会出现 base64 档。默认 8MB 意味着通常不走 base64——
+  把几十 MB 的视频塞进单条消息会带来内存和 payload 压力。调高该值即表示接受这一开销。
+- URL 直传默认关闭。开启后协议端会**直连 Twitter CDN**，绕过插件的代理配置并暴露其出口 IP；
+  网络隔离的部署请保持关闭。带 token 的 xdown 直链时效短且对 Referer 敏感，任何时候都不会交给协议端。
+- 传输层会记住每个平台最近一次成功的编码档作为下次的起步提示。如果你确定文件系统不共享，
+  直接设 `base64_first` 可以省掉第一次的路径档试探。
+- 超时等「可能已送达」的失败不会推进梯度，避免重复投递。
+
+飞书、Telegram、QQ Official 和其他平台都在 AstrBot 进程内从本地路径上传，不存在这个问题，
+也不参与该梯度。
 
 ### AI
 
@@ -278,7 +303,7 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 分组“仅媒体”有效时，消息只包含 `@作者` 和已准备附件；正文、翻译、原帖链接、媒体 warning 和 AI 提示都不会进入消息。媒体准备结果：`ready` 发送；`policy_skipped`（全局禁用类型或大小/时长/分辨率/数量等策略排除）本轮不发送并允许扫描基准推进；`transient_failure` 与 `no_candidate`（解析后仍无候选）本轮不发送、不写 seen，下轮重试。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮重复推送。
 - 视频/GIF 附件发送默认关闭；关闭时会保留原帖链接并提示打开原文查看。
-- 开启视频/GIF 附件后只会按 `video_resolution_preference` 下载一个分辨率；检测到视频/GIF 时会忽略所有图片附件，避免把视频封面当普通图片发送。
+- 开启视频/GIF 附件后只会按 `media_quality` 下载一个分辨率档；检测到视频/GIF 时会忽略所有图片附件，避免把视频封面当普通图片发送。视频选中档超 `media_max_size_mb` 时会自动降到下一低档。
 - 插件会尽量读取视频时长，超过 `max_video_duration_minutes` 时跳过下载；读不到时长时不会误拦截，仍按文件大小上限处理。
 - 普通媒体文件会在本轮手动查询或后台推送发送流程结束后删除；如果同一轮要发送到多个目标，会等所有目标都处理完再删除。
 - 翻译使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。

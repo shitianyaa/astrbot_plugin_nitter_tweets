@@ -98,6 +98,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 普通媒体发送后清理；统计 removed/failed 等。
 - UMO 用 `/sid` 完整值；平台类型用 `PlatformResolver`，勿只看 UMO 第一段。
 - QQ 合并转发有降级与「可能已送达」处理；TG flood retry；Lark 优先原生 post。
+- 媒体传输编码梯度只作用于 OneBot（`delivery/media_transport.py`）：**无损的换编码重试必须排在有损的去视频/纯文本降级之前**；`uncertain` 不推进梯度；Lark 必须拿到文件系统路径而非 base64。详见 `docs/project/platform-delivery.md`。
 - 处理顺序：翻译 → 媒体；provider 不硬编码。
 
 ## 文档同步
@@ -122,6 +123,10 @@ ruff format --check .
 - HTML/搜索：`tests/test_html_backend_query.py`、`tests/test_watch_queries_config.py`
 - 日志与 HTML 页面分类：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
 - 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
+- 媒体传输编码：`tests/test_media_transport.py`
+- 媒体画质三档：`tests/test_media_quality_preference.py`、`tests/test_prefer_pbs_quality.py`
+- xdown token 直链与重试兜底：`tests/test_xdown_token_direct_url.py`
+- 视频大小预检降级：`tests/test_video_size_preflight.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。
 
 完整矩阵：`docs/dev/testing.md`。

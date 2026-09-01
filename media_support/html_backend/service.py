@@ -45,6 +45,7 @@ class HtmlBackendConfig:
     max_global_retries: int = 2
     retry_delay_base: float = 5.0
     retry_delay_on_cooldown: float = 10.0
+    media_quality: str = "high"
 
 
 class HtmlNitterService:
@@ -87,6 +88,7 @@ class HtmlNitterService:
                 max_global_retries=self.config.max_global_retries,
                 retry_delay_base=self.config.retry_delay_base,
                 retry_delay_on_cooldown=self.config.retry_delay_on_cooldown,
+                media_quality=self.config.media_quality,
             ),
             log=self.log,
             shared_limiter=self.limiter,

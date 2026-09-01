@@ -26,13 +26,28 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
     def should_split_direct_images(self) -> bool:
         return True
 
-    async def send_event_forward(self, event, raw_nodes: list[dict]) -> bool:
+    def media_transport_ladder(self, media, **kwargs) -> tuple[str, ...]:
+        """OneBot is the one adapter that hands a path to a separate process.
+
+        NapCat / LLOneBot / Lagrange may run in another container or on another
+        host, where ``file:///`` is unreadable. Fall back to other wire encodings
+        before the lossy content degradation gets a chance to drop the media.
+        """
+        policy = getattr(self.sender, "transport_policy", None)
+        if policy is None:
+            return super().media_transport_ladder(media, **kwargs)
+        return policy.ladder_for(media, **kwargs)
+
+    def _event_call_action(self, event):
         client = getattr(event, "bot", None)
-        call_action = self.profile.call_action
         if hasattr(client, "api") and hasattr(client.api, "call_action"):
-            call_action = client.api.call_action
-        elif hasattr(client, "call_action"):
-            call_action = client.call_action
+            return client.api.call_action
+        if hasattr(client, "call_action"):
+            return client.call_action
+        return self.profile.call_action
+
+    async def send_event_forward(self, event, raw_nodes: list[dict]) -> bool:
+        call_action = self._event_call_action(event)
         if call_action is None:
             return False
 
@@ -57,6 +72,70 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
             return True
 
         return False
+
+    async def send_event_media_segment(self, event, segment: dict, label: str):
+        """Send one media segment through a raw OneBot action.
+
+        Going around AstrBot's component chain is what gives the transport layer
+        control over the ``file`` value. Without ``call_action`` we return ``None``
+        so the caller falls back to the unchanged component path.
+        """
+        call_action = self._event_call_action(event)
+        if call_action is None:
+            return None
+
+        group_id = safe_call(event, "get_group_id")
+        if group_id:
+            action = "send_group_msg"
+            payload = {"group_id": int(group_id)}
+            target = str(group_id)
+        else:
+            user_id = safe_call(event, "get_sender_id")
+            if not user_id:
+                return None
+            action = "send_private_msg"
+            payload = {"user_id": int(user_id)}
+            target = str(user_id)
+
+        return await self._call_message_action(
+            call_action, action, payload, segment, label, target
+        )
+
+    async def send_umo_media_segment(
+        self, context, umo: str, segment: dict, label: str
+    ):
+        call_action = self.sender._onebot_call_action_for_umo(context, umo)
+        if call_action is None:
+            return None
+
+        message_type, session_id = self.onebot_target_from_umo(umo)
+        if not session_id:
+            return None
+
+        action = "send_group_msg"
+        payload = {"group_id": session_id}
+        if message_type in {"private", "friend", "friendmessage", "privatemessage"}:
+            action = "send_private_msg"
+            payload = {"user_id": session_id}
+
+        return await self._call_message_action(
+            call_action, action, payload, segment, label, umo
+        )
+
+    async def _call_message_action(
+        self,
+        call_action,
+        action: str,
+        payload: dict,
+        segment: dict,
+        label: str,
+        target: str,
+    ) -> SendAttempt:
+        try:
+            await call_action(action, **payload, message=[segment])
+        except Exception as exc:
+            return self.sender._send_exception_attempt(exc, label, target)
+        return SendAttempt(success=True)
 
     async def send_umo_forward(
         self,

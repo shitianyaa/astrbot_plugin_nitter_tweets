@@ -115,6 +115,7 @@ HTML 只分类真实时间线、空页、登录/维护/挑战错误页和异常�
 - `scheduler/`: 调度状态机、分组配置、调度结果模型、日志和消息格式。
 - `plugin_api/`: AstrBot Plugin Pages 后端 API 和 WebUI 分组编辑。
 - `delivery/`: `TweetSender`、平台识别和平台适配器。
+- `delivery/media_transport.py` + `delivery/sender_transport.py`: 媒体线上编码梯度（path / base64 / url / skip）与其执行；只有 OneBot 适配器启用，见[平台发送指南](./platform-delivery.md#媒体传输编码)。
 - `media_support/`: Nitter RSS、xdown、媒体下载、缓存和视频探测。
 - `storage/`: SQLite、push history、旧 KV seen 迁移。
 - `ai/`: 翻译。

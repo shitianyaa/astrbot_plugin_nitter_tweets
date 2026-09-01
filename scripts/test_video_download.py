@@ -51,8 +51,7 @@ def _build_config(args: argparse.Namespace) -> dict:
         "media_timeout": args.timeout,
         "media_max_size_mb": args.max_size_mb,
         "max_video_duration_minutes": args.max_duration_minutes,
-        "xdown_api_url": args.xdown_url,
-        "video_resolution_preference": args.resolution,
+        "media_quality": args.resolution,
     }
 
 
@@ -137,7 +136,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"x_url={tweet.x_url}")
     print(f"cache_dir={service.cache_dir}")
     print(f"xdown_api={service.xdown_url}")
-    print(f"resolution={service.video_resolution_preference}")
+    print(f"media_quality={service.media_quality}")
     print(f"max_video_duration={service.max_video_duration_seconds}s")
 
     try:

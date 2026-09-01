@@ -30,6 +30,7 @@ try:
     )
     from ..rendering import TweetMessageRenderer
     from ..shared import TweetItem
+    from .media_transport import MediaTransportPolicy, TransportConfig, TransportMemo
     from .outcomes import SendAttempt, SendOutcome
     from .platforms import PlatformDeliveryRegistry, PlatformResolver
     from .sender_capabilities import SenderCapabilitiesMixin
@@ -37,6 +38,7 @@ try:
     from .sender_forward import SenderForwardMixin
     from .sender_helpers import SenderHelpersMixin
     from .sender_merged import SenderMergedForwardMixin
+    from .sender_transport import SenderTransportMixin
 except ImportError:
     from config import (
         configured_merge_tweet_threshold,
@@ -49,11 +51,17 @@ except ImportError:
         SendAttempt,
         SendOutcome,
     )
+    from delivery.media_transport import (
+        MediaTransportPolicy,
+        TransportConfig,
+        TransportMemo,
+    )
     from delivery.sender_capabilities import SenderCapabilitiesMixin
     from delivery.sender_direct import SenderDirectMixin
     from delivery.sender_forward import SenderForwardMixin
     from delivery.sender_helpers import SenderHelpersMixin
     from delivery.sender_merged import SenderMergedForwardMixin
+    from delivery.sender_transport import SenderTransportMixin
     from rendering import TweetMessageRenderer
     from shared import TweetItem
 
@@ -63,6 +71,7 @@ class TweetSender(
     SenderDirectMixin,
     SenderForwardMixin,
     SenderMergedForwardMixin,
+    SenderTransportMixin,
     SenderHelpersMixin,
 ):
     FORWARD_TWEET_CHUNK_SIZE = 8
@@ -82,6 +91,11 @@ class TweetSender(
         )
         self.platform_resolver = PlatformResolver()
         self.delivery_registry = PlatformDeliveryRegistry()
+        self.transport_policy = MediaTransportPolicy(
+            TransportConfig.from_config(config)
+        )
+        # Instance state, not module-global: keeps parallel senders and tests isolated.
+        self.transport_memo = TransportMemo()
 
     @staticmethod
     def resolve_link_style(platform_name: str = "") -> str:

@@ -26,6 +26,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | SQLite 线程安全 | `python -m pytest -q tests/test_sqlite_threading.py` | `asyncio.to_thread` 调用 |
 | 结构化日志与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、时间线/空页/登录维护/异常页分类 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
+| 媒体传输编码 | `python -m pytest -q tests/test_media_transport.py` | 梯度组成、base64 上限、URL 主机白名单、传输降级先于内容降级、`uncertain` 不推进、编码记忆、非 OneBot 恒 `path` |
 
 ## 高风险改动
 
@@ -33,8 +34,9 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | --- | --- | --- |
 | seen / 扫描水位写入时机 | 准备失败漏推或发送失败重复 | 补调度测试 |
 | OneBot 合并转发 | 重复推送、视频节点失败 | 补 OneBot 平台测试 |
+| 媒体传输编码梯度 | 有损降级抢在无损重试之前导致丢图丢视频；`uncertain` 推进梯度导致重复投递；base64 撑爆 payload | 补 `tests/test_media_transport.py` |
 | QQ Official 官方 Bot | Markdown 原样泄漏、官方 UMO 字段错误、Markdown 拒绝降级、媒体失败导致重复推送 | 补 `tests/test_qq_official_delivery.py` |
-| Lark post | 图片或文本降级异常 | 补 Lark 行为测试 |
+| Lark post | 图片或文本降级异常；被误喂 base64 而不是文件路径 | 补 Lark 行为测试 |
 | 纯文本过滤 | 引用媒体误判 | 补 RSS HTML 片段测试 |
 | xdown 解析 | 下载错误或封面误发 | 补 media resolution 测试 |
 | 配置迁移 | 老用户配置丢失 | 补 `config/compat.py` 相关测试 |
