@@ -98,8 +98,8 @@ class WebAPIOverviewMixin:
                 config_get(self.config, "translate_enabled", False), False
             ),
         }
-        instance_lists = self._configured_instance_lists()
-        instances = list(instance_lists["instances"])
+        instances = self._configured_instances()
+        instance_lists = {"instances": instances}
         return self._ok(
             scheduler=scheduler_state,
             counts=counts,

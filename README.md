@@ -132,6 +132,8 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 部署完成后，将 Nitter 地址填入本插件的 `instances`。同一列表同时用于用户 RSS、用户 HTML、搜索、List 和后台并发抓取。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
 
+如果需要关注较多账号，建议在 Nitter 中建立 List，再使用插件的 List 分组订阅。List 时间线通常比逐个轮询用户页产生更少请求，更不容易触发实例的 429。RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds`，无需分别调整两套参数。
+
 实例地址按部署拓扑填写：AstrBot 与 Nitter 同一 Docker network 使用 `http://nitter:8080`；AstrBot 在容器、Nitter 在宿主机时使用宿主机可达地址（如 `http://host.docker.internal:8080`）；两者都在宿主机进程时可使用 `http://127.0.0.1:8080`；跨机器使用 Nitter 服务器的公网 IP 或域名。AstrBot 容器内的 `127.0.0.1` 只指向 AstrBot 容器本身。
 
 只填写你自己控制且信任的 Nitter。插件允许访问本地、Docker 和私网 HTTP(S) 地址，并会继续访问实例响应中提供的媒体 URL 与重定向目标；请用 Docker network、防火墙和反向代理隔离 Redis、AstrBot/NapCat 管理面及其他内部服务。

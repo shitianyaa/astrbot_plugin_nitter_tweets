@@ -21,7 +21,6 @@ try:
         clamp_float,
         clamp_int,
         clean_text,
-        filter_retired_instances,
         load_instances,
         normalize_external_links,
     )
@@ -32,7 +31,6 @@ except ImportError:
         clamp_float,
         clamp_int,
         clean_text,
-        filter_retired_instances,
         load_instances,
         normalize_external_links,
     )
@@ -241,7 +239,7 @@ class NitterClient:
 
     def __init__(self, config):
         raw_instances = config_get(config, "instances")
-        self.instances, self.retired_instances = filter_retired_instances(raw_instances)
+        self.instances = load_instances(raw_instances)
         self.ignored_legacy_instances = {
             key: load_instances(self._legacy_instance_value(config, key))
             for key in (

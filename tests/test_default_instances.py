@@ -15,7 +15,7 @@ from main import NitterTweetsPlugin
 from media_support.client import NitterClient
 from media_support.html_backend.service import HtmlBackendConfig
 from media_support.nitter import NitterService
-from shared.utils import DEFAULT_INSTANCES, filter_retired_instances
+from shared.utils import DEFAULT_INSTANCES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,18 +23,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_code_defaults_are_empty_for_self_hosted_only():
     assert DEFAULT_INSTANCES == []
     assert HtmlBackendConfig().instances == []
-
-
-def test_retired_public_instances_are_filtered_without_mutating_input():
-    configured = [
-        "https://nitter.net",
-        "http://nitter:8080",
-        "https://nitter.tiekoetter.com/",
-    ]
-    active, removed = filter_retired_instances(configured)
-    assert active == ["http://nitter:8080"]
-    assert removed == ["https://nitter.net", "https://nitter.tiekoetter.com"]
-    assert configured[0] == "https://nitter.net"
 
 
 def test_deleted_instance_fields_are_not_migrated_or_removed():
@@ -57,13 +45,20 @@ def test_schema_exposes_only_instances():
     basic = schema["basic"]["items"]
     assert basic["instances"]["default"] == []
     for key in (
+        "storage_backend",
         "search_instances",
         "blogger_html_instances",
         "concurrent_fetch_instances",
         "user_html_fallback",
     ):
         assert key not in basic
-        assert key not in schema
+    for key in (
+        "search_cooldown_seconds",
+        "search_default_limit",
+        "html_request_timeout",
+    ):
+        assert key not in basic
+    assert "storage_backend" not in basic
     assert basic["filter_reposts_enabled"]["default"] is True
     assert basic["filter_reposts_enabled"]["description"] == "转发过滤总开关"
 

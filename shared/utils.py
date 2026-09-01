@@ -80,18 +80,6 @@ class TweetItem:
 # deployment is incomplete instead of silently calling a retired mirror.
 DEFAULT_INSTANCES: list[str] = []
 
-# Public mirrors are no longer a supported deployment dependency.  Keep this
-# list only to prevent stale configs from silently calling retired services.
-RETIRED_PUBLIC_INSTANCES = frozenset(
-    {
-        "https://nitter.net",
-        "https://nitter.tiekoetter.com",
-        "https://nitter.poast.org",
-        "https://nitter.kareem.one",
-        "https://nitter.catsarch.com",
-    }
-)
-
 
 def format_tweet_published(raw: str) -> str:
     """Normalize any tweet timestamp to Asia/Shanghai ``YYYY-MM-DD HH:MM:SS``.
@@ -315,26 +303,6 @@ def load_instances(value) -> list[str]:
         if item not in instances:
             instances.append(item)
     return instances or DEFAULT_INSTANCES
-
-
-def filter_retired_instances(value) -> tuple[list[str], list[str]]:
-    """Return configured instances minus retired public mirrors."""
-
-    configured = load_instances(value)
-    active: list[str] = []
-    removed: list[str] = []
-    retired_hosts = {
-        (urlparse(item).hostname or "").rstrip(".").casefold()
-        for item in RETIRED_PUBLIC_INSTANCES
-    }
-    for instance in configured:
-        normalized = instance.rstrip("/")
-        host = (urlparse(normalized).hostname or "").rstrip(".").casefold()
-        if host in retired_hosts:
-            removed.append(normalized)
-        elif normalized not in active:
-            active.append(normalized)
-    return active, removed
 
 
 def normalize_username(value: str) -> str:

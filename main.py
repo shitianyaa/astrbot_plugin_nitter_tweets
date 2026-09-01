@@ -77,12 +77,6 @@ class NitterTweetsPlugin(
         migrate_legacy_grouped_config(self.config)
         migrate_default_group_config(self.config)
         self.nitter = NitterService(config, session_dir=self._html_session_dir())
-        if self.nitter.retired_instances:
-            logger.warning(
-                "[NitterTweets] 已移除已退役公共实例配置: "
-                + ", ".join(self.nitter.retired_instances)
-                + "；请改为配置自建 Nitter 实例"
-            )
         for key, values in self.nitter.ignored_legacy_instances.items():
             labels = ", ".join(self._instance_log_label(value) for value in values)
             logger.warning(
@@ -115,12 +109,8 @@ class NitterTweetsPlugin(
         self.cooldown_seconds = clamp_float(
             config_get(config, "cooldown_seconds", 15.0), 0.0, 3600.0
         )
-        self.search_cooldown_seconds = clamp_float(
-            config_get(config, "search_cooldown_seconds", 30.0), 0.0, 3600.0
-        )
-        self.search_default_limit = self._parse_positive_limit(
-            config_get(config, "search_default_limit", 5), 5
-        )
+        self.search_cooldown_seconds = self.cooldown_seconds
+        self.search_default_limit = self.default_limit
         self.search_max_limit = self._parse_positive_limit(
             config_get(config, "search_max_limit", 10), 10
         )

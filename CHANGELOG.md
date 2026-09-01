@@ -9,6 +9,7 @@
 - 调整为仅支持可信自建 Nitter：不再提供或维护公共实例默认值、公共主机模式和 Anubis/Poast 挑战解算。
 - `instances` 成为唯一实例配置，同时用于用户 RSS/HTML、搜索、List 和后台并发抓取；Blogger 固定 RSS 优先、HTML 自动后备。
 - 删除 `search_instances`、`blogger_html_instances`、`concurrent_fetch_instances`、`user_html_fallback` 和 `search_enabled`。旧字段不会读取、迁移或写回，启动日志会列出被忽略的 origin；HTML 搜索和 List 现始终启用。
+- 关注对象较多时建议优先使用 Nitter List 分组，以减少逐用户轮询的请求量和 429；RSS 与 HTML 共用 `retry_attempts`、`retry_delay_seconds`。
 - 网络层允许合法 HTTP(S) 的 loopback、Docker 服务名、私网 IP、媒体 URL 和重定向；继续保留 URL 协议/语法、超时、响应/媒体大小、数量和时长限制。
 - Dashboard “镜像测试”重做为统一实例能力测试，一次报告用户 RSS、用户 HTML、搜索和可选 List 结果。
 - 文档增加容器内地址选择和可信来源提醒：插件会访问实例响应中的媒体与重定向，部署者应通过 Docker network、防火墙和反向代理隔离内部管理面。

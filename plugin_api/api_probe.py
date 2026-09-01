@@ -292,10 +292,6 @@ class WebAPIProbeMixin:
         )
         return self._dedupe_instances(values)
 
-    def _configured_instance_lists(self) -> dict[str, list[str]]:
-        """Dashboard compatibility wrapper with one product-level instance list."""
-        return {"instances": self._configured_instances()}
-
     @staticmethod
     def _dedupe_instances(values: list[str]) -> list[str]:
         seen: set[str] = set()

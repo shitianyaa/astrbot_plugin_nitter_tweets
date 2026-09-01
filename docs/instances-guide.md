@@ -16,6 +16,8 @@
 
 同一实例同时用于用户 RSS、用户 HTML、搜索、List 和后台并发抓取。可以填写多个自建实例，插件会按成功率、冷却状态和配置顺序轮换。
 
+关注对象较多时，优先在 Nitter 中建立一个 List，再订阅 List 分组。这样后台可以按 List 时间线抓取，减少逐个请求用户页面的次数，更不容易触发自建实例的 429；RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds` 重试配置。
+
 ## 容器和主机地址
 
 | 部署拓扑 | `instances` 示例 | 说明 |
@@ -40,7 +42,7 @@ AstrBot 容器内的 `127.0.0.1` 只代表 AstrBot 容器本身，不代表宿�
 
 ## 公共实例清理
 
-插件不再内置或推荐 `nitter.net`、tiekoetter、Poast、kareem 等公共实例。升级后如果旧配置中仍有已退役公共地址，启动时会在运行内过滤并输出 warning，但不会迁移、覆盖或删除配置文件；请手动改为自建地址。
+插件不再内置或推荐 `nitter.net`、tiekoetter、Poast、kareem 等公共实例。升级后旧配置不会被迁移、覆盖或删除；请手动把旧公共地址改为自建地址。
 
 旧版 `search_instances`、`blogger_html_instances` 和 `concurrent_fetch_instances` 已删除。插件不会读取、迁移或写回这些字段；启动日志会列出被忽略的旧实例 origin，用户需要手动整理到 `instances`。
 
@@ -64,7 +66,7 @@ AstrBot 容器内的 `127.0.0.1` 只代表 AstrBot 容器本身，不代表宿�
 
 | 错误 | 原因 | 处理 |
 | --- | --- | --- |
-| `未配置 Nitter 实例` | `instances` 为空或只剩退役公共地址 | 填写自建 Nitter 地址 |
+| `未配置 Nitter 实例` | `instances` 为空 | 填写自建 Nitter 地址 |
 | `无法解析 host nitter` | AstrBot 与 Nitter 不在同一 Docker network | 共享 network 或改用映射地址 |
 | `连接 127.0.0.1 失败` | 127.0.0.1 指向了错误的容器 | 使用 `nitter`、`host.docker.internal` 或公网地址 |
 | RSS 成功但搜索为空 | Nitter/反向代理未提供 HTML 搜索 | 检查自建 Nitter 版本和代理配置 |

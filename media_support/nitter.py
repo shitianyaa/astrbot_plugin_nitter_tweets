@@ -33,9 +33,7 @@ class NitterService(NitterClient):
                 instances=list(self.instances),
                 proxy=None,
                 session_dir=session_dir,
-                timeout=clamp_float(
-                    config_get(config, "html_request_timeout", 35.0), 5.0, 120.0
-                ),
+                timeout=self.timeout,
                 min_interval=clamp_float(
                     config_get(config, "html_min_interval", 3.0), 0.0, 120.0
                 ),

@@ -2,14 +2,8 @@
   "basic": {
     "description": "基础设置",
     "type": "object",
-    "hint": "Nitter 请求、存储和手动查询的基础配置。",
+    "hint": "Nitter 请求和手动查询的基础配置。",
     "items": {
-      "storage_backend": {
-        "description": "存储后端",
-        "type": "string",
-        "default": "sqlite",
-        "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和推送记录，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。"
-      },
       "instances": {
         "description": "自建 Nitter 实例列表",
         "type": "list",
@@ -26,16 +20,16 @@
         "description": "单个 Nitter 实例超时秒数",
         "type": "float",
         "default": 12.0,
-        "hint": "单次 RSS 请求等待该实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。"
+        "hint": "单次 Nitter 请求等待该实例响应的最长秒数；RSS、HTML 搜索和 List 共用此超时。"
       },
       "retry_attempts": {
-        "description": "Nitter RSS 重试轮数",
+        "description": "Nitter 请求重试轮数",
         "type": "int",
         "default": 2,
         "hint": "轮换重试轮数，默认 2。插件会轮流尝试所有实例，重复指定轮数。例如 3 个实例、2 轮：A→B→C→A→B→C。同时用于 HTML 搜索/List 的全局重试。"
       },
       "retry_delay_seconds": {
-        "description": "Nitter RSS 重试间隔（秒）",
+        "description": "Nitter 请求重试间隔（秒）",
         "type": "float",
         "default": 5.0,
         "hint": "两次重试之间的等待秒数，默认 5。设为 0 表示不等待。"
@@ -58,18 +52,6 @@
         "default": false,
         "hint": "开启后无需命令：识别消息里的公开 X/Twitter 推文链接并发送正文与媒体。默认关闭。忽略 Bot 自己的消息。翻译与「有译文时显示原文」跟随全局 AI 翻译设置。不受订阅、冷却、seen 和全局图/视频开关限制；仍受大小、时长、超时等安全限制。勿与同类链接解析插件同时对同一会话开启以免重复回复。"
       },
-      "search_cooldown_seconds": {
-        "description": "搜索命令冷却秒数",
-        "type": "float",
-        "default": 30.0,
-        "hint": "同一会话 /推文搜索 冷却，与 /推文 冷却分离。0 关闭。"
-      },
-      "search_default_limit": {
-        "description": "搜索默认条数",
-        "type": "int",
-        "default": 5,
-        "hint": "未指定条数时的本地截断上限。"
-      },
       "search_max_limit": {
         "description": "搜索最大条数",
         "type": "int",
@@ -87,12 +69,6 @@
         "type": "int",
         "default": 1,
         "hint": "手动搜索按请求上限截断；Tag/List 首轮最多取 20 条建立基准，已有水位后最多翻到该页数以寻找旧水位或游标末尾。Tag/List 达到上限仍未命中旧基准时，max_tweets_per_check=0 会跳过推送并用当前第一页最多 20 个状态 ID 自动重建基准，正数按上限推送成功后再重建；若第一页没有有效状态 ID、发送失败或基准写入失败，则保留旧水位。持久化水位始终最多保存 20 个 ID。"
-      },
-      "html_request_timeout": {
-        "description": "HTML 请求超时秒",
-        "type": "float",
-        "default": 35.0,
-        "hint": "HTML 页面请求超时。"
       }
     }
   },
@@ -259,20 +235,6 @@
         "type": "float",
         "default": 0.0,
         "hint": "手动 /推文、/推文搜索、/镜像测试 在非合并转发时，每条推文消息之间的等待秒数。0 表示不间隔。在平台适配前 sleep，对 QQ/Telegram/Lark/微信 OC 等均生效。合并转发整包发送时不使用本项。范围 0-60。"
-      },
-      "watch_users": {
-        "description": "旧版关注账号列表",
-        "type": "list",
-        "default": [],
-        "hint": "旧版兼容字段。启动后会迁移到用户分组里的默认分组；新配置请在用户分组中填写关注账号。",
-        "invisible": true
-      },
-      "push_targets": {
-        "description": "旧版定时推送目标列表",
-        "type": "list",
-        "default": [],
-        "hint": "旧版兼容字段。启动后会迁移到用户分组里的默认分组；新配置请在用户分组中填写推送目标。",
-        "invisible": true
       },
       "target_blocked_users": {
         "description": "推送目标作者黑名单",
