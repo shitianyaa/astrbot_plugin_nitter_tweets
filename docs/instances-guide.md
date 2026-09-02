@@ -1,417 +1,73 @@
 # Nitter 实例配置指南
 
-本文档详细说明插件的 RSS vs HTML 双路架构、默认候选实例、回退机制和最佳实践。公共实例的可用性会随时间、地区、限流和门禁变化；文中的默认列表不是稳定性或成功率保证。
+本文档说明自建 Nitter 的接入方式、容器网络拓扑和实例轮换。插件不再提供公共 Nitter 默认实例；请先部署自己控制的 Nitter，再配置地址。
 
 - 返回 [README](../README.md)
 - 查看 [进阶说明](./advanced.md)
 
----
+## 统一实例配置
 
-## RSS vs HTML 双路架构
+自建 Nitter 通常同时提供 RSS 和 HTML，因此插件只保留一份实例列表：`instances`。
 
-插件采用**功能分离**的设计，针对不同场景使用不同的 Nitter 接口：
+| 场景 | 接口 | 路径 | 配置 |
+| --- | --- | --- | --- |
+| 博主订阅 | RSS | `/username/rss` | `instances` |
+| 标签、List、手动搜索 | HTML | `/search?...` 或 List 路径 | `instances` |
 
-### 架构对比
+同一实例同时用于用户 RSS、用户 HTML、搜索、List 和后台并发抓取。可以填写多个自建实例，插件会按成功率、冷却状态和配置顺序轮换。
 
-| 场景 | 接口类型 | 路径 | 默认实例 | 配置项 |
-|------|---------|------|---------|--------|
-| **博主订阅** | RSS | `/username/rss` | `nitter.net` | `instances` |
-| **标签搜索** | HTML | `/search?q=%23tag` | `tiekoetter.com`<br>`poast.org`<br>`kareem.one` | `search_instances` |
+关注对象较多时，优先在 Nitter 中建立一个 List，再订阅 List 分组。这样后台可以按 List 时间线抓取，减少逐个请求用户页面的次数，更不容易触发自建实例的 429；RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds` 重试配置。
 
-### 为什么分离？
+## 容器和主机地址
 
-**RSS 路径（博主订阅）：**
-- ✅ `nitter.net` 常作为 RSS 候选
-- ✅ XML 解析简单可靠
-- ✅ 适合定时轮询
-- ❌ **不支持搜索**（只能获取用户时间线）
-- ❌ `nitter.net` 的 HTML 搜索已不可用（返回 200 空 body）
+| 部署拓扑 | `instances` 示例 | 说明 |
+| --- | --- | --- |
+| AstrBot 与 Nitter 在同一 Docker network | `http://nitter:8080` | `nitter` 是 Docker Compose 服务名 |
+| AstrBot 在容器，Nitter 在宿主机 | `http://host.docker.internal:8080` | Linux 需要配置 `host-gateway`，或使用宿主机网关地址 |
+| AstrBot 与 Nitter 都是宿主机进程 | `http://127.0.0.1:8080` | 两个进程确实运行在同一台主机 |
+| Nitter 在另一台服务器 | `http://公网IP:8080` 或 HTTPS 域名 | 确保安全组、防火墙和反向代理允许访问 |
+| 两个容器不在同一 network | 使用映射端口、宿主机地址或共享 network | 不能直接填写 `http://nitter:8080` |
 
-**HTML 路径（标签搜索）：**
-- ✅ 支持标签和短语搜索
-- ✅ 默认提供多个候选实例（便于轮换）
-- ✅ 支持常见门禁检测/解算（Anubis PoW、Poast SHA1）
-- ❌ 需要解析 HTML（比 RSS 复杂）
-- ❌ 部分实例 RSS 路径返回 403
+AstrBot 容器内的 `127.0.0.1` 只代表 AstrBot 容器本身，不代表宿主机或 Nitter 容器。不要填写 Redis 地址，插件只需要 Nitter 的 HTTP 服务地址。
 
-**分离的好处：**
-1. **避免资源冲突** - 博主订阅和搜索不会抢同一个实例
-2. **降低限流风险** - 定时博主轮询不占用搜索配额
-3. **独立冷却机制** - `cooldown_seconds` 和 `search_cooldown_seconds` 分别控制
-4. **错误信息清晰** - RSS 失败不会误报搜索问题
+插件不再区分公网、私网或容器地址，也没有额外放行开关。只要 URL 是合法的 HTTP(S)，请求和重定向就可以访问；实例返回的媒体 URL 也会由插件下载。因此只应填写你自己控制且信任的 Nitter，并在网络层隔离 Redis、AstrBot/NapCat 管理端口、云 metadata 等内部服务。
 
----
-
-## 默认实例配置
-
-### 博主 RSS（`instances`）
+示例：
 
 ```json
 {
-  "instances": ["https://nitter.net"]
+  "instances": ["http://nitter:8080"]
 }
 ```
 
-**特点：**
-- 单实例，稳定性高
-- 仅支持 `/username/rss` 路径
-- **不要用于搜索**（搜索返回空）
+## 公共实例清理
 
-**推荐自建：**
-```json
-{
-  "instances": [
-    "https://your-nitter.example.com",
-    "https://nitter.net"  // 保留官方作为回退
-  ]
-}
-```
+插件不再内置或推荐 `nitter.net`、tiekoetter、Poast、kareem 等公共实例。升级后旧配置不会被迁移、覆盖或删除；请手动把旧公共地址改为自建地址。
 
----
+旧版 `search_instances`、`blogger_html_instances` 和 `concurrent_fetch_instances` 已删除。插件不会读取、迁移或写回这些字段；启动日志会列出被忽略的旧实例 origin，用户需要手动整理到 `instances`。
 
-### 标签搜索 HTML（`search_instances`）
+## 用户时间线协议
 
-```json
-{
-  "search_instances": [
-    "https://nitter.tiekoetter.com",  // Anubis PoW 门禁
-    "https://nitter.poast.org",       // Poast SHA1 门禁
-    "https://nitter.kareem.one"       // 轻量门禁
-  ]
-}
-```
+用户时间线固定先请求 RSS；RSS 失败或没有结果时，自动使用同一实例列表请求 HTML 用户页。该行为不再提供开关，也不存在独立 HTML 实例池。
 
-**特点：**
-- 默认提供多个候选站点，运行时按成功率和冷却状态选择并轮换
-- 自动处理代码已识别的门禁；具体耗时和是否可用取决于实例当前响应
-- **不要添加 `nitter.net`**（其搜索路径可能返回空页面）
+## 健康检查
 
-**门禁类型说明：**
+使用 Dashboard 的“实例测试”一次检查用户 RSS、用户 HTML、搜索和可选 List。管理员命令 `/镜像测试` 可临时检查单个实例的用户时间线。建议确认：
 
-| 实例 | 门禁类型 | 解算时间 | 说明 |
-|------|---------|---------|------|
-| `tiekoetter.com` | Anubis PoW | ~10-100ms | 基于 SHA256 工作量证明 |
-| `poast.org` | Poast SHA1 | ~5-50ms | 基于 SHA1 迭代验证 |
-| `kareem.one` | 轻量门禁 | <5ms | 简单验证或无门禁 |
+- 容器内 DNS 能否解析 Docker 服务名；
+- 端口是否在 Nitter 容器监听并对 AstrBot 网络开放；
+- RSS 用户页是否返回有效 XML；
+- HTML 搜索是否返回时间线内容；
+- 反向代理是否要求额外认证或拦截请求。
 
-插件会自动检测并解算已支持的门禁，用户无需手动操作。明确 Anubis/Poast 挑战结构优先进入解算；没有明确挑战结构时，真实时间线内容优先于通用门禁文字和 Cloudflare beacon。HTTP 403、429、超时或未支持的门禁仍可能导致轮换。
+自建实例的认证、反向代理和安全组策略应在部署层配置。插件不包含公共实例挑战解算或过盾逻辑。
 
----
+## 常见错误
 
-## RSS 博主回退机制
-
-### 配置项
-
-**`user_html_fallback`**（默认 `false`，WebUI 可见）
-
-### 行为说明
-
-当所有 `instances` 中的 RSS 镜像都失败时：
-
-**默认行为（`user_html_fallback: false`）：**
-```
-1. 尝试 instances[0] → 失败
-2. 尝试 instances[1] → 失败
-3. 尝试 instances[2] → 失败
-4. 报错：RSS 轮换失败: username=NASA, tried=3, errors=...
-5. ✅ 不会自动切换到 search_instances
-```
-
-**回退行为（`user_html_fallback: true`）：**
-```
-1. 尝试所有 instances（RSS）→ 全部失败
-2. ⚠️ 自动回退到 search_instances（HTML /username 路径）
-3. 尝试 HTML 搜索实例的用户页
-4. 成功则返回结果
-```
-
-### 为什么默认关闭？
-
-| 问题 | 影响 |
-|------|------|
-| **占用搜索资源** | 博主订阅会消耗搜索实例配额 |
-| **增加 429 风险** | 定时轮询 + 搜索查询 = 更容易触发限流 |
-| **降低搜索成功率** | 博主回退占用可能导致真正的搜索失败 |
-| **错误信息混淆** | 难以区分是 RSS 问题还是搜索问题 |
-
-### 何时可以开启？
-
-**仅在以下情况下考虑：**
-1. ✅ 你的 `instances` 完全不可用（所有 RSS 镜像都挂了）
-2. ✅ 你需要紧急获取博主推文
-3. ✅ 你的 `search_instances` 有足够的配额（自建或低频使用）
-4. ✅ 你理解这只是临时应急方案
-
-**推荐长期方案：**
-1. 在 `instances` 中配置多个 RSS 镜像（推荐 2-3 个）
-2. 或者自建 Nitter 实例
-3. 定期检查实例健康度
-
-**开启后需要监控：**
-1. `search_instances` 的 429 限流情况
-2. 搜索命令的成功率变化
-3. 博主订阅的响应延迟
-
----
-
-## 容错机制
-
-### 实例轮换
-
-**单个实例失败 → 自动尝试下一个：**
-```
-instances: ["A", "B", "C"]
-
-尝试顺序:
-1. A → 失败（429 限流）
-2. B → 失败（超时）
-3. C → 成功 ✅
-```
-
-**冷却机制：**
-```
-实例 A 返回 429:
-1. 记录冷却时间（默认 60 秒）
-2. 60 秒内跳过实例 A
-3. 优先使用 B、C
-4. 60 秒后 A 恢复可用
-```
-
-**健康度评分：**
-```
-每个实例有内存评分:
-- 成功返回结果 → +100 分
-- 返回空结果 → +50 分（软成功）
-- 失败 → -20 分
-
-选择实例时优先使用高分实例
-```
-
----
-
-### 全局重试机制
-
-**当所有实例都失败时：**
-
-```
-第 1 轮尝试:
-  A → 失败
-  B → 失败
-  C → 失败
-
-延迟 5 秒
-
-第 2 轮尝试:
-  A → 失败
-  B → 成功 ✅ → 返回结果
-  
-(如果第 2 轮也失败，延迟 10 秒继续第 3 轮)
-```
-
-**配置项：**
-
-| 配置 | 默认值 | 说明 |
-|------|--------|------|
-| `max_global_retries` | `2` | 最多重试轮数 |
-| `retry_delay_base` | `5.0` | 基础延迟（秒） |
-| `retry_delay_on_cooldown` | `10.0` | 全部冷却时的延迟（秒） |
-
-**渐进式延迟：**
-```
-重试 1: 延迟 5s  (1 × retry_delay_base)
-重试 2: 延迟 10s (2 × retry_delay_base)
-重试 3: 延迟 15s (3 × retry_delay_base)
-```
-
-**智能跳过：**
-- ✅ 验证错误（ValueError）不触发重试
-- ✅ Probe 模式（`/镜像测试`）不触发重试
-- ✅ 运行时故障才重试
-
----
-
-## 错误提示对照表
-
-| 错误信息 | 原因 | 解决方案 |
-|---------|------|---------|
-| `未配置 Nitter 实例` | `instances` 或 `search_instances` 为空 | 检查配置，添加至少一个实例 |
-| `本轮所有 Nitter 实例均不可用（已跳过 3 个实例）` | 所有实例都在冷却或全部失败 | 等待冷却结束，或检查实例可用性 |
-| `RSS 轮换失败: username=NASA, tried=3, errors=...` | 所有 RSS 实例都失败 | 检查 `instances` 可用性，考虑添加更多镜像 |
-| `HTML search failed after 2 retries` | 搜索实例全部失败且重试耗尽 | 检查 `search_instances` 可用性，稍后重试 |
-| `all instances in cooldown` | 所有实例都被限流 | 等待冷却结束（默认 60 秒） |
-
----
-
-## 最佳实践
-
-### 1. 生产环境配置
-
-**博主订阅（RSS）：**
-```json
-{
-  "instances": [
-    "https://your-primary-nitter.example.com",
-    "https://your-backup-nitter.example.com",
-    "https://nitter.net"
-  ],
-  "user_html_fallback": false
-}
-```
-
-**标签搜索（HTML）：**
-```json
-{
-  "search_instances": [
-    "https://your-search-nitter.example.com",
-    "https://nitter.tiekoetter.com",
-    "https://nitter.poast.org",
-    "https://nitter.kareem.one"
-  ]
-}
-```
-
----
-
-### 2. 自建实例优先
-
-**为什么要自建？**
-- ✅ 无限流风险
-- ✅ 稳定性可控
-- ✅ 可自定义配置
-- ✅ 不受公共实例状态影响
-
-**自建后配置：**
-```json
-{
-  "instances": [
-    "https://your-nitter.example.com"  // 自建优先
-  ],
-  "search_instances": [
-    "https://your-nitter.example.com",  // 自建优先
-    "https://nitter.tiekoetter.com"    // 公共镜像作为回退
-  ]
-}
-```
-
----
-
-### 3. 监控与诊断
-
-**使用 `/镜像测试` 验证实例：**
-```bash
-# 测试 RSS 路径
-/镜像测试 nasa 5 https://nitter.net
-
-# 测试自建实例
-/镜像测试 nasa 5 https://your-nitter.example.com
-```
-
-**日志关键字：**
-```
-# 后台检查成功/无更新/有告警均使用同一结构化摘要；实际字段按任务类型出现
-[NitterTweets] 推文检查任务完成
-  分组名称: 科技订阅 (default)
-  订阅类型: 博主推文 (共 1 个源)
-  生效实例: nitter.net
-  抓取状态: 正常无更新 1 个
-  水位状态: 已推进 1 个
-  推文统计: 无新推文
-  推送结果: 未触发推送（无新推文）
-  任务耗时: 450 毫秒
-
-# 轮换、无效目标、基准重建失败和发送部分失败会附加明细，并提升到 warning
-[NitterTweets] 推文检查任务完成
-  轮换轨迹: 博主 @NASA: nitter.top[HTTP 403] ➔ nitter.net[成功]
-  推送结果: 成功推送 1/2 个目标
-  无效推送目标: bad-target
-  发送状态提示: 媒体部分失败
-```
-
----
-
-### 4. 不要混用路径
-
-**❌ 错误配置：**
-```json
-{
-  "instances": ["https://nitter.tiekoetter.com"],  // 这个实例的 RSS 返回 403
-  "search_instances": ["https://nitter.net"]       // 这个实例的搜索返回空
-}
-```
-
-**✅ 正确配置：**
-```json
-{
-  "instances": ["https://nitter.net"],             // RSS 专用
-  "search_instances": [                            // 搜索专用
-    "https://nitter.tiekoetter.com",
-    "https://nitter.poast.org"
-  ]
-}
-```
-
----
-
-## 常见问题
-
-### Q: 为什么不用同一个实例列表？
-
-**A:** 因为不同实例对 RSS 和搜索的支持情况不同：
-- `nitter.net`: RSS ✅ / 搜索 ❌
-- `tiekoetter/poast/kareem`: RSS ❌ / 搜索 ✅
-
-分离配置确保每个功能都用对应的可用实例。
-
----
-
-### Q: 我的 RSS 实例全挂了怎么办？
-
-**A:** 三种方案（按推荐顺序）：
-1. **最佳方案：** 添加自建 Nitter 实例到 `instances`
-2. **临时方案：** 添加其他公共 RSS 镜像（需验证可用性）
-3. **应急方案：** 临时开启 `user_html_fallback`，但尽快修复 RSS
-
----
-
-### Q: 搜索总是返回 429 怎么办？
-
-**A:** 
-1. 检查是否频繁搜索（触发限流）
-2. 增加 `search_cooldown_seconds`（默认 120 秒）
-3. 添加更多 `search_instances`（分散负载）
-4. 考虑自建实例（无限流）
-5. 确认没有开启 `user_html_fallback`（避免博主占用搜索配额）
-
----
-
-### Q: 全局重试会让请求变慢吗？
-
-**A:** 
-- **正常情况：** 不会。第一轮就成功，无延迟。
-- **全部失败时：** 会增加 5-15 秒延迟，但提升了成功率。
-- **权衡：** 可靠性 > 响应时间（偶尔慢一点，但成功率高 3 倍）
-
----
-
-### Q: 我可以只用一个实例吗？
-
-**A:** 可以，但不推荐：
-- ✅ 适合：自建实例（稳定性自己控制）
-- ❌ 不适合：公共实例（随时可能失效或限流）
-
-建议至少配置 2-3 个实例作为回退。
-
----
-
-## 相关文档
-
-- [README](../README.md) - 快速开始
-- [进阶说明](./advanced.md) - 完整配置参考
-- [_conf_schema.json](../_conf_schema.json) - 配置默认值
-
----
-
-## 更新日志
-
-- **2026-07-27** - 添加全局重试机制和 3 镜像默认配置
-- **2026-07-23** - 初始版本，分离 RSS 和 HTML 架构
+| 错误 | 原因 | 处理 |
+| --- | --- | --- |
+| `未配置 Nitter 实例` | `instances` 为空 | 填写自建 Nitter 地址 |
+| `无法解析 host nitter` | AstrBot 与 Nitter 不在同一 Docker network | 共享 network 或改用映射地址 |
+| `连接 127.0.0.1 失败` | 127.0.0.1 指向了错误的容器 | 使用 `nitter`、`host.docker.internal` 或公网地址 |
+| RSS 成功但搜索为空 | Nitter/反向代理未提供 HTML 搜索 | 检查自建 Nitter 版本和代理配置 |
+| 返回登录、维护或挑战页 | 实例自身访问控制或部署异常 | 在 Nitter/反向代理层处理 |

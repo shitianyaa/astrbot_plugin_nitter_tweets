@@ -12,7 +12,6 @@ from astrbot.core.star.filter.command import GreedyStr
 try:
     from ..ai import format_ai_tweet_summary
     from ..config import (
-        parse_config_bool,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -28,7 +27,6 @@ try:
 except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
-        parse_config_bool,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -142,49 +140,39 @@ class ManualCommandMixin:
             self.nitter.begin_run_host_skip()
         try:
             try:
-                instance, tweets = await self.nitter.fetch_tweets(
+                instance, tweets = await self.nitter.fetch_user(
                     username, limit, filter_reposts=False
                 )
             except Exception as exc:
                 logger.warning(f"[NitterTweets] 手动获取 @{username} 推文失败: {exc}")
-                instance, tweets = await self._fetch_user_with_html_fallback(
-                    username, limit, rss_error=exc
+                self._log_manual_no_send_task(
+                    "推文查询失败",
+                    operation="user_timeline",
+                    source=f"@{username}",
+                    started=started,
+                    status="抓取失败",
+                    error_detail=str(exc),
+                    warning=True,
                 )
-                if not tweets:
-                    self._log_manual_no_send_task(
-                        "推文查询失败",
-                        operation="user_timeline",
-                        source=f"@{username}",
-                        instance=instance,
-                        started=started,
-                        status="抓取失败",
-                        error_detail=f"RSS 与 HTML 回退均不可用: {exc}",
-                        warning=True,
+                await event.send(
+                    event.plain_result(
+                        f"获取 @{username} 推文失败，请检查自建 Nitter 实例。"
                     )
-                    await event.send(
-                        event.plain_result(
-                            f"获取 @{username} 推文失败：Nitter RSS 与 HTML 回退均不可用。"
-                        )
-                    )
-                    return
-            else:
-                if not tweets:
-                    instance, tweets = await self._fetch_user_with_html_fallback(
-                        username, limit, rss_error=None
-                    )
-                    if not tweets:
-                        self._log_manual_no_send_task(
-                            "推文查询完成",
-                            operation="user_timeline",
-                            source=f"@{username}",
-                            instance=instance,
-                            started=started,
-                            status="无公开推文",
-                        )
-                        await event.send(
-                            event.plain_result(f"没有找到 @{username} 的公开推文。")
-                        )
-                        return
+                )
+                return
+            if not tweets:
+                self._log_manual_no_send_task(
+                    "推文查询完成",
+                    operation="user_timeline",
+                    source=f"@{username}",
+                    instance=instance,
+                    started=started,
+                    status="无公开推文",
+                )
+                await event.send(
+                    event.plain_result(f"没有找到 @{username} 的公开推文。")
+                )
+                return
 
         finally:
             if hasattr(self.nitter, "end_run_host_skip"):
@@ -217,28 +205,6 @@ class ManualCommandMixin:
             return
 
         search_started = time.perf_counter()
-        html_backend = getattr(self, "html_backend", None)
-        if html_backend is None:
-            self._log_manual_no_send_task(
-                "推文搜索失败",
-                operation="tweet_search",
-                source=query,
-                started=search_started,
-                status="搜索后端未初始化",
-                warning=True,
-            )
-            await event.send(event.plain_result("搜索后端未初始化。"))
-            return
-        if not getattr(html_backend.config, "search_enabled", True):
-            self._log_manual_no_send_task(
-                "推文搜索跳过",
-                operation="tweet_search",
-                source=query,
-                started=search_started,
-                status="搜索已关闭",
-            )
-            await event.send(event.plain_result("搜索已关闭（search_enabled=false）。"))
-            return
 
         session_id = self._search_session_id(event)
         store = self._get_search_session_store()
@@ -312,7 +278,7 @@ class ManualCommandMixin:
         )
         try:
             instance, fetched = await asyncio.to_thread(
-                html_backend.search,
+                self.nitter.search,
                 query,
                 fetch_limit,
                 max_pages=pages,
@@ -320,7 +286,7 @@ class ManualCommandMixin:
         except TypeError:
             try:
                 instance, fetched = await asyncio.to_thread(
-                    html_backend.search, query, fetch_limit
+                    self.nitter.search, query, fetch_limit
                 )
             except Exception as exc:
                 logger.warning(f"[NitterTweets] 搜索失败 query={query!r}: {exc}")
@@ -334,7 +300,7 @@ class ManualCommandMixin:
                     warning=True,
                 )
                 await event.send(
-                    event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
+                    event.plain_result("搜索失败，请稍后重试或检查自建 Nitter 实例")
                 )
                 return
         except Exception as exc:
@@ -349,7 +315,7 @@ class ManualCommandMixin:
                 warning=True,
             )
             await event.send(
-                event.plain_result("搜索失败，请稍后重试或检查搜索镜像配置")
+                event.plain_result("搜索失败，请稍后重试或检查自建 Nitter 实例")
             )
             return
 
@@ -404,35 +370,6 @@ class ManualCommandMixin:
             started=search_started,
         )
 
-    async def _fetch_user_with_html_fallback(
-        self, username: str, limit: int, rss_error=None
-    ):
-        html_backend = getattr(self, "html_backend", None)
-        if html_backend is None:
-            return "", []
-        try:
-            from ..config import config_get
-        except ImportError:  # pragma: no cover
-            from config import config_get
-
-        if not parse_config_bool(
-            config_get(self.config, "user_html_fallback", False), False
-        ):
-            return "", []
-        try:
-            instance, tweets = await asyncio.to_thread(
-                html_backend.fetch_user, username, limit
-            )
-            if tweets:
-                logger.info(
-                    f"[NitterTweets] HTML 回退成功 @{username} via {instance}"
-                    + (f" after RSS error={rss_error}" if rss_error else "")
-                )
-            return instance, list(tweets or [])
-        except Exception as exc:
-            logger.warning(f"[NitterTweets] HTML 回退失败 @{username}: {exc}")
-            return "", []
-
     def _parse_search_args(self, event: AstrMessageEvent, args=GreedyStr):
         text = ""
         if args is not None and str(args).strip():
@@ -471,7 +408,7 @@ class ManualCommandMixin:
         return query, limit, ""
 
     async def _cmd_mirror_probe_impl(self, event: AstrMessageEvent, args=GreedyStr):
-        """用临时 Nitter 镜像站测试获取推文。"""
+        """用临时自建 Nitter 实例测试用户时间线。"""
         event.stop_event()
 
         parsed = self._parse_mirror_probe_args(event, args)
@@ -495,7 +432,7 @@ class ManualCommandMixin:
         )
 
         try:
-            instance, tweets = await self.nitter.fetch_tweets_from_instance(
+            instance, tweets = await self.nitter.fetch_user_from_instance(
                 instance_text, username, limit, filter_reposts=False
             )
         except Exception as exc:
@@ -506,7 +443,7 @@ class ManualCommandMixin:
             await event.send(
                 event.plain_result(
                     f"通过 {instance_text} 获取 @{username} 推文失败："
-                    "Nitter 镜像站暂时不可用或该用户无公开 RSS。"
+                    "自建 Nitter 实例不可用，或该用户没有公开推文。"
                 )
             )
             return
@@ -759,10 +696,10 @@ class ManualCommandMixin:
     ) -> tuple[str, int, str, str]:
         tokens = self._command_tokens(event, args)
         usage = (
-            "用法：/镜像测试 [用户名] [数量] 镜像站URL\n"
-            "镜像站必须填写完整 http:// 或 https:// 地址\n"
-            "例如：/镜像测试 https://nitter.net\n"
-            "也可以：/镜像测试 nasa 3 https://nitter.net"
+            "用法：/镜像测试 [用户名] [数量] 实例URL\n"
+            "实例必须填写完整 http:// 或 https:// 地址\n"
+            "例如：/镜像测试 http://nitter:8080\n"
+            "也可以：/镜像测试 nasa 3 http://nitter:8080"
         )
         if not tokens:
             return "", 0, "", usage
@@ -776,20 +713,18 @@ class ManualCommandMixin:
                 "",
                 0,
                 "",
-                ("请提供完整 Nitter 镜像站地址，例如：/镜像测试 https://nitter.net"),
+                ("请提供完整 Nitter 实例地址，例如：/镜像测试 http://nitter:8080"),
             )
 
         instance_text = tokens[instance_index]
         try:
-            instance_text = validate_http_url(instance_text, resolve_dns=False).rstrip(
-                "/"
-            )
+            instance_text = validate_http_url(instance_text).rstrip("/")
         except UnsafeUrlError:
             return (
                 "",
                 0,
                 "",
-                "镜像站地址不安全或格式无效，请使用公开的 http:// 或 https:// 地址",
+                "实例地址格式无效，请使用完整的 http:// 或 https:// 地址",
             )
         extras = tokens[:instance_index] + tokens[instance_index + 1 :]
         if len(extras) > 2:
@@ -806,7 +741,7 @@ class ManualCommandMixin:
                         "",
                         0,
                         "",
-                        ("数量只能填写一次，例如：/镜像测试 3 https://nitter.net"),
+                        ("数量只能填写一次，例如：/镜像测试 3 http://nitter:8080"),
                     )
                 parsed_limit, limit_error = self._parse_command_limit(token)
                 if limit_error:
@@ -823,7 +758,7 @@ class ManualCommandMixin:
                     "",
                     0,
                     "",
-                    ("用户名只能填写一次，例如：/镜像测试 nasa https://nitter.net"),
+                    ("用户名只能填写一次，例如：/镜像测试 nasa http://nitter:8080"),
                 )
             username = normalized
             seen_username = True
@@ -889,7 +824,7 @@ class ManualCommandMixin:
         if not value or value.startswith("@") or " " in value:
             return False
         try:
-            validate_http_url(value, resolve_dns=False)
+            validate_http_url(value)
         except UnsafeUrlError:
             return False
         return True

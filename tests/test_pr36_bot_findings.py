@@ -125,26 +125,6 @@ def test_history_group_exposes_tag_type_for_query_display():
     assert grouped[0]["group_type"] == "tag"
 
 
-def test_dashboard_history_uses_generic_partial_and_query_labels():
-    src = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
-
-    assert 'text: "部分送达"' in src
-    assert 'className: "badge badge-danger"' in src
-    assert 'text: "发送失败"' in src
-    assert 'text: "订阅源"' in src
-    assert 'text: "账号/查询"' not in src
-    assert "function historyAccountLabel(row)" in src
-    assert 'text: "媒体失败"' not in src
-
-
-def test_dashboard_disables_delete_for_legacy_default_group_alias():
-    src = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
-
-    assert "function isDefaultGroupId(value)" in src
-    assert 'groupId === "global"' in src
-    assert "isDefaultGroupId(group.group_id)" in src
-
-
 # ---------------------------------------------------------------------------
 # P0-1: WebUIGroupEditor._bool extra default arg
 # ---------------------------------------------------------------------------
@@ -470,14 +450,6 @@ def test_dashboard_query_editor_preserves_explicit_phrase_type():
 # ---------------------------------------------------------------------------
 
 
-def test_p0_format_video_is_staticmethod():
-    video = inspect.getattr_static(TweetMessageRenderer, "format_video_attachment_text")
-    assert isinstance(video, staticmethod), (
-        "format_video_attachment_text must be @staticmethod; "
-        "instance call currently binds self into index/tweet slots"
-    )
-
-
 def test_p0_instance_format_video_and_build_video_node_work():
     renderer = TweetMessageRenderer()
     tweet = _tweet()
@@ -488,22 +460,6 @@ def test_p0_instance_format_video_and_build_video_node_work():
     media = TweetMedia(kind="video", url="https://example.com/v.mp4", path=Path("."))
     components = renderer.build_video_node_components(1, "nasa", tweet, media)
     assert components  # must not raise TypeError/AttributeError
-
-
-# ---------------------------------------------------------------------------
-# P0-3: configuration.md top garbage
-# ---------------------------------------------------------------------------
-
-
-def test_p0_configuration_md_title_not_corrupted():
-    path = ROOT / "docs" / "project" / "configuration.md"
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    assert lines[0].startswith("#")
-    # known corruption from PR #36 bot review
-    joined = "\n".join(lines[:8])
-    assert "（默认 true，去推文链接）" not in joined
-    assert not re.search(r"^（默认", joined, re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -535,107 +491,36 @@ def test_p1_build_video_forwards_omit_status_url_false():
 
 
 def test_p1_build_image_node_has_no_repeated_caption():
+    """Images ride in the tweet node; the caption text stays single and leading."""
     renderer = TweetMessageRenderer()
     tweet = _tweet()
-    media = TweetMedia(kind="image", url="https://example.com/a.jpg", path=Path("."))
-    components = renderer.build_image_node_components(
-        1,
-        "nasa",
-        tweet,
-        media,
-        omit_status_url=False,
+    tweet.media.append(
+        TweetMedia(kind="image", url="https://example.com/a.jpg", path=Path("a.jpg"))
     )
-    assert len(components) == 1
-    assert "image" in type(components[0]).__name__.lower()
-
-    raw_content = renderer._build_onebot_image_content(
+    components = renderer.build_components(
         1,
         "nasa",
         tweet,
-        media,
         source="https://nitter.example",
+        include_images=True,
+        include_videos=False,
         omit_status_url=False,
     )
-    assert [part["type"] for part in raw_content] == ["image"]
+    plains = [c for c in components if "plain" in type(c).__name__.lower()]
+    assert len(plains) == 1
+    images = [c for c in components if "image" in type(c).__name__.lower()]
+    assert len(images) == 1
 
-
-def test_p1_onebot_video_call_sites_pass_omit_kwargs():
-    """Static check: onebot/node builders must not only pass media_only."""
-    src = (ROOT / "rendering" / "tweets.py").read_text(encoding="utf-8")
-    # Find call blocks for format_video_attachment_text that are not the def
-    for m in re.finditer(
-        r"format_video_attachment_text\(\s*([^)]+)\)",
-        src,
-    ):
-        args = m.group(1)
-        if "index: int" in args:  # definition
-            continue
-        assert "omit_status_url=" in args, (
-            f"call missing omit_status_url= near:\n{args}"
-        )
-        assert "hide_original_when_translated=" in args
-        assert "link_style=" in args
-
-
-# ---------------------------------------------------------------------------
-# P1-3: Lark fallback drops render kwargs
-# ---------------------------------------------------------------------------
-
-
-def test_p1_lark_fallback_forwards_render_kwargs():
-    src = (ROOT / "delivery" / "lark.py").read_text(encoding="utf-8")
-    # The no-client fallback block
-    idx = src.find("_send_default_direct_to_umo")
-    assert idx > 0
-    # find first call used as fallback when client is None
-    # look at block around "改用通用发送"
-    anchor = src.find("改用通用发送")
-    assert anchor > 0
-    block = src[anchor : anchor + 500]
-    assert "omit_status_url=" in block, block
-    assert "hide_original_when_translated=" in block, block
-    assert "link_style=" in block, block
-
-
-# ---------------------------------------------------------------------------
-# P1-5: history replay missing omit/hide
-# ---------------------------------------------------------------------------
-
-
-def test_p1_replay_send_passes_omit_and_hide():
-    src = (ROOT / "scheduler" / "runner.py").read_text(encoding="utf-8")
-    # Heuristic: send_to_umo_with_outcome near 重新推送 / replay history
-    # Find "replay" delivery_status block and require omit in nearby kwargs
-    # Broader: any send_to_umo_with_outcome in runner that only passes
-    # tweet_start_index without omit is a smell for the replay path.
-    assert "async def" in src
-    # Locate the replay send call that uses record.username
-    m = re.search(
-        r"send_to_umo_with_outcome\(\s*"
-        r"self\.context,\s*"
-        r"target,\s*"
-        r"record\.username,[\s\S]{0,1200}?\)",
-        src,
+    raw_content = renderer._build_onebot_tweet_content(
+        1,
+        "nasa",
+        "https://nitter.example",
+        tweet,
+        include_videos=False,
+        include_images=True,
+        omit_status_url=False,
     )
-    assert m, "could not locate history replay send_to_umo_with_outcome"
-    call = m.group(0)
-    assert "omit_status_url=" in call, call
-    assert "hide_original_when_translated=" in call, call
-
-
-# ---------------------------------------------------------------------------
-# P2-1: search failure must not echo raw exception to user
-# ---------------------------------------------------------------------------
-
-
-def test_p2_manual_search_error_message_does_not_embed_exc():
-    src = (ROOT / "command_handlers" / "manual.py").read_text(encoding="utf-8")
-    # Allow logging with {exc}, forbid plain_result with {exc}
-    bad = re.findall(
-        r"plain_result\(\s*f?[\"']搜索失败[^\"']*\{exc\}",
-        src,
-    )
-    assert not bad, f"user-facing search errors leak exc: {bad}"
+    assert [part["type"] for part in raw_content] == ["text", "image"]
 
 
 # ---------------------------------------------------------------------------

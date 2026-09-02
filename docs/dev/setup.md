@@ -26,17 +26,17 @@ docs/                # 项目和开发文档
 RSS 抓取：
 
 ```powershell
-python scripts/probe_nitter_fetch.py nasa 5
-python scripts/probe_nitter_fetch.py nasa 5 --include-reposts
-python scripts/probe_nitter_fetch.py nasa 5 --skip-plain-text
+python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080
+python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --include-reposts
+python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --skip-plain-text
 ```
 
-List/HTML 探测脚本、代理测试和临时输出放在 `testignore/`。需要本地代理时，在脚本或命令中显式使用 `http://127.0.0.1:3067` 等代理地址；不要把 Cookie、token 或完整会话响应写入文件。测试脚本应记录目标 URL、实例、代理和结果摘要，便于复现。
+List/HTML 探测脚本、代理测试和临时输出放在 `testignore/`。需要本地代理时，在脚本或命令中显式使用 `http://127.0.0.1:3067` 等代理地址；不要把 Cookie、token 或完整会话响应写入文件。测试脚本应记录目标 URL、实例、代理和结果摘要，便于复现。只使用可信的自建 Nitter 实例进行探测；Nitter 的管理面应隔离在不可信网络之外，不要暴露到公网。
 
 视频下载：
 
 ```powershell
-python scripts/test_video_download.py
+python scripts/test_video_download.py https://x.com/user/status/123
 ```
 
 ## 运行数据

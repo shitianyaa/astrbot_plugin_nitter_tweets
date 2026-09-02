@@ -15,11 +15,6 @@ def test_brief_drops_session_try_empty_and_cooling():
     log("search empty host=nitter.example, rotate next (1/3)")
     log("defer cooling nitter.example remain=30s")
     log("skip cooling nitter.example remain=10s")
-    log("ensure soft-fail nitter.example, trying path anyway")
-    log("anubis: solved difficulty=4 nonce=12")
-    log("poast: solved token_len=40")
-    log("gate nitter.example mode=plain http=200 detect=ok")
-
     assert out == []
 
 
@@ -31,33 +26,25 @@ def test_brief_keeps_failures_and_summaries():
     log("search ok after rotate host=b.example tried=2/2")
     log("search empty after rotate hosts=2, query='#x' kind=tag, last_empty=a.example")
     log("punish a.example http=429 cooldown=30s")
-    log("gate a.example: cloudflare unsupported")
-    log("anubis: no challenge json")
 
     assert out == [
         "search fail host=a.example, rotate next (1/2): boom",
         "search ok after rotate host=b.example tried=2/2",
         "search empty after rotate hosts=2, query='#x' kind=tag, last_empty=a.example",
         "punish a.example http=429 cooldown=30s",
-        "gate a.example: cloudflare unsupported",
-        "anubis: no challenge json",
     ]
 
 
-def test_gate_lines_deduped_by_host_code_detect():
+def test_verbose_keeps_ordinary_response_errors():
     out: list[str] = []
     log = QuietHtmlLog(out.append, brief=False)
 
-    log("gate h1 mode=anubis http=200 detect=anubis")
-    log("gate h1 mode=anubis http=200 detect=anubis")  # dup
-    log("gate h1 mode=anubis http=200 detect=ok")  # different detect
-    log("gate h1 mode=plain http=200 detect=ok")  # same detect+code, mode ignored
-    log("gate h2 mode=plain http=200 detect=ok")
+    log("search fail host=h1, rotate next (1/2): HTTP 503")
+    log("search fail host=h2, rotate next (2/2): invalid page")
 
     assert out == [
-        "gate h1 mode=anubis http=200 detect=anubis",
-        "gate h1 mode=anubis http=200 detect=ok",
-        "gate h2 mode=plain http=200 detect=ok",
+        "search fail host=h1, rotate next (1/2): HTTP 503",
+        "search fail host=h2, rotate next (2/2): invalid page",
     ]
 
 
@@ -81,7 +68,7 @@ def test_service_wraps_plain_log_with_quiet():
 
     out: list[str] = []
     svc = HtmlNitterService(
-        HtmlBackendConfig(search_instances=["https://a.example"]),
+        HtmlBackendConfig(instances=["https://a.example"]),
         log=out.append,
         brief_log=True,
     )

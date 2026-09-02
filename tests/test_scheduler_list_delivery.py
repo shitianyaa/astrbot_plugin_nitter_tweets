@@ -156,15 +156,16 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         }
 
     def _create_scheduler(self, html_backend, sender=None, nitter=None, config=None):
+        nitter = nitter or base._Nitter()
+        nitter.fetch_list = html_backend.fetch_list
         scheduler = base.NitterTweetScheduler(
             base._Owner(),
             context=None,
             config=config or self._config(),
-            nitter=nitter or base._Nitter(),
+            nitter=nitter,
             media=base._Media(),
             sender=sender or base._Sender(),
             translator=base._Translator(),
-            html_backend=html_backend,
         )
         self.schedulers.append(scheduler)
         return scheduler

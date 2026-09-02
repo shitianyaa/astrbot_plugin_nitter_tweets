@@ -79,3 +79,5 @@ class XdownMediaCandidate:
     label: str = ""
     resolution: int | None = None
     duration_seconds: float | None = None
+    fallback_url: str = ""
+    size_bytes: int | None = None

@@ -431,7 +431,7 @@ class _RecordingMedia(_Media):
         for tweet in tweets:
             for media in tweet.media:
                 if media.path is None:
-                    media.path = Path(f"/tmp/{tweet.status_id}.jpg")
+                    media.path = Path(f"{tweet.status_id}.jpg")
         await super().attach_media(tweets)
 
     def cleanup_after_send(self, tweets):
@@ -963,7 +963,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         media=None,
         sender=None,
         translator=None,
-        html_backend=None,
     ):
         scheduler = NitterTweetScheduler(
             _Owner(),
@@ -973,7 +972,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             media=media or _Media(),
             sender=sender or _Sender(),
             translator=translator or _Translator(),
-            html_backend=html_backend,
         )
         self.schedulers.append(scheduler)
         return scheduler
@@ -1013,7 +1011,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
 
         config = {
             "filter_reposts_enabled": True,
-            "user_html_fallback": True,
             "tweet_groups": [
                 {
                     "name": "博主",
@@ -1036,10 +1033,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             }
         )
         html_backend = HtmlBackend()
+        serial_nitter.fetch_user_html = html_backend.fetch_user
         serial_scheduler = self._create_scheduler(
             config,
             nitter=serial_nitter,
-            html_backend=html_backend,
         )
         group = serial_scheduler._schedule_groups(log_invalid_targets=False)[0]
 
@@ -1063,7 +1060,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         concurrent_group = concurrent_scheduler._schedule_groups(
             log_invalid_targets=False
         )[0]
-        concurrent_group.concurrent_fetch_instances = ["https://nitter.test"]
+        concurrent_nitter.instances = ["https://nitter.test"]
 
         await concurrent_scheduler._fetch_group_user(
             concurrent_group,

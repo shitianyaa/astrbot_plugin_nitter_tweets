@@ -17,6 +17,7 @@ except ImportError:
 
 from .cache import MediaCacheCleanupResult
 from .client import NitterClient, SchedulerFetchResult
+from .nitter import NitterService
 from .service import MediaPreparationResult, MediaService
 from .xdown import XdownMediaCandidate, XdownMediaParser
 
@@ -30,6 +31,7 @@ __all__ = [
     "MediaPreparationResult",
     "MediaService",
     "NitterClient",
+    "NitterService",
     "SchedulerFetchResult",
     "XdownMediaCandidate",
     "XdownMediaParser",

@@ -62,6 +62,26 @@ def test_is_forward_payload_rejected_error_retcode_1200(monkeypatch):
     )
 
 
+def test_is_forward_payload_rejected_error_allows_transport_retry_on_enoent_1200(
+    monkeypatch,
+):
+    import delivery.sender as sender_mod
+
+    monkeypatch.setattr(sender_mod, "ActionFailed", _FakeActionFailed)
+    # NapCat 因读不到本地媒体文件（ENOENT copyfile）回的 1200 是传输问题，
+    # 不是 payload 体积拒绝，应放行无损编码重试。
+    assert not TweetSender._is_forward_payload_rejected_error(
+        _FakeActionFailed(
+            1200,
+            "发送伪造合并转发消息失败: Error: ENOENT: no such file or directory, "
+            "copyfile '/AstrBot/x.mp4' -> '/app/y.mp4'",
+        )
+    )
+    assert not TweetSender._is_forward_payload_rejected_error(
+        Exception("retcode=1200 copyfile ENOENT no such file")
+    )
+
+
 def test_split_tweets_for_forward_retry_halves():
     sender = TweetSender.__new__(TweetSender)
     sender.FORWARD_SPLIT_MIN_TWEETS = 1

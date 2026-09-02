@@ -9,8 +9,6 @@ import types
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_URL = "https://nitter.net/JuanEgg18/status/2064692617242448015#m"
-
 
 def _install_astrbot_logger_stub() -> None:
     """Allow running the plugin media module outside AstrBot."""
@@ -53,8 +51,7 @@ def _build_config(args: argparse.Namespace) -> dict:
         "media_timeout": args.timeout,
         "media_max_size_mb": args.max_size_mb,
         "max_video_duration_minutes": args.max_duration_minutes,
-        "xdown_api_url": args.xdown_url,
-        "video_resolution_preference": args.resolution,
+        "media_quality": args.media_quality,
     }
 
 
@@ -139,7 +136,7 @@ async def _run(args: argparse.Namespace) -> int:
     print(f"x_url={tweet.x_url}")
     print(f"cache_dir={service.cache_dir}")
     print(f"xdown_api={service.xdown_url}")
-    print(f"resolution={service.video_resolution_preference}")
+    print(f"media_quality={service.media_quality}")
     print(f"max_video_duration={service.max_video_duration_seconds}s")
 
     try:
@@ -175,7 +172,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Test the existing Nitter video resolve/download logic.",
     )
-    parser.add_argument("url", nargs="?", default=DEFAULT_URL)
+    parser.add_argument("url", help="Public X/Twitter status URL to test.")
     parser.add_argument("--resolve-only", action="store_true")
     parser.add_argument(
         "--output-dir",
@@ -185,9 +182,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--images", action="store_true", help="Also download images.")
     parser.add_argument(
-        "--resolution",
-        default="highest",
-        help="Video resolution preference: highest, lowest, 1280p, 852p, 568p, etc.",
+        "--media-quality",
+        dest="media_quality",
+        choices=("high", "medium", "low"),
+        default="high",
+        help="Media quality tier applied to images and videos.",
     )
     parser.add_argument("--max-media", type=int, default=4)
     parser.add_argument(
@@ -198,10 +197,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--max-size-mb", type=float, default=100.0)
-    parser.add_argument(
-        "--xdown-url",
-        default="https://xdown.app/api/ajaxSearch",
-    )
     return parser.parse_args()
 
 

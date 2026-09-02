@@ -1,4 +1,4 @@
-"""抓取阶段：博主 RSS、HTML 回退与标签搜索。
+"""抓取阶段：博主时间线、标签搜索与 List。
 
 `NitterTweetScheduler` 的 mixin：只通过 `self` 协作，不 import 宿主类。
 只负责产出 `UserFetchResult`；首次 init、水位裁剪等编排留在 `runner.py`。
@@ -149,7 +149,7 @@ class SchedulerFetchMixin:
                     instance, scan_result = await fetch_for_scheduler(
                         username,
                         scan_watermark,
-                        group.concurrent_fetch_instances,
+                        self.nitter.instances,
                         start_index=index,
                         skip_plain_text=skip_plain_text,
                         retry_attempts=getattr(self.nitter, "retry_attempts", 2),
@@ -169,8 +169,8 @@ class SchedulerFetchMixin:
                     else list(raw_anchor_status_ids)
                 )
                 tweets = list(scan_result.tweets)
-                if not tweets and self._user_html_fallback_enabled():
-                    html_result = await self._fetch_user_html_fallback(
+                if not tweets:
+                    html_result = await self._fetch_user_html_after_rss(
                         index,
                         username,
                         fetch_limit,
@@ -199,7 +199,7 @@ class SchedulerFetchMixin:
                 ) = await self.nitter.fetch_tweets_with_stats_from_instances(
                     username,
                     fetch_limit,
-                    group.concurrent_fetch_instances,
+                    self.nitter.instances,
                     start_index=index,
                     skip_plain_text=skip_plain_text,
                     retry_attempts=getattr(self.nitter, "retry_attempts", 2),
@@ -216,8 +216,8 @@ class SchedulerFetchMixin:
                     skip_plain_text=skip_plain_text,
                     filter_reposts=filter_reposts,
                 )
-            if not tweets and self._user_html_fallback_enabled():
-                html_result = await self._fetch_user_html_fallback(
+            if not tweets:
+                html_result = await self._fetch_user_html_after_rss(
                     index,
                     username,
                     fetch_limit,
@@ -227,16 +227,15 @@ class SchedulerFetchMixin:
                 if html_result is not None:
                     return html_result
         except Exception as exc:
-            if self._user_html_fallback_enabled():
-                html_result = await self._fetch_user_html_fallback(
-                    index,
-                    username,
-                    fetch_limit,
-                    skip_plain_text=skip_plain_text,
-                    filter_reposts=filter_reposts,
-                )
-                if html_result is not None:
-                    return html_result
+            html_result = await self._fetch_user_html_after_rss(
+                index,
+                username,
+                fetch_limit,
+                skip_plain_text=skip_plain_text,
+                filter_reposts=filter_reposts,
+            )
+            if html_result is not None:
+                return html_result
             return UserFetchResult(
                 index=index,
                 username=username,
@@ -255,13 +254,6 @@ class SchedulerFetchMixin:
             plain_text_filtered=plain_text_filtered,
         )
 
-    def _user_html_fallback_enabled(self) -> bool:
-        if self.html_backend is None:
-            return False
-        return parse_config_bool(
-            config_get(self.config, "user_html_fallback", False), False
-        )
-
     def _effective_filter_reposts(self, group: ScheduleGroup) -> bool:
         global_enabled = parse_config_bool(
             config_get(self.config, "filter_reposts_enabled", True),
@@ -269,7 +261,7 @@ class SchedulerFetchMixin:
         )
         return global_enabled and bool(getattr(group, "filter_reposts_enabled", True))
 
-    async def _fetch_user_html_fallback(
+    async def _fetch_user_html_after_rss(
         self,
         index: int,
         username: str,
@@ -278,11 +270,9 @@ class SchedulerFetchMixin:
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
     ) -> UserFetchResult | None:
-        if self.html_backend is None:
-            return None
         try:
             instance, tweets = await asyncio.to_thread(
-                lambda: self.html_backend.fetch_user(
+                lambda: self.nitter.fetch_user_html(
                     username,
                     fetch_limit,
                     filter_reposts=filter_reposts,
@@ -347,15 +337,6 @@ class SchedulerFetchMixin:
                     RuntimeError(f"missing watch query for {account_key}")
                 ),
             )
-        if self.html_backend is None:
-            return UserFetchResult(
-                index=index,
-                username=account_key,
-                error=SchedulerTaskError.from_exception(
-                    RuntimeError("html_backend unavailable")
-                ),
-            )
-        html_backend = self.html_backend
         source_label = format_subscription_source(account_key, group.group_type)
 
         self._log_verbose_info(
@@ -371,7 +352,7 @@ class SchedulerFetchMixin:
             if scan_watermark is not None:
                 search_kwargs["anchor_ids"] = scan_watermark
             instance, tweets = await asyncio.to_thread(
-                lambda: html_backend.search(
+                lambda: self.nitter.search(
                     query_item.query,
                     fetch_limit,
                     **search_kwargs,
@@ -439,7 +420,7 @@ class SchedulerFetchMixin:
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
     ) -> UserFetchResult:
-        """Fetch Twitter List timeline (serial, HTML backend)."""
+        """Fetch Twitter List timeline through the unified Nitter service."""
         # account_key format: "list:1234567890"
         if not account_key.startswith("list:"):
             return UserFetchResult(
@@ -453,15 +434,6 @@ class SchedulerFetchMixin:
         list_id = account_key[5:]  # strip "list:" prefix
         source_label = format_subscription_source(account_key, group.group_type)
 
-        if self.html_backend is None:
-            return UserFetchResult(
-                index=index,
-                username=account_key,
-                error=SchedulerTaskError.from_exception(
-                    RuntimeError("html_backend unavailable")
-                ),
-            )
-
         self._log_verbose_info(
             f"[NitterTweets] List 抓取开始: group={group.group_id}, "
             f"source={source_label}, limit={fetch_limit}"
@@ -469,7 +441,7 @@ class SchedulerFetchMixin:
 
         try:
             instance, tweets = await asyncio.to_thread(
-                lambda: self.html_backend.fetch_list(
+                lambda: self.nitter.fetch_list(
                     list_id,
                     fetch_limit,
                     filter_reposts=filter_reposts,
@@ -531,10 +503,9 @@ class SchedulerFetchMixin:
             host_attempts=host_attempts,
         )
 
-    @staticmethod
-    def _should_use_concurrent_fetch(group: ScheduleGroup) -> bool:
+    def _should_use_concurrent_fetch(self, group: ScheduleGroup) -> bool:
         return (
             bool(group.concurrent_fetch_enabled)
-            and bool(group.concurrent_fetch_instances)
+            and bool(getattr(self.nitter, "instances", []))
             and group.fetch_concurrency > 1
         )

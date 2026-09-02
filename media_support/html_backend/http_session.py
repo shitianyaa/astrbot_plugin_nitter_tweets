@@ -17,6 +17,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse
 from urllib.request import (
     HTTPCookieProcessor,
+    HTTPSHandler,
     ProxyHandler,
     Request,
     build_opener,
@@ -25,8 +26,6 @@ from urllib.request import (
 try:
     from ..network import (
         BUILTIN_USER_AGENT,
-        SafeHTTPHandler,
-        SafeHTTPSHandler,
         SafeRedirectHandler,
         build_request_headers,
         validate_http_url,
@@ -34,8 +33,6 @@ try:
 except ImportError:  # pragma: no cover
     from media_support.network import (
         BUILTIN_USER_AGENT,
-        SafeHTTPHandler,
-        SafeHTTPSHandler,
         SafeRedirectHandler,
         build_request_headers,
         validate_http_url,
@@ -154,26 +151,23 @@ class HttpSession:
         self.session_dir = Path(session_dir) if session_dir else None
         self.log = log or (lambda _m: None)
         self.jar = http.cookiejar.CookieJar(policy=_ExactHostCookiePolicy())
-        # CookieJar and the challenge/session sequence are shared by the RSS
-        # and search pools.  Keep the whole request/read operation serialized;
+        # CookieJar and the HTML request sequence are shared by all callers.
+        # Keep the whole request/read operation serialized;
         # a timestamp-only rate limiter cannot prevent overlapping requests
         # when a response takes longer than the configured interval.
         self.serial_lock = threading.RLock()
         self._request_lock = self.serial_lock  # compatibility for callers/tests
+        self.opener = self._build_opener()
+
+    def _build_opener(self):
         handlers: list = [
-            # SOCKS/HTTP proxies may resolve .onion or private self-hosted
-            # names remotely; without a proxy, resolve every hop locally.
-            SafeRedirectHandler(resolve_dns=not bool(self.proxy)),
-            SafeHTTPHandler(check_peer=not bool(self.proxy)),
-            SafeHTTPSHandler(
-                context=ssl.create_default_context(),
-                check_peer=not bool(self.proxy),
-            ),
+            SafeRedirectHandler(),
+            HTTPSHandler(context=ssl.create_default_context()),
             HTTPCookieProcessor(self.jar),
         ]
         if self.proxy:
             handlers.insert(0, ProxyHandler({"http": self.proxy, "https": self.proxy}))
-        self.opener = build_opener(*handlers)
+        return build_opener(*handlers)
 
     def request(
         self,
@@ -184,7 +178,7 @@ class HttpSession:
         timeout: float | None = None,
     ) -> RawResponse:
         try:
-            validate_http_url(url, resolve_dns=not bool(self.proxy))
+            validate_http_url(url)
         except Exception as exc:
             return RawResponse(-1, url, b"", 0.0, f"{type(exc).__name__}: {exc}")
         headers = build_request_headers(accept=accept, referer=referer)
@@ -200,10 +194,7 @@ class HttpSession:
                         body = resp.read(5_000_000)
                         get_url = getattr(resp, "geturl", None)
                         final_url = get_url() if callable(get_url) else url
-                        validate_http_url(
-                            final_url,
-                            resolve_dns=not bool(self.proxy),
-                        )
+                        validate_http_url(final_url)
                         code = int(getattr(resp, "status", None) or resp.getcode())
                         return RawResponse(
                             code,
@@ -332,12 +323,6 @@ class HttpSession:
                 host_only = bool(meta.get("host_only", False))
             else:
                 continue
-            # Older Poast session files persisted ``res`` for ``.poast.org``.
-            # Narrow it while loading so a legacy file cannot recreate the
-            # cross-host cookie scope removed by the current solver.
-            if name == "res":
-                domain = host
-                host_only = True
             if not _cookie_domain_matches_host(
                 domain,
                 host,

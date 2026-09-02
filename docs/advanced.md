@@ -9,6 +9,8 @@ README 只保留上手与定位；边界以本文与 `_conf_schema.json` 为准�
 - List 专题：[twitter-lists.md](./twitter-lists.md)
 - 实例专题：[instances-guide.md](./instances-guide.md)
 
+> 自建实例说明：当前版本不再提供公共 Nitter 默认地址。用户只需在 `instances` 中填写可信的自建 Nitter；该列表同时供用户 RSS/HTML、搜索、List 和后台并发抓取使用。已删除的旧实例字段只在启动时诊断，不会读取、迁移或写回。
+
 ## 平台支持
 
 | 平台 | 适配器类型 | 特殊要求/说明 |
@@ -96,7 +98,7 @@ flowchart TD
 | `概览` | 分别查看博主订阅、搜索订阅和 List 数量，以及重复/无效订阅、无效推送目标和全局配置诊断。 |
 | `分组订阅` | 左侧推送分组列表 + 右侧详情编辑；支持创建博主、标签或列表分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_reposts_enabled`、`filter_plain_text_enabled`、`push_targets` 和对应的 `watch_users`、`watch_queries`、`watch_lists`。类型创建后不可修改；每个目标下还可维护跨分组共享的作者黑名单。 |
 | `最近推送` | 查看成功、部分送达或发送失败历史；默认每页 10 条，最多 50 条；支持按分组、订阅源和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
-| `镜像测试` | 管理员按当前模式测试 Nitter：Blogger RSS 使用 `instances`，搜索和 List 使用 `search_instances`。URL 留空会按配置顺序串行测试全部实例并返回逐站成功/失败、推文数和耗时；填写 URL 时只测试该站。不写入实例配置或推送记录。 |
+| `实例测试` | 管理员一次检查统一 `instances` 中每个自建 Nitter 的用户 RSS、用户 HTML、搜索和可选 List 能力；URL 留空测试全部实例，填写 URL 只测试该站。不写入配置或推送记录。 |
 | `缓存清理` | 清理普通媒体缓存或推送记录；推送记录清理不会删除关注账号、推送目标或媒体文件。 |
 
 ### WebUI 分组管理 v2
@@ -120,12 +122,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 | 配置 | 说明 |
 | --- | --- |
-| `instances` | 博主 RSS 实例列表；默认 `https://nitter.net`，可配多个。建议自建。 |
-| `search_instances` | 搜索/List HTML；默认 `tiekoetter.com`、`poast.org`、`kareem.one` 三镜像（3x 冗余）。**不要放 `nitter.net`**（它的搜索已不可用）。 |
-| `user_html_fallback` | RSS 失败时是否回退到 HTML（默认 `false`）。开启后 RSS 全部失败时会尝试使用 `search_instances` 的 HTML 用户页获取博主推文。⚠️ 会占用搜索资源，增加 429 风险，降低搜索成功率。推荐方案：在 `instances` 中配置多个 RSS 镜像。详见 [实例配置指南](./instances-guide.md)。 |
-| `max_global_retries` | 全局重试轮数（默认 `2`）。所有实例失败后延迟重试（5s → 10s → 15s 渐进式），提升容错能力。 |
-| `retry_delay_base` | 全局重试基础延迟秒数（默认 `5.0`）。第 N 轮延迟 = N × retry_delay_base。 |
-| `retry_delay_on_cooldown` | 全部实例冷却时的重试延迟秒数（默认 `10.0`）。 |
+| `instances` | 自建 Nitter 实例列表，同时用于 RSS、HTML 搜索和 List；默认空，必须由用户填写。 |
 | `storage_backend` | 存储后端；运行期固定使用本地 SQLite 数据库。旧 KV 推送记录只会在启动迁移时自动导入，不再作为运行后端。 |
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
@@ -187,12 +184,36 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | --- | --- |
 | `send_image_attachments` | 是否发送图片附件；默认开启。 |
 | `send_video_attachments` | 是否发送视频/GIF 附件；默认关闭。开启后可能受平台大小/格式限制；关闭时跳过视频下载。检测到视频/GIF 时会忽略图片附件（含封面）。 |
-| `video_resolution_preference` | 视频分辨率偏好；默认 `highest`，也可填 `lowest`、`1280p`、`852p`、`568p` 等。 |
+| `media_quality` | 媒体画质，图片和视频共用三档；默认 `high`（图片 twimg `name=orig`、视频取候选最高档），`medium`（图片 `name=large`、视频中位数档），`low`（图片 `name=small`、视频最低档）。图片档位对 HTML 抓取、xdown 兜底和 status 链接解析三条渠道统一生效（Nitter 实例自身的 `/pic/orig/media/...` 代理路径除外，那类 URL 不含 `pbs.twimg.com`，恒取实例提供的档）。 |
 | `max_video_duration_minutes` | 视频/GIF 最长下载分钟数，范围 `1-8`；能读取到时长且超过上限时会跳过下载并保留原文链接。 |
 | `max_media_per_tweet` | 单条推文最多发送多少个媒体。 |
 | `media_timeout` | 媒体解析和下载超时秒数。 |
 | `media_max_size_mb` | 单个媒体大小上限。 |
-| `xdown_api_url` | Twitter/X 媒体解析 API。 |
+| `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8，范围 `0.5-32`。同时约束图片和视频——默认值已把绝大多数视频排除在 base64 之外。 |
+
+#### 媒体传输编码
+
+插件把媒体交给平台时默认使用本地文件路径，这要求 AstrBot 与协议端（NapCat / LLOneBot / Lagrange）
+能读到同一个文件系统。分容器或分机器部署时协议端读不到 `file:///`，媒体会失败。
+
+传输编码层为此提供一条**无损**的降级梯度，排在去视频、退纯文本这些**有损**降级之前：
+
+| 类型 | 传输梯度 |
+| --- | --- |
+| 图片 | 本地路径 → base64（文件 ≤ `media_transport_base64_max_mb` 时）→ twimg 直链（白名单主机，自动）→ 放弃附件 |
+| 视频 | 本地路径 → base64（文件 ≤ `media_transport_base64_max_mb` 时）→ twimg 直链（白名单主机，自动）→ 放弃附件并保留「视频未发送」提示 |
+
+- 视频只有小于 `media_transport_base64_max_mb` 时才会出现 base64 档。默认 8MB 意味着通常不走 base64——
+  把几十 MB 的视频塞进单条消息会带来内存和 payload 压力。调高该值即表示接受这一开销。
+- twimg 白名单主机的直链会自动加入梯度：本地路径与 base64 都失败后交给协议端直传。这会让协议端
+  **直连 Twitter CDN**，绕过插件的代理配置并暴露其出口 IP；网络隔离的部署需自行评估这一暴露。带 token
+  的 xdown 直链时效短且对 Referer 敏感，任何时候都不会交给协议端。
+- 传输层会记住每个平台最近一次成功的编码档作为下次的起步提示。分容器部署且 AstrBot 与协议端
+  不共享文件系统时，本地路径档会失败，自动落到 base64 档。
+- 超时等「可能已送达」的失败不会推进梯度，避免重复投递。
+
+飞书、Telegram、QQ Official 和其他平台都在 AstrBot 进程内从本地路径上传，不存在这个问题，
+也不参与该梯度。
 
 ### AI
 
@@ -220,21 +241,19 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 
 - 始终抑制：`session load`（cookie 重载刷屏）
-- 始终去重：同一 host 的同类 `gate ... detect=...` 只保留首次
-- 简略开启时再抑制：每次 `search/user try`、空页轮换过程行、冷却 skip/defer、soft-fail、Anubis/Poast solved 过程行
-- 简略仍保留：`punish`/冷却处罚、镜像 fail、ok after rotate、empty after rotate、Cloudflare 等硬错误
+- 简略开启时再抑制：每次 `search/user/list try`、空页轮换过程行、冷却 skip/defer
+- 简略仍保留：`punish`/冷却处罚、实例 fail、ok after rotate、empty after rotate 和页面错误
 
 ### 并发与限流
 
 | 配置 | 说明 |
 | --- | --- |
-| `concurrent_fetch_enabled` | 是否启用后台账号 RSS 并发拉取，默认 `false`。只有同时满足本项开启、`concurrent_fetch_instances` 非空、`fetch_concurrency > 1` 时才会启用；任一条件不满足时完全走旧串行路径。 |
+| `concurrent_fetch_enabled` | 是否启用后台账号 RSS 并发拉取，默认 `false`。开启且 `fetch_concurrency > 1` 时使用统一 `instances`；否则走串行路径。 |
 | `fetch_concurrency` | 同时拉取账号数，默认 `3`，范围 `1-8`。 |
-| `concurrent_fetch_instances` | 后台并发拉取专用 Nitter 镜像池。只用于后台检查，不用于手动 `/推文` 或 `/镜像测试`；留空时不启用并发，也不会回退到基础配置里的 `instances`。建议只填写自建镜像，不建议对公共镜像高并发。 |
 | `concurrent_prepare_enabled` | 是否启用后台媒体和模型并发准备，默认 `false`。开启后不同推文或账号批次可以并发准备；同一条推文内部仍先翻译、后下载媒体。 |
 | `prepare_concurrency` | 同时准备的推文或账号批次数，默认 `2`，范围 `1-8`。按单条推文或账号批次并发准备。 |
 
-并发拉取只使用 `concurrent_fetch_instances`。每个账号会按账号索引轮转首选镜像，避免所有账号先打同一个镜像；单个镜像遇到 SSL、HTTP 5xx、429、超时等临时错误时总请求尝试 3 次，仍失败才尝试专用池内下一个镜像。
+并发拉取使用统一 `instances`。每个账号会按账号索引轮转首选实例，避免所有账号先打同一个实例；单个实例遇到 SSL、HTTP 5xx、429、超时等临时错误时总请求尝试 3 次，仍失败才尝试下一个实例。
 
 并发拉取仍按账号配置顺序收集发现结果；并发准备则按每条推文实际完成准备的顺序进入普通目标发送，不再恢复输入顺序。串行路径按 RSS 返回顺序逐条准备和发送；每条推文内部仍先翻译、后下载媒体。私人号 OneBot 合并目标在准备结束后按完成顺序组包发送。
 
@@ -269,21 +288,25 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 - 后台检查结果会区分“正常无更新”“HTML 返回空结果”“结果全部被过滤”“扫描未完整”和“抓取失败”；空结果或实例不可用时会显示实例轮换原因、水位保持不变，不再使用“没有发现新推文”概括。
 - 普通 RSS 抓取会按 `instances` 配置顺序尝试；全部失败时日志会显示尝试数量和最后几个错误。
 - 普通 RSS 抓取遇到 SSL EOF、HTTP 5xx、429 等临时错误时，同一实例初次请求失败后最多再重试 1 次；仍失败则按配置顺序尝试下一个实例。
-- 后台并发拉取启用时只使用 `concurrent_fetch_instances`，不会回退到 `instances`；专用池内每个镜像总请求尝试 3 次，仍失败才尝试下一个专用镜像。
+- 后台并发拉取启用时直接使用 `instances`；每个实例总请求尝试 3 次，仍失败才尝试下一个实例。
 - 图片解析或下载失败时，推文文本和原始链接仍会发送。
 - 推文正文里的普通外部链接会保留在原文位置；当前来源 Nitter 实例改写出的同站镜像链接会清理，避免把 `nitter.../status/...` 混入正文；Nitter 改写出的 `piped.video` 会还原为 `youtu.be`。
 - 翻译只处理去除 URL 后的正文，避免重复链接。
 - 手动 `/推文` 会按单条推文处理：一条推文完成翻译和媒体下载后就发送这一条。
 - 后台推送会先完成本轮账号发现，以便计算第一条概括；随后串行路径按 RSS 顺序逐条发送，并发准备路径按完成顺序发送。用户消息不显示“所有账号 x/总数”或“该账号推文 x/y”。
 - 私人号 OneBot 合并转发由 `merge_tweet_threshold` 控制；达到阈值时 `aiocqhttp`、`onebot`、`onebot_v11`、`napcat` 使用 `Node/Nodes` 合并转发。
-- 私人号 OneBot 图片附件会从推文正文中拆出：普通直发先发正文再逐张发图，单张图片发送失败会重试一次，合并转发中图片会成为独立节点；非私人号 OneBot 平台仍按平台适配能力发送图文同消息。
+- 私人号 OneBot 图片附件会从推文正文中拆出：普通直发先发正文再逐张发图，单张图片发送失败会重试一次；合并转发中图片会并入推文正文节点（每条推文一个图文节点），视频/GIF 保持独立节点；节点昵称与 uin 显示该条推文的实际作者（标签/List 分组每条推文各自显示作者，取不到时回退分组标识）；非私人号 OneBot 平台仍按平台适配能力发送图文同消息。
 - QQ Official 走 `QQOfficialDeliveryAdapter`：正文 Event/UMO 使用安全转义的官方 Markdown；QQ API 拒绝 Markdown 时，UMO 自动改用 `msg_type=0` 纯文本重发。带媒体时先发正文，再逐张发送图片和视频，不使用 OneBot 合并转发；正文送达而媒体失败时记录“部分送达”。
 - 如果主体文本或 post 已送达，但图片、视频/GIF 等媒体附件最终失败，插件会把该次历史标记为“部分送达”并保留错误摘要；OneBot 分块发送只有部分推文确认送达时也使用该状态，WebUI 可通过错误提示区分原因并手动重发。
+- 「没下下来」和「发不出去」的提示措辞刻意区分，便于从消息本身判断卡在哪一侧：
+  - **下载失败**在发送前就已知，写进正文，措辞为“图片下载失败，已保留原文链接”“视频/GIF 下载失败，已保留原文链接”。
+  - **发送失败**只能事后知道（正文先于媒体发出，警告写不进正文），改为补发一条独立提示。命中平台拒收签名时为“图片可能被平台风控拦截，未能发送”，其他发送失败为“图片发送失败”；是否附带原帖链接遵循分组的 `omit_status_url`，与视频省略提示一致。“仅媒体”分组不补提示，因为整条会在下一轮重推，补提示只会在每轮重试里刷屏。
+- 目标平台拒收内容本身时（NapCat 群媒体上传后收不到回执的 `Timeout: NTEvent ... sendMsg`、合并转发 `res_id` 拒绝），插件不再用相同字节空跑：传输编码梯度与组件级重试立即停手；但去视频重试、拆分小包、降级直发和纯文本兜底照常运行，因为那些换的是内容而不是字节。这类拒收由内容触发，换编码、换下载渠道或降低 `media_quality` 都不改变判定。
 - OneBot 合并转发单次推文较多时会按每批最多 8 条自动分批，避免大合并包漏节点。
 - 分组“仅媒体”有效时，消息只包含 `@作者` 和已准备附件；正文、翻译、原帖链接、媒体 warning 和 AI 提示都不会进入消息。媒体准备结果：`ready` 发送；`policy_skipped`（全局禁用类型或大小/时长/分辨率/数量等策略排除）本轮不发送并允许扫描基准推进；`transient_failure` 与 `no_candidate`（解析后仍无候选）本轮不发送、不写 seen，下轮重试。
 - OneBot 合并转发超时或网络回包状态不确定时，插件会按可能已送达处理，跳过降级重发，避免同一轮重复推送。
-- 视频/GIF 附件发送默认关闭；关闭时会保留原帖链接并提示打开原文查看。
-- 开启视频/GIF 附件后只会按 `video_resolution_preference` 下载一个分辨率；检测到视频/GIF 时会忽略所有图片附件，避免把视频封面当普通图片发送。
+- 视频/GIF 附件发送默认关闭；关闭时会保留原帖链接并提示打开原文查看。已经开启但发送失败被省略时（合并转发去视频降级重发、直发/QQ Official 的视频省略提示），正文提示为“视频/GIF 附件发送失败，本次已省略”，与“发送已关闭”提示区分。
+- 开启视频/GIF 附件后只会按 `media_quality` 下载一个分辨率档；检测到视频/GIF 时会忽略所有图片附件，避免把视频封面当普通图片发送。视频选中档超 `media_max_size_mb` 时会自动降到下一低档。
 - 插件会尽量读取视频时长，超过 `max_video_duration_minutes` 时跳过下载；读不到时长时不会误拦截，仍按文件大小上限处理。
 - 普通媒体文件会在本轮手动查询或后台推送发送流程结束后删除；如果同一轮要发送到多个目标，会等所有目标都处理完再删除。
 - 翻译使用 AstrBot 的 `context.llm_generate(...)` 接口；模型输出质量和费用取决于所选 provider。
@@ -301,8 +324,8 @@ HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
 ## 本地诊断
 
 ```text
-python scripts\probe_nitter_fetch.py nasa 5
-python scripts\probe_nitter_fetch.py nasa 5 --include-reposts
+python scripts\probe_nitter_fetch.py nasa 5 --instance http://nitter:8080
+python scripts\probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --include-reposts
 ```
 
 脚本会复用插件的 Nitter RSS 抓取、分页和过滤逻辑。默认启用 `filter_reposts_enabled`；加 `--include-reposts` 后会临时关闭转发过滤，用于对比 Nitter RSS 原始返回。
@@ -317,9 +340,9 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 ### 分组类型
 
-- `group_type: blogger`：只使用 `watch_users`，**仅 RSS**（`instances`，可多站）。不设博主 HTML 回退池，避免与搜索抢公共 HTML。
-- `group_type: tag`：只使用 `watch_queries`，仅 HTML `search_instances` 搜索；seen 订阅源键为 `q:<casefold query>`。
-- `group_type: list`：只使用 `watch_lists`，通过 HTML `search_instances` 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
+- `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。
+- `group_type: tag`：只使用 `watch_queries`，通过 `instances` 的 HTML 搜索；seen 订阅源键为 `q:<casefold query>`。
+- `group_type: list`：只使用 `watch_lists`，通过 `instances` 的 HTML 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
 - **风险提示：Bot 若使用私人 QQ 号，不建议启用 Tag/List 分组定时搜索/推送**（HTML 查询与推送更频繁，有封号风险）。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
 - Tag/List 首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
@@ -332,7 +355,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - 兼容读取旧的 `{query, type}` 对象，启动/保存时会规范成字符串，避免 AstrBot 配置列表显示成 `[object Object]`。
 - 若配置里已出现字面量 `[object Object]`，该项无效，请删除后重新填写 `#标签` 或短语。
 - 运行时：tag 可回退 `/hashtag/`，phrase 仅 `/search`。
-- 手动：`/推文搜索 <query> [数量]`，冷却 `search_cooldown_seconds`，默认/最大条数见 `search_default_limit` / `search_max_limit`。手动搜索为凑满条数最多翻约 3 页；定时 Tag/List 默认按 `html_max_pages=1`，已有水位时会在该范围内寻找旧基准。
+- 手动：`/推文搜索 <query> [数量]`，冷却使用 `cooldown_seconds`，默认条数使用 `default_limit`，最大条数仍由 `search_max_limit` 限制。手动搜索为凑满条数最多翻约 3 页；定时 Tag/List 默认按 `html_max_pages=1`，已有水位时会在该范围内寻找旧基准。
 
 ### Tag/List 分组定时：获取与发送数量
 
@@ -353,35 +376,34 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 ```
 
 因此 Tag/List「拉到 20 但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已有水位时一轮内可能扫描并发现超过 20 条新推文，但首次基准和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量。若页数用尽仍找不到旧基准，日志会明确提示扫描未完整和自动重建基准，旧积压可能被跳过。
-HTTP 层可能有 Anubis、Poast、Cloudflare 门禁与限流。带明确 Anubis/Poast 挑战结构的页面优先判定为对应 gate；没有明确挑战结构时，真实时间线内容不会被通用门禁文案或 Cloudflare beacon 覆盖。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与结构化检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
+HTTP 层会识别错误页、限流和异常 HTML 响应。自建实例的访问控制应在 Nitter 或反向代理层配置。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与结构化检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
 
-**空结果与全量过滤：** Tag/List 都走 `search_instances`；多站时会轮换。镜像 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部镜像请求异常时才记抓取失败。
+**空结果与全量过滤：** Tag/List 都走 `instances`；多站时会轮换。实例 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部实例请求异常时才记抓取失败。
 
 ### 实例列表
 
 | 列表 | 用途 |
 |------|------|
-| `instances` | 博主 RSS（默认 `nitter.net`，可多站） |
-| `search_instances` | Tag/List/搜索 HTML（默认 `tiekoetter.com`、`poast.org`、`kareem.one`；禁止默认使用 nitter.net） |
+| `instances` | 自建 Nitter；同时用于博主 RSS、Tag/List 和手动搜索 HTML |
 
-**公共默认策略：** Blogger 只用 RSS（`instances` 可多站）；Tag/List 使用三站搜索池。不设 `blogger_html_instances`，避免博主 HTML 与搜索抢同一公共站。自建 plain 时：RSS 与搜索都可只填自建地址。
+旧 `search_instances`、`blogger_html_instances` 和 `concurrent_fetch_instances` 不再参与运行；启动日志只提示被忽略的 origin。新配置只填 `instances`。
 
 HTML 全局串行节流；Tag/List 查询在组内也会按 `send_user_interval` 串行等待。429 冷却约 30s 起、封顶 5 分钟。Cookie 落在插件数据目录 `html_sessions/`。
 
 搜索/List 实例池有多站时失败会轮换（冷却殿后）。**可用性优先：** 进程内按请求成功率记分，ready 高分优先。
 
-记分规则（内存，重启清零；RSS 与搜索 HTML 分账）：
+记分规则（内存，重启清零；统一实例分数由 RSS 与 HTML 共享）：
 
 - 有可用推文/成功 RSS：满分成功（+0.5，封顶 10）
 - 可达但空（空 feed、空时间线、整页滤成纯转推）：soft 成功（+0.15）
-- 超时/连接错误/HTTP 错误/门禁失败/429：失败（×0.5，保底 0.1）；HTML 在 `_get_html` 统一记失败（含 transport 异常）
+- 超时/连接错误/HTTP 错误/异常页面/429：失败（×0.5，保底 0.1）；HTML 在 `_get_html` 统一记失败（含 transport 异常）
 - 单次探测（指定 instance）不轮换；成功/失败仍记入对应池
 
 ## RSS 重试与本轮跳过（第二刀）
 
-- `retry_attempts` / `retry_delay_seconds`：全局 basic 配置，默认 2 / 5s。
+- `retry_attempts` / `retry_delay_seconds`：全局 basic 配置，默认 2 / 5s。同时用于 HTML 搜索/List 的全局重试：所有实例失败后按此延迟重试，全部实例冷却时延迟为该值的两倍。
 - 一次定时检查或一次手动 `/推文` 期间，若某 RSS 镜像出现 429/可重试失败，本轮后续账号跳过该 host；检查结束即丢弃（不写盘、不跨 tick）。
-- HTML 搜索限流仍用 `html_backend` 的 host 冷却（30s 起、封顶 5min），并已加线程锁。
+- HTML 搜索使用统一服务内的 host 冷却（30s 起、封顶 5min），并已加线程锁。
 
 ### 翻译与原文
 

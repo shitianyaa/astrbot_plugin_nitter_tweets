@@ -30,6 +30,7 @@ try:
     )
     from ..rendering import TweetMessageRenderer
     from ..shared import TweetItem
+    from .media_transport import MediaTransportPolicy, TransportConfig, TransportMemo
     from .outcomes import SendAttempt, SendOutcome
     from .platforms import PlatformDeliveryRegistry, PlatformResolver
     from .sender_capabilities import SenderCapabilitiesMixin
@@ -37,6 +38,7 @@ try:
     from .sender_forward import SenderForwardMixin
     from .sender_helpers import SenderHelpersMixin
     from .sender_merged import SenderMergedForwardMixin
+    from .sender_transport import SenderTransportMixin
 except ImportError:
     from config import (
         configured_merge_tweet_threshold,
@@ -49,11 +51,17 @@ except ImportError:
         SendAttempt,
         SendOutcome,
     )
+    from delivery.media_transport import (
+        MediaTransportPolicy,
+        TransportConfig,
+        TransportMemo,
+    )
     from delivery.sender_capabilities import SenderCapabilitiesMixin
     from delivery.sender_direct import SenderDirectMixin
     from delivery.sender_forward import SenderForwardMixin
     from delivery.sender_helpers import SenderHelpersMixin
     from delivery.sender_merged import SenderMergedForwardMixin
+    from delivery.sender_transport import SenderTransportMixin
     from rendering import TweetMessageRenderer
     from shared import TweetItem
 
@@ -63,6 +71,7 @@ class TweetSender(
     SenderDirectMixin,
     SenderForwardMixin,
     SenderMergedForwardMixin,
+    SenderTransportMixin,
     SenderHelpersMixin,
 ):
     FORWARD_TWEET_CHUNK_SIZE = 8
@@ -82,6 +91,11 @@ class TweetSender(
         )
         self.platform_resolver = PlatformResolver()
         self.delivery_registry = PlatformDeliveryRegistry()
+        self.transport_policy = MediaTransportPolicy(
+            TransportConfig.from_config(config)
+        )
+        # Instance state, not module-global: keeps parallel senders and tests isolated.
+        self.transport_memo = TransportMemo()
 
     @staticmethod
     def resolve_link_style(platform_name: str = "") -> str:
@@ -425,6 +439,23 @@ class TweetSender(
         target: str = "",
     ) -> SendAttempt:
         error = str(exc)
+        # 先判拒收：这两个签名都明确表示「没送到」，而它们的文本里含
+        # "Timeout" 字样，交给 _is_uncertain_delivery_error 会被误判成
+        # 「可能已送达」而跳过降级（ActionFailed 不可导入时尤其明显）。
+        if self._is_content_rejected_error(exc):
+            logger.warning(
+                "[NitterTweets] 发送被目标平台拒收，不再重发相同内容: "
+                f"label={label}, target={target or '-'}, error={error}"
+            )
+            # 只表达「同样的字节别再发一遍」。retryable 保持 True，让既有的
+            # 有损降级链（去视频、拆分、降级直发、纯文本）照常运行——那些都是
+            # 换内容而不是换字节，拒收不代表它们也发不出去。
+            return SendAttempt(
+                success=False,
+                retryable=True,
+                rejected=True,
+                error=error,
+            )
         if self._is_uncertain_delivery_error(exc):
             warning = self.UNCERTAIN_DELIVERY_WARNING
             self._log_uncertain_delivery(label, target, exc)
@@ -442,6 +473,31 @@ class TweetSender(
         else:
             logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return SendAttempt(success=False, retryable=True, error=error)
+
+    @classmethod
+    def _is_content_rejected_error(cls, exc: Exception | None) -> bool:
+        """目标平台事实上拒收了内容本身，换编码或重发都不会改变结果。
+
+        两个已知签名（均为 OneBot/NapCat retcode 1200）：
+
+        - 群媒体上传后收不到回执：``Timeout: NTEvent ... sendMsg`` 且
+          ``result: 0`` / ``errMsg`` 为空。调用本身没报错，是服务端静默丢弃。
+        - 合并转发被拒：``res_id ... 失败``。
+
+        本地文件读不到导致的 1200（ENOENT copyfile）不属于此类，那是传输
+        问题，交给无损编码梯度重试，见 ``_is_forward_payload_rejected_error``。
+        """
+        if exc is None:
+            return False
+        text = str(exc or "")
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("no such file", "enoent", "copyfile")):
+            return False
+        if "ntevent" in lowered and "sendmsg" in lowered:
+            return True
+        if "res_id" in lowered and ("失败" in text or "fail" in lowered):
+            return True
+        return False
 
     @staticmethod
     def _log_uncertain_delivery(
@@ -494,8 +550,17 @@ class TweetSender(
 
     @classmethod
     def _is_forward_payload_rejected_error(cls, exc: Exception | None) -> bool:
-        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200)."""
+        """OneBot/NapCat explicit reject of merged-forward content (e.g. retcode 1200).
+
+        NapCat also wraps per-element local-file failures as 1200 (ENOENT
+        copyfile); those are transport problems the lossless encoding ladder
+        can fix, so they are not payload rejects here.
+        """
         if exc is None:
+            return False
+        text = str(exc or "")
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("no such file", "enoent", "copyfile")):
             return False
         if ActionFailed is not None and isinstance(exc, ActionFailed):
             retcode = getattr(exc, "retcode", None)
@@ -504,8 +569,6 @@ class TweetSender(
                     return True
             except (TypeError, ValueError):
                 pass
-        text = str(exc or "")
-        lowered = text.lower()
         if "retcode=1200" in lowered or "retcode': 1200" in lowered:
             return True
         if "res_id" in lowered and ("失败" in text or "fail" in lowered):

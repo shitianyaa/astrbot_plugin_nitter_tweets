@@ -10,9 +10,11 @@ from urllib.request import Request
 
 try:
     from ..shared.utils import TweetItem, TweetMedia, format_tweet_published
+    from .html_backend.parser import prefer_pbs_quality
     from .network import build_request_headers, safe_urlopen
     from .status_link import StatusLink
 except ImportError:
+    from media_support.html_backend.parser import prefer_pbs_quality
     from media_support.network import build_request_headers, safe_urlopen
     from media_support.status_link import StatusLink
     from shared.utils import TweetItem, TweetMedia, format_tweet_published
@@ -287,10 +289,27 @@ def _tweet_from_syndication(link: StatusLink, data: dict[str, Any]) -> TweetItem
     )
 
 
+def _apply_image_quality(tweet: TweetItem, quality: str) -> None:
+    """Align Fx/Vx/Syndication image URLs with the configured quality tier.
+
+    These backends hand back pbs.twimg.com links at whatever tier they chose
+    (usually ``name=orig``), so without this the media_quality setting had no
+    effect on the status route while HTML and xdown both honoured it.
+    """
+    tier = str(quality or "").strip().lower()
+    if tier not in {"high", "medium", "low"}:
+        tier = "high"
+    for media in tweet.media:
+        if getattr(media, "kind", "") != "image":
+            continue
+        media.url = prefer_pbs_quality(media.url, tier)
+
+
 def resolve_status_tweet(
     link: StatusLink,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    media_quality: str = "high",
 ) -> TweetItem:
     """Resolve one status link; raise StatusResolveError on total failure."""
     user = link.username or "i"
@@ -322,29 +341,24 @@ def resolve_status_tweet(
             if tweet is None:
                 errors.append(f"{name}: empty")
                 logger.info(
-                    "[NitterTweets] status resolve empty: source=%s status_id=%s elapsed_ms=%s",
-                    name,
-                    sid,
-                    elapsed_ms,
+                    f"[NitterTweets] 链接解析为空: source={name}, "
+                    f"status_id={sid}, elapsed_ms={elapsed_ms}"
                 )
                 continue
+            _apply_image_quality(tweet, media_quality)
             logger.info(
-                "[NitterTweets] status resolve ok: source=%s status_id=%s elapsed_ms=%s media=%s",
-                name,
-                sid,
-                elapsed_ms,
-                len(tweet.media),
+                f"[NitterTweets] 链接解析成功: source={name}, "
+                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
+                f"media={len(tweet.media)}, quality={media_quality}"
             )
             return tweet
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             errors.append(f"{name}: {type(exc).__name__}")
             logger.info(
-                "[NitterTweets] status resolve fail: source=%s status_id=%s elapsed_ms=%s error=%s",
-                name,
-                sid,
-                elapsed_ms,
-                type(exc).__name__,
+                f"[NitterTweets] 链接解析失败: source={name}, "
+                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
+                f"error={type(exc).__name__}"
             )
     raise StatusResolveError("; ".join(errors) or "resolve failed")
 
@@ -353,7 +367,10 @@ async def resolve_status_tweet_async(
     link: StatusLink,
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    media_quality: str = "high",
 ) -> TweetItem:
     import asyncio
 
-    return await asyncio.to_thread(resolve_status_tweet, link, timeout=timeout)
+    return await asyncio.to_thread(
+        resolve_status_tweet, link, timeout=timeout, media_quality=media_quality
+    )

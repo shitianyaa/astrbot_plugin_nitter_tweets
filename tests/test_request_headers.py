@@ -58,12 +58,11 @@ def test_safe_urlopen_enforces_builtin_headers(monkeypatch):
             captured.append(outgoing)
             return _Response(url=outgoing.full_url)
 
-    monkeypatch.setattr(network, "_safe_opener", lambda **_kwargs: _Opener())
+    monkeypatch.setattr(network, "_safe_opener", lambda: _Opener())
 
     network.safe_urlopen(
         Request("https://example.com/path", headers={"User-Agent": "custom"}),
         1.0,
-        resolve_dns=False,
     )
 
     assert _request_header(captured[0], "User-Agent") == network.BUILTIN_USER_AGENT
@@ -71,6 +70,23 @@ def test_safe_urlopen_enforces_builtin_headers(monkeypatch):
         _request_header(captured[0], "Accept-Language")
         == network.BUILTIN_ACCEPT_LANGUAGE
     )
+
+
+def test_safe_urlopen_allows_private_self_hosted_url(monkeypatch):
+    captured: list[Request] = []
+
+    class _Opener:
+        def open(self, outgoing: Request, timeout: float):
+            captured.append(outgoing)
+            return _Response(url=outgoing.full_url)
+
+    monkeypatch.setattr(network, "_safe_opener", lambda: _Opener())
+    request = Request("http://127.0.0.1:8080/NASA/rss")
+
+    response = network.safe_urlopen(request, 1.0)
+
+    assert response.geturl() == request.full_url
+    assert captured[0].full_url == request.full_url
 
 
 def test_rss_request_uses_builtin_headers(monkeypatch):
@@ -87,6 +103,23 @@ def test_rss_request_uses_builtin_headers(monkeypatch):
         client._fetch_page_from_instance("https://example.com", "nasa", "", 1)
 
     assert _request_header(captured[0], "User-Agent") == network.BUILTIN_USER_AGENT
+
+
+def test_html_request_allows_configured_private_instance():
+    captured: list[Request] = []
+
+    class _Opener:
+        def open(self, request: Request, timeout: float):
+            captured.append(request)
+            return _Response(b"ok", request.full_url)
+
+    session = HttpSession()
+    session.opener = _Opener()
+
+    response = session.request("http://nitter:8080/NASA")
+
+    assert response.code == 200
+    assert captured[0].full_url == "http://nitter:8080/NASA"
 
 
 def test_html_request_uses_builtin_headers():

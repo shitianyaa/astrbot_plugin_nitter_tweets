@@ -139,7 +139,12 @@ class LinkPreviewMixin:
                 tweet = None
                 task_warnings: list[str] = []
                 try:
-                    tweet = await resolve_status_tweet_async(link)
+                    tweet = await resolve_status_tweet_async(
+                        link,
+                        media_quality=str(
+                            config_get(self.config, "media_quality", "high") or "high"
+                        ),
+                    )
                 except StatusResolveError as exc:
                     logger.warning(
                         "[NitterTweets] link preview resolve failed: "

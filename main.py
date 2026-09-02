@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from astrbot.api.all import AstrBotConfig, Context, Star, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -25,16 +26,11 @@ try:
         parse_config_bool,
     )
     from .delivery import TweetSender
-    from .media_support import MediaService, NitterClient
-    from .media_support.html_backend import (
-        DEFAULT_SEARCH_INSTANCES,
-        HtmlBackendConfig,
-        HtmlNitterService,
-    )
+    from .media_support import MediaService, NitterService
     from .media_support.status_link import STATUS_LINK_REGEX
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
-    from .shared import clamp_float, clamp_int
+    from .shared import clamp_float
 except ImportError:
     from ai import TweetTranslator
     from command_handlers import (
@@ -53,23 +49,18 @@ except ImportError:
         parse_config_bool,
     )
     from delivery import TweetSender
-    from media_support import MediaService, NitterClient
-    from media_support.html_backend import (
-        DEFAULT_SEARCH_INSTANCES,
-        HtmlBackendConfig,
-        HtmlNitterService,
-    )
+    from media_support import MediaService, NitterService
     from media_support.status_link import STATUS_LINK_REGEX
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
-    from shared import clamp_float, clamp_int
+    from shared import clamp_float
 
 
 @register(
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "0.18.6",
+    "1.3.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
@@ -85,12 +76,22 @@ class NitterTweetsPlugin(
         self.config = config
         migrate_legacy_grouped_config(self.config)
         migrate_default_group_config(self.config)
-        self.nitter = NitterClient(config)
+        self.nitter = NitterService(config, session_dir=self._html_session_dir())
+        for key, values in self.nitter.ignored_legacy_instances.items():
+            labels = ", ".join(self._instance_log_label(value) for value in values)
+            logger.warning(
+                f"[NitterTweets] 已忽略已删除配置 {key} 中的实例: {labels}；"
+                "请手动填写到 instances，插件不会迁移或写回旧字段"
+            )
+        if not self.nitter.instances:
+            logger.warning(
+                "[NitterTweets] 未配置可用的自建 Nitter 实例；"
+                "RSS、搜索和 List 功能将不可用"
+            )
         self.media = MediaService(config)
         self._cleanup_legacy_media_cache_once()
         self.sender = TweetSender(config)
         self.translator = TweetTranslator(context, config)
-        self.html_backend = self._build_html_backend()
         self.scheduler = NitterTweetScheduler(
             self,
             context,
@@ -99,7 +100,6 @@ class NitterTweetsPlugin(
             self.media,
             self.sender,
             self.translator,
-            html_backend=self.html_backend,
         )
         self.web_api = NitterWebAPI(self)
         self.web_api.register(context)
@@ -109,12 +109,8 @@ class NitterTweetsPlugin(
         self.cooldown_seconds = clamp_float(
             config_get(config, "cooldown_seconds", 15.0), 0.0, 3600.0
         )
-        self.search_cooldown_seconds = clamp_float(
-            config_get(config, "search_cooldown_seconds", 30.0), 0.0, 3600.0
-        )
-        self.search_default_limit = self._parse_positive_limit(
-            config_get(config, "search_default_limit", 5), 5
-        )
+        self.search_cooldown_seconds = self.cooldown_seconds
+        self.search_default_limit = self.default_limit
         self.search_max_limit = self._parse_positive_limit(
             config_get(config, "search_max_limit", 10), 10
         )
@@ -122,60 +118,25 @@ class NitterTweetsPlugin(
         self._search_session_store = None  # lazy SearchSessionStore
         self.scheduler.start(reason="__init__")
 
-    def _build_html_backend(self) -> HtmlNitterService:
-        data_dir = None
+    def _html_session_dir(self) -> Path | None:
         try:
             from astrbot.api.star import StarTools
 
             data_dir = StarTools.get_data_dir(self.name)
         except Exception:
-            data_dir = None
-        session_dir = None
-        if data_dir is not None:
-            session_dir = Path(data_dir) / "html_sessions"
+            return None
+        return Path(data_dir) / "html_sessions"
 
-        def _list(key: str, default: list[str]) -> list[str]:
-            raw = config_get(self.config, key, default) or default
-            if isinstance(raw, str):
-                items = [part.strip() for part in raw.splitlines() if part.strip()]
-            elif isinstance(raw, list):
-                items = [str(item).strip() for item in raw if str(item).strip()]
-            else:
-                items = list(default)
-            return items or list(default)
-
-        return HtmlNitterService(
-            HtmlBackendConfig(
-                # Blogger path is RSS-only by default; no HTML instance list.
-                user_html_fallback=parse_config_bool(
-                    config_get(self.config, "user_html_fallback", False), False
-                ),
-                blogger_html_instances=[],
-                search_enabled=parse_config_bool(
-                    config_get(self.config, "search_enabled", True), True
-                ),
-                search_instances=_list("search_instances", DEFAULT_SEARCH_INSTANCES),
-                proxy=None,
-                session_dir=session_dir,
-                html_timeout=clamp_float(
-                    config_get(self.config, "html_request_timeout", 35.0), 5.0, 120.0
-                ),
-                html_min_interval=clamp_float(
-                    config_get(self.config, "html_min_interval", 3.0), 0.0, 120.0
-                ),
-                html_max_pages=clamp_int(
-                    config_get(self.config, "html_max_pages", 1), 1, 5
-                ),
-                filter_reposts=parse_config_bool(
-                    config_get(self.config, "filter_reposts_enabled", True), True
-                ),
-            ),
-            log=lambda msg: logger.info(f"[NitterTweets][html] {msg}"),
-            # Align HTML chatter with scheduler/RSS brief mode (default on).
-            brief_log=parse_config_bool(
-                config_get(self.config, "brief_log_enabled", True), True
-            ),
-        )
+    @staticmethod
+    def _instance_log_label(value: str) -> str:
+        """Keep startup diagnostics useful without logging URL paths."""
+        try:
+            parsed = urlsplit(str(value or "").strip())
+            host = parsed.hostname or ""
+            port = f":{parsed.port}" if parsed.port else ""
+            return f"{parsed.scheme}://{host}{port}" if parsed.scheme and host else host
+        except ValueError:
+            return "<invalid>"
 
     def _cleanup_legacy_media_cache_once(self) -> None:
         if parse_config_bool(
@@ -256,7 +217,7 @@ class NitterTweetsPlugin(
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("镜像测试")
     async def cmd_mirror_probe(self, event: AstrMessageEvent, args=GreedyStr):
-        """用临时 Nitter 镜像站测试 RSS。用法：/镜像测试 [用户名] [数量] 镜像站URL"""
+        """测试自建 Nitter 实例。用法：/镜像测试 [用户名] [数量] 实例URL"""
         return await self._cmd_mirror_probe_impl(event, args)
 
     @filter.permission_type(filter.PermissionType.ADMIN)

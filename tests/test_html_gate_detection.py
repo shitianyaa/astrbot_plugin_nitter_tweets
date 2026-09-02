@@ -1,99 +1,94 @@
 from __future__ import annotations
 
-from media_support.html_backend.modes import detect_gate
+from media_support.html_backend.modes import classify_page
 
 
-def test_detect_gate_recognizes_real_timeline_content_even_with_just_a_moment_text():
+def test_classify_page_accepts_timeline_content():
     html = (
         b"<!DOCTYPE html><html><body>"
-        b'<div class="timeline-item">'
-        b'<a class="tweet-link" href="/user/status/123"></a>'
-        b'<div class="tweet-content media-body">give me just a moment to catch my breath please... \xe2\x99\xa1</div>'
-        b"</div></body></html>"
+        b'<div class="timeline-item"><div class="tweet-content">ok</div></div>'
+        b"</body></html>"
     )
-    assert detect_gate(html) == "ok"
+    assert classify_page(html) == "ok"
 
 
-def test_detect_gate_recognizes_real_timeline_content_with_cf_challenge_platform_beacon():
+def test_classify_page_accepts_empty_nitter_timeline():
+    html = b'<html><body><div class="timeline">No items found</div></body></html>'
+    assert classify_page(html) == "ok"
+
+
+def test_classify_page_rejects_login_and_maintenance_titles():
+    assert (
+        classify_page(b"<html><head><title>Login - Nitter</title></head></html>")
+        == "error"
+    )
+    assert (
+        classify_page(b"<html><head><title>Maintenance</title></head></html>")
+        == "error"
+    )
+    assert (
+        classify_page(b"<html><head><title>Access Denied</title></head></html>")
+        == "error"
+    )
+
+
+def test_classify_page_rejects_nitter_error_panel():
+    html = b'<html><body><div class="error-panel">User not found</div></body></html>'
+    assert classify_page(html) == "error"
+
+
+def test_classify_page_marks_generic_html_as_other():
+    assert classify_page(b"<html><body>unexpected page</body></html>") == "other"
+
+
+def test_classify_page_marks_blank_body_as_empty():
+    assert classify_page(b"  ") == "empty"
+
+
+def test_tweet_text_with_error_phrases_stays_ok():
+    """通用英文短语出现在推文正文里完全正常，不能据此判定实例故障。"""
+    for phrase in (
+        b"Access Denied",
+        b"just a moment",
+        b"this site is under maintenance",
+        b"service unavailable",
+    ):
+        html = (
+            b'<html><body><div class="timeline">'
+            b'<div class="timeline-item"><div class="tweet-content">'
+            + phrase
+            + b" happens when the API key expires</div></div>"
+            b"</div></body></html>"
+        )
+        assert classify_page(html) == "ok", phrase
+
+
+def test_cloudflare_beacon_does_not_fail_a_healthy_page():
+    """CF 会往正常 200 响应里注入 beacon 脚本；这不是挑战页。
+
+    仅支持自建实例后不再检测第三方挑战页，真实时间线内容说了算。
+    """
     html = (
         b"<!DOCTYPE html><html><body>"
-        b'<div class="timeline-item">'
-        b'<a class="tweet-link" href="/user/status/123"></a>'
-        b'<div class="tweet-content">Normal tweet content</div>'
-        b"</div>"
+        b'<div class="timeline-item"><div class="tweet-content">normal</div></div>'
         b'<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'
         b"</body></html>"
     )
-    assert detect_gate(html) == "ok"
+    assert classify_page(html) == "ok"
 
 
-def test_detect_gate_recognizes_empty_timeline_with_cf_beacon():
+def test_cloudflare_interstitial_without_timeline_is_not_ok():
+    """挑战页没有时间线内容，仍然不会被当作可用页面。"""
     html = (
-        b"<!DOCTYPE html><html><head><title>nitter</title></head><body>"
-        b'<div class="site-name">nitter</div><div class="timeline-none">No items found</div>'
-        b'<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'
-        b"</body></html>"
+        b"<!DOCTYPE html><html><head><title>Just a moment...</title></head>"
+        b'<body><script src="/cdn-cgi/challenge-platform/x.js"></script></body></html>'
     )
-    assert detect_gate(html) == "ok"
+    assert classify_page(html) in {"error", "other"}
 
 
-def test_detect_gate_recognizes_genuine_cloudflare_interstitial():
+def test_error_panel_still_wins_over_timeline_markup():
     html = (
-        b"<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>"
-        b'<div id="cf-turnstile"></div>'
-        b'<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>'
-        b"</body></html>"
+        b'<html><body><div class="timeline"></div>'
+        b'<div class="error-panel">blocked</div></body></html>'
     )
-    assert detect_gate(html) == "cf"
-
-
-def test_detect_gate_recognizes_anubis_challenge():
-    html = (
-        b"<!doctype html><html><head><title>Making sure you're not a bot!</title></head><body>"
-        b'<script id="anubis_challenge" type="application/json">{"challenge":{}}</script>'
-        b"</body></html>"
-    )
-    assert detect_gate(html) == "anubis"
-
-
-def test_detect_gate_recognizes_poast_sha1_challenge():
-    html = (
-        b"<html><head><title>Verifying your browser...</title></head><body>"
-        b"<script>const a0_0x2a54 = ['a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'];</script>"
-        b"</body></html>"
-    )
-    assert detect_gate(html) == "poast_sha1"
-
-
-def test_explicit_anubis_challenge_wins_over_placeholder_timeline_nodes():
-    html = (
-        b"<html><body>"
-        b'<div class="timeline-item"><div class="tweet-content">loading</div></div>'
-        b'<script id="anubis_challenge" type="application/json">'
-        b'{"challenge":{}}</script>'
-        b"</body></html>"
-    )
-
-    assert detect_gate(html) == "anubis"
-
-
-def test_explicit_poast_challenge_wins_over_placeholder_timeline_nodes():
-    html = (
-        b"<html><head><title>Verifying your browser...</title></head><body>"
-        b'<div class="timeline-item"><div class="tweet-content">loading</div></div>'
-        b"<script>const a0_0x2a54 = ['sha1']; const res='';</script>"
-        b"</body></html>"
-    )
-
-    assert detect_gate(html) == "poast_sha1"
-
-
-def test_explicit_error_panel_wins_over_placeholder_timeline_nodes():
-    html = (
-        b"<html><body>"
-        b'<div class="error-panel">User not found</div>'
-        b'<div class="timeline-item"><div class="tweet-content">dummy template</div></div>'
-        b"</body></html>"
-    )
-
-    assert detect_gate(html) == "error"
+    assert classify_page(html) == "error"

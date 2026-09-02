@@ -34,6 +34,7 @@ class TweetMedia:
     url: str
     path: Path | None = None
     duration_seconds: float | None = None
+    fallback_url: str = ""
 
     @property
     def is_image(self) -> bool:
@@ -75,9 +76,10 @@ class TweetItem:
         return self.link
 
 
-DEFAULT_INSTANCES = [
-    "https://nitter.net",
-]
+# No public Nitter instances are shipped.  Users must configure a self-hosted
+# instance explicitly; an empty list lets startup diagnostics explain that
+# deployment is incomplete instead of silently calling a retired mirror.
+DEFAULT_INSTANCES: list[str] = []
 
 
 def format_tweet_published(raw: str) -> str:
@@ -276,10 +278,18 @@ def file_uri(path: Path) -> str:
 def generate_file_name(url: str, default_suffix: str = "") -> str:
     parsed = urlparse(url)
     suffix = Path(parsed.path).suffix
+    # Percent-encoded junk can trail the real extension (e.g. nitter's
+    # /video/<code>/https%3A...mp4%3Ftag%3D29 proxy URLs). The naive suffix
+    # there is ".mp4%3Ftag%3D29", and a later URI decode turns it into a '?'
+    # that no longer matches the file on disk. Only accept plain extensions.
+    if suffix and not re.fullmatch(r"\.[A-Za-z0-9]{1,10}", suffix):
+        suffix = ""
     if not suffix:
         query = parse_qs(parsed.query)
         media_format = (query.get("format") or [""])[0].strip(".")
         suffix = f".{media_format}" if media_format else default_suffix
+        if suffix and not re.fullmatch(r"\.[A-Za-z0-9]{1,10}", suffix):
+            suffix = default_suffix
     digest = hashlib.md5(url.encode("utf-8")).hexdigest()[:16]
     return f"{digest}{suffix or default_suffix}"
 

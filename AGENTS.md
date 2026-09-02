@@ -57,13 +57,15 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - `group_type`：`blogger` | `tag` | **`list`**。创建后勿改；字段分别用 `watch_users` / `watch_queries` / **`watch_lists`**，勿混用。
 - seen：`group_id + account_key`；博主=用户名；标签=`q:<casefold>`；List=`list:<id>`（用 `normalize_seen_account_key`）。
 - 转发过滤：`全局 filter_reposts_enabled && 分组 filter_reposts_enabled`；手动命令不读分组子开关。
-- List 必须 Public；ID 为纯数字；走 `search_instances` HTML。
+- List 必须 Public；ID 为纯数字；走统一 `instances` HTML。
 
-### 实例三义（禁止混用）
+### 自建实例
 
-- `instances`：仅博主 RSS（默认可含 nitter.net）。
-- `search_instances`：搜索/List HTML（默认勿放 nitter.net）。
-- 无独立博主 HTML 池；`user_html_fallback` 默认关，开启会占用搜索实例。
+- `instances`：唯一 Nitter 列表，同时用于博主 RSS/HTML、搜索、List 和后台并发抓取。
+- Blogger 固定 RSS 优先、HTML 自动后备；无 `user_html_fallback` 开关。
+- `search_instances` / `blogger_html_instances` / `concurrent_fetch_instances` 已删除，只做启动诊断，不读取、不迁移、不写回。
+- 无公共默认实例；已退役公共地址只在运行时过滤并记录 warning。
+- 网络层允许合法 HTTP(S) 的 loopback、Docker 服务名、私网 IP 和重定向；文档必须提醒只使用可信自建实例并隔离内部管理面。
 
 ### 被动链接解析
 
@@ -81,8 +83,8 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 手动 `fetch_tweets` 默认不跳纯文本、保留转发；后台可用 `skip_plain_text` 与双层转发过滤。
 - 纯文本过滤只影响后台：作者上传媒体才算；`card_img`、Article 封面、**引用推媒体**不算。
 - 整页被滤但仍有 cursor 须翻页；真·空 feed 才 empty。
-- 诊断：`python scripts/probe_nitter_fetch.py nasa 5`（可加 `--skip-plain-text` / `--include-reposts`）。
-- HTML 门禁判定先识别明确的 Anubis/Poast 挑战结构，避免占位 timeline 节点绕过解算；没有明确挑战结构时，真实时间线内容优先于通用 Cloudflare 文案和 beacon。
+- 诊断：`python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080`（可加 `--skip-plain-text` / `--include-reposts`）。
+- HTML 只分类正常时间线、空页、登录/维护/错误页和异常页面；不再实现或检测公共实例挑战。
 
 ## 调度与 seen
 
@@ -96,6 +98,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 普通媒体发送后清理；统计 removed/failed 等。
 - UMO 用 `/sid` 完整值；平台类型用 `PlatformResolver`，勿只看 UMO 第一段。
 - QQ 合并转发有降级与「可能已送达」处理；TG flood retry；Lark 优先原生 post。
+- 媒体传输编码梯度只作用于 OneBot（`delivery/media_transport.py`）：**无损的换编码重试必须排在有损的去视频/纯文本降级之前**；`uncertain` 不推进梯度；Lark 必须拿到文件系统路径而非 base64。详见 `docs/project/platform-delivery.md`。
 - 处理顺序：翻译 → 媒体；provider 不硬编码。
 
 ## 文档同步
@@ -118,8 +121,15 @@ ruff format --check .
 - List：`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`
 - 标签调度：`tests/test_scheduler_tag_delivery.py`
 - HTML/搜索：`tests/test_html_backend_query.py`、`tests/test_watch_queries_config.py`
-- 日志与门禁：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
+- 日志与 HTML 页面分类：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
 - 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
+- 媒体传输编码：`tests/test_media_transport.py`
+- 媒体画质三档：`tests/test_media_quality_preference.py`、`tests/test_prefer_pbs_quality.py`、`tests/test_status_media_quality.py`
+- 发送拒收分类与图片失败提示：`tests/test_image_send_rejected_notice.py`
+- 媒体缓存文件名后缀：`tests/test_media_file_name.py`
+- 配置迁移标记 schema 声明：`tests/test_conf_schema_migration_keys.py`
+- xdown token 直链与重试兜底：`tests/test_xdown_token_direct_url.py`
+- 视频大小预检降级：`tests/test_video_size_preflight.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。
 
 完整矩阵：`docs/dev/testing.md`。

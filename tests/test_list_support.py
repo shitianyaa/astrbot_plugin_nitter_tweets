@@ -294,7 +294,7 @@ def test_list_pagination_uses_cursor_and_global_repost_filter(monkeypatch):
     monkeypatch.setattr(
         pool_module,
         "parse_timeline_html",
-        lambda body, _base, source="": pages[body],
+        lambda body, _base, source="", **_kw: pages[body],
     )
 
     tweets = pool._paginate_list("https://a.example", "12345", 20)
@@ -335,7 +335,7 @@ def test_list_pagination_scans_past_limit_until_watermark(monkeypatch):
     monkeypatch.setattr(
         pool_module,
         "parse_timeline_html",
-        lambda body, _base, source="": pages[body],
+        lambda body, _base, source="", **_kw: pages[body],
     )
 
     tweets = pool._paginate_list(
@@ -369,7 +369,7 @@ def test_list_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
     monkeypatch.setattr(
         pool_module,
         "parse_timeline_html",
-        lambda body, _base, source="": pages[body],
+        lambda body, _base, source="", **_kw: pages[body],
     )
 
     tweets = pool._paginate_list(
@@ -404,7 +404,7 @@ def test_search_pagination_scans_past_limit_until_watermark(monkeypatch):
     monkeypatch.setattr(
         pool_module,
         "parse_timeline_html",
-        lambda body, _base, source="": pages[body],
+        lambda body, _base, source="", **_kw: pages[body],
     )
 
     tweets = pool._paginate_search(
@@ -439,7 +439,7 @@ def test_search_pagination_marks_scan_incomplete_at_page_limit(monkeypatch):
     monkeypatch.setattr(
         pool_module,
         "parse_timeline_html",
-        lambda body, _base, source="": pages[body],
+        lambda body, _base, source="", **_kw: pages[body],
     )
 
     tweets = pool._paginate_search(
@@ -476,15 +476,11 @@ def test_list_empty_host_rotates_to_later_hit():
 
 
 def test_list_pool_inherits_global_repost_filter():
-    enabled = HtmlNitterService(
-        HtmlBackendConfig(search_instances=[], filter_reposts=True)
-    )
-    disabled = HtmlNitterService(
-        HtmlBackendConfig(search_instances=[], filter_reposts=False)
-    )
+    enabled = HtmlNitterService(HtmlBackendConfig(instances=[], filter_reposts=True))
+    disabled = HtmlNitterService(HtmlBackendConfig(instances=[], filter_reposts=False))
 
-    assert enabled.search_pool.config.filter_reposts is True
-    assert disabled.search_pool.config.filter_reposts is False
+    assert enabled.pool.config.filter_reposts is True
+    assert disabled.pool.config.filter_reposts is False
 
 
 class _Config(dict):
@@ -578,7 +574,8 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "全局转发过滤总开关" in source
     assert "List ID 必须是 1-20 位正整数" in source
     assert "List ID 已存在" in source
-    assert "probe_all: !instance" in source
+    assert "list_id: els.mirrorListId.value.trim()" in source
+    assert 'rss_user: "用户 RSS"' in source
 
 
 def test_status_and_export_render_list_group():

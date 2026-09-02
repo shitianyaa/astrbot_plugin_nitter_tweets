@@ -2,6 +2,83 @@
 
 所有重要变更都会记录在这里。
 
+## [1.3.0] - 2026-09-01
+
+### ⚠️ 升级速读（从 0.18.x 升级，不想细看至少记住这三条）
+
+- **公共 Nitter 基本全挂，现在只能自建。** 自建 Nitter 占用很低（静态文件约 10 MB 量级，详见资源说明），强烈建议自建；README 有[一键部署脚本](./README.md#一键部署-nitter)（nitter-installer，Docker Compose 编排 Nitter + Redis）。
+- **强烈建议改用 List 分组。** 把关注的人加到一个 Public List 里订阅，比逐个轮询用户页请求量小、更不容易触发 429；分类更清晰，数量不建议过多。详见 [List 指南](./docs/twitter-lists.md)。
+- **WebUI 运维面板（`pages/dashboard`）后续会大修。** 本版的实例能力诊断能用，但面板整体体验后面再重做。
+
+### Added
+
+- 发送失败分类新增「被目标平台拒收」：`SendAttempt.rejected` 与 `TweetSender._is_content_rejected_error`，识别 NapCat 群媒体上传无回执（`Timeout: NTEvent ... sendMsg`，`result: 0`）和合并转发 `res_id` 拒绝两个签名。该标记只表示「同样的字节别再发一遍」：传输编码梯度与组件级重试据此停手，而去视频、拆分、降级直发、纯文本兜底等换内容的降级链照常运行。
+- 图片已下载但发送失败时补发一条提示消息。命中拒收签名时措辞为「图片可能被平台风控拦截，未能发送」，其他发送失败为「图片发送失败」；是否附带原帖链接遵循 `omit_status_url`，与视频省略提示一致。「仅媒体」分组不补提示，因为整条会在下一轮重推。
+- 图片下载失败新增用户可见提示「图片下载失败，已保留原文链接」。此前只有视频有下载失败提示，图片失败对用户完全静默。
+
+### Fixed
+
+- 修复 Nitter `/video/` 代理 URL 的百分号编码尾巴（如 `%3Ftag%3D29`）被当作文件扩展名，导致 NapCat 解码 `file://` 路径后 ENOENT（retcode 1200）、含视频合并转发发送失败：`generate_file_name` 后缀白名单化，脏尾巴回落媒体类型默认扩展名。
+- NapCat 因读不到本地媒体文件（ENOENT copyfile）而回的 1200 不再被判为“payload 体积拒绝”，放行无损传输编码重试（base64/URL）后再走有损降级。
+- 去视频降级重发及直发/QQ Official 的“视频省略提示”从「视频/GIF 发送已关闭，已跳过下载」改为「视频/GIF 附件发送失败，本次已省略」，与用户手动关闭发送开关的提示区分。
+- `media_quality` 现在对 status 链接解析渠道（Fx/Vx/Syndication）生效。此前该渠道直接使用后端返回的 pbs 直链、恒为 `name=orig` 原图，HTML 与 xdown 两条渠道则一直遵循档位，同一批推文因来源不同拿到不同画质。
+- 拒收判定排在「送达状态不确定」判定之前：`Timeout: NTEvent` 的错误文本含 `timeout` 字样，先走 uncertain 会被误判成“可能已送达”而跳过整个降级链（`ActionFailed` 不可导入时尤其明显）。
+- `_conf_schema.json` 补上 `_video_resolution_preference_migrated` 声明。7 个内部迁移标记中只有它未声明，WebUI 因此把它渲染成可编辑的裸输入框。
+- `pool.py` 实例轮换日志不再写入原始传输错误（`resp.error`）；`nitter.py` HTML 抓取日志改走 `sanitize_sensitive_text`；`api_probe.py` 警告只记 `host:port`，避免泄漏完整 URL 与响应正文。
+- `build_direct_video_items` 补 `send_video_attachments` 守卫：发送开关关闭时不再构造视频直发项，与图片侧 `build_direct_image_items` 对称。
+- Dashboard 探测标题在取不到 username 时不再渲染空 `@`。
+
+### Changed
+
+- OneBot 合并转发版式：推文图片并入正文节点（每条推文一个图文节点），视频/GIF 保持独立节点；节点昵称与 uin 改为显示该条推文的实际作者，标签/List 分组下每条推文各自显示其作者，取不到作者时回退分组标识，header 节点仍为 Nitter。
+- `build_image_node_components` / `_build_onebot_image_content` 移除（图片不再构独立节点）。
+- `media_transport_mode` 与 `media_transport_url_fallback` 从代码移除：传输模式恒为 `auto`，twimg 白名单主机的 URL 档常驻梯度（原 `url_fallback` 默认 False，现自动加入）；`media_transport_base64_max_mb` 保留。
+- `_probe_remote_media` 仅在缺大小时请求 1 字节、从 `Content-Range` 取 total，不再对每个候选都下载 1 MiB。
+- `scripts/test_video_download.py` 的 `--resolution` 改为 `--media-quality`（`high`/`medium`/`low`），移除已失效的 `--xdown-url`。
+
+## [1.2.0] - 2026-09-01
+
+### Added
+
+- 新增 `media_quality`（`high`/`medium`/`low`）三档媒体画质，图片和视频共用：图片映射 twimg `name=orig/large/small`，视频取候选最高/中位数/最低档，不重编码。
+- xdown 候选下载改用 token 内编码的原始 twimg 直链作主 URL、snapcdn 代理作兜底；twimg 直链下载失败自动切 snapcdn 重试。
+- 视频下载前 Range 预检完整大小，选中档超 `media_max_size_mb` 时自动降到下一低分辨率档，避免选了超大最高档却下载失败导致整条视频丢失。
+
+### Changed
+
+- `video_resolution_preference` 被 `media_quality` 取代；迁移 highest→high、lowest→low、精确档（如 1280p）→medium。三档按候选内排序选档，绕过横竖屏判定。
+- `xdown_api_url` 配置项移除（API 地址固定为常量）。
+- `prefer_orig_pbs` 改名为 `prefer_pbs_quality(url, quality)`，按 `media_quality` 选 twimg name 档；HTML 后端与 xdown token 直链统一生效。
+- `_probe_remote_video_duration` 升级为 `_probe_remote_media`，一次 Range 请求同时返回时长和完整大小。
+
+## [1.1.0] - 2026-09-01
+
+### Added
+
+- 新增媒体传输编码层：私人号 OneBot 发送图片和视频时，本地路径失败会自动换 base64 重试，再失败才轮到既有的去视频/纯文本降级。解决 AstrBot 与 NapCat 不共享文件系统（分容器、分机器）时 `file:///` 读不到导致媒体全丢的问题。
+- 新增 `media_transport_mode`（`auto` / `path_only` / `base64_first`）、`media_transport_base64_max_mb`（默认 8）和 `media_transport_url_fallback`（默认关闭）三项媒体配置。
+- 传输层会记住每个平台最近一次成功的编码档作为下次的起步提示，避免非共享文件系统的部署每条消息都先白试一次路径档；记住的档失败时仍会回落到更早的档。
+
+### Changed
+
+- 传输降级是无损的（同一份媒体换编码），排在有损的内容降级之前：路径档失败先换编码重试，视频不再被提前丢弃。
+- 超过 `media_transport_base64_max_mb` 的视频不会走 base64；梯度耗尽时复用既有的「视频未发送」提示，而不是让整条消息失败。
+- 合并转发在拆分之前也会先换编码重建整份节点数组重试；payload 被显式拒绝（retcode 1200）属于体积问题，仍直接交给拆分。
+- 超时等「可能已送达」的失败不会推进编码梯度，避免重复投递。
+
+## [1.0.0] - 2026-08-31
+
+### Changed
+
+- 调整为仅支持可信自建 Nitter：不再提供或维护公共实例默认值、公共主机模式和 Anubis/Poast 挑战解算。
+- `instances` 成为唯一实例配置，同时用于用户 RSS/HTML、搜索、List 和后台并发抓取；Blogger 固定 RSS 优先、HTML 自动后备。
+- 删除 `search_instances`、`blogger_html_instances`、`concurrent_fetch_instances`、`user_html_fallback` 和 `search_enabled`。旧字段不会读取、迁移或写回，启动日志会列出被忽略的 origin；HTML 搜索和 List 现始终启用。
+- 关注对象较多时建议优先使用 Nitter List 分组，以减少逐用户轮询的请求量和 429；RSS 与 HTML 共用 `retry_attempts`、`retry_delay_seconds`。
+- 网络层允许合法 HTTP(S) 的 loopback、Docker 服务名、私网 IP、媒体 URL 和重定向；继续保留 URL 协议/语法、超时、响应/媒体大小、数量和时长限制。
+- Dashboard “镜像测试”重做为统一实例能力测试，一次报告用户 RSS、用户 HTML、搜索和可选 List 结果。
+- 文档增加容器内地址选择和可信来源提醒：插件会访问实例响应中的媒体与重定向，部署者应通过 Docker network、防火墙和反向代理隔离内部管理面。
+- HTML 搜索/List 的全局重试不再独立硬编码，改由 `retry_attempts` / `retry_delay_seconds` 统一驱动（全部实例冷却时延迟为基础延迟的两倍）；移除 advanced.md 中失真的 `max_global_retries` / `retry_delay_base` / `retry_delay_on_cooldown` 配置条目。
+
 ## [0.18.6] - 2026-08-17
 
 ### Added

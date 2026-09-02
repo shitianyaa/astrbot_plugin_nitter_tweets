@@ -72,14 +72,47 @@ sender._should_use_merge_for_count(tweet_count)
 - `merge_tweet_threshold=0` 关闭合并。
 - 达到阈值且目标支持 merged forward 时使用合并。
 - 单次合并过大时按 chunk 分批。
-- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片成为独立节点。
+- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片并入推文正文节点、视频/GIF 保持独立节点，节点昵称与 uin 显示该条推文的实际作者（取不到时回退分组标识）。
 - 合并中有视频时优先 raw OneBot 节点。
+- raw 合并转发因非 payload 拒绝的原因失败时，先换传输编码重建整份节点数组重试，再考虑拆分或去视频。
+- NapCat 因读不到本地媒体文件而回的 1200（ENOENT copyfile）属于传输问题而非 payload 体积拒绝，会先走无损编码重试；只有纯体积/`res_id` 拒绝才直接拆分。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
-- `media_only_enabled` 有效时每个推文节点只保留作者和附件；附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
+- 内容被目标平台拒收（`Timeout: NTEvent ... sendMsg` 无回执、`res_id` 拒绝）标记 `SendAttempt.rejected`：传输梯度和组件级重试据此停手，因为重发同样的字节结果不变。**`retryable` 必须保持 `True`**——`sender_forward` / `sender_merged` 里的 `if not attempt.retryable: return` 同时把守着有损降级链，压低它会让去视频、拆分、降级直发和纯文本兜底一起被跳过，而那些换的是内容不是字节。该判定排在「不确定送达」之前——拒收错误文本含 `timeout` 字样，顺序反了会被误判成可能已送达而跳过降级。
+- 图片全部发送失败且非「仅媒体」时补发一条提示，链接是否附带遵循 `omit_status_url`；下载失败则写进正文，两侧措辞不同以便区分。
+- 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
+- `media_only_enabled` 有效时每个推文节点只保留作者和图片附件；视频附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
+- `tests/test_media_transport.py`
+- `tests/test_image_send_rejected_notice.py`
+
+## 媒体传输编码
+
+媒体默认以本地文件路径交给平台（直发用 `Image/Video.fromFileSystem`，OneBot 合并转发节点用
+`file:///` URI）。这隐含假设 AstrBot 与协议端共享文件系统；分容器或分机器部署时协议端读不到该路径。
+
+`delivery/media_transport.py` 提供一条**无损**的编码降级梯度，`delivery/sender_transport.py`
+负责执行：
+
+- **顺序不变量**：传输降级（换编码，无损）必须跑在内容降级（丢视频、退纯文本，有损）之前。
+  路径档失败先换 base64 重试，成功则视频从未被丢弃。
+- 编码档：`path` / `base64` / `url` / `skip`。`skip` 只有视频有，复用既有的
+  `TweetMessageRenderer.video_not_sent_notice`；图片没有对应文案，失败交给内容降级链。
+- `base64` 档受 `media_transport_base64_max_mb` 单文件上限约束，同一个数字同时管住图片和视频。
+- twimg 白名单主机的 URL 档自动加入梯度（路径与 base64 都失败后交给协议端直传）；xdown 直链带 token、
+  时效短且对 Referer 敏感，永不交给协议端。
+- `uncertain`（超时）**不推进梯度**，否则会重复投递。
+- `TransportMemo` 记住每个平台最近一次成功的档作为下次起步提示；失败时仍会回落到更早的档。
+
+**作用域只有 OneBot。** 其余适配器的 `media_transport_ladder` 恒为 `(path,)`：它们都在 AstrBot
+进程内从本地路径上传，Lark 甚至会把组件反解回 `Path` 再读字节
+（`delivery/lark_support.py` 的 `_local_image_path` 明确跳过 `base64://` 和 `http(s)://`），
+换编码会直接打断它。
+
+渲染层不 import `delivery/`：`build_onebot_nodes` / `build_merged_onebot_nodes_for_uin` /
+`raw_media` 接受一个可选的 `segment_builder` 回调，由发送层注入编码。
 
 ## QQ Official
 
@@ -140,13 +173,15 @@ sender._should_use_merge_for_count(tweet_count)
 - 纯文本 fallback。
 
 新增平台时优先新增/调整 `delivery/` adapter，不要在 `rendering/tweets.py` 写平台发送逻辑。
+传输编码同理：渲染层只接受注入的 `segment_builder`，不自己决定编码。
 
 ## 修改发送逻辑检查
 
 - 是否通过 `PlatformResolver` 获取平台能力。
 - 是否保留 Event 和 UMO 两条发送路径。
 - 是否保留不确定送达保护。
-- 是否保留私人号 OneBot 图片独立消息或独立节点行为。
+- 是否保留私人号 OneBot 直发图片独立消息行为、合并转发图片并入正文节点与视频独立节点、节点身份为推文实际作者。
 - 是否保留视频失败后的去视频重试或文本 fallback。
-- 是否保留 Lark post 降级。
+- **是否保留传输降级排在内容降级之前的顺序**，以及 `uncertain` 不推进梯度。
+- 是否保留 Lark post 降级，且 Lark 仍拿到文件系统路径而不是 base64。
 - 是否补对应平台测试。

@@ -6,11 +6,17 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 
-def parse_resolution_preference(value: str) -> int | None:
-    match = re.search(r"(\d{3,4})\s*p?", str(value or "").lower())
-    if not match:
+def content_range_total(content_range: str | None) -> int | None:
+    """Parse the total size from a ``bytes 0-N/TOTAL`` Content-Range header."""
+    if not content_range or "/" not in content_range:
         return None
-    return int(match.group(1))
+    tail = content_range.rsplit("/", 1)[-1].strip()
+    if not tail or tail == "*":
+        return None
+    try:
+        return int(tail)
+    except ValueError:
+        return None
 
 
 def extract_video_resolution(label: str, url: str) -> int | None:

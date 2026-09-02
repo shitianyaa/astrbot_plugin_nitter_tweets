@@ -173,6 +173,48 @@ class SenderForwardMixin:
         should_split = last_exc is None or self._is_forward_payload_rejected_error(
             last_exc
         )
+
+        # 传输编码降级是无损的，必须排在拆分/去视频之前。payload 被拒是体积问题，
+        # `_retry_forward_with_transport` 自己会跳过那种情况。
+        if not should_split:
+
+            async def rebuild_and_send(builder, _encoding):
+                retry_nodes = self.renderer.build_onebot_nodes(
+                    event,
+                    username,
+                    instance,
+                    tweets,
+                    notices=notices,
+                    start_index=tweet_start_index,
+                    media_only=media_only,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                    link_style=link_style,
+                    media_segment_builder=builder,
+                )
+                try:
+                    if await self._send_onebot_forward(event, retry_nodes):
+                        return True
+                except Exception as exc:
+                    if self._is_uncertain_delivery_error(exc):
+                        self._log_uncertain_delivery(
+                            "manual OneBot forward transport retry",
+                            self._event_target(event),
+                            exc,
+                        )
+                        return True
+                    logger.warning(f"[NitterTweets] 换传输编码重发合并转发失败: {exc}")
+                return None
+
+            if await self._retry_forward_with_transport(
+                lambda: self._delivery_adapter_for_event(event),
+                tweets,
+                rebuild_and_send=rebuild_and_send,
+                last_error=last_exc,
+            ):
+                self._notify_delivered(on_delivered, len(tweets))
+                return True
+
         remaining = tweets
         remaining_index = tweet_start_index
         remaining_notices = notices

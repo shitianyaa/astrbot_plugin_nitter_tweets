@@ -59,6 +59,20 @@ class TweetMessageRenderer:
             return format_subscription_source(raw)
         return f"@{raw.lstrip('@')}" if raw else "@unknown"
 
+    @classmethod
+    def _author_node_identity(cls, username: str, tweet: TweetItem | None) -> str:
+        """uin/nickname for a per-tweet forward node: the tweet's real author.
+
+        Tag/List batches mix authors, so derive the handle from the tweet link
+        when available and fall back to the group identity otherwise.
+        """
+        from_link = ""
+        if tweet is not None:
+            from_link = (getattr(tweet, "username", None) or "").strip().lstrip("@")
+        if from_link:
+            return f"@{from_link}"
+        return cls._source_node_name(username)
+
     def build_nodes(
         self,
         event,
@@ -123,14 +137,18 @@ class TweetMessageRenderer:
             link_style=link_style,
         )
         if header:
-            nodes.nodes.append(Node(uin=uin, name="Nitter", content=[Plain(header)]))
+            nodes.nodes.append(
+                Node(uin=str(uin), name="Nitter", content=[Plain(header)])
+            )
 
         for offset, tweet in enumerate(tweets):
             index = start_index + offset
+            identity = self._author_node_identity(username, tweet)
+            # Images ride in the tweet node; videos keep their own node below.
             nodes.nodes.append(
                 Node(
-                    uin=uin,
-                    name=self._source_node_name(username),
+                    uin=identity,
+                    name=identity,
                     content=self.build_components(
                         index,
                         username,
@@ -138,7 +156,7 @@ class TweetMessageRenderer:
                         source=instance,
                         exclude_videos=exclude_videos,
                         include_videos=False,
-                        include_images=False,
+                        include_images=True,
                         media_only=media_only,
                         omit_status_url=omit_status_url,
                         hide_original_when_translated=hide_original_when_translated,
@@ -146,32 +164,13 @@ class TweetMessageRenderer:
                     ),
                 )
             )
-            for media in tweet.media:
-                if media.path and media.is_image and self.send_image_attachments:
-                    nodes.nodes.append(
-                        Node(
-                            uin=uin,
-                            name=self._source_node_name(username),
-                            content=self.build_image_node_components(
-                                index,
-                                username,
-                                tweet,
-                                media,
-                                source=instance,
-                                media_only=media_only,
-                                omit_status_url=omit_status_url,
-                                hide_original_when_translated=hide_original_when_translated,
-                                link_style=link_style,
-                            ),
-                        )
-                    )
             if not exclude_videos and self.send_video_attachments:
                 for media in tweet.media:
                     if media.path and media.is_video:
                         nodes.nodes.append(
                             Node(
-                                uin=uin,
-                                name=self._source_node_name(username),
+                                uin=identity,
+                                name=identity,
                                 content=self.build_video_node_components(
                                     index,
                                     username,
@@ -203,15 +202,19 @@ class TweetMessageRenderer:
         nodes = Nodes([])
         header = self.format_merged_header(batches, group_label, batch_summary)
         if header:
-            nodes.nodes.append(Node(uin=uin, name="Nitter", content=[Plain(header)]))
+            nodes.nodes.append(
+                Node(uin=str(uin), name="Nitter", content=[Plain(header)])
+            )
 
         index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
+                identity = self._author_node_identity(username, tweet)
+                # Images ride in the tweet node; videos keep their own node below.
                 nodes.nodes.append(
                     Node(
-                        uin=uin,
-                        name=self._source_node_name(username),
+                        uin=identity,
+                        name=identity,
                         content=self.build_components(
                             index,
                             username,
@@ -219,7 +222,7 @@ class TweetMessageRenderer:
                             source=instance,
                             exclude_videos=exclude_videos,
                             include_videos=False,
-                            include_images=False,
+                            include_images=True,
                             media_only=media_only,
                             omit_status_url=omit_status_url,
                             hide_original_when_translated=hide_original_when_translated,
@@ -227,32 +230,13 @@ class TweetMessageRenderer:
                         ),
                     )
                 )
-                for media in tweet.media:
-                    if media.path and media.is_image and self.send_image_attachments:
-                        nodes.nodes.append(
-                            Node(
-                                uin=uin,
-                                name=self._source_node_name(username),
-                                content=self.build_image_node_components(
-                                    index,
-                                    username,
-                                    tweet,
-                                    media,
-                                    source=instance,
-                                    media_only=media_only,
-                                    omit_status_url=omit_status_url,
-                                    hide_original_when_translated=hide_original_when_translated,
-                                    link_style=link_style,
-                                ),
-                            )
-                        )
                 if not exclude_videos and self.send_video_attachments:
                     for media in tweet.media:
                         if media.path and media.is_video:
                             nodes.nodes.append(
                                 Node(
-                                    uin=uin,
-                                    name=self._source_node_name(username),
+                                    uin=identity,
+                                    name=identity,
                                     content=self.build_video_node_components(
                                         index,
                                         username,
@@ -281,6 +265,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        media_segment_builder=None,
     ) -> list[dict]:
         items = []
         header = self.format_merged_header(batches, group_label, batch_summary)
@@ -296,6 +281,8 @@ class TweetMessageRenderer:
         index = start_index
         for username, instance, tweets in batches:
             for tweet in tweets:
+                identity = self._author_node_identity(username, tweet)
+                # Images ride in the tweet node; videos keep their own node below.
                 content = self._build_onebot_tweet_content(
                     index,
                     username,
@@ -303,45 +290,27 @@ class TweetMessageRenderer:
                     tweet,
                     exclude_videos=exclude_videos,
                     include_videos=False,
-                    include_images=False,
+                    include_images=True,
                     media_only=media_only,
                     omit_status_url=omit_status_url,
                     hide_original_when_translated=hide_original_when_translated,
                     link_style=link_style,
+                    segment_builder=media_segment_builder,
                 )
                 items.append(
                     {
-                        "name": self._source_node_name(username),
-                        "uin": str(uin),
+                        "name": identity,
+                        "uin": identity,
                         "content": content,
                     }
                 )
-                for media in tweet.media:
-                    if media.path and media.is_image and self.send_image_attachments:
-                        items.append(
-                            {
-                                "name": self._source_node_name(username),
-                                "uin": str(uin),
-                                "content": self._build_onebot_image_content(
-                                    index,
-                                    username,
-                                    tweet,
-                                    media,
-                                    source=instance,
-                                    media_only=media_only,
-                                    omit_status_url=omit_status_url,
-                                    hide_original_when_translated=hide_original_when_translated,
-                                    link_style=link_style,
-                                ),
-                            }
-                        )
                 if not exclude_videos and self.send_video_attachments:
                     for media in tweet.media:
                         if media.path and media.is_video:
                             items.append(
                                 {
-                                    "name": self._source_node_name(username),
-                                    "uin": str(uin),
+                                    "name": identity,
+                                    "uin": identity,
                                     "content": self._build_onebot_video_content(
                                         index,
                                         username,
@@ -352,6 +321,7 @@ class TweetMessageRenderer:
                                         omit_status_url=omit_status_url,
                                         hide_original_when_translated=hide_original_when_translated,
                                         link_style=link_style,
+                                        segment_builder=media_segment_builder,
                                     ),
                                 }
                             )
@@ -527,23 +497,40 @@ class TweetMessageRenderer:
         if components[0].text:
             components[0].text = "\n\n" + components[0].text
 
-    def build_direct_image_components(self, tweets: list[TweetItem]):
-        components = []
+    def build_direct_image_items(self, tweets: list[TweetItem]):
+        """``(media, component)`` pairs.
+
+        Delivery needs the ``TweetMedia`` alongside the component so it can rebuild
+        a failed item at another wire encoding.
+        """
         if not self.send_image_attachments:
-            return components
-        for tweet in tweets:
-            for media in tweet.media:
-                if media.path and media.is_image:
-                    components.append(Image.fromFileSystem(str(media.path)))
-        return components
+            return []
+        return [
+            (media, Image.fromFileSystem(str(media.path)))
+            for tweet in tweets
+            for media in tweet.media
+            if media.path and media.is_image
+        ]
+
+    def build_direct_video_items(self, tweets: list[TweetItem]):
+        if not self.send_video_attachments:
+            return []
+        return [
+            (media, Video.fromFileSystem(str(media.path)))
+            for tweet in tweets
+            for media in tweet.media
+            if media.path and media.is_video
+        ]
+
+    def build_direct_image_components(self, tweets: list[TweetItem]):
+        return [
+            component for _media, component in self.build_direct_image_items(tweets)
+        ]
 
     def build_direct_video_components(self, tweets: list[TweetItem]):
-        components = []
-        for tweet in tweets:
-            for media in tweet.media:
-                if media.path and media.is_video:
-                    components.append(Video.fromFileSystem(str(media.path)))
-        return components
+        return [
+            component for _media, component in self.build_direct_video_items(tweets)
+        ]
 
     def build_video_omitted_notice_components(self, tweets: list[TweetItem]):
         lines = []
@@ -555,7 +542,43 @@ class TweetMessageRenderer:
             if original_link in seen_links:
                 continue
             seen_links.add(original_link)
-            lines.append("视频/GIF 发送已关闭，已跳过下载")
+            lines.append("视频/GIF 附件发送失败，本次已省略。")
+        if not lines:
+            return []
+        return [Plain("\n".join(lines))]
+
+    def build_image_send_failed_notice_components(
+        self,
+        tweets: list[TweetItem],
+        *,
+        rejected: bool = False,
+        omit_status_url: bool = True,
+    ):
+        """图片已下好但发不出去时的事后提示。
+
+        正文在图片之前就发出去了，警告写不进正文，只能补一条消息。
+        ``rejected`` 表示命中平台拒收签名（见
+        ``TweetSender._is_content_rejected_error``），措辞据此区分。
+
+        链接遵循 ``omit_status_url``，与 ``video_not_sent_notice`` 一致：该
+        配置的用途正是不在消息里放推文 URL 明文，提示不应绕过它。
+        """
+        lines: list[str] = []
+        seen_links: set[str] = set()
+        for tweet in tweets:
+            if not any(media.path and media.is_image for media in tweet.media):
+                continue
+            link = (tweet.x_url or tweet.link or "").strip()
+            if link in seen_links:
+                continue
+            seen_links.add(link)
+            head = (
+                "⚠️ 图片可能被平台风控拦截，未能发送" if rejected else "⚠️ 图片发送失败"
+            )
+            if omit_status_url or not link:
+                lines.append(f"{head}。")
+            else:
+                lines.append(f"{head}，可点开原帖查看：{link}")
         if not lines:
             return []
         return [Plain("\n".join(lines))]
@@ -608,6 +631,7 @@ class TweetMessageRenderer:
                             TweetMessageRenderer.video_not_sent_notice(
                                 omit_status_url=omit_status_url,
                                 status_url=status_url,
+                                reason="failed",
                             )
                         )
                     )
@@ -663,23 +687,6 @@ class TweetMessageRenderer:
             Video.fromFileSystem(str(media.path)),
         ]
 
-    def build_image_node_components(
-        self,
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        media: TweetMedia,
-        source: str = "",
-        media_only: bool = False,
-        omit_status_url: bool = True,
-        hide_original_when_translated: bool = False,
-        link_style: str = "plain",
-    ):
-        # The tweet node already carries the author and source context.
-        # Repeating it on every image node creates unwanted captions.
-        # Keep the shared builder signature; caption-related arguments are unused.
-        return [Image.fromFileSystem(str(media.path))]
-
     def build_onebot_nodes(
         self,
         event,
@@ -694,6 +701,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        media_segment_builder=None,
     ) -> list[dict]:
         uin = str(node_uin(event))
         items = []
@@ -717,51 +725,35 @@ class TweetMessageRenderer:
             )
         for offset, tweet in enumerate(tweets):
             index = start_index + offset
+            identity = self._author_node_identity(username, tweet)
+            # Images ride in the tweet node; videos keep their own node below.
             content = self._build_onebot_tweet_content(
                 index,
                 username,
                 instance,
                 tweet,
                 include_videos=False,
-                include_images=False,
+                include_images=True,
                 media_only=media_only,
                 omit_status_url=omit_status_url,
                 hide_original_when_translated=hide_original_when_translated,
                 link_style=link_style,
+                segment_builder=media_segment_builder,
             )
             items.append(
                 {
-                    "name": self._source_node_name(username),
-                    "uin": uin,
+                    "name": identity,
+                    "uin": identity,
                     "content": content,
                 }
             )
-            for media in tweet.media:
-                if media.path and media.is_image and self.send_image_attachments:
-                    items.append(
-                        {
-                            "name": self._source_node_name(username),
-                            "uin": uin,
-                            "content": self._build_onebot_image_content(
-                                index,
-                                username,
-                                tweet,
-                                media,
-                                source=instance,
-                                media_only=media_only,
-                                omit_status_url=omit_status_url,
-                                hide_original_when_translated=hide_original_when_translated,
-                                link_style=link_style,
-                            ),
-                        }
-                    )
             if self.send_video_attachments:
                 for media in tweet.media:
                     if media.path and media.is_video:
                         items.append(
                             {
-                                "name": self._source_node_name(username),
-                                "uin": uin,
+                                "name": identity,
+                                "uin": identity,
                                 "content": self._build_onebot_video_content(
                                     index,
                                     username,
@@ -772,6 +764,7 @@ class TweetMessageRenderer:
                                     omit_status_url=omit_status_url,
                                     hide_original_when_translated=hide_original_when_translated,
                                     link_style=link_style,
+                                    segment_builder=media_segment_builder,
                                 ),
                             }
                         )
@@ -793,7 +786,17 @@ class TweetMessageRenderer:
         return {"type": "text", "data": {"text": text}}
 
     @staticmethod
-    def raw_media(media: TweetMedia) -> dict:
+    def raw_media(media: TweetMedia, segment_builder=None) -> dict:
+        """Build one OneBot media segment.
+
+        ``segment_builder`` lets ``delivery/`` swap the wire encoding (base64 or a
+        backend-fetchable URL) without this module importing the delivery layer.
+        Returning ``None`` from it falls back to the local-path segment.
+        """
+        if segment_builder is not None:
+            segment = segment_builder(media)
+            if segment is not None:
+                return segment
         uri = file_uri(media.path)
         if media.is_image:
             return {"type": "image", "data": {"file": uri}}
@@ -810,9 +813,10 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        segment_builder=None,
     ) -> list[dict]:
         if media_only:
-            return [self.raw_media(media)]
+            return [self.raw_media(media, segment_builder)]
         return [
             self.raw_text(
                 self.format_video_attachment_text(
@@ -826,25 +830,8 @@ class TweetMessageRenderer:
                     link_style=link_style,
                 )
             ),
-            self.raw_media(media),
+            self.raw_media(media, segment_builder),
         ]
-
-    def _build_onebot_image_content(
-        self,
-        index: int,
-        username: str,
-        tweet: TweetItem,
-        media: TweetMedia,
-        source: str = "",
-        media_only: bool = False,
-        omit_status_url: bool = True,
-        hide_original_when_translated: bool = False,
-        link_style: str = "plain",
-    ) -> list[dict]:
-        # The tweet node already carries the author and source context.
-        # Keep each attachment node media-only to avoid repeated captions.
-        # Keep the shared builder signature; caption-related arguments are unused.
-        return [self.raw_media(media)]
 
     def _build_onebot_tweet_content(
         self,
@@ -859,6 +846,7 @@ class TweetMessageRenderer:
         omit_status_url: bool = True,
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
+        segment_builder=None,
     ) -> list[dict]:
         if media_only:
             content = [
@@ -893,6 +881,7 @@ class TweetMessageRenderer:
                             TweetMessageRenderer.video_not_sent_notice(
                                 omit_status_url=omit_status_url,
                                 status_url=(tweet.x_url or tweet.link or "").strip(),
+                                reason="failed",
                             )
                         )
                     )
@@ -909,7 +898,7 @@ class TweetMessageRenderer:
                     and include_videos
                 )
             ):
-                content.append(self.raw_media(media))
+                content.append(self.raw_media(media, segment_builder))
         return content
 
     def format_plain(
@@ -1227,8 +1216,13 @@ class TweetMessageRenderer:
         *,
         omit_status_url: bool = True,
         status_url: str = "",
+        reason: str = "disabled",
     ) -> str:
-        base = "视频/GIF 发送已关闭，已跳过下载。"
+        """Skip notice. ``reason="failed"`` separates delivery-degraded from disabled."""
+        if reason == "failed":
+            base = "视频/GIF 附件发送失败，本次已省略。"
+        else:
+            base = "视频/GIF 发送已关闭，已跳过下载。"
         url = (status_url or "").strip()
         if omit_status_url or not url:
             return base

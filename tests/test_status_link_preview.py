@@ -479,7 +479,7 @@ async def test_handler_processes_and_sends(monkeypatch):
     plugin = _FakePlugin(enabled=True)
     event = _make_event(text="看 https://x.com/ErroR_eroi/status/2081668333762687236")
 
-    async def fake_resolve(link, *, timeout=20.0):
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
         return TweetItem(
             text="#ブルアカ",
             link=link.canonical_url,
@@ -505,6 +505,25 @@ async def test_handler_processes_and_sends(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handler_forwards_media_quality_to_resolver(monkeypatch):
+    # status 渠道曾经完全绕过 media_quality，拿到的恒是 pbs 原图。
+    plugin = _FakePlugin(enabled=True)
+    plugin.config["media_quality"] = "low"
+    seen: list[str] = []
+
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
+        seen.append(media_quality)
+        return TweetItem(text="t", link=link.canonical_url, published="t", media=[])
+
+    monkeypatch.setattr(
+        "command_handlers.link_preview.resolve_status_tweet_async",
+        fake_resolve,
+    )
+    await plugin._cmd_link_preview_impl(_make_event(text="https://x.com/u/status/77"))
+    assert seen == ["low"]
+
+
+@pytest.mark.asyncio
 async def test_handler_caps_links_and_debounces(monkeypatch):
     plugin = _FakePlugin(enabled=True)
     ids = [str(i) for i in range(1, LINK_PREVIEW_MAX_LINKS + 3)]
@@ -512,7 +531,7 @@ async def test_handler_caps_links_and_debounces(monkeypatch):
     event = _make_event(text=text)
     seen: list[str] = []
 
-    async def fake_resolve(link, *, timeout=20.0):
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
         seen.append(link.status_id)
         return TweetItem(text="t", link=link.canonical_url, published="t", media=[])
 
@@ -538,7 +557,7 @@ async def test_handler_deduplicates_concurrent_same_link(monkeypatch):
     release_resolve = asyncio.Event()
     calls = 0
 
-    async def resolve(link, *, timeout=20.0):
+    async def resolve(link, *, timeout=20.0, media_quality="high"):
         nonlocal calls
         calls += 1
         resolve_started.set()
@@ -570,7 +589,7 @@ async def test_handler_can_retry_after_resolve_failure(monkeypatch):
     link_text = "https://x.com/u/status/9"
     calls = 0
 
-    async def flaky_resolve(link, *, timeout=20.0):
+    async def flaky_resolve(link, *, timeout=20.0, media_quality="high"):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -594,7 +613,7 @@ async def test_handler_can_retry_after_send_failure(monkeypatch):
     plugin.sender.send = AsyncMock(side_effect=[False, True])
     link_text = "https://x.com/u/status/9"
 
-    async def resolve(link, *, timeout=20.0):
+    async def resolve(link, *, timeout=20.0, media_quality="high"):
         return TweetItem(text="ok", link=link.canonical_url, published="t", media=[])
 
     monkeypatch.setattr(

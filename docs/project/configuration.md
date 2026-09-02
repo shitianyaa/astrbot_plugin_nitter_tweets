@@ -7,28 +7,29 @@
 AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）、**标签分组**（`tag`）或 **列表分组**（`list`）。
 旧版单一模板 `group`（用户分组）启动时迁移为 `blogger`。
 
-- `basic`: Nitter 实例、默认数量、冷却、基础平台字段与 HTML 搜索相关键（见下「两列表」）。
-- `media`: 图片、视频、xdown、缓存。
+- `basic`: 自建 Nitter 实例、默认数量、冷却和基础平台字段。
+- `media`: 图片、视频、传输编码、xdown、缓存。
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
 - `push`: `tweet_groups`、推送间隔、合并阈值和目标级作者黑名单。
-- `performance`: 后台账号并发拉取、并发准备和专用镜像池。
+- `performance`: 后台账号并发拉取和并发准备。
 - `logging`: 日志模式。
 
-## 两列表（禁止混用）
+## 实例配置
 
 | 配置键 | 用途 | 说明 |
 | --- | --- | --- |
-| `instances`（`basic`） | 博主 RSS | 默认 `https://nitter.net`，可配多个 |
-| `search_instances` | HTML 搜索/List | 默认 `tiekoetter.com`、`poast.org`、`kareem.one`；`/推文搜索`、Tag 和 List 分组定时；禁止默认放 nitter.net |
+| `instances`（`basic`） | RSS、HTML 搜索/List | 仅填写自建 Nitter，可配多个；无默认公共实例 |
 
-博主路径**不设**独立 HTML 回退列表；公共 HTML 留给搜索，避免抢 tie 资源。
+同一自建实例同时承担 RSS 和 HTML。旧版 `search_instances`、`blogger_html_instances`、`concurrent_fetch_instances` 已删除，仅在启动日志中提示，不读取、不迁移、不写回。
 
-相关：`search_enabled`、`search_cooldown_seconds`、`search_default_limit`、`search_max_limit`、`html_min_interval`、`html_max_pages`、`html_request_timeout`。
+关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
+
+相关：`cooldown_seconds`、`search_max_limit`、`html_min_interval`、`html_max_pages`。`request_timeout`、`retry_attempts`、`retry_delay_seconds` 同时作用于 RSS 和 HTML。
 
 `auto_parse_tweet_links_enabled`（`basic`，默认 `false`）：被动解析聊天中的公开 status 链接；不进 `tweet_groups` 模板。翻译与 `show_original_when_translated` 跟随全局 AI 配置。
 
-Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 `instances`，搜索模式使用 `search_instances`（List 不单设模式）。URL 留空时按配置顺序串行测试全部实例；填写 URL 时只测试该站。
+Dashboard 实例测试一次检查统一 `instances` 的用户 RSS、用户 HTML、搜索和可选 List。URL 留空时按配置顺序测试全部实例；填写 URL 时只测试该站。
 
 ## `tweet_groups`
 
@@ -42,7 +43,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 - `enabled`: 是否启用。
 - `watch_users`: **Blogger 组**博主订阅源；其他类型忽略。
 - `watch_queries`: **Tag 组**搜索订阅列表。**落盘为字符串列表**（如 `#圣娅`、`蔚蓝档案`）。前导 `#` → tag，否则 phrase；phrase 禁止自动加 `#`。仍可读旧 `{query,type}` 对象，但会规范成字符串，避免 AstrBot `list` 显示 `[object Object]`。
-- `watch_lists`: **List 组**正 `uint64` List ID 列表（`1` 至 `18446744073709551615`）；其他类型忽略。List 走 `search_instances`，不新增手动命令。
+- `watch_lists`: **List 组**正 `uint64` List ID 列表（`1` 至 `18446744073709551615`）；其他类型忽略。List 走统一 `instances`，不新增手动命令。
 - `push_targets`: 分组推送目标 UMO。
 - `interval_check_enabled`: 是否参与全局间隔检查。
 - `daily_check_times`: 每日检查时间。
@@ -69,7 +70,7 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 
 后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
-后台**Tag/List**检查：每个 `watch_query` 或 `watch_list` 走 HTML（`search_instances`），组内串行、订阅源之间按 `send_user_interval` 等待。首轮最多取 20 条建立基准；已有水位时本轮扫描可超过 20 条，并按 `html_max_pages` 翻页到旧水位或游标结束，持久化水位仍最多保存 20 个 ID。达到页数上限仍未命中旧基准时，`max_tweets_per_check=0` 会跳过推送并自动重建当前第一页基准，正数会按上限推送后再重建；首屏没有有效状态 ID、发送准备失败或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。二者都按全局和分组双层开关决定是否过滤转发，可选纯文本/仅媒体，再与 seen（`q:...` / `list:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
+后台**Tag/List**检查：每个 `watch_query` 或 `watch_list` 走 `instances` 的 HTML，组内串行、订阅源之间按 `send_user_interval` 等待。首轮最多取 20 条建立基准；已有水位时本轮扫描可超过 20 条，并按 `html_max_pages` 翻页到旧水位或游标结束，持久化水位仍最多保存 20 个 ID。达到页数上限仍未命中旧基准时，`max_tweets_per_check=0` 会跳过推送并自动重建当前第一页基准，正数会按上限推送后再重建；首屏没有有效状态 ID、发送准备失败或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。二者都按全局和分组双层开关决定是否过滤转发，可选纯文本/仅媒体，再与 seen（`q:...` / `list:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
 
 `check_on_startup=true` 时，调度存储初始化完成后按分组顺序首检所有启用且同时配置订阅源和有效推送目标的分组；仅每日定点、仅间隔和没有定时槽位的分组都执行一次。首检完成后锚定当前间隔/每日槽位，避免同一轮重复触发。手动 `/推文检查` 仍要求当前会话属于该分组的 `push_targets`，只是会等待同一套存储初始化完成。
 
@@ -89,6 +90,21 @@ Dashboard 镜像测试按模式读取这两个运行列表：Blogger RSS 使用 
 - `tests/test_subscription_import.py`
 
 如果字段只属于某个 `tweet_groups` 项，不要加入全局 `CONFIG_GROUP_BY_KEY`，除非还需要旧顶层字段迁移。
+
+全新的字段没有旧扁平形态可迁移，只需进 `CONFIG_GROUP_BY_KEY`，**不要**加入 `MIGRATABLE_CONFIG_KEYS`，
+也不必在 schema 里补 `invisible` 扁平镜像。`media_transport_*` 三项即按此处理。
+
+## 媒体传输编码
+
+`media` 分组下仅 `media_transport_base64_max_mb` 可配置（传输模式恒为 `auto`，twimg 白名单主机的 URL 档自动加入梯度），只影响私人号 OneBot 的媒体投递，行为见
+[平台发送指南](./platform-delivery.md#媒体传输编码)：
+
+| 配置键 | 默认 | 说明 |
+| --- | --- | --- |
+| `media_transport_base64_max_mb` | `8.0` | clamp 到 `0.5-32`；同时约束图片和视频 |
+
+解析函数在 `config/compat.py`：`resolve_media_transport_base64_max_mb`；
+`TransportConfig.from_config()` 负责组装。
 
 ## 兼容规则
 

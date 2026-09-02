@@ -147,7 +147,10 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         # Serializing raw_entries rebuilds the full configuration (sorting by
         # target text), including the invalid target and duplicate users.
         serialized = reader.serialize_target_blocked_users(
-            [(persist_text, raw_users) for _, persist_text, raw_users in info.raw_entries]
+            [
+                (persist_text, raw_users)
+                for _, persist_text, raw_users in info.raw_entries
+            ]
         )
         self.assertEqual(
             serialized,
@@ -308,7 +311,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         from config.compat import (
             LEGACY_CONFIG_MIGRATION_KEY,
             MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
-            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
             TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
             config_get,
             migrate_legacy_grouped_config,
@@ -326,7 +328,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                 "target_blocked_users": {"aiocqhttp:GroupMessage:123": "NASA\nOpenAI"},
                 LEGACY_CONFIG_MIGRATION_KEY: True,
                 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
-                SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
             }
         )
 
@@ -345,7 +346,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
     def test_migrate_target_blacklist_keeps_non_empty_canonical_value(self):
         from config.compat import (
             MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
-            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
             migrate_legacy_grouped_config,
         )
 
@@ -361,7 +361,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                 "aiocqhttp:GroupMessage:123": ["OpenAI"],
             },
             MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
-            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
         }
 
         self.assertTrue(migrate_legacy_grouped_config(config))
@@ -371,7 +370,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         from config.compat import (
             LEGACY_CONFIG_MIGRATION_KEY,
             MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY,
-            SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY,
             TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
             migrate_legacy_grouped_config,
         )
@@ -388,7 +386,6 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
                 "target_blocked_users": [],
                 LEGACY_CONFIG_MIGRATION_KEY: True,
                 MAX_VIDEO_DURATION_GROUP_MIGRATION_KEY: True,
-                SEARCH_INSTANCES_DEFAULT_MIGRATION_KEY: True,
             }
         )
 
@@ -449,13 +446,9 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"])
 
         stored = config["push"]["target_blocked_users"]
-        by_target = {
-            item["target_umo"]: item["blocked_users"] for item in stored
-        }
+        by_target = {item["target_umo"]: item["blocked_users"] for item in stored}
         # Updated target keeps its new normalized users.
-        self.assertEqual(
-            by_target["telegram:FriendMessage:1"], ["user1", "user3"]
-        )
+        self.assertEqual(by_target["telegram:FriendMessage:1"], ["user1", "user3"])
         # Unrelated invalid target and invalid usernames survive.
         self.assertIn("not-a-target", by_target)
         self.assertEqual(by_target["not-a-target"], ["user_ok"])
@@ -492,9 +485,7 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["success"])
 
         stored = config["push"]["target_blocked_users"]
-        by_target = {
-            item["target_umo"]: item["blocked_users"] for item in stored
-        }
+        by_target = {item["target_umo"]: item["blocked_users"] for item in stored}
         self.assertIn("telegram:FriendMessage:9", by_target)
         self.assertEqual(by_target["telegram:FriendMessage:9"], ["newuser"])
         self.assertEqual(by_target["telegram:FriendMessage:1"], ["user1"])
@@ -578,9 +569,7 @@ class TargetBlacklistTest(unittest.IsolatedAsyncioTestCase):
         # Rollback restores the original full configuration, invalid entries
         # included.
         stored = config["push"]["target_blocked_users"]
-        by_target = {
-            item["target_umo"]: item["blocked_users"] for item in stored
-        }
+        by_target = {item["target_umo"]: item["blocked_users"] for item in stored}
         self.assertEqual(by_target["telegram:FriendMessage:1"], ["user1"])
         self.assertIn("not-a-target", by_target)
 

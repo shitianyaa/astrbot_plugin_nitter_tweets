@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from rendering.tweets import TweetMessageRenderer as R
@@ -291,3 +292,164 @@ def test_build_nodes_for_uin_strips_source_instance_links():
     text = "".join(getattr(c, "text", "") for c in node_content)
     assert "https://nitter.example.com" not in text
     assert "https://example.com/page" in text
+
+
+def _img_media(path="a.jpg"):
+    return SimpleNamespace(
+        path=Path(path),
+        url="https://pbs.twimg.com/media/a.jpg",
+        is_image=True,
+        is_video=False,
+    )
+
+
+def _vid_media(path="v.mp4"):
+    return SimpleNamespace(
+        path=Path(path),
+        url="https://example.com/v.mp4",
+        is_image=False,
+        is_video=True,
+    )
+
+
+def _kind(component) -> str:
+    """Lowercased component kind, tolerant of stubbed astrbot classes (_Plain)."""
+    return type(component).__name__.lower().lstrip("_")
+
+
+def test_forward_nodes_merge_images_into_tweet_node():
+    tweet = _tw(media=[_img_media(), _img_media("b.jpg")])
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    nodes = r.build_nodes_for_uin(
+        uin="10000", username="nasa", instance="", tweets=[tweet]
+    )
+    # No header args -> no header node; the whole tweet is a single node.
+    assert len(nodes.nodes) == 1
+    node = nodes.nodes[0]
+    kinds = [_kind(c) for c in node.content]
+    assert kinds == ["plain", "image", "image"]
+    assert (node.uin, node.name) == ("@nasa", "@nasa")
+
+
+def test_forward_node_identity_prefers_tweet_author():
+    tweets = [
+        _tw(
+            username="cat_a",
+            x_url="https://x.com/cat_a/status/1",
+            link="https://x.com/cat_a/status/1",
+        ),
+        _tw(
+            username="cat_b",
+            x_url="https://x.com/cat_b/status/2",
+            link="https://x.com/cat_b/status/2",
+        ),
+    ]
+    r = R(send_image_attachments=False, send_video_attachments=False)
+    nodes = r.build_nodes_for_uin(
+        uin="10000", username="q:cats", instance="", tweets=tweets
+    )
+    assert [node.name for node in nodes.nodes] == ["@cat_a", "@cat_b"]
+    assert [node.uin for node in nodes.nodes] == ["@cat_a", "@cat_b"]
+
+
+def test_forward_video_keeps_own_node_with_author_identity():
+    tweet = _tw(media=[_img_media(), _vid_media()])
+    r = R(send_image_attachments=True, send_video_attachments=True)
+    nodes = r.build_nodes_for_uin(
+        uin="10000", username="nasa", instance="", tweets=[tweet]
+    )
+    assert len(nodes.nodes) == 2
+    tweet_node, video_node = nodes.nodes
+    assert [_kind(c) for c in tweet_node.content] == ["plain", "image"]
+    video_text = "".join(getattr(c, "text", "") for c in video_node.content)
+    assert "视频/GIF 附件" in video_text
+    assert _kind(video_node.content[-1]) == "video"
+    assert (video_node.uin, video_node.name) == ("@nasa", "@nasa")
+
+
+def test_forward_exclude_videos_notice_stays_in_tweet_node():
+    tweet = _tw(media=[_vid_media()])
+    r = R(send_image_attachments=True, send_video_attachments=True)
+    nodes = r.build_nodes_for_uin(
+        uin="10000",
+        username="nasa",
+        instance="",
+        tweets=[tweet],
+        exclude_videos=True,
+    )
+    assert len(nodes.nodes) == 1
+    texts = "".join(getattr(c, "text", "") for c in nodes.nodes[0].content)
+    # 降级去视频是发送失败被省略，不是用户关掉了发送开关
+    assert "视频/GIF 附件发送失败，本次已省略" in texts
+    assert "已关闭" not in texts
+
+
+def test_video_disabled_notice_keeps_disabled_wording():
+    tweet = _tw(media=[_vid_media()])
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    nodes = r.build_nodes_for_uin(
+        uin="10000",
+        username="nasa",
+        instance="",
+        tweets=[tweet],
+    )
+    assert len(nodes.nodes) == 1
+    texts = "".join(getattr(c, "text", "") for c in nodes.nodes[0].content)
+    assert "视频/GIF 发送已关闭，已跳过下载" in texts
+    assert "发送失败" not in texts
+
+
+def test_video_omitted_notice_uses_failed_wording():
+    tweet = _tw(
+        media=[_vid_media()],
+        username="nasa",
+        x_url="https://x.com/nasa/status/1",
+        link="https://x.com/nasa/status/1",
+    )
+    r = R(send_image_attachments=True, send_video_attachments=True)
+    comps = r.build_video_omitted_notice_components([tweet])
+    assert len(comps) == 1
+    text = getattr(comps[0], "text", "")
+    assert "视频/GIF 附件发送失败，本次已省略" in text
+    assert "已关闭" not in text
+
+
+def test_merged_onebot_nodes_merge_images_and_use_author_identity():
+    tweet = _tw(
+        username="cat_a",
+        x_url="https://x.com/cat_a/status/1",
+        link="https://x.com/cat_a/status/1",
+        media=[_img_media(), _img_media("b.jpg")],
+    )
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    nodes = r.build_merged_onebot_nodes_for_uin(10000, [("q:cats", "", [tweet])])
+    # Merged builders always lead with a header node.
+    assert len(nodes) == 2
+    assert nodes[0]["data"]["name"] == "Nitter"
+    node = nodes[1]["data"]
+    assert (node["uin"], node["name"]) == ("@cat_a", "@cat_a")
+    assert [seg["type"] for seg in node["content"]] == ["text", "image", "image"]
+
+
+def test_onebot_nodes_merge_images_and_use_author_identity():
+    tweet = _tw(media=[_img_media()])
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    event = SimpleNamespace(get_self_id=lambda: "10001", get_sender_id=lambda: None)
+    nodes = r.build_onebot_nodes(event, "nasa", "", [tweet])
+    assert len(nodes) == 1
+    node = nodes[0]["data"]
+    assert (node["uin"], node["name"]) == ("@nasa", "@nasa")
+    assert [seg["type"] for seg in node["content"]] == ["text", "image"]
+
+
+def test_merged_nodes_media_only_single_node_with_author():
+    tweet = _tw(text="", media=[_img_media()])
+    r = R(send_image_attachments=True, send_video_attachments=False)
+    nodes = r.build_merged_nodes_for_uin(
+        10000, [("q:cats", "", [tweet])], media_only=True
+    )
+    assert len(nodes.nodes) == 2
+    node = nodes.nodes[1]
+    kinds = [_kind(c) for c in node.content]
+    assert kinds == ["plain", "image"]
+    assert (node.uin, node.name) == ("@nasa", "@nasa")

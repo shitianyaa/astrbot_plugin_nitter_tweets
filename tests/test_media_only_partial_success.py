@@ -17,6 +17,11 @@ from delivery.outcomes import SendAttempt
 from shared import TweetItem
 
 
+def _media(*, is_video: bool = True):
+    """Stand-in TweetMedia. Path-only transport, so identity is all that matters."""
+    return SimpleNamespace(path=None, url="", is_image=not is_video, is_video=is_video)
+
+
 def _tweet(status_id: str) -> TweetItem:
     return TweetItem(
         text=f"tweet {status_id}",
@@ -29,9 +34,14 @@ def _adapter(*, images, videos, attempts):
     sender = SimpleNamespace(
         renderer=SimpleNamespace(
             build_direct_components=MagicMock(return_value=[]),
-            build_direct_image_components=MagicMock(return_value=images),
-            build_direct_video_components=MagicMock(return_value=videos),
+            build_direct_image_items=MagicMock(
+                return_value=[(_media(), c) for c in images]
+            ),
+            build_direct_video_items=MagicMock(
+                return_value=[(_media(), c) for c in videos]
+            ),
             build_video_omitted_notice_components=MagicMock(return_value=[]),
+            build_image_send_failed_notice_components=MagicMock(return_value=[]),
         ),
         _send_context_message=AsyncMock(side_effect=attempts),
     )
@@ -140,9 +150,10 @@ async def test_event_media_only_without_any_media_component_is_not_success():
     sender = SimpleNamespace(
         renderer=SimpleNamespace(
             build_direct_components=MagicMock(return_value=[]),
-            build_direct_image_components=MagicMock(return_value=[]),
-            build_direct_video_components=MagicMock(return_value=[]),
+            build_direct_image_items=MagicMock(return_value=[]),
+            build_direct_video_items=MagicMock(return_value=[]),
             build_video_omitted_notice_components=MagicMock(return_value=[]),
+            build_image_send_failed_notice_components=MagicMock(return_value=[]),
         ),
         _send_event_chain=AsyncMock(return_value=SendAttempt(success=True)),
     )

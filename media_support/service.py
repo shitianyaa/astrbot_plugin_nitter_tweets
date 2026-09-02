@@ -26,6 +26,7 @@ try:
         clamp_float,
         clamp_int,
         generate_file_name,
+        sanitize_sensitive_text,
     )
     from ..shared.media_status import (
         MEDIA_SIZE_LIMIT_ERROR,
@@ -47,6 +48,7 @@ except ImportError:
         clamp_float,
         clamp_int,
         generate_file_name,
+        sanitize_sensitive_text,
     )
     from shared.media_status import (
         MEDIA_SIZE_LIMIT_ERROR,
@@ -65,6 +67,7 @@ try:
         MEDIA_TYPE_IMAGE,
         MEDIA_TYPE_VIDEO,
     )
+    from .html_backend.parser import prefer_pbs_quality
     from .network import build_request_headers, compat_urlopen
     from .xdown import XdownMediaCandidate, XdownMediaParser
 except ImportError:
@@ -76,6 +79,7 @@ except ImportError:
         MEDIA_TYPE_IMAGE,
         MEDIA_TYPE_VIDEO,
     )
+    from html_backend.parser import prefer_pbs_quality
     from network import build_request_headers, compat_urlopen
     from xdown import XdownMediaCandidate, XdownMediaParser
 
@@ -87,6 +91,21 @@ class MediaPreparationResult:
     status: str
     prepared_count: int = 0
     error: str = ""
+
+
+def _safe_url(url: object) -> str:
+    """媒体 URL 入日志前必须脱敏。
+
+    twimg 直链带 ``g2a_`` 签名和查询串，xdown/snapcdn 代理把整条原始 URL
+    编码在 token 里；``sanitize_sensitive_text`` 会把 ``?query`` 折成
+    ``?***`` 并抹掉签名键，只留 host+path 供排查。
+    """
+    return sanitize_sensitive_text(str(url or "")) or "-"
+
+
+def _safe_text(value: object) -> str:
+    """异常文本同样脱敏：urllib 的报错常把完整 URL 拼在消息里。"""
+    return sanitize_sensitive_text(str(value or ""))
 
 
 class _ResolvedMediaUrls(list):
@@ -118,14 +137,11 @@ class MediaService(MediaCacheMixin):
         self.max_per_tweet = clamp_int(
             config_get(config, "max_media_per_tweet", 4), 0, 12
         )
-        self.video_resolution_preference = (
-            str(
-                config_get(config, "video_resolution_preference", "highest")
-                or "highest"
-            )
-            .strip()
-            .lower()
+        self.media_quality = (
+            str(config_get(config, "media_quality", "high") or "high").strip().lower()
         )
+        if self.media_quality not in {"high", "medium", "low"}:
+            self.media_quality = "high"
         self.max_video_duration_seconds = int(
             clamp_float(
                 config_get(
@@ -146,9 +162,7 @@ class MediaService(MediaCacheMixin):
         )
         self.max_bytes = int(self.max_bytes * 1024 * 1024)
         # 普通媒体不长期缓存；发送流程结束后由 cleanup_after_send 删除。
-        self.xdown_url = str(
-            config_get(config, "xdown_api_url", "https://xdown.app/api/ajaxSearch")
-        )
+        self.xdown_url = "https://xdown.app/api/ajaxSearch"
         self.cache_dir = _plugin_data_dir() / "cache"
         self.legacy_cache_dir = Path(__file__).resolve().parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -206,6 +220,7 @@ class MediaService(MediaCacheMixin):
                 media.kind,
                 media.url,
                 duration_seconds=media.duration_seconds,
+                fallback_url=media.fallback_url,
             )
             for media in tweet.media
             if media.url
@@ -283,9 +298,16 @@ class MediaService(MediaCacheMixin):
                     self._add_media_warning(
                         tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
                     )
+                else:
+                    # 下载失败在发送前就已知，写进正文；发送失败只能事后补提示。
+                    # 两者措辞刻意不同，便于从消息本身分辨卡在哪一侧。
+                    self._add_media_warning(
+                        tweet, f"图片下载失败，已保留原文链接：{exc}"
+                    )
                 transient_failure = True
                 logger.warning(
-                    f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}"
+                    "[NitterTweets] 媒体下载失败: "
+                    f"url={_safe_url(media.url)}, error={_safe_text(exc)}"
                 )
                 continue
             downloaded.append(media)
@@ -332,19 +354,29 @@ class MediaService(MediaCacheMixin):
             try:
                 return self._download(media)
             except Exception as exc:
-                if str(
-                    exc
-                ) == MEDIA_SIZE_LIMIT_ERROR or not self._is_retryable_download_error(
-                    exc
-                ):
+                if str(exc) == MEDIA_SIZE_LIMIT_ERROR:
+                    raise
+                # twimg 直链下载失败时切到 snapcdn 代理兜底重试一次，
+                # 再按可重试性决定是否继续重试当前 URL。
+                if media.fallback_url and media.fallback_url != media.url:
+                    logger.info(
+                        "[NitterTweets] 媒体下载切到兜底 URL 重试: "
+                        f"primary={_safe_url(media.url)}, "
+                        f"fallback={_safe_url(media.fallback_url)}, "
+                        f"attempt={attempt}/{attempts}, error={_safe_text(exc)}"
+                    )
+                    media.url = media.fallback_url
+                    media.fallback_url = ""
+                    continue
+                if not self._is_retryable_download_error(exc):
                     raise
                 last_error = exc
                 if attempt >= attempts:
                     break
                 logger.warning(
                     "[NitterTweets] 媒体下载失败，准备重试: "
-                    f"url={media.url}, attempt={attempt}/{attempts}, "
-                    f"delay={delay:g}s, error={exc}"
+                    f"url={_safe_url(media.url)}, attempt={attempt}/{attempts}, "
+                    f"delay={delay:g}s, error={_safe_text(exc)}"
                 )
                 if delay > 0:
                     time.sleep(delay)
@@ -400,15 +432,34 @@ class MediaService(MediaCacheMixin):
             if not kind:
                 kind = XdownMediaParser._detect_kind("", full_url)
             if not kind:
-                logger.info(f"[NitterTweets] 跳过无法识别类型的媒体: url={full_url}")
+                logger.info(
+                    f"[NitterTweets] 跳过无法识别类型的媒体: url={_safe_url(full_url)}"
+                )
                 continue
+            # xdown 的 snapcdn 代理 URL 的 token 内含原始 twimg 直链；
+            # 优先用直链作主 URL（永久有效、可升画质），snapcdn 代理作兜底。
+            payload = self._xdown_token_payload(full_url)
+            direct_url = str(payload.get("url") or "").strip()
+            # token payload 来自第三方，明文 http 会把媒体拉取降级成不加密；
+            # twimg 直链本来就恒为 https，snapcdn 代理仍留在 fallback_url。
+            if direct_url.startswith("https://"):
+                candidate_url = direct_url
+                fallback = full_url
+                if kind == "image":
+                    candidate_url = prefer_pbs_quality(
+                        candidate_url, self.media_quality
+                    )
+            else:
+                candidate_url = full_url
+                fallback = ""
             result.append(
                 XdownMediaCandidate(
                     kind=kind,
-                    url=full_url,
+                    url=candidate_url,
                     label=label,
                     resolution=self._extract_video_resolution(label, full_url),
                     duration_seconds=self._extract_video_duration(label, full_url),
+                    fallback_url=fallback,
                 )
             )
         return result
@@ -447,6 +498,7 @@ class MediaService(MediaCacheMixin):
                     selected.kind,
                     selected.url,
                     duration_seconds=selected.duration_seconds,
+                    fallback_url=selected.fallback_url,
                 )
             ]
 
@@ -455,6 +507,7 @@ class MediaService(MediaCacheMixin):
                 item.kind,
                 item.url,
                 duration_seconds=item.duration_seconds,
+                fallback_url=item.fallback_url,
             )
             for item in candidates
         ]
@@ -472,44 +525,46 @@ class MediaService(MediaCacheMixin):
             return None
         candidates = allowed_candidates
 
-        preference = self.video_resolution_preference or "highest"
+        preference = self.media_quality or "high"
         known = [item for item in candidates if item.resolution is not None]
         if not known:
             return candidates[0]
 
-        if preference == "lowest":
-            return min(known, key=lambda item: item.resolution or 0)
-        if preference == "highest":
-            return max(known, key=lambda item: item.resolution or 0)
-
-        target = self._parse_resolution_preference(preference)
-        if target is None:
-            self._add_media_warning(
-                tweet,
-                f"视频分辨率配置 {preference} 无法识别，已改用最高分辨率",
-                log_warning=False,
-            )
-            return max(known, key=lambda item: item.resolution or 0)
-
-        exact = [item for item in known if item.resolution == target]
-        if exact:
-            return exact[0]
-
-        not_over_target = [
-            item
-            for item in known
-            if item.resolution is not None and item.resolution <= target
-        ]
-        if not_over_target:
-            selected = max(not_over_target, key=lambda item: item.resolution or 0)
-        else:
+        if preference == "low":
             selected = min(known, key=lambda item: item.resolution or 0)
-        self._add_media_warning(
-            tweet,
-            f"未找到配置的视频分辨率 {target}p，已选择 {selected.resolution}p",
-            log_warning=False,
-        )
-        return selected
+        elif preference == "medium":
+            ordered = sorted(known, key=lambda item: item.resolution or 0)
+            selected = ordered[(len(ordered) - 1) // 2]
+        else:
+            selected = max(known, key=lambda item: item.resolution or 0)
+        return self._downgrade_oversized_video(tweet, known, selected)
+
+    def _downgrade_oversized_video(
+        self,
+        tweet: TweetItem,
+        known: list[XdownMediaCandidate],
+        selected: XdownMediaCandidate,
+    ) -> XdownMediaCandidate:
+        """下载前预检：选中档超 size 上限时降到下一低分辨率档。"""
+        size = selected.size_bytes
+        if size is None or size <= self.max_bytes:
+            return selected
+        # 按 resolution 降序找第一个不超限（或大小未知）的更低档。
+        for item in sorted(known, key=lambda i: i.resolution or 0, reverse=True):
+            if (item.resolution or 0) >= (selected.resolution or 0):
+                continue
+            item_size = item.size_bytes
+            if item_size is None or item_size <= self.max_bytes:
+                self._add_media_warning(
+                    tweet,
+                    f"视频选中档 {selected.resolution}p 超过大小上限 "
+                    f"{self._format_size_mb(self.max_bytes)}，已降级到 "
+                    f"{item.resolution}p",
+                    log_warning=False,
+                )
+                return item
+        # 所有档都超限：选最小档，留给 _download 在线检查跳过。
+        return min(known, key=lambda i: i.resolution or 0)
 
     def _filter_video_duration_candidates(
         self,
@@ -521,9 +576,18 @@ class MediaService(MediaCacheMixin):
         skipped_durations: list[float] = []
         for item in candidates:
             duration = item.duration_seconds
-            if duration is None:
-                duration = self._probe_remote_video_duration(item.url)
-                item.duration_seconds = duration
+            # 缺时长或大小时做一次 Range 探测：缺时长则同时探时长与大小，
+            # 仅缺大小时只读 1 字节拿 Content-Range 的 total。
+            if duration is None or item.size_bytes is None:
+                probe = self._probe_remote_media(
+                    item.url, need_duration=duration is None
+                )
+                if probe:
+                    if duration is None:
+                        duration = probe.get("duration")
+                        item.duration_seconds = duration
+                    if item.size_bytes is None:
+                        item.size_bytes = probe.get("size_bytes")
             if duration is not None and duration > max_seconds:
                 skipped_durations.append(duration)
                 continue
@@ -543,10 +607,6 @@ class MediaService(MediaCacheMixin):
                 f"limit={self._format_duration(max_seconds)}, tweet={tweet.x_url}"
             )
         return allowed
-
-    @staticmethod
-    def _parse_resolution_preference(value: str) -> int | None:
-        return video_probe.parse_resolution_preference(value)
 
     @classmethod
     def _extract_video_resolution(cls, label: str, url: str) -> int | None:
@@ -580,17 +640,37 @@ class MediaService(MediaCacheMixin):
     def _parse_mvhd_duration(payload: bytes) -> float | None:
         return video_probe.parse_mvhd_duration(payload)
 
-    def _probe_remote_video_duration(self, url: str) -> float | None:
+    def _probe_remote_media(
+        self, url: str, *, need_duration: bool = True
+    ) -> dict | None:
+        """Probe remote media for duration (moov) and total size (Content-Range).
+
+        Returns ``{"duration": float|None, "size_bytes": int|None}`` or None on
+        failure. When ``need_duration`` is true a single 1 MiB Range request yields
+        both duration (from the moov atom) and total size (from Content-Range). When
+        only the size is missing, ``need_duration=False`` reads a single byte
+        (``Range: bytes=0-0``) and parses the total from Content-Range without
+        scanning for moov; ``duration`` is left ``None`` in that case.
+        """
         headers = self._media_request_headers(url)
-        headers["Range"] = "bytes=0-1048575"
+        if need_duration:
+            headers["Range"] = "bytes=0-1048575"
+            read_bytes = 1_048_576
+        else:
+            headers["Range"] = "bytes=0-0"
+            read_bytes = 1
         request = Request(url, headers=headers)
         try:
             with compat_urlopen(request, min(self.timeout, 10.0)) as response:
-                data = response.read(1_048_576)
+                data = response.read(read_bytes)
+                size_bytes = video_probe.content_range_total(
+                    response.headers.get("Content-Range")
+                )
         except Exception as exc:
-            logger.debug(f"[NitterTweets] 探测视频时长失败: {exc}")
+            logger.debug(f"[NitterTweets] 探测媒体时长/大小失败: {_safe_text(exc)}")
             return None
-        return self._probe_mp4_duration(data)
+        duration = self._probe_mp4_duration(data) if need_duration else None
+        return {"duration": duration, "size_bytes": size_bytes}
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

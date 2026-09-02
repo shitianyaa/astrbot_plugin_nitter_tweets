@@ -50,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
         "--instance",
         action="append",
         dest="instances",
-        default=[],
+        required=True,
         help="Nitter instance URL. Repeat to test multiple instances in order.",
     )
     parser.add_argument(
@@ -85,7 +85,7 @@ async def _main() -> None:
     args = _parse_args()
     skip_plain_text = args.skip_plain_text
     config = {
-        "instances": args.instances or ["https://nitter.net", "http://nitter.top"],
+        "instances": args.instances,
         "request_timeout": args.timeout,
         "basic": {"filter_reposts_enabled": not args.include_reposts},
     }
