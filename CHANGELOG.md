@@ -4,6 +4,12 @@
 
 ## [1.3.0] - 2026-09-01
 
+### ⚠️ 升级速读（从 0.18.x 升级，不想细看至少记住这三条）
+
+- **公共 Nitter 基本全挂，现在只能自建。** 自建 Nitter 占用很低（静态文件约 10 MB 量级，详见资源说明），强烈建议自建；README 有[一键部署脚本](./README.md#一键部署-nitter)（nitter-installer，Docker Compose 编排 Nitter + Redis）。
+- **强烈建议改用 List 分组。** 把关注的人加到一个 Public List 里订阅，比逐个轮询用户页请求量小、更不容易触发 429；分类更清晰，数量不建议过多。详见 [List 指南](./docs/twitter-lists.md)。
+- **WebUI 运维面板（`pages/dashboard`）后续会大修。** 本版的实例能力诊断能用，但面板整体体验后面再重做。
+
 ### Added
 
 - 发送失败分类新增「被目标平台拒收」：`SendAttempt.rejected` 与 `TweetSender._is_content_rejected_error`，识别 NapCat 群媒体上传无回执（`Timeout: NTEvent ... sendMsg`，`result: 0`）和合并转发 `res_id` 拒绝两个签名。该标记只表示「同样的字节别再发一遍」：传输编码梯度与组件级重试据此停手，而去视频、拆分、降级直发、纯文本兜底等换内容的降级链照常运行。
