@@ -54,15 +54,18 @@ def test_ordinary_failure_is_not_content_rejected():
     assert not TweetSender._is_content_rejected_error(None)
 
 
-def test_rejected_attempt_is_not_retryable():
+def test_rejected_attempt_stops_same_byte_retry_but_keeps_degradation():
     sender = TweetSender.__new__(TweetSender)
     attempt = sender._send_exception_attempt(
         _FakeActionFailed(1200, NTEVENT_TIMEOUT), "img", "group:1"
     )
     assert attempt.success is False
     assert attempt.rejected is True
-    # retryable=False 同时让 sender_transport 的编码梯度停手。
-    assert attempt.retryable is False
+    # rejected 只表达「同样的字节别再发一遍」：传输梯度和组件级重试据此停手。
+    # retryable 必须保持 True，否则 sender_forward/sender_merged 里
+    # `if not attempt.retryable: return` 会把去视频、拆分、降级直发和纯文本
+    # 兜底整条链一起跳过——那些换的是内容而不是字节，拒收不代表它们发不出去。
+    assert attempt.retryable is True
 
 
 def test_plain_failure_stays_retryable():

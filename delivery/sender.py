@@ -449,9 +449,12 @@ class TweetSender(
                 "[NitterTweets] 发送被目标平台拒收，不再重试: "
                 f"label={label}, target={target or '-'}, error={error}"
             )
+            # 只表达「同样的字节别再发一遍」。retryable 保持 True，让既有的
+            # 有损降级链（去视频、拆分、降级直发、纯文本）照常运行——那些都是
+            # 换内容而不是换字节，拒收不代表它们也发不出去。
             return SendAttempt(
                 success=False,
-                retryable=False,
+                retryable=True,
                 rejected=True,
                 error=error,
             )

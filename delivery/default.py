@@ -718,7 +718,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             self._message_chain([component], link_style=link_style),
             label,
         )
-        if attempt.success or attempt.uncertain or not attempt.retryable:
+        if (
+            attempt.success
+            or attempt.uncertain
+            or attempt.rejected
+            or not attempt.retryable
+        ):
             return attempt
         return await sender._send_context_message(
             context,
@@ -740,7 +745,12 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             self._message_chain([component], link_style=link_style),
             label,
         )
-        if attempt.success or attempt.uncertain or not attempt.retryable:
+        if (
+            attempt.success
+            or attempt.uncertain
+            or attempt.rejected
+            or not attempt.retryable
+        ):
             return attempt
         return await sender._send_event_chain(
             event,

@@ -149,7 +149,7 @@ class AdapterTransportMixin:
             if memo is not None:
                 memo.forget(platform_id, kind)
 
-            if attempt.uncertain or not attempt.retryable:
+            if attempt.uncertain or attempt.rejected or not attempt.retryable:
                 # 可能已送达，或对端明确拒绝：换编码重发只会重复投递。
                 status = "uncertain" if attempt.uncertain else "rejected"
                 _log_transport(kind, encoding, bucket, status, label)

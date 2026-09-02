@@ -341,31 +341,24 @@ def resolve_status_tweet(
             if tweet is None:
                 errors.append(f"{name}: empty")
                 logger.info(
-                    "[NitterTweets] status resolve empty: source=%s status_id=%s elapsed_ms=%s",
-                    name,
-                    sid,
-                    elapsed_ms,
+                    f"[NitterTweets] 链接解析为空: source={name}, "
+                    f"status_id={sid}, elapsed_ms={elapsed_ms}"
                 )
                 continue
             _apply_image_quality(tweet, media_quality)
             logger.info(
-                "[NitterTweets] status resolve ok: source=%s status_id=%s elapsed_ms=%s media=%s quality=%s",
-                name,
-                sid,
-                elapsed_ms,
-                len(tweet.media),
-                media_quality,
+                f"[NitterTweets] 链接解析成功: source={name}, "
+                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
+                f"media={len(tweet.media)}, quality={media_quality}"
             )
             return tweet
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             errors.append(f"{name}: {type(exc).__name__}")
             logger.info(
-                "[NitterTweets] status resolve fail: source=%s status_id=%s elapsed_ms=%s error=%s",
-                name,
-                sid,
-                elapsed_ms,
-                type(exc).__name__,
+                f"[NitterTweets] 链接解析失败: source={name}, "
+                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
+                f"error={type(exc).__name__}"
             )
     raise StatusResolveError("; ".join(errors) or "resolve failed")
 

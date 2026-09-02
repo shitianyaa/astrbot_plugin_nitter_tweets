@@ -415,6 +415,24 @@ async def test_uncertain_delivery_does_not_advance_ladder(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_content_rejection_does_not_advance_ladder(tmp_path):
+    """内容被拒时换编码没有意义：base64 与路径是同一份字节。"""
+    sender = _umo_sender()
+    call_action = _RecordingCallAction(
+        error=RuntimeError(
+            "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
+            "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate"
+        )
+    )
+    sender._onebot_call_action_for_umo = MagicMock(return_value=call_action)
+    adapter = OneBotDeliveryAdapter(sender, _onebot_profile())
+
+    await _send_media_only(sender, adapter, _image(tmp_path))
+
+    assert len(call_action.files) == 1
+
+
+@pytest.mark.asyncio
 async def test_successful_encoding_is_remembered_for_next_send(tmp_path):
     sender = _umo_sender()
     call_action = _RecordingCallAction()

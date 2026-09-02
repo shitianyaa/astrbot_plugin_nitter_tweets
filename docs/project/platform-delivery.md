@@ -78,7 +78,7 @@ sender._should_use_merge_for_count(tweet_count)
 - NapCat 因读不到本地媒体文件而回的 1200（ENOENT copyfile）属于传输问题而非 payload 体积拒绝，会先走无损编码重试；只有纯体积/`res_id` 拒绝才直接拆分。
 - 合并失败时尝试去视频重试。
 - 不确定送达错误按可能已送达处理，避免重复推送。
-- 内容被目标平台拒收（`Timeout: NTEvent ... sendMsg` 无回执、`res_id` 拒绝）标记 `SendAttempt.rejected` 且 `retryable=False`：传输梯度和组件级重试都停手，因为重发同样的字节结果不变。该判定排在「不确定送达」之前——拒收错误文本含 `timeout` 字样，顺序反了会被误判成可能已送达而跳过降级。
+- 内容被目标平台拒收（`Timeout: NTEvent ... sendMsg` 无回执、`res_id` 拒绝）标记 `SendAttempt.rejected`：传输梯度和组件级重试据此停手，因为重发同样的字节结果不变。**`retryable` 必须保持 `True`**——`sender_forward` / `sender_merged` 里的 `if not attempt.retryable: return` 同时把守着有损降级链，压低它会让去视频、拆分、降级直发和纯文本兜底一起被跳过，而那些换的是内容不是字节。该判定排在「不确定送达」之前——拒收错误文本含 `timeout` 字样，顺序反了会被误判成可能已送达而跳过降级。
 - 图片全部发送失败且非「仅媒体」时补发一条提示，链接是否附带遵循 `omit_status_url`；下载失败则写进正文，两侧措辞不同以便区分。
 - 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
 - `media_only_enabled` 有效时每个推文节点只保留作者和图片附件；视频附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。

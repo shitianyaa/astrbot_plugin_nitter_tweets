@@ -6,7 +6,7 @@
 
 ### Added
 
-- 发送失败分类新增「被目标平台拒收」：`SendAttempt.rejected` 与 `TweetSender._is_content_rejected_error`，识别 NapCat 群媒体上传无回执（`Timeout: NTEvent ... sendMsg`，`result: 0`）和合并转发 `res_id` 拒绝两个签名。这类失败重发同样的字节必然同样失败，因此标记 `retryable=False`，传输编码梯度与组件级重试都立即停手。
+- 发送失败分类新增「被目标平台拒收」：`SendAttempt.rejected` 与 `TweetSender._is_content_rejected_error`，识别 NapCat 群媒体上传无回执（`Timeout: NTEvent ... sendMsg`，`result: 0`）和合并转发 `res_id` 拒绝两个签名。该标记只表示「同样的字节别再发一遍」：传输编码梯度与组件级重试据此停手，而去视频、拆分、降级直发、纯文本兜底等换内容的降级链照常运行。
 - 图片已下载但发送失败时补发一条提示消息。命中拒收签名时措辞为「图片可能被平台风控拦截，未能发送」，其他发送失败为「图片发送失败」；是否附带原帖链接遵循 `omit_status_url`，与视频省略提示一致。「仅媒体」分组不补提示，因为整条会在下一轮重推。
 - 图片下载失败新增用户可见提示「图片下载失败，已保留原文链接」。此前只有视频有下载失败提示，图片失败对用户完全静默。
 
