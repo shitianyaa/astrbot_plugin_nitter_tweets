@@ -26,6 +26,7 @@ try:
         clamp_float,
         clamp_int,
         generate_file_name,
+        sanitize_sensitive_text,
     )
     from ..shared.media_status import (
         MEDIA_SIZE_LIMIT_ERROR,
@@ -47,6 +48,7 @@ except ImportError:
         clamp_float,
         clamp_int,
         generate_file_name,
+        sanitize_sensitive_text,
     )
     from shared.media_status import (
         MEDIA_SIZE_LIMIT_ERROR,
@@ -89,6 +91,21 @@ class MediaPreparationResult:
     status: str
     prepared_count: int = 0
     error: str = ""
+
+
+def _safe_url(url: object) -> str:
+    """媒体 URL 入日志前必须脱敏。
+
+    twimg 直链带 ``g2a_`` 签名和查询串，xdown/snapcdn 代理把整条原始 URL
+    编码在 token 里；``sanitize_sensitive_text`` 会把 ``?query`` 折成
+    ``?***`` 并抹掉签名键，只留 host+path 供排查。
+    """
+    return sanitize_sensitive_text(str(url or "")) or "-"
+
+
+def _safe_text(value: object) -> str:
+    """异常文本同样脱敏：urllib 的报错常把完整 URL 拼在消息里。"""
+    return sanitize_sensitive_text(str(value or ""))
 
 
 class _ResolvedMediaUrls(list):
@@ -289,7 +306,8 @@ class MediaService(MediaCacheMixin):
                     )
                 transient_failure = True
                 logger.warning(
-                    f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}"
+                    "[NitterTweets] 媒体下载失败: "
+                    f"url={_safe_url(media.url)}, error={_safe_text(exc)}"
                 )
                 continue
             downloaded.append(media)
@@ -343,8 +361,9 @@ class MediaService(MediaCacheMixin):
                 if media.fallback_url and media.fallback_url != media.url:
                     logger.info(
                         "[NitterTweets] 媒体下载切到兜底 URL 重试: "
-                        f"primary={media.url}, fallback={media.fallback_url}, "
-                        f"attempt={attempt}/{attempts}, error={exc}"
+                        f"primary={_safe_url(media.url)}, "
+                        f"fallback={_safe_url(media.fallback_url)}, "
+                        f"attempt={attempt}/{attempts}, error={_safe_text(exc)}"
                     )
                     media.url = media.fallback_url
                     media.fallback_url = ""
@@ -356,8 +375,8 @@ class MediaService(MediaCacheMixin):
                     break
                 logger.warning(
                     "[NitterTweets] 媒体下载失败，准备重试: "
-                    f"url={media.url}, attempt={attempt}/{attempts}, "
-                    f"delay={delay:g}s, error={exc}"
+                    f"url={_safe_url(media.url)}, attempt={attempt}/{attempts}, "
+                    f"delay={delay:g}s, error={_safe_text(exc)}"
                 )
                 if delay > 0:
                     time.sleep(delay)
@@ -413,7 +432,9 @@ class MediaService(MediaCacheMixin):
             if not kind:
                 kind = XdownMediaParser._detect_kind("", full_url)
             if not kind:
-                logger.info(f"[NitterTweets] 跳过无法识别类型的媒体: url={full_url}")
+                logger.info(
+                    f"[NitterTweets] 跳过无法识别类型的媒体: url={_safe_url(full_url)}"
+                )
                 continue
             # xdown 的 snapcdn 代理 URL 的 token 内含原始 twimg 直链；
             # 优先用直链作主 URL（永久有效、可升画质），snapcdn 代理作兜底。
@@ -630,7 +651,7 @@ class MediaService(MediaCacheMixin):
                     response.headers.get("Content-Range")
                 )
         except Exception as exc:
-            logger.debug(f"[NitterTweets] 探测媒体时长/大小失败: {exc}")
+            logger.debug(f"[NitterTweets] 探测媒体时长/大小失败: {_safe_text(exc)}")
             return None
         return {"duration": self._probe_mp4_duration(data), "size_bytes": size_bytes}
 
