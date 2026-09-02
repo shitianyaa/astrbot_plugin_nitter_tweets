@@ -8,6 +8,9 @@ class SendAttempt:
     success: bool
     retryable: bool = False
     uncertain: bool = False
+    #: 目标平台事实上拒收了这份内容，重发同样的字节不会有不同结果。
+    #: 与 retryable=False 一起用于区分「发不出去」和「没下下来」。
+    rejected: bool = False
     error: str = ""
     warning: str = ""
 

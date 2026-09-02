@@ -41,6 +41,7 @@ def _adapter(*, images, videos, attempts):
                 return_value=[(_media(), c) for c in videos]
             ),
             build_video_omitted_notice_components=MagicMock(return_value=[]),
+            build_image_send_failed_notice_components=MagicMock(return_value=[]),
         ),
         _send_context_message=AsyncMock(side_effect=attempts),
     )
@@ -152,6 +153,7 @@ async def test_event_media_only_without_any_media_component_is_not_success():
             build_direct_image_items=MagicMock(return_value=[]),
             build_direct_video_items=MagicMock(return_value=[]),
             build_video_omitted_notice_components=MagicMock(return_value=[]),
+            build_image_send_failed_notice_components=MagicMock(return_value=[]),
         ),
         _send_event_chain=AsyncMock(return_value=SendAttempt(success=True)),
     )

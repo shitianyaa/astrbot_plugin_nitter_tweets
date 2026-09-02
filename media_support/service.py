@@ -281,6 +281,12 @@ class MediaService(MediaCacheMixin):
                     self._add_media_warning(
                         tweet, f"视频/GIF 下载失败，已保留原文链接：{exc}"
                     )
+                else:
+                    # 下载失败在发送前就已知，写进正文；发送失败只能事后补提示。
+                    # 两者措辞刻意不同，便于从消息本身分辨卡在哪一侧。
+                    self._add_media_warning(
+                        tweet, f"图片下载失败，已保留原文链接：{exc}"
+                    )
                 transient_failure = True
                 logger.warning(
                     f"[NitterTweets] 媒体下载失败: url={media.url}, error={exc}"

@@ -124,7 +124,10 @@ ruff format --check .
 - 日志与 HTML 页面分类：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
 - 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
 - 媒体传输编码：`tests/test_media_transport.py`
-- 媒体画质三档：`tests/test_media_quality_preference.py`、`tests/test_prefer_pbs_quality.py`
+- 媒体画质三档：`tests/test_media_quality_preference.py`、`tests/test_prefer_pbs_quality.py`、`tests/test_status_media_quality.py`
+- 发送拒收分类与图片失败提示：`tests/test_image_send_rejected_notice.py`
+- 媒体缓存文件名后缀：`tests/test_media_file_name.py`
+- 配置迁移标记 schema 声明：`tests/test_conf_schema_migration_keys.py`
 - xdown token 直链与重试兜底：`tests/test_xdown_token_direct_url.py`
 - 视频大小预检降级：`tests/test_video_size_preflight.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。

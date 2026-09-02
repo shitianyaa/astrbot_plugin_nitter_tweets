@@ -439,6 +439,22 @@ class TweetSender(
         target: str = "",
     ) -> SendAttempt:
         error = str(exc)
+        # 先判拒收：这两个签名都明确表示「没送到」，而它们的文本里含
+        # "Timeout" 字样，交给 _is_uncertain_delivery_error 会被误判成
+        # 「可能已送达」而跳过降级（ActionFailed 不可导入时尤其明显）。
+        if self._is_content_rejected_error(exc):
+            # 重发同样的字节必然同样失败，retryable=False 同时让传输梯度
+            # (sender_transport) 立刻停手，不再换编码空跑。
+            logger.warning(
+                "[NitterTweets] 发送被目标平台拒收，不再重试: "
+                f"label={label}, target={target or '-'}, error={error}"
+            )
+            return SendAttempt(
+                success=False,
+                retryable=False,
+                rejected=True,
+                error=error,
+            )
         if self._is_uncertain_delivery_error(exc):
             warning = self.UNCERTAIN_DELIVERY_WARNING
             self._log_uncertain_delivery(label, target, exc)
@@ -456,6 +472,31 @@ class TweetSender(
         else:
             logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")
         return SendAttempt(success=False, retryable=True, error=error)
+
+    @classmethod
+    def _is_content_rejected_error(cls, exc: Exception | None) -> bool:
+        """目标平台事实上拒收了内容本身，换编码或重发都不会改变结果。
+
+        两个已知签名（均为 OneBot/NapCat retcode 1200）：
+
+        - 群媒体上传后收不到回执：``Timeout: NTEvent ... sendMsg`` 且
+          ``result: 0`` / ``errMsg`` 为空。调用本身没报错，是服务端静默丢弃。
+        - 合并转发被拒：``res_id ... 失败``。
+
+        本地文件读不到导致的 1200（ENOENT copyfile）不属于此类，那是传输
+        问题，交给无损编码梯度重试，见 ``_is_forward_payload_rejected_error``。
+        """
+        if exc is None:
+            return False
+        text = str(exc or "")
+        lowered = text.lower()
+        if any(marker in lowered for marker in ("no such file", "enoent", "copyfile")):
+            return False
+        if "ntevent" in lowered and "sendmsg" in lowered:
+            return True
+        if "res_id" in lowered and ("失败" in text or "fail" in lowered):
+            return True
+        return False
 
     @staticmethod
     def _log_uncertain_delivery(

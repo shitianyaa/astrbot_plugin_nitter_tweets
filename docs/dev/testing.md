@@ -27,6 +27,8 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 结构化日志与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、时间线/空页/登录维护/异常页分类 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
 | 媒体传输编码 | `python -m pytest -q tests/test_media_transport.py` | 梯度组成、base64 上限、URL 主机白名单、传输降级先于内容降级、`uncertain` 不推进、编码记忆、非 OneBot 恒 `path` |
+| 发送失败分类与提示 | `python -m pytest -q tests/test_image_send_rejected_notice.py` | 拒收签名识别、ENOENT 不误判、`rejected` 不重试、拒收判定排在 uncertain 之前、图片失败提示带原帖链接、仅媒体不补提示 |
+| 媒体缓存文件名 | `python -m pytest -q tests/test_media_file_name.py` | 百分号编码尾巴、query `format` 脏值、无扩展名回落 |
 
 ## 高风险改动
 

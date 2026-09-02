@@ -545,6 +545,42 @@ class TweetMessageRenderer:
             return []
         return [Plain("\n".join(lines))]
 
+    def build_image_send_failed_notice_components(
+        self,
+        tweets: list[TweetItem],
+        *,
+        rejected: bool = False,
+        omit_status_url: bool = True,
+    ):
+        """图片已下好但发不出去时的事后提示。
+
+        正文在图片之前就发出去了，警告写不进正文，只能补一条消息。
+        ``rejected`` 表示命中平台拒收签名（见
+        ``TweetSender._is_content_rejected_error``），措辞据此区分。
+
+        链接遵循 ``omit_status_url``，与 ``video_not_sent_notice`` 一致：该
+        配置的用途正是不在消息里放推文 URL 明文，提示不应绕过它。
+        """
+        lines: list[str] = []
+        seen_links: set[str] = set()
+        for tweet in tweets:
+            if not any(media.path and media.is_image for media in tweet.media):
+                continue
+            link = (tweet.x_url or tweet.link or "").strip()
+            if link in seen_links:
+                continue
+            seen_links.add(link)
+            head = (
+                "⚠️ 图片可能被平台风控拦截，未能发送" if rejected else "⚠️ 图片发送失败"
+            )
+            if omit_status_url or not link:
+                lines.append(f"{head}。")
+            else:
+                lines.append(f"{head}，可点开原帖查看：{link}")
+        if not lines:
+            return []
+        return [Plain("\n".join(lines))]
+
     def build_components(
         self,
         index: int,

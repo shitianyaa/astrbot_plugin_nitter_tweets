@@ -4,11 +4,20 @@
 
 ## [1.3.0] - 2026-09-01
 
+### Added
+
+- 发送失败分类新增「被目标平台拒收」：`SendAttempt.rejected` 与 `TweetSender._is_content_rejected_error`，识别 NapCat 群媒体上传无回执（`Timeout: NTEvent ... sendMsg`，`result: 0`）和合并转发 `res_id` 拒绝两个签名。这类失败重发同样的字节必然同样失败，因此标记 `retryable=False`，传输编码梯度与组件级重试都立即停手。
+- 图片已下载但发送失败时补发一条提示消息。命中拒收签名时措辞为「图片可能被平台风控拦截，未能发送」，其他发送失败为「图片发送失败」；是否附带原帖链接遵循 `omit_status_url`，与视频省略提示一致。「仅媒体」分组不补提示，因为整条会在下一轮重推。
+- 图片下载失败新增用户可见提示「图片下载失败，已保留原文链接」。此前只有视频有下载失败提示，图片失败对用户完全静默。
+
 ### Fixed
 
 - 修复 Nitter `/video/` 代理 URL 的百分号编码尾巴（如 `%3Ftag%3D29`）被当作文件扩展名，导致 NapCat 解码 `file://` 路径后 ENOENT（retcode 1200）、含视频合并转发发送失败：`generate_file_name` 后缀白名单化，脏尾巴回落媒体类型默认扩展名。
 - NapCat 因读不到本地媒体文件（ENOENT copyfile）而回的 1200 不再被判为“payload 体积拒绝”，放行无损传输编码重试（base64/URL）后再走有损降级。
 - 去视频降级重发及直发/QQ Official 的“视频省略提示”从「视频/GIF 发送已关闭，已跳过下载」改为「视频/GIF 附件发送失败，本次已省略」，与用户手动关闭发送开关的提示区分。
+- `media_quality` 现在对 status 链接解析渠道（Fx/Vx/Syndication）生效。此前该渠道直接使用后端返回的 pbs 直链、恒为 `name=orig` 原图，HTML 与 xdown 两条渠道则一直遵循档位，同一批推文因来源不同拿到不同画质。
+- 拒收判定排在「送达状态不确定」判定之前：`Timeout: NTEvent` 的错误文本含 `timeout` 字样，先走 uncertain 会被误判成“可能已送达”而跳过整个降级链（`ActionFailed` 不可导入时尤其明显）。
+- `_conf_schema.json` 补上 `_video_resolution_preference_migrated` 声明。7 个内部迁移标记中只有它未声明，WebUI 因此把它渲染成可编辑的裸输入框。
 
 ### Changed
 

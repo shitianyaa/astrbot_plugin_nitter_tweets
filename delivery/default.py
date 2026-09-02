@@ -343,6 +343,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         image_items = sender.renderer.build_direct_image_items(tweets)
         image_error = ""
         image_warning = ""
+        image_rejected = False
         for offset, (media, image_component) in enumerate(image_items, start=1):
             label = f"QQ direct scheduled tweet image {offset}/{len(image_items)}"
             outcome = await self._send_umo_media_item(
@@ -359,12 +360,27 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
                 image_warning = image_warning or image_attempt.warning
                 continue
             image_error = image_attempt.error
+            image_rejected = bool(getattr(image_attempt, "rejected", False))
             logger.warning(
                 "[NitterTweets] QQ 直发图片附件失败，主体文本已发送: "
                 f"target={umo}, image={offset}/{len(image_items)}, "
-                f"error={image_error}"
+                f"rejected={image_rejected}, error={image_error}"
             )
             break
+
+        # 正文已经先于图片发出，警告写不进正文，只能事后补一条提示。
+        # media_only 分组会整条重推，补提示只会在每轮重试里刷屏。
+        if image_error and not media_only:
+            await self._send_image_failed_notice(
+                sender,
+                context,
+                umo,
+                tweets,
+                rejected=image_rejected,
+                omit_status_url=omit_status_url,
+                label="QQ direct scheduled image failed notice",
+                link_style=link_style,
+            )
 
         video_items = sender.renderer.build_direct_video_items(tweets)
         video_error = ""
@@ -498,6 +514,7 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
 
         image_items = sender.renderer.build_direct_image_items(tweets)
         image_failed = False
+        image_rejected = False
         for offset, (media, image_component) in enumerate(image_items, start=1):
             label = f"manual QQ direct image {offset}/{len(image_items)}"
             outcome = await self._send_event_media_item(
@@ -511,12 +528,30 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             image_attempt = outcome.attempt
             if image_attempt.success or image_attempt.uncertain:
                 continue
+            image_rejected = bool(getattr(image_attempt, "rejected", False))
             logger.warning(
                 "[NitterTweets] QQ 手动直发图片附件失败，正文已发送: "
-                f"image={offset}/{len(image_items)}, error={image_attempt.error}"
+                f"image={offset}/{len(image_items)}, "
+                f"rejected={image_rejected}, error={image_attempt.error}"
             )
             image_failed = True
             break
+
+        # 正文已先发出，提示只能事后补；链接是否附带由 omit_status_url 决定。
+        if image_failed and not media_only:
+            notice_components = (
+                sender.renderer.build_image_send_failed_notice_components(
+                    tweets,
+                    rejected=image_rejected,
+                    omit_status_url=omit_status_url,
+                )
+            )
+            if notice_components:
+                await sender._send_event_chain(
+                    event,
+                    self._message_chain(notice_components, link_style=link_style),
+                    "manual QQ direct image failed notice",
+                )
 
         video_items = sender.renderer.build_direct_video_items(tweets)
         if not video_items:
@@ -557,6 +592,31 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
             "manual QQ direct video omitted notice",
         )
         return notice_attempt.success or notice_attempt.uncertain
+
+    async def _send_image_failed_notice(
+        self,
+        sender,
+        context,
+        umo: str,
+        tweets,
+        *,
+        rejected: bool,
+        omit_status_url: bool,
+        label: str,
+        link_style: str = "plain",
+    ) -> None:
+        """事后补发图片失败提示；提示本身失败不影响推送结论。"""
+        notice_components = sender.renderer.build_image_send_failed_notice_components(
+            tweets, rejected=rejected, omit_status_url=omit_status_url
+        )
+        if not notice_components:
+            return
+        await sender._send_context_message(
+            context,
+            umo,
+            self._message_chain(notice_components, link_style=link_style),
+            label,
+        )
 
     def _event_component_sender(
         self,
