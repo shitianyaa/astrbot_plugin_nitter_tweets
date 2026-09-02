@@ -19,7 +19,7 @@ def _service(max_bytes: int) -> MediaService:
     service.media_quality = "high"
     service.max_video_duration_seconds = 480
     service.max_bytes = max_bytes
-    service._probe_remote_media = lambda _url: None  # type: ignore[method-assign]
+    service._probe_remote_media = lambda _url, *, need_duration=True: None  # type: ignore[method-assign]
     return service
 
 
@@ -86,7 +86,7 @@ def test_unknown_size_does_not_downgrade():
     assert selected.resolution == 2160
 
 
-def test_medium_picks_median_then_downgrades_if_oversized():
+def test_medium_keeps_median_when_under_limit():
     cands = [
         _candidate(360, int(2 * MB)),
         _candidate(720, int(8.6 * MB)),
@@ -97,5 +97,20 @@ def test_medium_picks_median_then_downgrades_if_oversized():
     allowed = service._filter_video_duration_candidates(TWEET, cands)
     selected = service._select_video_candidate(TWEET, allowed)
     assert selected is not None
-    # medium 中位 = 720p(8.6MB，不超)→ 保留
+    # medium 中位 = 720p(8.6MB，不超 25MB 上限)→ 保留 720p
     assert selected.resolution == 720
+
+
+def test_medium_downgrades_when_median_exceeds_size_limit():
+    cands = [
+        _candidate(360, int(2 * MB)),
+        _candidate(720, int(30 * MB)),
+        _candidate(2160, int(94.9 * MB)),
+    ]
+    service = _service(25 * MB)
+    service.media_quality = "medium"
+    allowed = service._filter_video_duration_candidates(TWEET, cands)
+    selected = service._select_video_candidate(TWEET, allowed)
+    assert selected is not None
+    # medium 中位 = 720p(30MB，超 25MB 上限)→ 降级到 360p(2MB，不超)
+    assert selected.resolution == 360

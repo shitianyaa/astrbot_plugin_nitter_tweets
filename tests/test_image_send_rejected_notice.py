@@ -82,7 +82,7 @@ def _tweet_with_image() -> TweetItem:
         published="",
     )
     media = TweetMedia(kind="image", url="https://pbs.twimg.com/media/a.jpg")
-    media.path = "/tmp/a.jpg"
+    media.path = "a.jpg"
     tweet.media = [media]
     return tweet
 

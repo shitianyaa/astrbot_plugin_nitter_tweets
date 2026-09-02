@@ -450,14 +450,6 @@ def test_dashboard_query_editor_preserves_explicit_phrase_type():
 # ---------------------------------------------------------------------------
 
 
-def test_p0_format_video_is_staticmethod():
-    video = inspect.getattr_static(TweetMessageRenderer, "format_video_attachment_text")
-    assert isinstance(video, staticmethod), (
-        "format_video_attachment_text must be @staticmethod; "
-        "instance call currently binds self into index/tweet slots"
-    )
-
-
 def test_p0_instance_format_video_and_build_video_node_work():
     renderer = TweetMessageRenderer()
     tweet = _tweet()

@@ -440,7 +440,9 @@ class MediaService(MediaCacheMixin):
             # 优先用直链作主 URL（永久有效、可升画质），snapcdn 代理作兜底。
             payload = self._xdown_token_payload(full_url)
             direct_url = str(payload.get("url") or "").strip()
-            if direct_url.startswith(("http://", "https://")):
+            # token payload 来自第三方，明文 http 会把媒体拉取降级成不加密；
+            # twimg 直链本来就恒为 https，snapcdn 代理仍留在 fallback_url。
+            if direct_url.startswith("https://"):
                 candidate_url = direct_url
                 fallback = full_url
                 if kind == "image":
@@ -574,9 +576,12 @@ class MediaService(MediaCacheMixin):
         skipped_durations: list[float] = []
         for item in candidates:
             duration = item.duration_seconds
-            # 缺时长或大小时做一次 Range 探测，两个值一起拿。
+            # 缺时长或大小时做一次 Range 探测：缺时长则同时探时长与大小，
+            # 仅缺大小时只读 1 字节拿 Content-Range 的 total。
             if duration is None or item.size_bytes is None:
-                probe = self._probe_remote_media(item.url)
+                probe = self._probe_remote_media(
+                    item.url, need_duration=duration is None
+                )
                 if probe:
                     if duration is None:
                         duration = probe.get("duration")
@@ -635,25 +640,37 @@ class MediaService(MediaCacheMixin):
     def _parse_mvhd_duration(payload: bytes) -> float | None:
         return video_probe.parse_mvhd_duration(payload)
 
-    def _probe_remote_media(self, url: str) -> dict | None:
+    def _probe_remote_media(
+        self, url: str, *, need_duration: bool = True
+    ) -> dict | None:
         """Probe remote media for duration (moov) and total size (Content-Range).
 
         Returns ``{"duration": float|None, "size_bytes": int|None}`` or None on
-        failure. A single Range request yields both values at no extra cost.
+        failure. When ``need_duration`` is true a single 1 MiB Range request yields
+        both duration (from the moov atom) and total size (from Content-Range). When
+        only the size is missing, ``need_duration=False`` reads a single byte
+        (``Range: bytes=0-0``) and parses the total from Content-Range without
+        scanning for moov; ``duration`` is left ``None`` in that case.
         """
         headers = self._media_request_headers(url)
-        headers["Range"] = "bytes=0-1048575"
+        if need_duration:
+            headers["Range"] = "bytes=0-1048575"
+            read_bytes = 1_048_576
+        else:
+            headers["Range"] = "bytes=0-0"
+            read_bytes = 1
         request = Request(url, headers=headers)
         try:
             with compat_urlopen(request, min(self.timeout, 10.0)) as response:
-                data = response.read(1_048_576)
+                data = response.read(read_bytes)
                 size_bytes = video_probe.content_range_total(
                     response.headers.get("Content-Range")
                 )
         except Exception as exc:
             logger.debug(f"[NitterTweets] 探测媒体时长/大小失败: {_safe_text(exc)}")
             return None
-        return {"duration": self._probe_mp4_duration(data), "size_bytes": size_bytes}
+        duration = self._probe_mp4_duration(data) if need_duration else None
+        return {"duration": duration, "size_bytes": size_bytes}
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

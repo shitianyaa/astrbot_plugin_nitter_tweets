@@ -26,6 +26,7 @@ try:
         PATH_ONLY_LADDER,
         MediaEncoding,
         apply_memo,
+        is_backend_fetchable_url,
         media_kind,
         media_size_bytes,
         onebot_segment,
@@ -38,6 +39,7 @@ except ImportError:  # pragma: no cover - flat import fallback
         PATH_ONLY_LADDER,
         MediaEncoding,
         apply_memo,
+        is_backend_fetchable_url,
         media_kind,
         media_size_bytes,
         onebot_segment,
@@ -220,7 +222,16 @@ class SenderTransportMixin:
     async def _forward_segment_builder(self, tweets, encoding: str):
         """构造一个同步 segment builder 交给渲染层；不适用时返回 ``None``。"""
         if encoding == MediaEncoding.URL:
-            return lambda media: onebot_segment(media, MediaEncoding.URL)
+            # 梯度是整份 payload 共用的：只要有一个媒体的 URL 在白名单内，URL 档
+            # 就会进入梯度。但 payload 里可能混着不在白名单的地址（例如 xdown
+            # 兜底后 media.url 已换成 snapcdn 代理），逐个再判一次，避免把它们
+            # 交给协议端自行下载。
+            def url_builder(media):
+                if not is_backend_fetchable_url(getattr(media, "url", "")):
+                    return None
+                return onebot_segment(media, MediaEncoding.URL)
+
+            return url_builder
         if encoding != MediaEncoding.BASE64:
             return None
 

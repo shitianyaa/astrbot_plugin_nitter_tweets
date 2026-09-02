@@ -431,7 +431,7 @@ class _RecordingMedia(_Media):
         for tweet in tweets:
             for media in tweet.media:
                 if media.path is None:
-                    media.path = Path(f"/tmp/{tweet.status_id}.jpg")
+                    media.path = Path(f"{tweet.status_id}.jpg")
         await super().attach_media(tweets)
 
     def cleanup_after_send(self, tweets):

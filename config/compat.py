@@ -105,9 +105,7 @@ CONFIG_GROUP_BY_KEY = {
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
-    "media_transport_mode": "media",
     "media_transport_base64_max_mb": "media",
-    "media_transport_url_fallback": "media",
     "translate_enabled": "ai_translation",
     "translation_provider_id": "ai_translation",
     "translate_min_chars": "ai_translation",
@@ -266,20 +264,6 @@ def resolve_send_video_attachments(config) -> bool:
     return parse_config_bool(config_get(config, "send_video_attachments", False), False)
 
 
-def resolve_media_transport_mode(config) -> str:
-    """How media bytes reach the protocol backend.
-
-    ``auto`` tries the local path first and falls back to base64 (and optionally a
-    backend-fetchable URL). ``base64_first`` skips the doomed path attempt when the
-    filesystem is known not to be shared. ``path_only`` keeps the pre-transport
-    behaviour.
-    """
-    value = (
-        str(config_get(config, "media_transport_mode", "auto") or "").strip().lower()
-    )
-    return value if value in {"auto", "path_only", "base64_first"} else "auto"
-
-
 def resolve_media_transport_base64_max_mb(config) -> float:
     """Per-file ceiling for base64 delivery, in MB.
 
@@ -291,17 +275,6 @@ def resolve_media_transport_base64_max_mb(config) -> float:
     except (TypeError, ValueError):
         value = 8.0
     return max(0.5, min(32.0, value))
-
-
-def resolve_media_transport_url_fallback(config) -> bool:
-    """Allow handing a Twitter CDN URL to the backend to download itself.
-
-    Off by default: the backend would reach Twitter directly, bypassing the
-    plugin's proxy and exposing its egress IP.
-    """
-    return parse_config_bool(
-        config_get(config, "media_transport_url_fallback", False), False
-    )
 
 
 def resolve_show_original_when_translated(config) -> bool:

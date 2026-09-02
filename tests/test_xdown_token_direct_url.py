@@ -112,7 +112,7 @@ def test_download_with_retries_switches_to_fallback_on_failure(monkeypatch):
         calls.append(media.url)
         if media.url == "https://twimg/x.mp4":
             raise URLError("twimg unreachable")
-        media.path = Path("/tmp/fake.mp4")
+        media.path = Path("fake.mp4")
         return media.path
 
     monkeypatch.setattr(service, "_download", fake_download)
@@ -126,7 +126,7 @@ def test_download_with_retries_switches_to_fallback_on_failure(monkeypatch):
     )
     result = service._download_with_retries(media)
 
-    assert result == Path("/tmp/fake.mp4")
+    assert result == Path("fake.mp4")
     assert calls == ["https://twimg/x.mp4", "https://snapcdn/get?token=x"]
     assert media.url == "https://snapcdn/get?token=x"
     assert media.fallback_url == ""

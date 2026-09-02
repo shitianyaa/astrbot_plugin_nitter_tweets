@@ -18,11 +18,17 @@
 - `media_quality` 现在对 status 链接解析渠道（Fx/Vx/Syndication）生效。此前该渠道直接使用后端返回的 pbs 直链、恒为 `name=orig` 原图，HTML 与 xdown 两条渠道则一直遵循档位，同一批推文因来源不同拿到不同画质。
 - 拒收判定排在「送达状态不确定」判定之前：`Timeout: NTEvent` 的错误文本含 `timeout` 字样，先走 uncertain 会被误判成“可能已送达”而跳过整个降级链（`ActionFailed` 不可导入时尤其明显）。
 - `_conf_schema.json` 补上 `_video_resolution_preference_migrated` 声明。7 个内部迁移标记中只有它未声明，WebUI 因此把它渲染成可编辑的裸输入框。
+- `pool.py` 实例轮换日志不再写入原始传输错误（`resp.error`）；`nitter.py` HTML 抓取日志改走 `sanitize_sensitive_text`；`api_probe.py` 警告只记 `host:port`，避免泄漏完整 URL 与响应正文。
+- `build_direct_video_items` 补 `send_video_attachments` 守卫：发送开关关闭时不再构造视频直发项，与图片侧 `build_direct_image_items` 对称。
+- Dashboard 探测标题在取不到 username 时不再渲染空 `@`。
 
 ### Changed
 
 - OneBot 合并转发版式：推文图片并入正文节点（每条推文一个图文节点），视频/GIF 保持独立节点；节点昵称与 uin 改为显示该条推文的实际作者，标签/List 分组下每条推文各自显示其作者，取不到作者时回退分组标识，header 节点仍为 Nitter。
 - `build_image_node_components` / `_build_onebot_image_content` 移除（图片不再构独立节点）。
+- `media_transport_mode` 与 `media_transport_url_fallback` 从代码移除：传输模式恒为 `auto`，twimg 白名单主机的 URL 档常驻梯度（原 `url_fallback` 默认 False，现自动加入）；`media_transport_base64_max_mb` 保留。
+- `_probe_remote_media` 仅在缺大小时请求 1 字节、从 `Content-Range` 取 total，不再对每个候选都下载 1 MiB。
+- `scripts/test_video_download.py` 的 `--resolution` 改为 `--media-quality`（`high`/`medium`/`low`），移除已失效的 `--xdown-url`。
 
 ## [1.2.0] - 2026-09-01
 

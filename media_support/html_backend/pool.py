@@ -246,7 +246,7 @@ class HtmlNitterPool:
                 self.scores.record_failure(host)
                 scored_failure = True
                 raise HtmlFetchError(
-                    f"{host} HTTP {resp.code} {resp.error or ''}".strip(),
+                    f"{host} HTTP {resp.code}",
                     f"HTTP {resp.code}",
                 )
             if page_kind in {"error", "other"}:

@@ -169,7 +169,7 @@ def test_web_probe_all_rss_instances_is_serial_and_keeps_partial_failures():
     ]
 
 
-def test_web_probe_all_search_instances_returns_all_failed_rows():
+def test_web_probe_all_instances_returns_all_failed_rows():
     nitter = SimpleNamespace(
         instances=["https://search-a.example"],
         fetch_tweets_from_instance=AsyncMock(side_effect=RuntimeError("rss")),

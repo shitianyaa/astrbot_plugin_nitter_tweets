@@ -2632,7 +2632,11 @@ async function probeMirror(event) {
       });
       els.mirrorResult.replaceChildren(
         el("div", { className: "panel" }, [
-          el("h2", { text: `实例能力测试 · @${result.username}` }),
+          el("h2", {
+            text: result.username
+              ? `实例能力测试 · @${result.username}`
+              : "实例能力测试",
+          }),
           el("p", {
             className: "muted",
             text: `共 ${formatNumber(summary.total)} 个实例，成功 ${formatNumber(summary.succeeded)} 个，失败 ${formatNumber(summary.failed)} 个`,

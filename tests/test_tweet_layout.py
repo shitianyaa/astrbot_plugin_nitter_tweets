@@ -294,7 +294,7 @@ def test_build_nodes_for_uin_strips_source_instance_links():
     assert "https://example.com/page" in text
 
 
-def _img_media(path="/tmp/a.jpg"):
+def _img_media(path="a.jpg"):
     return SimpleNamespace(
         path=Path(path),
         url="https://pbs.twimg.com/media/a.jpg",
@@ -303,7 +303,7 @@ def _img_media(path="/tmp/a.jpg"):
     )
 
 
-def _vid_media(path="/tmp/v.mp4"):
+def _vid_media(path="v.mp4"):
     return SimpleNamespace(
         path=Path(path),
         url="https://example.com/v.mp4",
@@ -318,7 +318,7 @@ def _kind(component) -> str:
 
 
 def test_forward_nodes_merge_images_into_tweet_node():
-    tweet = _tw(media=[_img_media(), _img_media("/tmp/b.jpg")])
+    tweet = _tw(media=[_img_media(), _img_media("b.jpg")])
     r = R(send_image_attachments=True, send_video_attachments=False)
     nodes = r.build_nodes_for_uin(
         uin="10000", username="nasa", instance="", tweets=[tweet]
@@ -419,7 +419,7 @@ def test_merged_onebot_nodes_merge_images_and_use_author_identity():
         username="cat_a",
         x_url="https://x.com/cat_a/status/1",
         link="https://x.com/cat_a/status/1",
-        media=[_img_media(), _img_media("/tmp/b.jpg")],
+        media=[_img_media(), _img_media("b.jpg")],
     )
     r = R(send_image_attachments=True, send_video_attachments=False)
     nodes = r.build_merged_onebot_nodes_for_uin(10000, [("q:cats", "", [tweet])])

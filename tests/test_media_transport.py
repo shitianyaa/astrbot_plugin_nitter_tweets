@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -65,71 +66,22 @@ def _onebot_profile() -> PlatformProfile:
 # ---------------------------------------------------------------------------
 
 
-def test_small_image_ladder_is_path_then_base64(tmp_path):
+def test_small_image_ladder(tmp_path):
+    """内定 auto：路径 → base64 → URL（白名单主机）。"""
     ladder = _policy().ladder_for(_image(tmp_path))
-    assert ladder == (MediaEncoding.PATH, MediaEncoding.BASE64)
+    assert ladder == (MediaEncoding.PATH, MediaEncoding.BASE64, MediaEncoding.URL)
 
 
 def test_large_image_drops_base64_rung(tmp_path):
-    # 上限 1MB，图片 2MB：base64 档不该出现。
+    # 上限 1MB，图片 2MB：base64 档不该出现，但 URL 档仍在。
     policy = _policy(base64_max_bytes=1024 * 1024)
     ladder = policy.ladder_for(_image(tmp_path, size=2 * 1024 * 1024))
-    assert ladder == (MediaEncoding.PATH,)
+    assert ladder == (MediaEncoding.PATH, MediaEncoding.URL)
 
 
-def test_small_video_gets_base64_and_skip(tmp_path):
+def test_small_video_ladder(tmp_path):
+    """内定 auto：路径 → base64 → URL → 放弃。"""
     ladder = _policy().ladder_for(_video(tmp_path))
-    assert ladder == (MediaEncoding.PATH, MediaEncoding.BASE64, MediaEncoding.SKIP)
-
-
-def test_large_video_never_offers_base64(tmp_path):
-    """默认 8MB 上限把视频挡在 base64 之外，只剩路径和放弃。"""
-    ladder = _policy().ladder_for(_video(tmp_path, size=9 * 1024 * 1024))
-    assert ladder == (MediaEncoding.PATH, MediaEncoding.SKIP)
-
-
-def test_image_never_gets_skip_rung(tmp_path):
-    """图片没有对应的省略提示文案，失败交给既有的内容降级链。"""
-    assert MediaEncoding.SKIP not in _policy().ladder_for(_image(tmp_path))
-
-
-def test_base64_first_mode_reorders_image_ladder(tmp_path):
-    ladder = _policy(mode="base64_first").ladder_for(_image(tmp_path))
-    assert ladder == (MediaEncoding.BASE64, MediaEncoding.PATH)
-
-
-def test_base64_first_falls_back_to_path_when_over_cap(tmp_path):
-    policy = _policy(mode="base64_first", base64_max_bytes=512)
-    assert policy.ladder_for(_image(tmp_path, size=4096)) == (MediaEncoding.PATH,)
-
-
-def test_path_only_mode_keeps_single_rung(tmp_path):
-    policy = _policy(mode="path_only", url_fallback=True)
-    assert policy.ladder_for(_video(tmp_path)) == (MediaEncoding.PATH,)
-
-
-def test_allow_base64_false_suppresses_rung(tmp_path):
-    ladder = _policy().ladder_for(_image(tmp_path), allow_base64=False)
-    assert ladder == (MediaEncoding.PATH,)
-
-
-def test_missing_path_has_no_base64_rung():
-    media = TweetMedia(kind="image", url=TWIMG_IMAGE, path=None)
-    assert _policy().ladder_for(media) == (MediaEncoding.PATH,)
-
-
-# ---------------------------------------------------------------------------
-# URL 档
-# ---------------------------------------------------------------------------
-
-
-def test_url_rung_absent_by_default(tmp_path):
-    """默认不让协议端直连 Twitter CDN。"""
-    assert MediaEncoding.URL not in _policy().ladder_for(_video(tmp_path))
-
-
-def test_url_rung_present_for_twimg_when_enabled(tmp_path):
-    ladder = _policy(url_fallback=True).ladder_for(_video(tmp_path))
     assert ladder == (
         MediaEncoding.PATH,
         MediaEncoding.BASE64,
@@ -138,10 +90,41 @@ def test_url_rung_present_for_twimg_when_enabled(tmp_path):
     )
 
 
+def test_large_video_never_offers_base64(tmp_path):
+    """默认 8MB 上限把视频挡在 base64 之外，路径之后直接 URL 和放弃。"""
+    ladder = _policy().ladder_for(_video(tmp_path, size=9 * 1024 * 1024))
+    assert ladder == (MediaEncoding.PATH, MediaEncoding.URL, MediaEncoding.SKIP)
+
+
+def test_image_never_gets_skip_rung(tmp_path):
+    """图片没有对应的省略提示文案，失败交给既有的内容降级链。"""
+    assert MediaEncoding.SKIP not in _policy().ladder_for(_image(tmp_path))
+
+
+def test_allow_base64_false_suppresses_rung(tmp_path):
+    ladder = _policy().ladder_for(_image(tmp_path), allow_base64=False)
+    assert ladder == (MediaEncoding.PATH, MediaEncoding.URL)
+
+
+def test_missing_path_has_no_base64_rung():
+    media = TweetMedia(kind="image", url=TWIMG_IMAGE, path=None)
+    assert _policy().ladder_for(media) == (MediaEncoding.PATH, MediaEncoding.URL)
+
+
+# ---------------------------------------------------------------------------
+# URL 档
+# ---------------------------------------------------------------------------
+
+
+def test_url_rung_present_for_twimg(tmp_path):
+    """内定 url_fallback=True：白名单主机的 URL 档直接进梯度。"""
+    assert MediaEncoding.URL in _policy().ladder_for(_video(tmp_path))
+
+
 def test_url_rung_absent_for_non_allowlisted_host(tmp_path):
     """xdown 直链带 token、时效短且对 Referer 敏感，不交给后端。"""
     media = _video(tmp_path, url=XDOWN_VIDEO)
-    assert MediaEncoding.URL not in _policy(url_fallback=True).ladder_for(media)
+    assert MediaEncoding.URL not in _policy().ladder_for(media)
 
 
 @pytest.mark.parametrize(
@@ -257,11 +240,6 @@ def test_forward_base64_budget_blocks_oversized_payload(tmp_path):
     assert _policy().forward_allows_base64(tweets, budget=1024 * 1024) is False
 
 
-def test_forward_base64_disabled_in_path_only_mode(tmp_path):
-    policy = _policy(mode="path_only")
-    assert policy.forward_allows_base64([_tweet_with(_image(tmp_path))]) is False
-
-
 # ---------------------------------------------------------------------------
 # 适配器接线
 # ---------------------------------------------------------------------------
@@ -280,6 +258,7 @@ def test_onebot_adapter_uses_sender_policy(tmp_path):
     assert adapter.media_transport_ladder(_image(tmp_path)) == (
         MediaEncoding.PATH,
         MediaEncoding.BASE64,
+        MediaEncoding.URL,
     )
 
 
@@ -364,8 +343,9 @@ async def test_exhausted_video_ladder_emits_the_existing_omitted_notice(tmp_path
         return_value=["notice"]
     )
 
-    # 9MB 超出 base64 上限，路径档失败后只剩放弃。
-    outcome = await _send(sender, adapter, _video(tmp_path, size=9 * 1024 * 1024))
+    # 9MB 超出 base64 上限；用非白名单 URL 避开 URL 档，路径档失败后只剩放弃。
+    media = _video(tmp_path, size=9 * 1024 * 1024, url=XDOWN_VIDEO)
+    outcome = await _send(sender, adapter, media)
 
     assert outcome.success is True
     sender.renderer.build_video_omitted_notice_components.assert_called_once()
@@ -392,7 +372,8 @@ async def test_oversized_video_skips_instead_of_sending_base64(tmp_path):
     sender._onebot_call_action_for_umo = MagicMock(return_value=call_action)
     adapter = OneBotDeliveryAdapter(sender, _onebot_profile())
 
-    media = _video(tmp_path, size=9 * 1024 * 1024)
+    # 用非白名单 URL 避开 URL 档，只测 path→skip。
+    media = _video(tmp_path, size=9 * 1024 * 1024, url=XDOWN_VIDEO)
     outcome = await _send_media_only(sender, adapter, media)
 
     assert outcome.success is False
@@ -464,20 +445,6 @@ async def test_remembered_encoding_still_falls_back_to_path(tmp_path):
     assert outcome.success is True
     assert call_action.files[0].startswith("base64://")
     assert call_action.files[1].startswith("file:///")
-
-
-@pytest.mark.asyncio
-async def test_path_only_mode_never_leaves_the_component_path(tmp_path):
-    sender = _umo_sender({"media_transport_mode": "path_only"})
-    call_action = _RecordingCallAction()
-    sender._onebot_call_action_for_umo = MagicMock(return_value=call_action)
-    adapter = OneBotDeliveryAdapter(sender, _onebot_profile())
-
-    await _send_media_only(sender, adapter, _image(tmp_path))
-
-    # 梯度只有一档时走原始组件链，不碰 call_action。
-    assert call_action.files == []
-    assert sender._send_context_message.await_count >= 2
 
 
 @pytest.mark.asyncio
@@ -558,24 +525,23 @@ def test_direct_media_items_carry_their_media(tmp_path):
 
 
 def test_transport_config_reads_grouped_media_config():
+    """mode 与 url_fallback 现已内定，只有 base64 上限仍从配置读取。"""
     config = {
         "media": {
-            "media_transport_mode": "base64_first",
             "media_transport_base64_max_mb": 2.0,
-            "media_transport_url_fallback": True,
         }
     }
     resolved = TransportConfig.from_config(config)
-    assert resolved.mode == "base64_first"
+    assert resolved.mode == "auto"
     assert resolved.base64_max_bytes == 2 * 1024 * 1024
     assert resolved.url_fallback is True
 
 
-def test_transport_config_defaults_are_conservative():
+def test_transport_config_defaults():
     resolved = TransportConfig.from_config({})
     assert resolved.mode == "auto"
     assert resolved.base64_max_bytes == 8 * 1024 * 1024
-    assert resolved.url_fallback is False
+    assert resolved.url_fallback is True
 
 
 def test_media_transport_log_fields_are_allowlisted():
@@ -595,7 +561,10 @@ def test_forward_ladder_lists_non_path_rungs(tmp_path):
     adapter = OneBotDeliveryAdapter(sender, _onebot_profile())
     tweets = [_tweet_with(_image(tmp_path))]
 
-    assert sender._forward_transport_ladder(adapter, tweets) == (MediaEncoding.BASE64,)
+    assert sender._forward_transport_ladder(adapter, tweets) == (
+        MediaEncoding.BASE64,
+        MediaEncoding.URL,
+    )
 
 
 def test_forward_ladder_is_empty_without_media():
@@ -674,3 +643,24 @@ async def test_forward_retry_is_inert_without_policy(tmp_path):
     assert result is None
     adapter_factory.assert_not_called()
     rebuild_and_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_forward_url_builder_gates_each_media_host():
+    """URL 档是整份 payload 共用的，但白名单必须逐个媒体再判一次。
+
+    只要有一个媒体的 URL 在白名单内，URL 档就会进入梯度；payload 里混着的
+    非白名单地址（例如 xdown 兜底后换成的 snapcdn 代理）不能跟着被交给协议端。
+    """
+    sender = _umo_sender()
+    builder = await sender._forward_segment_builder([], MediaEncoding.URL)
+
+    allowed = SimpleNamespace(
+        url="https://pbs.twimg.com/media/a.jpg", path="a.jpg", is_video=False
+    )
+    blocked = SimpleNamespace(
+        url="https://snapcdn.app/dl?token=abc", path="b.jpg", is_video=False
+    )
+
+    assert builder(allowed) is not None
+    assert builder(blocked) is None

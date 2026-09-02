@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit
 
 from astrbot.api import logger
 
@@ -30,6 +31,19 @@ except ImportError:
     from media_support.network import UnsafeUrlError, validate_http_url
     from scheduler import ScheduleGroup
     from shared import normalize_username
+
+
+def _instance_log_label(value: str) -> str:
+    """只保留 host:port，剥掉 scheme/path/凭据，避免日志写入完整私有 URL。"""
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        host = parsed.hostname or ""
+        if not host:
+            return "<invalid>"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{host}{port}"
+    except ValueError:
+        return "<invalid>"
 
 
 class WebAPIProbeMixin:
@@ -174,7 +188,7 @@ class WebAPIProbeMixin:
             except Exception as exc:
                 logger.warning(
                     "[NitterTweets] WebUI 实例测试失败: "
-                    f"instance={configured_instance}, error={exc}"
+                    f"instance={_instance_log_label(configured_instance)}, error={exc}"
                 )
                 results.append(
                     {

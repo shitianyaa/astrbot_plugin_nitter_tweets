@@ -96,17 +96,14 @@ Dashboard 实例测试一次检查统一 `instances` 的用户 RSS、用户 HTML
 
 ## 媒体传输编码
 
-`media` 分组下的三项只影响私人号 OneBot 的媒体投递，行为见
+`media` 分组下仅 `media_transport_base64_max_mb` 可配置（传输模式恒为 `auto`，twimg 白名单主机的 URL 档自动加入梯度），只影响私人号 OneBot 的媒体投递，行为见
 [平台发送指南](./platform-delivery.md#媒体传输编码)：
 
 | 配置键 | 默认 | 说明 |
 | --- | --- | --- |
-| `media_transport_mode` | `auto` | `auto` / `path_only` / `base64_first`；非法值回落 `auto` |
 | `media_transport_base64_max_mb` | `8.0` | clamp 到 `0.5-32`；同时约束图片和视频 |
-| `media_transport_url_fallback` | `false` | 开启会让协议端直连 Twitter CDN |
 
-解析函数在 `config/compat.py`：`resolve_media_transport_mode`、
-`resolve_media_transport_base64_max_mb`、`resolve_media_transport_url_fallback`；
+解析函数在 `config/compat.py`：`resolve_media_transport_base64_max_mb`；
 `TransportConfig.from_config()` 负责组装。
 
 ## 兼容规则

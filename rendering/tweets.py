@@ -513,6 +513,8 @@ class TweetMessageRenderer:
         ]
 
     def build_direct_video_items(self, tweets: list[TweetItem]):
+        if not self.send_video_attachments:
+            return []
         return [
             (media, Video.fromFileSystem(str(media.path)))
             for tweet in tweets

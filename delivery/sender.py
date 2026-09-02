@@ -443,10 +443,8 @@ class TweetSender(
         # "Timeout" 字样，交给 _is_uncertain_delivery_error 会被误判成
         # 「可能已送达」而跳过降级（ActionFailed 不可导入时尤其明显）。
         if self._is_content_rejected_error(exc):
-            # 重发同样的字节必然同样失败，retryable=False 同时让传输梯度
-            # (sender_transport) 立刻停手，不再换编码空跑。
             logger.warning(
-                "[NitterTweets] 发送被目标平台拒收，不再重试: "
+                "[NitterTweets] 发送被目标平台拒收，不再重发相同内容: "
                 f"label={label}, target={target or '-'}, error={error}"
             )
             # 只表达「同样的字节别再发一遍」。retryable 保持 True，让既有的

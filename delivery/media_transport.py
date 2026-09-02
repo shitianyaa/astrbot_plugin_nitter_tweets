@@ -20,19 +20,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 try:
-    from ..config import (
-        resolve_media_transport_base64_max_mb,
-        resolve_media_transport_mode,
-        resolve_media_transport_url_fallback,
-    )
+    from ..config import resolve_media_transport_base64_max_mb
     from ..media_support.network import is_safe_http_url
     from ..shared import file_uri
 except ImportError:  # pragma: no cover - flat import fallback
-    from config import (
-        resolve_media_transport_base64_max_mb,
-        resolve_media_transport_mode,
-        resolve_media_transport_url_fallback,
-    )
+    from config import resolve_media_transport_base64_max_mb
     from media_support.network import is_safe_http_url
     from shared import file_uri
 
@@ -128,15 +120,15 @@ def onebot_segment(media, encoding: str, base64_value: str = "") -> dict | None:
 class TransportConfig:
     mode: str = "auto"
     base64_max_bytes: int = 8 * 1024 * 1024
-    url_fallback: bool = False
+    url_fallback: bool = True
 
     @classmethod
     def from_config(cls, config) -> TransportConfig:
         max_mb = resolve_media_transport_base64_max_mb(config)
         return cls(
-            mode=resolve_media_transport_mode(config),
+            mode="auto",
             base64_max_bytes=int(max_mb * 1024 * 1024),
-            url_fallback=resolve_media_transport_url_fallback(config),
+            url_fallback=True,
         )
 
 

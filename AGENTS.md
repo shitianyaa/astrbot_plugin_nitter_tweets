@@ -84,7 +84,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 纯文本过滤只影响后台：作者上传媒体才算；`card_img`、Article 封面、**引用推媒体**不算。
 - 整页被滤但仍有 cursor 须翻页；真·空 feed 才 empty。
 - 诊断：`python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080`（可加 `--skip-plain-text` / `--include-reposts`）。
-- HTML 只分类正常时间线、空页、登录/维护/挑战错误页和异常页面；不实现公共实例挑战解算。
+- HTML 只分类正常时间线、空页、登录/维护/错误页和异常页面；不再实现或检测公共实例挑战。
 
 ## 调度与 seen
 

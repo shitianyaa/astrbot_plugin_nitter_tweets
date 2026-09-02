@@ -1,3 +1,9 @@
+"""网络边界策略回归测试。
+
+覆盖网络层 URL 校验、重定向策略、cookie 文件名、parser 媒体规则与
+HttpSession 串行化。SSRF 防护已随自建实例化移除，不再在此测第三方挑战页。
+"""
+
 from __future__ import annotations
 
 import asyncio

@@ -18,7 +18,7 @@ def _service(media_quality: str) -> MediaService:
     service.media_quality = media_quality
     service.max_video_duration_seconds = 480
     # 候选都带时长，不会触发真实探测；兜底返回 None 表示探测不到。
-    service._probe_remote_media = lambda _url: None  # type: ignore[method-assign]
+    service._probe_remote_media = lambda _url, *, need_duration=True: None  # type: ignore[method-assign]
     return service
 
 

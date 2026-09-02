@@ -51,7 +51,7 @@ def _build_config(args: argparse.Namespace) -> dict:
         "media_timeout": args.timeout,
         "media_max_size_mb": args.max_size_mb,
         "max_video_duration_minutes": args.max_duration_minutes,
-        "media_quality": args.resolution,
+        "media_quality": args.media_quality,
     }
 
 
@@ -182,9 +182,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--images", action="store_true", help="Also download images.")
     parser.add_argument(
-        "--resolution",
-        default="highest",
-        help="Video resolution preference: highest, lowest, 1280p, 852p, 568p, etc.",
+        "--media-quality",
+        dest="media_quality",
+        choices=("high", "medium", "low"),
+        default="high",
+        help="Media quality tier applied to images and videos.",
     )
     parser.add_argument("--max-media", type=int, default=4)
     parser.add_argument(
@@ -195,10 +197,6 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--max-size-mb", type=float, default=100.0)
-    parser.add_argument(
-        "--xdown-url",
-        default="https://xdown.app/api/ajaxSearch",
-    )
     return parser.parse_args()
 
 
