@@ -169,16 +169,19 @@ function closeConfirm() {
    Theme
    -------------------------------------------------------------------------- */
 function initTheme() {
-  const saved = localStorage.getItem("nitter-dashboard-theme");
-  if (saved === "dark") document.body.classList.add("dark-theme");
-  else if (saved === "light") document.body.classList.add("light-theme");
+  const context = bridge?.getContext?.() || {};
+  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  applyTheme(typeof context.isDark === "boolean" ? context.isDark : prefersDark);
+  bridge?.onContext?.(nextContext => {
+    if (typeof nextContext?.isDark === "boolean") applyTheme(nextContext.isDark);
+  });
+}
+function applyTheme(isDark) {
+  document.body.classList.toggle("dark-theme", !!isDark);
+  document.body.classList.toggle("light-theme", !isDark);
 }
 function toggleTheme() {
-  const isDark = document.body.classList.contains("dark-theme") ||
-    (!document.body.classList.contains("light-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.body.classList.toggle("dark-theme", !isDark);
-  document.body.classList.toggle("light-theme", isDark);
-  localStorage.setItem("nitter-dashboard-theme", isDark ? "light" : "dark");
+  applyTheme(!document.body.classList.contains("dark-theme"));
 }
 
 /* --------------------------------------------------------------------------
@@ -959,15 +962,20 @@ function bindEvents() {
 }
 
 function boot() {
-  bridge = window.AstrBotPluginPage;
-  if (!bridge) {
-    document.body.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#71767b;font-family:system-ui,sans-serif;font-size:14px;">请通过 AstrBot 插件页面（WebUI → 插件 → 推文订阅 → 控制台）访问本面板。</div>';
-    return;
+  try {
+    bridge = window.AstrBotPluginPage;
+    if (!bridge) throw new Error("AstrBot 页面桥接不可用");
+    initEls();
+    initTheme();
+    bindEvents();
+    reloadAll({ preserveDrafts: false });
+  } catch (err) {
+    console.error("Nitter dashboard boot failed", err);
+    const message = document.createElement("div");
+    message.className = "boot-error";
+    message.textContent = `面板启动失败：${err.message || "未知错误"}`;
+    document.querySelector(".view-container")?.replaceChildren(message);
   }
-  initEls();
-  initTheme();
-  bindEvents();
-  reloadAll({ preserveDrafts: false });
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", boot);

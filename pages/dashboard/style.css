@@ -7,60 +7,59 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Moss teal gives the operations console a calmer, more distinctive signal. */
-  --blue: #087f78;
-  --blue-hover: #06645f;
-  --blue-soft: #e3f2f0;
-  --blue-border: #9bcfc8;
+  /* X/Twitter blue on a light information surface. */
+  --blue: #1d9bf0;
+  --blue-hover: #1a8cd8;
+  --blue-soft: rgba(29, 155, 240, 0.1);
+  --blue-border: rgba(29, 155, 240, 0.4);
 
   /* Light mode (Default) — Twitter Web palette */
-  --bg: #eef3f2;
-  --bg-secondary: #e5eceb;
+  --bg: #ffffff;
+  --bg-secondary: #f7f9f9;
   --surface: #ffffff;
-  --surface-hover: #f3f7f6;
-  --border: #dfe8e6;
-  --border-strong: #b8c9c5;
+  --surface-hover: #f7f9f9;
+  --border: #eff3f4;
+  --border-strong: #cfd9de;
 
-  --text: #172222;
-  --text-muted: #62716f;
-  --text-subtle: #8b9997;
+  --text: #0f1419;
+  --text-muted: #536471;
+  --text-subtle: #71767b;
 
-  --green: #087f5b;
-  --green-soft: #e5f4ed;
-  --yellow: #bc7a00;
-  --yellow-soft: #fff3d9;
-  --red: #c33c45;
-  --red-soft: #fbe8ea;
+  --green: #00ba7c;
+  --green-soft: rgba(0, 186, 124, 0.1);
+  --yellow: #ffd400;
+  --yellow-soft: rgba(255, 212, 0, 0.1);
+  --red: #f4212e;
+  --red-soft: rgba(244, 33, 46, 0.1);
 
   --radius-sm: 6px;
-  --radius: 10px;
+  --radius: 12px;
   --radius-pill: 9999px;
 
-  --shadow-sm: 0 1px 2px rgba(18, 42, 40, 0.05);
-  --shadow: 0 8px 24px rgba(18, 42, 40, 0.06);
-  --shadow-dialog: 0 16px 40px rgba(18, 42, 40, 0.18);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.12);
 
-  --transition: 0.16s ease;
+  --transition: 0.2s ease;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #101918;
-    --bg-secondary: #172523;
-    --surface: #1b2927;
-    --surface-hover: #243633;
-    --border: #304541;
-    --border-strong: #4b625c;
+    --bg: #15202b;
+    --bg-secondary: #192734;
+    --surface: #1c2938;
+    --surface-hover: #253341;
+    --border: #38444d;
+    --border-strong: #42536c;
 
-    --text: #e7f1ef;
-    --text-muted: #a2b5b0;
-    --text-subtle: #80948f;
+    --text: #e7e9ea;
+    --text-muted: #929aab;
+    --text-subtle: #717c8a;
 
-    --blue-soft: #173c39;
-    --blue-border: #3e8f86;
-    --green-soft: #17382e;
-    --yellow-soft: #423619;
-    --red-soft: #412326;
+    --blue-soft: rgba(29, 155, 240, 0.15);
+    --green-soft: rgba(0, 186, 124, 0.15);
+    --yellow-soft: rgba(255, 212, 0, 0.12);
+    --red-soft: rgba(244, 33, 46, 0.15);
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
@@ -154,8 +153,8 @@ a:hover { text-decoration: underline; }
 
 /* Sidebar */
 .rail {
-  background: #12201f;
-  border-right: 0;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
@@ -165,9 +164,9 @@ a:hover { text-decoration: underline; }
   height: 100vh;
   overflow-y: auto;
 }
-.rail .brand-name { color: #f2fbf8; }
-.rail .brand-sub, .rail .rail-section-title, .rail .health-row .label { color: #9ab3ad; }
-.rail .brand-logo { background: #dff5ef; color: #12201f; }
+.rail .brand-name { color: var(--text); }
+.rail .brand-sub, .rail .rail-section-title, .rail .health-row .label { color: var(--text-muted); }
+.rail .brand-logo { background: var(--text); color: var(--bg); }
 
 /* Brand */
 .brand {
@@ -207,7 +206,7 @@ a:hover { text-decoration: underline; }
 .tab {
   background: transparent;
   border: none;
-  color: #b8cfca;
+  color: var(--text);
   font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 500;
@@ -225,11 +224,11 @@ a:hover { text-decoration: underline; }
 .tab:hover { background: var(--surface-hover); }
 .tab.active {
   font-weight: 700;
-  color: #f5fffd;
-  background: #176e67;
+  color: var(--blue);
+  background: var(--blue-soft);
 }
-.tab:hover { color: #f5fffd; background: rgba(255, 255, 255, 0.08); }
-.tab.active svg { color: #a8eee3; }
+.tab:hover { color: var(--blue); background: var(--surface-hover); }
+.tab.active svg { color: var(--blue); }
 
 /* Health card */
 .rail-section-title {
@@ -240,8 +239,8 @@ a:hover { text-decoration: underline; }
   padding: 0 16px 4px;
 }
 .health-card {
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   display: flex;
@@ -273,7 +272,7 @@ a:hover { text-decoration: underline; }
 .pill-danger .dot { background: var(--red); }
 .pill-muted { background: var(--surface-hover); color: var(--text-muted); }
 .pill-muted .dot { background: var(--text-subtle); }
-.rail .pill-muted { background: rgba(255, 255, 255, 0.08); color: #b8cfca; }
+.rail .pill-muted { background: var(--surface-hover); color: var(--text-muted); }
 
 /* Main */
 .main { display: flex; flex-direction: column; min-width: 0; }
@@ -826,6 +825,14 @@ select { cursor: pointer; }
 .alert.success { border-color: #b6e0cf; }
 .alert.warn { border-color: #efd694; }
 .alert.error { border-color: #efb5b9; }
+.boot-error {
+  padding: 20px;
+  border: 1px solid var(--red-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--red);
+  font-size: 14px;
+}
 
 @media (max-width: 900px) {
   .shell { display: block; }

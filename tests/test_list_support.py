@@ -557,6 +557,7 @@ def test_webui_list_update_rejects_invalid_and_duplicate_ids():
 def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
     assert 'value: "list"' in source
     assert 'name: "createGroupType"' in source
@@ -576,6 +577,8 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
     assert 'rss_user: "用户 RSS"' in source
+    assert "localStorage" not in source
+    assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
 
 
 def test_status_and_export_render_list_group():
