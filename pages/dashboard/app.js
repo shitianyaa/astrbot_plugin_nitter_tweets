@@ -57,7 +57,6 @@ const ICONS = {
   check: '<path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   alert: '<path d="M12 2L1 21h22zM12 9v6m0 3v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
-  copy: '<rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 012-2h10" fill="none" stroke="currentColor" stroke-width="2"/>',
   sun: '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4 4l1.4 1.4M18.6 18.6L20 20M2 12h2M20 12h2M4 20l1.4-1.4M18.6 5.4L20 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   moon: '<path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="9" r="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 15l-5-5L5 21" fill="none" stroke="currentColor" stroke-width="2"/>',
@@ -136,10 +135,6 @@ function showToast(msg) {
   const t = h("div", { class: "toast", text: msg });
   els.toastContainer.appendChild(t);
   setTimeout(() => t.remove(), 2800);
-}
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); showToast("已复制"); }
-  catch { showToast("复制失败"); }
 }
 function parsePushedAt(raw) {
   const s = String(raw ?? "").trim();
@@ -776,7 +771,7 @@ function renderHistory() {
         ]),
         // Tweet text
         h("div", { class: "tweet-text" }, [
-          r.original_link ? h("a", { href: r.original_link, target: "_blank", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" } }) : null,
+          r.original_link ? h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" } }) : null,
           r.text_preview || "(无文字内容)",
         ]),
         // Footer: media badge + actions
@@ -788,12 +783,6 @@ function renderHistory() {
             iconEl("image", 14), "含媒体",
           ]) : null,
           h("div", { class: "tweet-actions" }, [
-            r.original_link ? h("button", {
-              class: "btn-icon",
-              title: "复制链接",
-              html: svgIcon("copy", 16),
-              onClick: () => copyText(r.original_link),
-            }) : null,
             h("button", {
               class: "btn btn-ghost btn-sm",
               html: iconEl("refresh", 14).outerHTML,
