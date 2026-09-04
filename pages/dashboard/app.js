@@ -899,6 +899,7 @@ function renderMirrorBase() {
     return;
   }
   els.instanceList.replaceChildren(...inst.map(u => h("button", {
+    type: "button",
     class: "chip chip-action mono", text: u,
     onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; },
   })));
