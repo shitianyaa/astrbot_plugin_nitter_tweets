@@ -639,6 +639,10 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         having, having_params = self._push_history_having(status)
+        # 状态筛选才需要 latest-per-target 去重;无筛选时窗口函数是纯浪费
+        # (ponytail: 筛选路径全量扫过滤子集,几十万行后再考虑覆盖索引)
+        prefix = f"{self._push_history_latest_sql(where)}," if having else "WITH"
+        source = "latest_deliveries WHERE rn = 1" if having else f"push_history {where}"
         params = (
             params
             + having_params
@@ -649,7 +653,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         )
         rows = self.conn.execute(
             f"""
-            {self._push_history_latest_sql(where)},
+            {prefix}
             display_page AS (
                 SELECT
                     group_id,
@@ -659,8 +663,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                     original_link,
                     MAX(pushed_at) AS latest_pushed_at,
                     MAX(id) AS latest_id
-                FROM latest_deliveries
-                WHERE rn = 1
+                FROM {source}
                 GROUP BY group_id, username, status_id, source, original_link
                 {having}
                 ORDER BY latest_pushed_at DESC, latest_id DESC
@@ -691,13 +694,14 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
         having, having_params = self._push_history_having(status)
+        prefix = f"{self._push_history_latest_sql(where)}," if having else "WITH"
+        source = "latest_deliveries WHERE rn = 1" if having else f"push_history {where}"
         row = self.conn.execute(
             f"""
-            {self._push_history_latest_sql(where)},
+            {prefix}
             grouped_history AS (
                 SELECT 1
-                FROM latest_deliveries
-                WHERE rn = 1
+                FROM {source}
                 GROUP BY group_id, username, status_id, source, original_link
                 {having}
             )
@@ -761,7 +765,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """每个 (分组键, 推送目标) 只保留最新一条送达结果的 CTE。
 
         与 _group_history_records 的徽章一致：同一目标重推后以最新结果为准；
-        分组级 status 筛选必须建立在这份去重结果上，而不是全部历史行。
+        仅在带 status 筛选时拼入查询（无筛选时直接 GROUP BY，省一遍窗口排序）。
         """
         return f"""
             WITH latest_deliveries AS (
