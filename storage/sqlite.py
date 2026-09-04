@@ -506,6 +506,14 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 self._add_seen_ids_unlocked(group_id, seen_username, seen_ids)
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
+    def count_seen_tweets_by_group(self) -> dict[str, int]:
+        """按分组统计 seen 记录条数(只读,不含 scan_watermarks)."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            "SELECT group_id, COUNT(*) AS count FROM seen_tweets GROUP BY group_id"
+        ).fetchall()
+        return {str(row["group_id"]): int(row["count"] or 0) for row in rows}
+
     def clear_seen_tweets(self, group_id: str | None = None) -> int:
         """清理 seen 记录；group_id 为空时清理全部分组."""
         assert self.conn is not None

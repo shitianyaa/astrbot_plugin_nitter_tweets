@@ -161,6 +161,11 @@ function formatDateTime(raw) {
   const p = x => String(x).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return "0 KB";
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
 function setBusy(isBusy) {
   state.loading = isBusy;
   [els.refreshBtn, els.createGroupBtn, els.historyRefreshBtn, els.historyOrphanBtn,
@@ -675,6 +680,15 @@ function renderOverview() {
   ]);
 
   // Danger zone
+  const mt = (state.overview && state.overview.maintenance) || {};
+  const cacheInfo = mt.cache;
+  const cacheText = cacheInfo
+    ? (cacheInfo.files
+        ? `当前缓存：${cacheInfo.files} 个文件 · ${formatBytes(cacheInfo.bytes)}`
+        : "当前缓存：空")
+    : "当前缓存：未知";
+  const seenInfo = mt.seen || null;
+  const seenByGroup = (seenInfo && seenInfo.by_group) || {};
   const dz = h("div", { class: "panel danger-zone" }, [
     h("div", { class: "panel-head" }, [
       h("h3", { text: "维护与缓存清理" }),
@@ -684,6 +698,7 @@ function renderOverview() {
       h("div", { class: "danger-item" }, [
         h("h4", { text: "清理媒体缓存" }),
         h("p", { text: "删除临时下载的图片与视频附件" }),
+        h("p", { text: cacheText }),
         h("div", { class: "actions" }, [
           h("button", { class: "btn btn-danger btn-sm", text: "清理", onClick: confirmClearCache }),
         ]),
@@ -691,10 +706,14 @@ function renderOverview() {
       h("div", { class: "danger-item" }, [
         h("h4", { text: "重置推送记录 (Seen)" }),
         h("p", { text: "可能导致历史推文再次推送" }),
+        h("p", { text: seenInfo ? `当前共 ${seenInfo.total} 条记录` : "当前记录数：未知" }),
         h("div", { class: "actions" }, [
           h("select", { id: "seenSelect", style: { width: "auto" } }, [
             h("option", { value: "", text: "全部分组" }),
-            ...state.groups.map(g => h("option", { value: g.group_id, text: g.name })),
+            ...state.groups.map(g => h("option", {
+              value: g.group_id,
+              text: `${g.name}（${seenByGroup[g.group_id] ?? 0} 条）`,
+            })),
           ]),
           h("button", { class: "btn btn-danger btn-sm", text: "重置", onClick: confirmClearSeen }),
         ]),
