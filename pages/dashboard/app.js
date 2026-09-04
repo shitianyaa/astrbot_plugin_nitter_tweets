@@ -42,15 +42,15 @@ function initEls() {
    -------------------------------------------------------------------------- */
 const ICONS = {
   x: '<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>',
-  home: '<path d="M12 1.696L.622 8.807l.762 1.233L3 8.75V20h6v-6h6v6h6V8.75l1.616 1.29.762-1.233z"/>',
-  list: '<path d="M3 4.5h18v2H3zm0 6.5h18v2H3zm0 6.5h18v2H3zM7 9.5H5V8h2zm0 6.5H5v-1.5h2z"/>',
-  clock: '<path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17zm0 15a6.5 6.5 0 110-13 6.5 6.5 0 010 13zm.5-10H9v5l4 2.5.8-1.3L10.5 11z" transform="translate(2 2)"/>',
+  home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 21v-6h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/>',
+  clock: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   probe: '<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>',
   user: '<circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   hash: '<path d="M6 3v6H3v2h3v6h2v-6h4v6h2v-6h3v-2h-3V3h-2v6H8V3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>',
   refresh: '<path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
-  play: '<path d="M8 5v14l11-7z"/>',
+  play: '<path d="m9 6 9 6-9 6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   plus: '<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   check: '<path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -68,7 +68,7 @@ const ICONS = {
 
 function svgIcon(name, size = 20) {
   const path = ICONS[name] || "";
-  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor" xmlns="http://www.w3.org/2000/svg">${path}</svg>`;
+  return `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">${path}</svg>`;
 }
 
 function iconEl(name, size = 20) {
@@ -201,29 +201,38 @@ async function withAction(action, successText, { reload = true, rerender = null 
 
 async function reloadAll(options = {}) {
   setBusy(true); hideAlert();
+  renderAll();
   try {
     await bridge.ready();
-    const [ov, gr, bl] = await Promise.all([
+    const [ov, gr, bl] = await Promise.allSettled([
       apiGet("web/overview"), apiGet("web/groups"), apiGet("web/target-blacklists"),
     ]);
-    state.overview = ov;
-    state.groups = gr.groups || [];
-    state.targetBlacklists = bl.target_blacklists || [];
+    const errors = [];
+    if (ov.status === "fulfilled") state.overview = ov.value;
+    else errors.push(`概览加载失败：${ov.reason?.message || "请求失败"}`);
+    if (gr.status === "fulfilled") state.groups = gr.value.groups || [];
+    else errors.push(`分组加载失败：${gr.reason?.message || "请求失败"}`);
+    if (bl.status === "fulfilled") state.targetBlacklists = bl.value.target_blacklists || [];
+    else errors.push(`黑名单加载失败：${bl.reason?.message || "请求失败"}`);
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
     if (options.preserveDrafts === false) state.groupDrafts = {};
     syncGroupDrafts();
-    syncGroupDrafts();
-    state.history = await apiGet("web/history", {
-      group_id: state.historyGroupId || undefined,
-      username: state.historyUsername || undefined,
-      limit: state.historyLimit, offset: state.historyOffset,
-    });
+    try {
+      state.history = await apiGet("web/history", {
+        group_id: state.historyGroupId || undefined,
+        username: state.historyUsername || undefined,
+        limit: state.historyLimit, offset: state.historyOffset,
+      });
+    } catch (err) {
+      errors.push(`历史加载失败：${err.message || "请求失败"}`);
+      if (!state.history) state.history = { records: [], total_count: 0, total_pages: 1, page: 1 };
+    }
     state.lastUpdated = new Date().toLocaleTimeString();
     if (els.lastUpdated) els.lastUpdated.textContent = state.lastUpdated;
     renderAll();
-    setBusy(false); renderAll();
-    return true;
+    if (errors.length) showAlert(`部分数据未加载：${errors.join("；")}`, "warn");
+    return errors.length === 0;
   } catch (err) { showAlert(err.message, "error"); return false; }
   finally { setBusy(false); }
 }
@@ -655,7 +664,7 @@ function renderOverview() {
     ]),
   ]);
 
-  root.replaceChildren(metrics, attPanel, configPanel, dz);
+  root.replaceChildren(metrics, ...(attPanel ? [attPanel] : []), configPanel, dz);
 }
 
 function metric(icon, label, value) {
