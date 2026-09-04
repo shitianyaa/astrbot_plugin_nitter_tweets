@@ -1,11 +1,7 @@
 /* Single-file bundle. Do not edit core.js/groups.js/views.js — this is the only script loaded. */
 'use strict';
 
-const bridge = window.AstrBotPluginPage;
-if (!bridge) {
-  document.body.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#71767b;font-family:sans-serif;font-size:14px;">请通过 AstrBot 插件页面（WebUI → 插件 → 推文订阅 → 控制台）访问本面板。</div>';
-  throw new Error("AstrBotPluginPage bridge missing");
-}
+let bridge = null;
 
 // core.js — Infrastructure: State, API, DOM, Icons, Feedback
 
@@ -954,6 +950,11 @@ function bindEvents() {
 }
 
 function boot() {
+  bridge = window.AstrBotPluginPage;
+  if (!bridge) {
+    document.body.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#71767b;font-family:system-ui,sans-serif;font-size:14px;">请通过 AstrBot 插件页面（WebUI → 插件 → 推文订阅 → 控制台）访问本面板。</div>';
+    return;
+  }
   initEls();
   initTheme();
   bindEvents();
