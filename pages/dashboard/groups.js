@@ -1,23 +1,14 @@
-// groups.js - Group List, Group Editor, Draft System & Subscriptions
-import { state, els, h, withAction, openConfirm, apiPost } from "./core.js";
+// groups.js — Group List, Editor, Draft System & Subscriptions
+import { state, els, h, svgIcon, iconEl, withAction, openConfirm, apiPost } from "./core.js";
 
 export const PRIVATE_QQ_GROUP_WARNING =
   "风险提示：使用私人 QQ 号作为 Bot 时，不建议创建或启用标签分组和 List 分组。";
 
 const EDITABLE_FIELDS = [
-  "name",
-  "enabled",
-  "interval_check_enabled",
-  "daily_check_times",
-  "filter_reposts_enabled",
-  "filter_plain_text_enabled",
-  "media_only_enabled",
-  "omit_status_url",
-  "hide_original_when_translated",
-  "push_targets",
-  "watch_users",
-  "watch_queries",
-  "watch_lists"
+  "name","enabled","interval_check_enabled","daily_check_times",
+  "filter_reposts_enabled","filter_plain_text_enabled","media_only_enabled",
+  "omit_status_url","hide_original_when_translated",
+  "push_targets","watch_users","watch_queries","watch_lists",
 ];
 
 export function snapshotGroup(group) {
@@ -32,22 +23,17 @@ export function snapshotGroup(group) {
       snap[f] = Array.isArray(group[f]) ? [...group[f]] : [];
     } else if (f === "watch_queries") {
       snap[f] = Array.isArray(group[f]) ? group[f].map(q => typeof q === "string" ? { query: q, type: "tag" } : { query: q.query, type: q.type || "tag" }) : [];
-    } else if (f === "enabled" || f === "interval_check_enabled" || f === "filter_plain_text_enabled" || f === "media_only_enabled" || f === "omit_status_url" || f === "hide_original_when_translated") {
+    } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","media_only_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
       snap[f] = !!group[f];
-    } else {
-      snap[f] = group[f] || "";
-    }
+    } else { snap[f] = group[f] || ""; }
   }
-  snap.group_id = group.group_id;
-  snap.group_type = group.group_type;
+  snap.group_id = group.group_id; snap.group_type = group.group_type;
   return snap;
 }
 
 export function syncGroupDrafts() {
   for (const g of state.groups) {
-    if (!state.groupDrafts[g.group_id]) {
-      state.groupDrafts[g.group_id] = snapshotGroup(g);
-    }
+    if (!state.groupDrafts[g.group_id]) state.groupDrafts[g.group_id] = snapshotGroup(g);
   }
 }
 
@@ -59,11 +45,8 @@ export function isGroupDirty(groupId) {
 }
 
 export function updateDraft(groupId, field, val) {
-  const d = state.groupDrafts[groupId];
-  if (!d) return;
-  d[field] = val;
-  renderGroupList();
-  updateEditorHeaderControls(groupId);
+  const d = state.groupDrafts[groupId]; if (!d) return;
+  d[field] = val; renderGroupList(); updateEditorControls(groupId);
 }
 
 /* --------------------------------------------------------------------------
@@ -72,399 +55,264 @@ export function updateDraft(groupId, field, val) {
 export function renderGroupList() {
   if (!els.groupList) return;
   if (!state.groups.length) {
-    els.groupList.replaceChildren(h("div", { class: "panel", text: "暂无分组，请新建。" }));
+    els.groupList.replaceChildren(h("div", { class: "panel", style: { textAlign: "center", color: "var(--text-muted)" }, text: "暂无分组" }));
     return;
   }
-
-  const items = state.groups.map(g => {
+  els.groupList.replaceChildren(...state.groups.map(g => {
     const active = g.group_id === state.selectedGroupId;
     const dirty = isGroupDirty(g.group_id);
-    const typeTag = g.group_type === "tag" ? "搜索" : g.group_type === "list" ? "List" : "博主";
-
+    const icon = g.group_type === "tag" ? "hash" : g.group_type === "list" ? "rss" : "user";
+    const label = g.group_type === "tag" ? "搜索" : g.group_type === "list" ? "List" : "博主";
     return h("div", {
       class: `group-item ${active ? "active" : ""}`,
-      onClick: () => selectGroup(g.group_id)
+      onClick: () => selectGroup(g.group_id),
     }, [
-      h("div", { class: "group-item-head" }, [
-        h("span", { text: (state.groupDrafts[g.group_id] && state.groupDrafts[g.group_id].name) || g.name }),
-        dirty ? h("span", { class: "badge warn", text: "● 未保存" }) : null
+      h("div", { class: "group-item-row" }, [
+        h("span", { style: { display: "flex", alignItems: "center", gap: "6px" }, html: svgIcon(icon, 16), text: (state.groupDrafts[g.group_id]?.name) || g.name }),
+        dirty ? h("span", { class: "badge badge-warn", text: "未保存" }) : null,
       ]),
       h("div", { class: "group-item-meta" }, [
-        h("span", { class: "badge", text: typeTag }),
-        h("span", { text: g.group_id, class: "mono" }),
-        !g.enabled ? h("span", { class: "badge", text: "已停用" }) : null
-      ])
+        h("span", { class: "badge badge-blue", text: label }),
+        h("span", { class: "mono", text: g.group_id }),
+        !g.enabled ? h("span", { class: "badge", text: "停用" }) : null,
+      ]),
     ]);
-  });
-
-  els.groupList.replaceChildren(...items);
+  }));
 }
 
-function selectGroup(groupId) {
+function selectGroup(gid) {
   if (state.selectedGroupId && isGroupDirty(state.selectedGroupId)) {
-    if (!window.confirm("当前分组有未保存的更改，切换将丢弃未保存内容。确认放弃？")) {
-      return;
-    }
+    if (!confirm("有未保存更改，切换将丢弃。确认？")) return;
     const prev = state.groups.find(g => g.group_id === state.selectedGroupId);
     if (prev) state.groupDrafts[prev.group_id] = snapshotGroup(prev);
   }
-  state.selectedGroupId = groupId;
-  renderGroupList();
-  renderGroupEditor();
+  state.selectedGroupId = gid; renderGroupList(); renderGroupEditor();
 }
 
 /* --------------------------------------------------------------------------
    Group Editor
    -------------------------------------------------------------------------- */
-function updateEditorHeaderControls(groupId) {
-  const g = state.groups.find(x => x.group_id === groupId);
-  if (!g) return;
-  const dirty = isGroupDirty(groupId);
-
-  const saveBtn = document.getElementById("saveGroupBtn");
-  if (saveBtn) saveBtn.disabled = !dirty || state.actionBusy;
-
-  const checkBtn = document.getElementById("checkGroupBtn");
-  if (checkBtn) {
-    checkBtn.disabled = !g.enabled || dirty || state.actionBusy;
-    checkBtn.title = !g.enabled ? "分组停用时不能检查" : dirty ? "请先保存更改" : "立即触发一次检查";
-  }
+function updateEditorControls(gid) {
+  const g = state.groups.find(x => x.group_id === gid); if (!g) return;
+  const dirty = isGroupDirty(gid);
+  const save = document.getElementById("saveGroupBtn");
+  if (save) save.disabled = !dirty;
+  const chk = document.getElementById("checkGroupBtn");
+  if (chk) { chk.disabled = !g.enabled || dirty; chk.title = !g.enabled ? "分组停用" : dirty ? "请先保存" : ""; }
 }
 
 export function renderGroupEditor() {
   if (!els.groupEditor) return;
   const g = state.groups.find(x => x.group_id === state.selectedGroupId);
-  if (!g) {
-    els.groupEditor.replaceChildren(h("div", { class: "panel", text: "请选择或新建一个分组以进行配置。" }));
-    return;
-  }
-
+  if (!g) { els.groupEditor.replaceChildren(h("div", { class: "panel", style: { textAlign: "center", color: "var(--text-muted)" }, text: "请选择一个分组" })); return; }
   const d = state.groupDrafts[g.group_id] || snapshotGroup(g);
   const dirty = isGroupDirty(g.group_id);
 
+  // Head
   const head = h("div", { class: "panel-head" }, [
     h("div", { style: { display: "flex", alignItems: "center", gap: "10px" } }, [
       h("h2", { text: d.name || g.name }),
-      h("span", { class: `badge ${d.enabled ? "ok" : "warn"}`, text: d.enabled ? "启用中" : "已停用" }),
-      h("span", { class: "mono", style: { color: "var(--text-muted)" }, text: `ID: ${g.group_id}` })
+      h("span", { class: `badge ${d.enabled ? "badge-ok" : "badge-warn"}`, text: d.enabled ? "启用" : "停用" }),
+      h("span", { class: "mono", style: { color: "var(--text-muted)" }, text: g.group_id }),
     ]),
     h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("button", {
-        id: "checkGroupBtn",
-        class: "button small",
-        text: "立即检查",
-        disabled: !g.enabled || dirty,
-        onClick: () => runCheck(g.group_id)
-      }),
-      h("button", {
-        id: "saveGroupBtn",
-        class: "button small primary",
-        text: "保存更改",
-        disabled: !dirty,
-        onClick: () => saveGroup(g.group_id)
-      }),
-      g.group_id !== "default" ? h("button", {
-        class: "button small danger ghost",
-        text: "删除分组",
-        onClick: () => confirmDeleteGroup(g.group_id)
-      }) : null
-    ])
+      h("button", { id: "checkGroupBtn", class: "btn btn-sm", html: svgIcon("play", 14), text: "检查", disabled: !g.enabled || dirty, onClick: () => runCheck(g.group_id) }),
+      h("button", { id: "saveGroupBtn", class: "btn btn-sm btn-primary", text: "保存", disabled: !dirty, onClick: () => saveGroup(g.group_id) }),
+      g.group_id !== "default" ? h("button", { class: "btn btn-sm btn-danger", html: svgIcon("trash", 14), text: "删除", onClick: () => confirmDeleteGroup(g.group_id) }) : null,
+    ]),
   ]);
 
-  const baseConfig = h("div", { class: "editor-grid" }, [
+  // Base config
+  const base = h("div", { class: "editor-grid" }, [
     h("label", { class: "field" }, [
       h("span", { text: "分组名称" }),
-      h("input", {
-        type: "text",
-        value: d.name,
-        onInput: (e) => updateDraft(g.group_id, "name", e.target.value.trim())
-      })
+      h("input", { type: "text", value: d.name, onInput: e => updateDraft(g.group_id, "name", e.target.value.trim()) }),
     ]),
-    h("div", { class: "field", style: { justifyContent: "flex-end" } }, [
-      h("label", { class: "toggle-label" }, [
-        h("div", { class: "toggle-switch" }, [
-          h("input", {
-            type: "checkbox",
-            checked: d.enabled,
-            onChange: (e) => updateDraft(g.group_id, "enabled", e.target.checked)
-          }),
-          h("span", { class: "toggle-slider" })
-        ]),
-        h("span", { text: "启用此分组检查" })
-      ])
-    ])
+    h("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "flex-end" } }, [
+      h("label", { class: "toggle" }, [
+        h("input", { type: "checkbox", checked: d.enabled, onChange: e => updateDraft(g.group_id, "enabled", e.target.checked) }),
+        h("span", { class: "toggle-track" }),
+        h("span", { text: "启用此分组" }),
+      ]),
+    ]),
   ]);
 
-  const policyConfig = h("div", { class: "editor-grid" }, [
-    h("label", { class: "toggle-label" }, [
-      h("div", { class: "toggle-switch" }, [
-        h("input", {
-          type: "checkbox",
-          checked: d.filter_reposts_enabled,
-          onChange: (e) => updateDraft(g.group_id, "filter_reposts_enabled", e.target.checked)
-        }),
-        h("span", { class: "toggle-slider" })
-      ]),
-      h("span", { text: "过滤转发内容（需同时开启全局转发过滤总开关）" })
+  // Policy toggles
+  const policy = h("div", { class: "editor-grid" }, [
+    toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(g.group_id, "filter_reposts_enabled", v)),
+    toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(g.group_id, "filter_plain_text_enabled", v)),
+    toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(g.group_id, "interval_check_enabled", v)),
+    h("label", { class: "field editor-grid-full" }, [
+      h("span", { text: "每日定时触发时间（逗号或换行分隔，如 08:00, 20:00）" }),
+      h("input", { type: "text", value: (d.daily_check_times || []).join(", "), onInput: e => updateDraft(g.group_id, "daily_check_times", e.target.value.split(/[,，\s]+/).filter(Boolean)) }),
     ]),
-    h("label", { class: "toggle-label" }, [
-      h("div", { class: "toggle-switch" }, [
-        h("input", {
-          type: "checkbox",
-          checked: d.filter_plain_text_enabled,
-          onChange: (e) => updateDraft(g.group_id, "filter_plain_text_enabled", e.target.checked)
-        }),
-        h("span", { class: "toggle-slider" })
-      ]),
-      h("span", { text: "过滤纯文本（仅有媒体推文才推送）" })
-    ]),
-    h("label", { class: "toggle-label" }, [
-      h("div", { class: "toggle-switch" }, [
-        h("input", {
-          type: "checkbox",
-          checked: d.interval_check_enabled,
-          onChange: (e) => updateDraft(g.group_id, "interval_check_enabled", e.target.checked)
-        }),
-        h("span", { class: "toggle-slider" })
-      ]),
-      h("span", { text: "开启定时循环间隔检查" })
-    ]),
-    h("label", { class: "field" }, [
-      h("span", { text: "每日定时触发时间 (以逗号或换行隔开，如 08:00, 20:00)" }),
-      h("input", {
-        type: "text",
-        value: Array.isArray(d.daily_check_times) ? d.daily_check_times.join(", ") : "",
-        onInput: (e) => updateDraft(g.group_id, "daily_check_times", e.target.value.split(/[,，\s]+/).filter(Boolean))
-      })
-    ])
   ]);
 
-  const warningCard = (g.group_type === "tag" || g.group_type === "list")
+  // Private QQ warning for tag/list groups
+  const warn = (g.group_type === "tag" || g.group_type === "list")
     ? h("div", { class: "alert warn", text: PRIVATE_QQ_GROUP_WARNING })
     : null;
 
-  const entitiesPanel = renderEntitiesSection(g, d);
-  const targetsPanel = renderTargetsSection(g, d);
+  // Subscription entities section
+  const entities = renderEntities(g, d);
+  // Push targets section
+  const targets = renderTargets(g, d);
 
   els.groupEditor.replaceChildren(h("div", { class: "panel" }, [
-    head,
-    warningCard,
-    baseConfig,
-    policyConfig,
-    entitiesPanel,
-    targetsPanel
+    head, warn, base, policy, entities, targets,
   ]));
 }
 
-export function addWatchList(groupId) {
-  const inp = document.getElementById("newWatchListInput");
-  const val = inp ? inp.value.trim() : "";
-  if (!val) return;
-  if (!/^\d{1,20}$/.test(val)) {
-    alert("List ID 必须是 1-20 位正整数");
-    return;
-  }
-  const d = state.groupDrafts[groupId];
-  if (!d) return;
-  const list = d.watch_lists || [];
-  if (list.includes(val)) {
-    alert("List ID 已存在");
-    return;
-  }
-  updateDraft(groupId, "watch_lists", [...list, val]);
-  renderGroupEditor();
+function toggleRow(checked, label, onChange) {
+  return h("label", { class: "toggle" }, [
+    h("input", { type: "checkbox", checked, onChange: e => onChange(e.target.checked) }),
+    h("span", { class: "toggle-track" }),
+    h("span", { text: label }),
+  ]);
 }
 
-function renderEntitiesSection(group, draft) {
+function renderEntities(group, draft) {
   const isTag = group.group_type === "tag";
   const isList = group.group_type === "list";
-  const typeLabel = isTag ? "搜索查询词 (Query)" : isList ? "Twitter List ID" : "关注推特博主 (Username)";
+  const icon = isTag ? "hash" : isList ? "rss" : "user";
+  const label = isTag ? "搜索查询词" : isList ? "Twitter List ID" : "博主用户名";
   const list = isTag ? draft.watch_queries : isList ? draft.watch_lists : draft.watch_users;
 
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, [
-    h("div", { style: { fontWeight: "600", fontSize: "12px", color: "var(--text-muted)" }, text: `订阅源列表 - ${typeLabel}` }),
+    h("div", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [
+      iconEl(icon, 16), `订阅源 — ${label}`,
+    ]),
     h("div", { class: "chip-list" },
       (list || []).map((item, idx) => {
         const val = typeof item === "object" ? item.query : item;
         return h("span", { class: "chip mono" }, [
-          val,
-          h("button", {
-            class: "button ghost small",
-            style: { padding: "0 2px", color: "var(--danger)" },
-            text: "×",
-            onClick: () => {
-              const next = [...list];
-              next.splice(idx, 1);
-              updateDraft(group.group_id, isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users", next);
-              renderGroupEditor();
-            }
-          })
+          iconEl(icon, 12), val,
+          h("button", { class: "btn-icon", style: { width: "20px", height: "20px" }, html: svgIcon("close", 12), onClick: () => {
+            const next = [...list]; next.splice(idx, 1);
+            updateDraft(group.group_id, isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users", next);
+            renderGroupEditor();
+          }}),
         ]);
       })
     ),
     h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("input", {
-        id: isList ? "newWatchListInput" : "newEntityInput",
-        type: "text",
-        placeholder: isTag ? "#tag 或关键词" : isList ? "纯数字 List ID" : "推特用户名 (无需@)",
-        style: { width: "240px" }
-      }),
-      h("button", {
-        class: "button small",
-        text: "添加",
-        onClick: () => {
-          if (isList) {
-            addWatchList(group.group_id);
-          } else {
-            const inp = document.getElementById("newEntityInput");
-            const val = inp ? inp.value.trim() : "";
-            if (!val) return;
-            const next = [...(list || [])];
-            if (isTag) next.push({ query: val, type: "tag" });
-            else next.push(val);
-            updateDraft(group.group_id, isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users", next);
-            renderGroupEditor();
-          }
+      h("input", { id: isList ? "newWatchListInput" : "newEntityInput", type: "text", placeholder: isTag ? "#tag 或关键词" : isList ? "纯数字 List ID" : "推特用户名", style: { width: "240px" } }),
+      h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
+        if (isList) { addWatchList(group.group_id); }
+        else {
+          const inp = document.getElementById("newEntityInput");
+          const v = inp?.value.trim(); if (!v) return;
+          const next = [...(list || [])];
+          if (isTag) next.push({ query: v, type: "tag" }); else next.push(v);
+          updateDraft(group.group_id, isTag ? "watch_queries" : "watch_lists", next);
+          renderGroupEditor();
         }
-      })
-    ])
+      }}),
+    ]),
   ]);
 }
 
-function renderTargetsSection(group, draft) {
+function renderTargets(group, draft) {
   const targets = draft.push_targets || [];
-  const probeRes = state.targetProbeResults[group.group_id];
+  const probe = state.targetProbeResults[group.group_id];
 
-  return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", borderTop: "1px solid var(--border-muted)", paddingTop: "12px" } }, [
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "12px" } }, [
     h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, [
-      h("span", { style: { fontWeight: "600", fontSize: "12px", color: "var(--text-muted)" }, text: "推送目标会话 (UMO)" }),
-      h("button", {
-        class: "button small ghost",
-        text: "测试目标连通性",
-        disabled: !targets.length,
-        onClick: () => probeTargets(group.group_id)
-      })
+      h("span", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [iconEl("send", 16), "推送目标 (UMO)"]),
+      h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length, onClick: () => probeTargets(group.group_id) }),
     ]),
     h("div", { class: "chip-list" },
       targets.map((t, idx) => {
-        const pInfo = probeRes && probeRes.targets && probeRes.targets.find(x => x.umo === t);
+        const info = probe?.targets?.find(x => x.umo === t);
         return h("span", { class: "chip mono" }, [
           t,
-          pInfo ? h("span", { class: `badge ${pInfo.valid ? "ok" : "danger"}` }, [
-            pInfo.platform_kind || (pInfo.valid ? "有效" : "失败")
-          ]) : null,
-          h("button", {
-            class: "button ghost small",
-            style: { padding: "0 2px", color: "var(--danger)" },
-            text: "×",
-            onClick: () => {
-              const next = [...targets];
-              next.splice(idx, 1);
-              updateDraft(group.group_id, "push_targets", next);
-              renderGroupEditor();
-            }
-          })
+          info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
+          h("button", { class: "btn-icon", style: { width: "20px", height: "20px" }, html: svgIcon("close", 12), onClick: () => {
+            const next = [...targets]; next.splice(idx, 1);
+            updateDraft(group.group_id, "push_targets", next); renderGroupEditor();
+          }}),
         ]);
       })
     ),
     h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("input", {
-        id: "newTargetInput",
-        type: "text",
-        placeholder: "如 aiocqhttp:GroupMessage:123456",
-        style: { width: "320px" }
-      }),
-      h("button", {
-        class: "button small",
-        text: "添加目标",
-        onClick: () => {
-          const inp = document.getElementById("newTargetInput");
-          const val = inp ? inp.value.trim() : "";
-          if (!val) return;
-          const next = [...targets, val];
-          updateDraft(group.group_id, "push_targets", next);
-          renderGroupEditor();
-        }
-      })
-    ])
+      h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456", style: { width: "320px" } }),
+      h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
+        const inp = document.getElementById("newTargetInput");
+        const v = inp?.value.trim(); if (!v) return;
+        updateDraft(group.group_id, "push_targets", [...targets, v]); renderGroupEditor();
+      }}),
+    ]),
   ]);
 }
 
+export function addWatchList(groupId) {
+  const inp = document.getElementById("newWatchListInput");
+  const val = inp?.value.trim(); if (!val) return;
+  if (!/^\d{1,20}$/.test(val)) { alert("List ID 必须是 1-20 位正整数"); return; }
+  const d = state.groupDrafts[groupId]; if (!d) return;
+  if ((d.watch_lists || []).includes(val)) { alert("List ID 已存在"); return; }
+  updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]); renderGroupEditor();
+}
+
 /* --------------------------------------------------------------------------
-   Actions & Dialogs
+   Actions
    -------------------------------------------------------------------------- */
 export function createGroup() {
-  // Modal with radio options
   const nameInput = h("input", { type: "text", value: "新订阅分组", style: { width: "100%", marginBottom: "10px" } });
-  
   const options = [
     { value: "blogger", label: "博主分组" },
     { value: "tag", label: "搜索订阅分组" },
     { value: "list", label: "List 分组" },
   ];
-
-  const radioContainer = h("div", { class: "group-type-options", style: { display: "flex", flexDirection: "column", gap: "6px" } },
-    options.map(opt => h("label", { style: { display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", cursor: "pointer" } }, [
+  const radioBox = h("div", { class: "group-type-options", style: { display: "flex", flexDirection: "column", gap: "6px" } },
+    options.map(opt => h("label", { style: { display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", cursor: "pointer" } }, [
       h("input", { type: "radio", name: "createGroupType", value: opt.value, checked: opt.value === "blogger" }),
-      h("span", { text: opt.label })
+      h("span", { text: opt.label }),
     ]))
   );
-
-  const warnMsg = h("div", { class: "alert warn", style: { marginTop: "10px" }, text: PRIVATE_QQ_GROUP_WARNING });
-
-  const desc = h("div", {}, [
-    h("div", { style: { marginBottom: "4px", fontSize: "12px" }, text: "分组名称：" }),
-    nameInput,
-    h("div", { style: { marginBottom: "4px", fontSize: "12px" }, text: "选择分组类型：" }),
-    radioContainer,
-    warnMsg
-  ]);
+  const warn = h("div", { class: "alert warn", style: { marginTop: "10px" }, text: PRIVATE_QQ_GROUP_WARNING });
 
   openConfirm({
     title: "新建订阅分组",
-    desc,
+    desc: h("div", {}, [h("div", { text: "分组名称：", style: { marginBottom: "4px", fontSize: "13px" } }), nameInput, h("div", { text: "选择类型：", style: { marginBottom: "4px", fontSize: "13px" } }), radioBox, warn]),
     confirmText: "创建",
     action: () => withAction(async () => {
-      const selectedRadio = radioContainer.querySelector('input[name="createGroupType"]:checked');
-      const gType = selectedRadio ? selectedRadio.value : "blogger";
+      const sel = radioBox.querySelector('input[name="createGroupType"]:checked');
+      const gType = sel?.value || "blogger";
       const name = nameInput.value.trim() || "新订阅分组";
       const res = await apiPost("web/groups/create", { name, group_type: gType });
-      if (res && res.group) {
-        state.selectedGroupId = res.group.group_id;
-      }
-    }, "分组创建成功")
+      if (res?.group) state.selectedGroupId = res.group.group_id;
+    }, "分组创建成功"),
   });
 }
 
-async function saveGroup(groupId) {
-  const draft = state.groupDrafts[groupId];
-  if (!draft) return;
+async function saveGroup(gid) {
+  const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
-    await apiPost("web/groups/update", draft);
-    delete state.groupDrafts[groupId];
+    await apiPost("web/groups/update", d);
+    delete state.groupDrafts[gid];
   }, "分组保存成功");
 }
 
-function confirmDeleteGroup(groupId) {
+function confirmDeleteGroup(gid) {
   openConfirm({
-    title: `确认删除分组 [${groupId}]？`,
-    desc: "此操作不可恢复，已订阅的规则与相关历史关联都将被清理。",
+    title: `删除分组 [${gid}]？`,
+    desc: "此操作不可恢复，订阅规则与历史关联将被清理。",
     danger: true,
     action: () => withAction(async () => {
-      await apiPost("web/groups/delete", { group_id: groupId, force: true, confirm: "DELETE" });
+      await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
       state.selectedGroupId = "";
-    }, "分组已删除")
+    }, "分组已删除"),
   });
 }
 
-async function runCheck(groupId) {
-  await withAction(() => apiPost("web/check", { group_id: groupId }), "检查执行完成");
+async function runCheck(gid) {
+  await withAction(() => apiPost("web/check", { group_id: gid }), "检查完成");
 }
 
-async function probeTargets(groupId) {
+async function probeTargets(gid) {
   await withAction(async () => {
-    const res = await apiPost("web/targets/probe", { group_id: groupId });
-    state.targetProbeResults[groupId] = res;
-    renderGroupEditor();
-  }, "连通性探测完成", { reload: false });
+    const res = await apiPost("web/targets/probe", { group_id: gid });
+    state.targetProbeResults[gid] = res; renderGroupEditor();
+  }, "探测完成", { reload: false });
 }
