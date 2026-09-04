@@ -83,7 +83,10 @@ class EmojiLikeArbiter:
         mid = ctx.message_id
 
         # Phase 1：初始窗口检测
-        if await self._fetch_users(bot, mid, self._EMOJI_ID, self._EMOJI_TYPE):
+        phase1 = await self._fetch_users(bot, mid, self._EMOJI_ID, self._EMOJI_TYPE)
+        if phase1 is None:
+            return True  # API 不可用，退化为无仲裁，不阻塞解析
+        if phase1:
             return False
 
         # Phase 2：占坑
@@ -143,9 +146,9 @@ class EmojiLikeArbiter:
         message_id: int,
         emoji_id: int,
         emoji_type: str,
-    ) -> list[int]:
+    ) -> list[int] | None:
         """
-        拉取指定表情的点赞用户列表。
+        拉取指定表情的点赞用户列表。返回 None 表示 API 不可用。
         """
         try:
             resp = await bot.fetch_emoji_like(
@@ -156,7 +159,7 @@ class EmojiLikeArbiter:
                 count=20,
             )
         except Exception:
-            return []
+            return None
 
         likes = (resp or {}).get("emojiLikesList") or []
         users: list[int] = []
