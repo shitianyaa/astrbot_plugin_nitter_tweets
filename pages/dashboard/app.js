@@ -836,7 +836,7 @@ const UMO_PLATFORM_LABELS = {
   qqofficial: "QQ 官方", telegram: "Telegram", lark: "飞书",
 };
 const UMO_KIND_LABELS = {
-  GroupMessage: "群聊", FriendMessage: "好友", GuildMessage: "频道", ChannelMessage: "频道",
+  GroupMessage: "群聊", FriendMessage: "私聊", GuildMessage: "频道", ChannelMessage: "频道",
 };
 function replayTargetParts(umo) {
   const raw = String(umo || "");
