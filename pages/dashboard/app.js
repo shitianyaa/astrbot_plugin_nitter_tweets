@@ -389,23 +389,13 @@ function renderGroupEditor() {
     ]),
   ]);
 
-  // Base config
+  // Base config: 名称通栏 + 开关 2×2 + 每日定时通栏,同一个 grid 保证对齐
   const base = h("div", { class: "editor-grid" }, [
-    h("label", { class: "field" }, [
+    h("label", { class: "field editor-grid-full" }, [
       h("span", { text: "分组名称" }),
       h("input", { type: "text", value: d.name, onInput: e => updateDraft(g.group_id, "name", e.target.value.trim()) }),
     ]),
-    h("div", { style: { display: "flex", alignItems: "flex-end" } }, [
-      h("label", { class: "toggle" }, [
-        h("input", { type: "checkbox", checked: d.enabled, onChange: e => updateDraft(g.group_id, "enabled", e.target.checked) }),
-        h("span", { class: "toggle-track" }),
-        h("span", { text: "启用此分组" }),
-      ]),
-    ]),
-  ]);
-
-  // Policy toggles
-  const policy = h("div", { class: "editor-grid" }, [
+    toggleRow(d.enabled, "启用此分组", v => updateDraft(g.group_id, "enabled", v)),
     toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(g.group_id, "filter_reposts_enabled", v)),
     toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(g.group_id, "filter_plain_text_enabled", v)),
     toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(g.group_id, "interval_check_enabled", v)),
@@ -434,7 +424,7 @@ function renderGroupEditor() {
   const targets = renderTargets(g, d);
 
   els.groupEditor.replaceChildren(h("div", { class: "panel" }, [
-    head, base, policy, entities, targets,
+    head, base, entities, targets,
   ]));
 }
 
@@ -503,8 +493,10 @@ function renderTargets(group, draft) {
     h("div", { class: "chip-list" },
       targets.map((t, idx) => {
         const info = probe?.targets?.find(x => x.umo === t);
-        return h("span", { class: "chip mono" }, [
-          t,
+        const { label, id: targetId } = replayTargetParts(t);
+        return h("span", { class: "chip", title: t }, [
+          h("span", { text: label }),
+          targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
           info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
           h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
             const next = [...targets]; next.splice(idx, 1);
