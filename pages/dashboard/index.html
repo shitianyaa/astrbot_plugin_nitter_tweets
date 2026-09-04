@@ -3,253 +3,162 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nitter 推文面板</title>
+    <title>Nitter 推文控制台</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="app" class="shell">
+    <div class="shell">
+      <!-- Sidebar -->
       <aside class="rail">
         <div class="brand">
-          <div class="brand-logo"><span>NT</span></div>
-          <div>
-            <h2 class="brand-title">Nitter Dispatch</h2>
-            <p class="brand-subtitle">推文监控调度台</p>
-          </div>
+          <h1 class="brand-title">Nitter Tweets</h1>
+          <span class="brand-badge">PRO</span>
         </div>
 
-        <section class="rail-panel" aria-label="运行监控状态">
-          <h3 class="rail-panel-title">运行监控状态</h3>
-          <div class="health-list">
-            <div class="health-item">
-              <span class="health-name">推文调度器</span>
-              <span id="railSchedulerStatus" class="status-badge">
-                <span class="dot"></span>
-                未加载
-              </span>
-            </div>
-            <div class="health-item">
-              <span class="health-name">后台检查</span>
-              <span id="railScheduleStatus" class="status-badge">
-                <span class="dot"></span>
-                未加载
-              </span>
-            </div>
-            <div class="health-item">
-              <span class="health-name">异常目标</span>
-              <span id="railTargetStatus" class="status-badge">
-                <span class="dot"></span>
-                未加载
-              </span>
-            </div>
-          </div>
-        </section>
-
-        <nav class="tabs nav" aria-label="页面导航">
-          <button class="tab active" type="button" data-view="overview">
-            <span class="nav-label">
-              <span class="icon" data-icon="play"></span>
-              控制台总览
-            </span>
-          </button>
-          <button class="tab" type="button" data-view="groups">
-            <span class="nav-label">
-              <span class="icon" data-icon="plus"></span>
-              分组订阅管理
-            </span>
-          </button>
-          <button class="tab" type="button" data-view="history">
-            <span class="nav-label">
-              <span class="icon" data-icon="refresh"></span>
-              最近推送历史
-            </span>
-          </button>
-          <button class="tab" type="button" data-view="mirror">
-            <span class="nav-label">
-              <span class="icon" data-icon="probe"></span>
-              实例能力诊断
-            </span>
-          </button>
+        <nav class="nav" aria-label="导航">
+          <button class="tab active" type="button" data-view="overview">控制台总览</button>
+          <button class="tab" type="button" data-view="groups">分组订阅管理</button>
+          <button class="tab" type="button" data-view="history">最近推送历史</button>
+          <button class="tab" type="button" data-view="mirror">实例能力诊断</button>
         </nav>
+
+        <div class="rail-section-title">系统状态</div>
+        <div class="health-box">
+          <div class="health-row">
+            <span>调度器</span>
+            <span id="railSchedulerStatus" class="status-indicator"><span class="status-dot"></span></span>
+          </div>
+          <div class="health-row">
+            <span>后台检查</span>
+            <span id="railScheduleStatus" class="status-indicator"><span class="status-dot"></span></span>
+          </div>
+          <div class="health-row">
+            <span>推送目标</span>
+            <span id="railTargetStatus" class="status-indicator"><span class="status-dot"></span></span>
+          </div>
+        </div>
       </aside>
 
+      <!-- Main Area -->
       <main class="main">
         <header class="topbar">
-          <div class="title-block">
-            <span class="kicker">PLUGIN CONSOLE</span>
-            <h1 id="currentTabTitle">Nitter 推文控制台总览</h1>
-            <p id="currentTabDesc">聚合查看推送分组（博主/搜索订阅/List）、目标状态以及 Nitter 镜像诊断。</p>
+          <div class="topbar-title">
+            <span id="currentTabTitle">控制台总览</span>
+            <span id="currentTabDesc" class="topbar-subtitle"></span>
           </div>
           <div class="topbar-actions">
-            <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换亮色/暗色" aria-label="切换亮色/暗色" aria-pressed="false">
+            <button id="themeToggleBtn" class="theme-toggle-pill" type="button" title="切换深/浅主题">
               <span class="theme-toggle-slider"></span>
-              <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="5"></circle>
-                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"></path>
-              </svg>
-              <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path>
-              </svg>
             </button>
-            <span id="lastUpdated" class="timestamp">未加载</span>
-            <button id="refreshBtn" class="button secondary" type="button">
-              <span class="icon" data-icon="refresh"></span>
-              刷新
-            </button>
+            <span id="lastUpdated" class="mono" style="font-size: 11px; color: var(--text-muted)">-</span>
+            <button id="refreshBtn" class="button small" type="button">刷新</button>
           </div>
         </header>
 
-        <div id="alert" class="alert" role="status" hidden></div>
+        <div id="alert" class="alert" hidden style="margin: 16px 20px 0;"></div>
 
-        <section id="overviewView" class="view active" aria-label="概览">
-          <div id="overviewContent"></div>
-          <div class="cleanup-grid">
-            <div class="panel danger-zone">
-              <div class="panel-head">
-                <h2>媒体缓存</h2>
+        <div class="view-container">
+          <!-- 1. Overview -->
+          <section id="overviewView" class="view active"></section>
+
+          <!-- 2. Groups -->
+          <section id="groupsView" class="view">
+            <div class="groups-layout">
+              <div class="panel" style="gap: 10px;">
+                <div class="panel-head">
+                  <h2>订阅分组</h2>
+                  <button id="createGroupBtn" class="button primary small" type="button">+ 新建</button>
+                </div>
+                <div id="groupList" class="group-list"></div>
               </div>
-              <button id="clearCacheBtn" class="button danger" type="button">
-                <span class="icon" data-icon="trash"></span>
-                清理媒体缓存
-              </button>
-              <div id="cacheResult" class="result-line"></div>
+              <div id="groupEditor"></div>
             </div>
-            <div class="panel danger-zone">
-              <div class="panel-head">
-                <h2>推送记录</h2>
-                <span class="badge warning">可能重新处理旧推文</span>
+          </section>
+
+          <!-- 3. History -->
+          <section id="historyView" class="view">
+            <div class="toolbar panel" style="padding: 10px 14px;">
+              <div class="field" style="flex-direction: row; align-items: center; gap: 6px;">
+                <span>分组:</span>
+                <select id="historyGroupSelect"></select>
               </div>
-              <label class="field">
-                <span>范围</span>
-                <select id="seenGroupSelect"></select>
-              </label>
-              <button id="clearSeenBtn" class="button danger" type="button">
-                <span class="icon" data-icon="erase"></span>
-                清理推送记录
-              </button>
-              <div id="seenResult" class="result-line"></div>
-            </div>
-          </div>
-        </section>
-
-        <section id="groupsView" class="view" aria-label="分组订阅">
-          <div class="groups-layout">
-            <section id="groupSwitcher" class="panel group-switcher" aria-label="分组切换">
-              <div class="panel-head">
-                <h2>推送分组</h2>
-                <button id="createGroupBtn" class="button primary small" type="button">
-                  <span class="icon" data-icon="plus"></span>
-                  新建分组
-                </button>
+              <div class="field" style="flex-direction: row; align-items: center; gap: 6px;">
+                <span>订阅源:</span>
+                <input id="historyUsername" type="text" placeholder="推特用户名或q:tag" style="width: 160px;" />
               </div>
-              <div id="groupList" class="group-list"></div>
-            </section>
-            <section id="groupEditor" class="group-editor" aria-label="分组详情"></section>
-          </div>
-        </section>
+              <div class="field" style="flex-direction: row; align-items: center; gap: 6px;">
+                <span>条数:</span>
+                <input id="historyLimit" type="number" min="1" max="50" value="10" style="width: 55px;" />
+              </div>
+              <button id="historyRefreshBtn" class="button small" type="button">筛选</button>
+              <button id="historyOrphanBtn" class="button small ghost" type="button">检查废弃分组历史</button>
 
-        <section id="historyView" class="view" aria-label="最近推送">
-          <div class="toolbar">
-            <label class="field compact">
-              <span>分组</span>
-              <select id="historyGroupSelect"></select>
-            </label>
-            <label class="field compact">
-              <span>订阅源</span>
-              <input id="historyUsername" type="text" placeholder="NASA、q:查询或 list:ID" />
-            </label>
-            <label class="field compact">
-              <span>数量</span>
-              <input id="historyLimit" type="number" min="1" max="50" value="10" />
-            </label>
-            <button id="historyRefreshBtn" class="button secondary" type="button">
-              <span class="icon" data-icon="refresh"></span>
-              查询
-            </button>
-            <button id="historyOrphanBtn" class="button secondary" type="button">
-              <span class="icon" data-icon="probe"></span>
-              检测失效分组
-            </button>
-            <div class="pager" aria-label="最近推送翻页">
-              <button id="historyPrevBtn" class="button secondary small" type="button">
-                上一页
-              </button>
-              <span id="historyPageLabel" class="pager-label">第 1 页</span>
-              <button id="historyNextBtn" class="button secondary small" type="button">
-                下一页
-              </button>
+              <div class="pager">
+                <button id="historyPrevBtn" class="button small" type="button">上一页</button>
+                <span id="historyPageLabel" class="mono" style="font-size: 11px;">1 / 1 页</span>
+                <button id="historyNextBtn" class="button small" type="button">下一页</button>
+              </div>
             </div>
-          </div>
-          <div id="historyOrphanResult" class="stack"></div>
-          <div id="historyContent" class="stack"></div>
-        </section>
 
-        <section id="mirrorView" class="view" aria-label="实例测试">
-          <div class="split">
-            <form id="mirrorForm" class="panel form-panel">
-              <h2>实例测试</h2>
-              <p class="helper-text">
-                不改配置、不写推送记录。一次检查用户 RSS、用户 HTML 和搜索；填写 List ID 时同时检查 List。URL 留空会按顺序测试全部已配置实例。
-              </p>
-              <div class="form-grid">
+            <div id="historyOrphanResult"></div>
+            <div id="historyContent"></div>
+          </section>
+
+          <!-- 4. Mirror Probe -->
+          <section id="mirrorView" class="view">
+            <form id="mirrorForm" class="panel">
+              <div class="panel-head">
+                <h2>Nitter 实例能力检测</h2>
+                <span style="font-size: 11px; color: var(--text-muted)">直接测试连通性，不写入推送记录</span>
+              </div>
+              <div class="editor-grid">
                 <label class="field">
-                  <span>用户名</span>
-                  <input id="mirrorUsername" type="text" value="nasa" placeholder="nasa" />
+                  <span>测试用户名</span>
+                  <input id="mirrorUsername" type="text" value="nasa" />
                 </label>
                 <label class="field">
-                  <span>搜索内容</span>
-                  <input id="mirrorQuery" type="text" value="nasa" placeholder="#标签 或短语" />
+                  <span>搜索关键词</span>
+                  <input id="mirrorQuery" type="text" value="nasa" />
                 </label>
                 <label class="field">
-                  <span>List ID（可选）</span>
-                  <input id="mirrorListId" type="text" inputmode="numeric" placeholder="纯数字" />
+                  <span>List ID (可选)</span>
+                  <input id="mirrorListId" type="text" placeholder="纯数字" />
                 </label>
                 <label class="field">
-                  <span>数量</span>
-                  <input id="mirrorLimit" type="number" min="1" max="50" value="5" />
-                </label>
-                <label class="field wide">
-                  <span>实例 URL</span>
+                  <span>测试实例 URL (留空测试全部已配置实例)</span>
                   <input id="mirrorInstance" type="url" placeholder="http://nitter:8080" />
                 </label>
               </div>
-              <button id="mirrorProbeBtn" class="button primary" type="submit">
-                <span class="icon" data-icon="probe"></span>
-                测试实例
-              </button>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 11px; color: var(--text-muted)">已配置实例（点击自动填入）：</span>
+                  <div id="instanceList" class="chip-list"></div>
+                </div>
+                <button id="mirrorProbeBtn" class="button primary small" type="submit">开始探测</button>
+              </div>
             </form>
-            <div class="panel">
-              <h2 id="mirrorInstanceListTitle">已配置实例</h2>
-              <p id="mirrorInstanceListHint" class="helper-text">点击填入左侧 URL；留空测试全部实例</p>
-              <div id="instanceList" class="chip-list"></div>
-            </div>
-          </div>
-          <div id="mirrorResult" class="stack"></div>
-        </section>
+            <div id="mirrorResult"></div>
+          </section>
+        </div>
       </main>
 
-      <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+      <!-- Toast Feedback -->
+      <div id="toastContainer"></div>
 
-      <div
-        id="confirmDialog"
-        class="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirmTitle"
-        aria-describedby="confirmDesc"
-        hidden
-      >
+      <!-- Native Confirm Modal -->
+      <div id="confirmDialog" class="dialog" hidden>
         <div class="dialog-panel">
-          <button id="cancelConfirmBtnIcon" class="dialog-close" type="button" aria-label="关闭">×</button>
-          <p id="confirmKicker" class="kicker">确认操作</p>
-          <h2 id="confirmTitle">确认执行？</h2>
+          <h3 id="confirmTitle" class="dialog-title">确认操作？</h3>
           <div id="confirmDesc" class="dialog-desc"></div>
           <div class="dialog-actions">
-            <button id="cancelConfirmBtn" class="button secondary" type="button">取消</button>
-            <button id="confirmActionBtn" class="button danger" type="button">确认</button>
+            <button id="cancelConfirmBtn" class="button small" type="button">取消</button>
+            <button id="confirmActionBtn" class="button small primary" type="button">确认</button>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- ES Module App Entry -->
     <script type="module" src="./app.js"></script>
   </body>
 </html>
