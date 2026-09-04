@@ -39,7 +39,7 @@ Dashboard 实例测试一次检查统一 `instances` 的用户 RSS、用户 HTML
 
 - `name`: 显示名，可用于命令。
 - `group_id`: 存储 ID。新建默认分组为 `default`；由插件自动分配并保持稳定，已有值（包括旧 `global`）保留。缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。
-- `group_type`: `blogger`（默认）、`tag` 或 `list`。创建后锁定；决定使用哪类订阅字段。Tag/List 组通过 HTML 搜索，Bot 使用私人 QQ 号时不建议启用定时搜索/推送。
+- `group_type`: `blogger`（默认）、`tag` 或 `list`。创建后锁定；决定使用哪类订阅字段。Tag/List 组通过 HTML 搜索。
 - `enabled`: 是否启用。
 - `watch_users`: **Blogger 组**博主订阅源；其他类型忽略。
 - `watch_queries`: **Tag 组**搜索订阅列表。**落盘为字符串列表**（如 `#圣娅`、`蔚蓝档案`）。前导 `#` → tag，否则 phrase；phrase 禁止自动加 `#`。仍可读旧 `{query,type}` 对象，但会规范成字符串，避免 AstrBot `list` 显示 `[object Object]`。

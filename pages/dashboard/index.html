@@ -107,6 +107,15 @@
                 <input id="historyUsername" type="text" placeholder="用户名" style="width: 140px;" />
               </div>
               <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
+                <span style="font-size: 13px; font-weight: 600;">状态</span>
+                <select id="historyStatusSelect" style="width: auto;">
+                  <option value="">全部</option>
+                  <option value="success">已送达</option>
+                  <option value="partial_failed">部分失败</option>
+                  <option value="failed">发送失败</option>
+                </select>
+              </div>
+              <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
                 <span style="font-size: 13px; font-weight: 600;">条数</span>
                 <input id="historyLimit" type="number" min="1" max="50" value="10" style="width: 50px;" />
               </div>

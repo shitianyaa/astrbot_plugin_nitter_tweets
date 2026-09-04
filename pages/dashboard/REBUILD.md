@@ -1,5 +1,7 @@
 # Nitter 推文面板重做计划
 
+> **⚠️ 历史计划，与实现脱节，以实现为准。** 实际落地：单文件 `app.js` bundle + 普通 `<script>`（AstrBot Plugin Pages 对 ES module 相对 import 支持不可靠，四文件拆分曾致整页不可点）；「重推选目标」「focus trap」后续已补上；其余文件结构已合并。前端细节约束见 `docs/dev` 与 `tests/test_list_support.py` 的源码断言。
+
 ## 背景
 
 AstrBot 插件 `astrbot_plugin_nitter_tweets` 的 WebUI 运维面板。当前界面过度装饰（渐变/发光/模糊滤镜/动画），要推倒重做一个简约风。

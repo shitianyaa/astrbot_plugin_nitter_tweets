@@ -101,13 +101,14 @@ class NitterWebAPI(
         async def action():
             group_id = str(request.args.get("group_id", "") or "").strip()
             username = str(request.args.get("username", "") or "").strip()
+            status = str(request.args.get("status", "") or "").strip()
             limit = self._parse_int(
                 request.args.get("limit"), 10, minimum=1, maximum=50
             )
             offset = self._parse_int(
                 request.args.get("offset"), 0, minimum=0, maximum=10_000_000
             )
-            return await self.build_history(group_id, username, limit, offset)
+            return await self.build_history(group_id, username, limit, offset, status)
 
         return await self._json_response(action)
 

@@ -344,7 +344,6 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。
 - `group_type: tag`：只使用 `watch_queries`，通过 `instances` 的 HTML 搜索；seen 订阅源键为 `q:<casefold query>`。
 - `group_type: list`：只使用 `watch_lists`，通过 `instances` 的 HTML 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
-- **风险提示：Bot 若使用私人 QQ 号，不建议启用 Tag/List 分组定时搜索/推送**（HTML 查询与推送更频繁，有封号风险）。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
 - Tag/List 首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
 - 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。

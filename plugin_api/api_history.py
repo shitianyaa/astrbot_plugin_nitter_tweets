@@ -31,9 +31,13 @@ class WebAPIHistoryMixin:
         username: str = "",
         limit: int = 10,
         offset: int = 0,
+        status: str = "",
     ) -> dict[str, Any]:
         group_id = str(group_id or "").strip()
         username = str(username or "").strip().lstrip("@")
+        status = str(status or "").strip()
+        if status not in {"success", "partial_failed", "failed"}:
+            status = ""
         limit = max(1, min(int(limit or 10), 50))
         offset = max(0, int(offset or 0))
         if group_id:
@@ -41,13 +45,14 @@ class WebAPIHistoryMixin:
             if error:
                 return self._error(error)
             group_id = group.group_id
-        total_count = await self.storage.count_push_history(group_id, username)
+        total_count = await self.storage.count_push_history(group_id, username, status)
         total_pages = max(1, math.ceil(total_count / limit))
         records = await self.storage.get_push_history(
             group_id,
             username,
             limit + 1,
             offset,
+            status,
         )
         group_names = {group.group_id: group.name for group in self._schedule_groups()}
         groups_by_id = {group.group_id: group for group in self._schedule_groups()}
@@ -145,6 +150,7 @@ class WebAPIHistoryMixin:
             "delivery_status": record.delivery_status,
             "delivery_error": record.delivery_error,
             "published": tweet.published,
+            "has_media": bool(tweet.media),
             "text_preview": WebAPISerializersMixin._text_preview(tweet.text),
             "translation_preview": WebAPISerializersMixin._text_preview(
                 tweet.translation

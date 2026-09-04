@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .claude/settings.local.json
+.zcode/
 .worktrees/
 cache/
 data/
