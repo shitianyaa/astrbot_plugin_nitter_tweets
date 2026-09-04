@@ -770,6 +770,41 @@ select { cursor: pointer; }
 .dialog-desc { font-size: 13px; color: var(--text-muted); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
+.replay-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin-top: 10px;
+  min-width: 0;
+}
+.replay-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background var(--transition), border-color var(--transition);
+}
+.replay-target:hover { background: var(--blue-soft); border-color: var(--blue-border); }
+.replay-target.offline { opacity: 0.5; cursor: not-allowed; }
+.replay-target.offline:hover { background: transparent; border-color: var(--border); }
+.replay-target-label { font-weight: 500; flex: 0 0 auto; }
+.replay-target-id {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .alert {
   padding: 10px 14px;
   border-radius: var(--radius-sm);

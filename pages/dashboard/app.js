@@ -839,15 +839,38 @@ function confirmDeleteOrphan(gid) {
   });
 }
 
+const UMO_PLATFORM_LABELS = {
+  aiocqhttp: "QQ", onebot: "QQ", onebot_v11: "QQ", napcat: "QQ",
+  qqofficial: "QQ 官方", telegram: "Telegram", lark: "飞书",
+};
+const UMO_KIND_LABELS = {
+  GroupMessage: "群聊", FriendMessage: "好友", GuildMessage: "频道", ChannelMessage: "频道",
+};
+function replayTargetParts(umo) {
+  const raw = String(umo || "");
+  const parts = raw.split(":");
+  if (parts.length < 3) return { label: raw || "未知目标", id: "" };
+  const platform = UMO_PLATFORM_LABELS[parts[0]] || parts[0];
+  const kind = UMO_KIND_LABELS[parts[1]] || parts[1];
+  return { label: `${platform} · ${kind}`, id: parts.slice(2).join(":") };
+}
+function replayTargetShortId(id) {
+  return id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+}
 function replayHistory(id, options) {
   let box = null;
   let desc;
   if (Array.isArray(options) && options.length) {
-    box = h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", maxHeight: "220px", overflowY: "auto", marginTop: "10px" } },
-      options.map(o => h("label", { style: { display: "flex", alignItems: "center", gap: "6px", fontSize: "13px" } }, [
-        h("input", { type: "checkbox", checked: !!o.available, disabled: !o.available, value: o.umo || "" }),
-        h("span", { class: "mono", text: `${o.umo || "未知目标"}${o.available ? "" : "（已下线）"}` }),
-      ])));
+    const sorted = [...options].sort((a, b) => (b.available ? 1 : 0) - (a.available ? 1 : 0));
+    box = h("div", { class: "replay-targets" },
+      sorted.map(o => {
+        const { label, id: targetId } = replayTargetParts(o.umo);
+        return h("label", { class: `replay-target${o.available ? "" : " offline"}`, title: o.umo || "" }, [
+          h("input", { type: "checkbox", checked: !!o.available, disabled: !o.available, value: o.umo || "" }),
+          h("span", { class: "replay-target-label", text: o.available ? label : `${label}（已下线）` }),
+          targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+        ]);
+      }));
     desc = h("div", {}, [h("div", { text: "选择重推目标（已下线目标不可选）：" }), box]);
   } else {
     desc = "将重推至当前分组目标";
