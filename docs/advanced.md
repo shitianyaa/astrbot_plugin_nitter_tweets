@@ -129,7 +129,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 | `filter_reposts_enabled` | Blogger、Tag、List 后台转发过滤总开关，默认开启。只有总开关与分组同名子开关都开启时才过滤；全局关闭时所有分组保留转发。Blogger 会比较 RSS item 主链接作者和订阅源，博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。 |
 | `auto_parse_tweet_links_enabled` | 是否被动解析聊天中的公开 X/Twitter status 链接，默认关闭。开启后无需命令；忽略 Bot 自身消息；翻译与「有译文时显示原文」跟随全局；不写 seen/push history；不受订阅、冷却和全局图/视频开关限制。同会话同帖约 60 秒防抖，单条消息最多 3 个不同链接。勿与同类链接解析插件同时开启以免重复回复。 |
-| `link_preview_arbiter_enabled` | 跨 Bot 仲裁，默认关闭。开启后 OneBot 群聊中多个同类 Bot 只有赢的 Bot 解析回复，避免重复。通过 QQ 表情回应实现（会给消息贴永久表情标记）。单 Bot 无需开启；每次解析约多 1s 延迟。 |
+| `link_preview_arbiter_enabled` | 跨 Bot 仲裁，默认开启。OneBot 群聊中多个同类 Bot 只有赢的 Bot 解析回复，避免重复。通过 QQ 表情回应实现（会给消息贴永久表情标记）。单 Bot 环境可关闭以省去约 1s 延迟。协议移植自 [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser) 的 EmojiLikeArbiter。 |
 
 插件对 RSS、HTML/List、状态解析、媒体解析和下载统一使用内置浏览器请求标识；User-Agent 不再作为配置项，避免不同请求链路使用互相冲突的身份。各协议所需的 `Accept`、`Referer`、`Origin` 和 `Content-Type` 仍分别设置。
 

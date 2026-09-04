@@ -119,7 +119,7 @@ class LinkPreviewMixin:
 
         # 跨 Bot 仲裁：仅 OneBot 群聊，赢了才 stop_event 继续解析，输了直接 return
         if parse_config_bool(
-            config_get(self.config, "link_preview_arbiter_enabled", False), False
+            config_get(self.config, "link_preview_arbiter_enabled", True), True
         ):
             profile = PlatformResolver().from_event(event)
             if profile.is_onebot and "GroupMessage" in umo:

@@ -55,8 +55,8 @@
       "link_preview_arbiter_enabled": {
         "description": "跨 Bot 仲裁（防重复解析）",
         "type": "bool",
-        "default": false,
-        "hint": "OneBot 群聊中多个同类 Bot 同时开启被动链接解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复。会给被解析的消息贴上表情标记（永久）。单 Bot 无需开启；多 Bot 环境开启可避免重复回复。开启后每次解析约多 1s 延迟。"
+        "default": true,
+        "hint": "OneBot 群聊中多个同类 Bot 同时开启被动链接解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复。会给被解析的消息贴上表情标记（永久）。单 Bot 环境可关闭以省去约 1s 仲裁延迟。协议移植自 astrbot_plugin_parser 的 EmojiLikeArbiter。"
       },
       "search_max_limit": {
         "description": "搜索最大条数",
