@@ -69,12 +69,6 @@
               实例能力诊断
             </span>
           </button>
-          <button class="tab" type="button" data-view="cleanup">
-            <span class="nav-label">
-              <span class="icon" data-icon="erase"></span>
-              系统维护清理
-            </span>
-          </button>
         </nav>
       </aside>
 
@@ -106,7 +100,36 @@
 
         <div id="alert" class="alert" role="status" hidden></div>
 
-        <section id="overviewView" class="view active" aria-label="概览"></section>
+        <section id="overviewView" class="view active" aria-label="概览">
+          <div id="overviewContent"></div>
+          <div class="cleanup-grid">
+            <div class="panel danger-zone">
+              <div class="panel-head">
+                <h2>媒体缓存</h2>
+              </div>
+              <button id="clearCacheBtn" class="button danger" type="button">
+                <span class="icon" data-icon="trash"></span>
+                清理媒体缓存
+              </button>
+              <div id="cacheResult" class="result-line"></div>
+            </div>
+            <div class="panel danger-zone">
+              <div class="panel-head">
+                <h2>推送记录</h2>
+                <span class="badge warning">可能重新处理旧推文</span>
+              </div>
+              <label class="field">
+                <span>范围</span>
+                <select id="seenGroupSelect"></select>
+              </label>
+              <button id="clearSeenBtn" class="button danger" type="button">
+                <span class="icon" data-icon="erase"></span>
+                清理推送记录
+              </button>
+              <div id="seenResult" class="result-line"></div>
+            </div>
+          </div>
+        </section>
 
         <section id="groupsView" class="view" aria-label="分组订阅">
           <div class="groups-layout">
@@ -201,37 +224,6 @@
             </div>
           </div>
           <div id="mirrorResult" class="stack"></div>
-        </section>
-
-        <section id="cleanupView" class="view" aria-label="缓存清理">
-          <div class="cleanup-grid">
-            <div class="panel danger-zone">
-              <div class="panel-head">
-                <h2>媒体缓存</h2>
-                
-              </div>
-              <button id="clearCacheBtn" class="button danger" type="button">
-                <span class="icon" data-icon="trash"></span>
-                清理媒体缓存
-              </button>
-              <div id="cacheResult" class="result-line"></div>
-            </div>
-            <div class="panel danger-zone">
-              <div class="panel-head">
-                <h2>推送记录</h2>
-                <span class="badge warning">可能重新处理旧推文</span>
-              </div>
-              <label class="field">
-                <span>范围</span>
-                <select id="seenGroupSelect"></select>
-              </label>
-              <button id="clearSeenBtn" class="button danger" type="button">
-                <span class="icon" data-icon="erase"></span>
-                清理推送记录
-              </button>
-              <div id="seenResult" class="result-line"></div>
-            </div>
-          </div>
         </section>
       </main>
 

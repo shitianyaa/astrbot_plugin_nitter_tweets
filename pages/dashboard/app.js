@@ -40,6 +40,7 @@ const els = {
   alert: document.getElementById("alert"),
   toastContainer: document.getElementById("toastContainer"),
   overviewView: document.getElementById("overviewView"),
+  overviewContent: document.getElementById("overviewContent"),
   createGroupBtn: document.getElementById("createGroupBtn"),
   groupList: document.getElementById("groupList"),
   groupEditor: document.getElementById("groupEditor"),
@@ -96,10 +97,6 @@ const viewMeta = {
   mirror: {
     title: "Nitter 实例能力诊断",
     desc: "一次测试用户 RSS、用户 HTML、搜索和可选 List；实例从配置同步，不写推送记录。",
-  },
-  cleanup: {
-    title: "系统维护清理",
-    desc: "清理普通媒体缓存或推送记录，危险操作会二次确认。",
   },
 };
 
@@ -1228,7 +1225,7 @@ function groupRuntimeCard(label, value) {
 function renderOverview() {
   const payload = state.overview;
   if (!payload) {
-    els.overviewView.replaceChildren(emptyState("正在加载概览"));
+    els.overviewContent.replaceChildren(emptyState("正在加载概览"));
     return;
   }
   const counts = payload.counts || {};
@@ -1236,6 +1233,7 @@ function renderOverview() {
   const features = payload.features || {};
   const configSummary = payload.config_summary || {};
   const attentionItems = payload.attention_items || [];
+  const instances = payload.instances || [];
   const stats = [
     ["调度器", scheduler.running ? "运行中" : "未运行"],
     ["后台检查", scheduler.schedule_enabled ? "已开启" : "已关闭"],
@@ -1292,21 +1290,42 @@ function renderOverview() {
     buildPanel("功能开关", featureRows),
     buildPanel("配置摘要", configRows),
   ]);
+  const instancePanel = instances.length
+    ? el("div", { className: "panel" }, [
+        el("h2", { text: "已配置实例" }),
+        el(
+          "div",
+          { className: "chip-list" },
+          instances.map((url) =>
+            el("span", { className: "chip mono", text: safeUrl(url) }),
+          ),
+        ),
+      ])
+    : null;
   const attentionList = el(
     "div",
     { className: "attention-list" },
     attentionItems.map((item) =>
-      el("div", { className: `attention-item ${item.level || "info"}` }, [
-        el("strong", { text: item.title || "" }),
-        el("span", { text: item.detail || "" }),
-      ]),
+      el(
+        "div",
+        { className: `attention-item ${item.level || "info"}` },
+        [
+          el("strong", { text: item.title || "" }),
+          el("span", { text: item.detail || "" }),
+        ],
+      ),
     ),
   );
   const attentionPanel = el("div", { className: "panel attention-panel" }, [
     el("h2", { text: "需要关注" }),
     attentionList,
   ]);
-  els.overviewView.replaceChildren(metrics, panels, attentionPanel);
+  els.overviewContent.replaceChildren(
+    metrics,
+    panels,
+    instancePanel,
+    attentionPanel,
+  );
 }
 
 function renderGroupList() {
@@ -1856,7 +1875,7 @@ function renderAll() {
   renderHistoryOrphans();
   renderMirrorBase();
   renderCleanupSelectors();
-  mountIcons();
+  mountIcons(els.overviewView);
 }
 
 
