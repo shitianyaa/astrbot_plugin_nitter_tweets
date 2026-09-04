@@ -15,11 +15,13 @@ try:
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
+    from ..delivery.platforms import PlatformResolver
     from ..media_support.status_link import extract_status_links
     from ..media_support.status_resolve import (
         StatusResolveError,
         resolve_status_tweet_async,
     )
+    from ..shared.arbiter import ArbiterContext, EmojiLikeArbiter
     from ..shared.observability import safe_task_log
 except ImportError:
     from config import (
@@ -27,11 +29,13 @@ except ImportError:
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
+    from delivery.platforms import PlatformResolver
     from media_support.status_link import extract_status_links
     from media_support.status_resolve import (
         StatusResolveError,
         resolve_status_tweet_async,
     )
+    from shared.arbiter import ArbiterContext, EmojiLikeArbiter
     from shared.observability import safe_task_log
 
 LINK_PREVIEW_MAX_LINKS = 3
@@ -111,9 +115,42 @@ class LinkPreviewMixin:
         if not links:
             return
 
+        umo = str(getattr(event, "unified_msg_origin", "") or "")
+
+        # 跨 Bot 仲裁：仅 OneBot 群聊，赢了才 stop_event 继续解析，输了直接 return
+        if parse_config_bool(
+            config_get(self.config, "link_preview_arbiter_enabled", False), False
+        ):
+            profile = PlatformResolver().from_event(event)
+            if profile.is_onebot and "GroupMessage" in umo:
+                raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+                if isinstance(raw, dict) and all(
+                    k in raw for k in ("message_id", "time", "self_id")
+                ):
+                    try:
+                        if not await EmojiLikeArbiter().compete(
+                            event.bot,
+                            ArbiterContext(
+                                int(raw["message_id"]),
+                                int(raw["time"]),
+                                int(raw["self_id"]),
+                            ),
+                        ):
+                            logger.debug(
+                                "[NitterTweets] link preview arbiter lost, "
+                                "skipping: umo=%s",
+                                umo,
+                            )
+                            return
+                    except Exception as exc:
+                        logger.debug(
+                            "[NitterTweets] link preview arbiter error, "
+                            "proceeding without arbitration: %s",
+                            exc,
+                        )
+
         event.stop_event()
         links = links[:LINK_PREVIEW_MAX_LINKS]
-        umo = str(getattr(event, "unified_msg_origin", "") or "")
         hide_original = resolve_hide_original_when_translated(self.config)
 
         for link in links:

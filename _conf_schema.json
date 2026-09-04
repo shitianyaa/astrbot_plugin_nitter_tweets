@@ -52,6 +52,12 @@
         "default": false,
         "hint": "开启后无需命令：识别消息里的公开 X/Twitter 推文链接并发送正文与媒体。默认关闭。忽略 Bot 自己的消息。翻译与「有译文时显示原文」跟随全局 AI 翻译设置。不受订阅、冷却、seen 和全局图/视频开关限制；仍受大小、时长、超时等安全限制。勿与同类链接解析插件同时对同一会话开启以免重复回复。"
       },
+      "link_preview_arbiter_enabled": {
+        "description": "跨 Bot 仲裁（防重复解析）",
+        "type": "bool",
+        "default": false,
+        "hint": "OneBot 群聊中多个同类 Bot 同时开启被动链接解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复。会给被解析的消息贴上表情标记（永久）。单 Bot 无需开启；多 Bot 环境开启可避免重复回复。开启后每次解析约多 1s 延迟。"
+      },
       "search_max_limit": {
         "description": "搜索最大条数",
         "type": "int",
