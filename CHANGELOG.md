@@ -4,15 +4,13 @@
 
 ## [1.4.0] - 2026-09-04
 
-### Changed
-
-- WebUI 面板大修：删除约 1400 行死 CSS（"Premium Design Concept" 遗留层），style.css 从 2942 行精简到 1542 行；合并「系统维护清理」tab 到「控制台总览」底部 danger zone（5 tab → 4 tab）；总览新增已配置实例列表展示。
-
-## [1.3.1] - 2026-09-04
-
 ### Added
 
 - 被动链接解析新增跨 Bot 仲裁（`link_preview_arbiter_enabled`，默认开启）：OneBot 群聊中多个同类 Bot 同时开启被动解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复，避免重复。会给被解析的消息贴上表情标记（永久）。协议移植自 [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser) 的 EmojiLikeArbiter。单 Bot 环境可关闭以省去约 1s 延迟。
+
+### Changed
+
+- WebUI 面板大修：删除约 1400 行死 CSS（"Premium Design Concept" 遗留层），style.css 从 2942 行精简到 1542 行；合并「系统维护清理」tab 到「控制台总览」底部 danger zone（5 tab → 4 tab）；总览新增已配置实例列表展示。
 
 ## [1.3.0] - 2026-09-01
 
