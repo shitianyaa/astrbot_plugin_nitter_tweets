@@ -803,6 +803,51 @@ select { cursor: pointer; }
 .config-control input[type="text"], .config-control input[type="number"] { width: 240px; }
 .config-control textarea { width: 100%; max-width: 560px; resize: vertical; }
 
+/* Config panel V2:双栏 + 字段卡片 */
+.config-layout { display: grid; grid-template-columns: minmax(200px, 0.3fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.config-actionbar {
+  position: sticky; top: 72px; z-index: 40;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-sm);
+}
+.config-nav { display: flex; flex-direction: column; gap: 8px; }
+.config-nav > input { width: 100%; }
+.config-nav-list { display: flex; flex-direction: column; gap: 4px; }
+.config-nav-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px;
+  transition: background var(--transition), color var(--transition);
+}
+.config-nav-item:hover { background: var(--surface-hover); }
+.config-nav-item.active { background: var(--blue); color: #fff; font-weight: 600; }
+.config-nav-count { font-size: 11px; color: var(--text-muted); }
+.config-nav-item.active .config-nav-count { color: rgba(255, 255, 255, 0.75); }
+.config-group-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding-bottom: 10px; margin-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.config-fields { display: flex; flex-direction: column; gap: 12px; }
+.config-item {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px 14px; background: var(--surface);
+}
+.config-item-head { display: flex; align-items: center; gap: 8px; }
+.config-label { font-size: 13px; font-weight: 600; }
+.config-key { font-size: 11px; color: var(--text-muted); }
+.config-reset { padding: 0 6px; font-size: 11px; height: auto; }
+.config-hint-block {
+  font-size: 12px; line-height: 1.6; color: var(--text-muted);
+  background: var(--blue-soft); border-radius: var(--radius-sm);
+  padding: 6px 10px; word-break: break-word;
+}
+@media (max-width: 900px) {
+  .config-layout { grid-template-columns: 1fr; }
+  .config-actionbar { top: 0; }
+}
+
 /* ==========================================================================
    Dialog & Feedback
    ========================================================================== */

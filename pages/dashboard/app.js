@@ -9,7 +9,9 @@ let bridge = null;
 
 const state = {
   view: "overview", loading: false, actionBusy: false,
-  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {}, config: null, configError: false,
+  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {},
+  config: null, configError: false,
+  configDraft: {}, configSearch: "", configActive: "", configSaving: false, providers: [],
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, historyOrphans: null, selectedGroupId: "",
   historyGroupId: "", historyUsername: "", historyLimit: 10,
@@ -327,9 +329,9 @@ async function reloadAll(options = {}) {
   renderAll();
   try {
     await bridge.ready();
-    const [ov, gr, bl, cf] = await Promise.allSettled([
+    const [ov, gr, bl, cf, pv] = await Promise.allSettled([
       apiGet("web/overview"), apiGet("web/groups"), apiGet("web/target-blacklists"),
-      apiGet("web/config/schema"),
+      apiGet("web/config/schema"), apiGet("web/config/providers"),
     ]);
     const errors = [];
     if (ov.status === "fulfilled") state.overview = ov.value;
@@ -340,9 +342,11 @@ async function reloadAll(options = {}) {
     else errors.push(`黑名单加载失败：${bl.reason?.message || "请求失败"}`);
     if (cf.status === "fulfilled") { state.config = cf.value; state.configError = false; }
     else { state.configError = true; errors.push(`配置加载失败：${cf.reason?.message || "请求失败"}`); }
+    // Provider 下拉数据源:失败静默降级为空列表(仅支持"留空 = 自动选择")
+    if (pv.status === "fulfilled") state.providers = pv.value.providers || [];
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
-    if (options.preserveDrafts === false) state.groupDrafts = {};
+    if (options.preserveDrafts === false) { state.groupDrafts = {}; state.configDraft = {}; }
     syncGroupDrafts();
     try {
       state.history = await apiGet("web/history", {
@@ -1070,8 +1074,22 @@ function probeCheck(label, item) {
 }
 
 /* --------------------------------------------------------------------------
-   Plugin Config — schema 驱动的配置查看与编辑
+   Plugin Config V2 — 双栏导航 + 字段卡片 + 草稿保存
    -------------------------------------------------------------------------- */
+function configItemsOf(group) {
+  const q = state.configSearch.trim().toLowerCase();
+  if (!q) return group.items;
+  return group.items.filter(
+    i => (i.description || "").toLowerCase().includes(q)
+      || i.key.toLowerCase().includes(q)
+  );
+}
+
+function configDirtyCount(group) {
+  return group.items.filter(i => state.configDraft[i.key] !== undefined
+    && JSON.stringify(state.configDraft[i.key]) !== JSON.stringify(i.value)).length;
+}
+
 function renderConfig() {
   const root = els.configView;
   if (!root) return;
@@ -1080,41 +1098,168 @@ function renderConfig() {
     root.replaceChildren(h("div", { class: "panel", text: state.configError ? "配置加载失败，请刷新重试" : "正在加载..." }));
     return;
   }
-  if (!Array.isArray(data.groups)) {
-    root.replaceChildren(h("div", { class: "panel", text: "配置数据异常，请刷新重试" }));
-    return;
+  const groups = Array.isArray(data.groups) ? data.groups : [];
+  if (!groups.length) { root.replaceChildren(h("div", { class: "panel", text: "配置数据异常，请刷新重试" })); return; }
+  if (!state.configActive || !groups.some(g => g.key === state.configActive)) {
+    state.configActive = groups[0].key;
   }
-  root.replaceChildren(...data.groups.map(group => h("div", { class: "panel" }, [
-    h("div", { class: "panel-head" }, [h("h3", { text: group.name })]),
-    h("div", { class: "config-list" }, group.items.map(configItem)),
-  ])));
+  const active = groups.find(g => g.key === state.configActive);
+  const totalDirty = groups.reduce((n, g) => n + configDirtyCount(g), 0);
+
+  // 左:分组导航
+  const nav = h("div", { class: "config-nav" }, [
+    h("input", {
+      type: "text", placeholder: "搜索配置…", value: state.configSearch,
+      onInput: onConfigSearchInput,
+    }),
+    h("div", { class: "config-nav-list" }, groups.map(configNavItem)),
+  ]);
+
+  // 右:当前组
+  const fields = h("div", { class: "config-fields" }, configFieldsChildren(active));
+
+  const bar = h("div", { class: "config-actionbar" }, [
+    totalDirty > 0 ? h("span", { class: "badge badge-warn", text: `存在未保存的修改（${totalDirty} 项）` }) : h("span", { class: "config-hint", text: "配置已同步" }),
+    h("div", { class: "actions" }, [
+      h("button", {
+        class: "btn btn-sm", text: "放弃更改", disabled: !totalDirty || state.configSaving,
+        onClick: () => maybeLeaveConfigGroup(() => { state.configDraft = {}; renderConfig(); }),
+      }),
+      h("button", {
+        class: "btn btn-sm btn-primary", text: state.configSaving ? "保存中…" : "保存配置",
+        disabled: !totalDirty || state.configSaving,
+        onClick: saveConfigDraft,
+      }),
+    ]),
+  ]);
+
+  root.replaceChildren(bar, h("div", { class: "config-layout" }, [nav, fields]));
 }
 
-function configItem(item) {
-  return h("div", { class: "config-item" }, [
-    h("span", { class: "config-label", text: item.description || item.key }),
-    configControl(item),
-    item.hint ? h("span", { class: "config-hint", text: item.hint }) : null,
+function configNavItem(g) {
+  const count = configDirtyCount(g);
+  return h("div", {
+    class: `config-nav-item${g.key === state.configActive ? " active" : ""}`,
+    onClick: () => { if (state.configActive !== g.key) maybeLeaveConfigGroup(() => { state.configActive = g.key; state.configSearch = ""; renderConfig(); }); },
+  }, [
+    h("span", { text: g.name }),
+    count > 0
+      ? h("span", { class: "badge badge-warn", text: `${count} 改` })
+      : h("span", { class: "config-nav-count", text: `${configItemsOf(g).length} 项` }),
   ]);
 }
 
-function configControl(item) {
+function configFieldsChildren(active) {
+  const items = configItemsOf(active);
+  const children = [
+    h("div", { class: "config-group-head" }, [
+      h("h3", { text: active.name }),
+      h("span", { class: "config-hint", text: `${items.length} 项` }),
+    ]),
+    ...items.map(configItem),
+  ];
+  // 不用 `length ? null : panel`:replaceChildren 不接受 null(仅 h() 会跳过)
+  if (!items.length) children.push(h("div", { class: "panel", text: "无匹配配置项" }));
+  return children;
+}
+
+// 搜索输入不整树重建(会丢失焦点/打断输入法):只刷新导航列表与右栏字段区。
+function onConfigSearchInput(e) {
+  state.configSearch = e.target.value;
+  const root = els.configView;
+  const navList = root?.querySelector(".config-nav-list");
+  const fields = root?.querySelector(".config-fields");
+  if (!navList || !fields) { renderConfig(); return; }
+  const groups = Array.isArray(state.config?.groups) ? state.config.groups : [];
+  const active = groups.find(g => g.key === state.configActive);
+  navList.replaceChildren(...groups.map(configNavItem));
+  if (active) fields.replaceChildren(...configFieldsChildren(active));
+}
+
+function maybeLeaveConfigGroup(action) {
+  const dirty = Object.keys(state.configDraft).length > 0;
+  if (!dirty) { action(); return; }
+  openConfirm({
+    title: "放弃未保存的配置修改？",
+    desc: "当前配置有未保存的修改，继续将丢失。",
+    confirmText: "丢弃并继续", danger: true,
+    action,
+  });
+}
+
+async function saveConfigDraft() {
+  const changed = Object.entries(state.configDraft)
+    .filter(([key, val]) => {
+      const item = findConfigItem(key);
+      return item && JSON.stringify(val) !== JSON.stringify(item.value);
+    });
+  if (!changed.length) { state.configDraft = {}; renderConfig(); return; }
+  state.configSaving = true; renderConfig();
+  const failed = [];
+  for (const [key, value] of changed) {
+    try {
+      await apiPost("web/config/update", { key, value });
+      const item = findConfigItem(key);
+      if (item) item.value = value;
+      delete state.configDraft[key];
+    } catch (err) { failed.push(`${key}：${err.message || err}`); }
+  }
+  state.configSaving = false;
+  if (failed.length) showAlert(`部分配置保存失败：${failed.join("；")}`, "error");
+  else showToast("配置已保存");
+  renderConfig();
+}
+
+function findConfigItem(key) {
+  const groups = state.config?.groups || [];
+  for (const g of groups) {
+    const item = (g.items || []).find(i => i.key === key);
+    if (item) return item;
+  }
+  return null;
+}
+
+function configItem(item) {
+  const value = state.configDraft[item.key] !== undefined
+    ? state.configDraft[item.key] : item.value;
+  const differsFromDefault = item.default !== undefined
+    && JSON.stringify(value) !== JSON.stringify(item.default);
+  const control = configControl(item, value);
+  return h("div", { class: "config-item" }, [
+    h("div", { class: "config-item-head" }, [
+      h("span", { class: "config-label", text: item.description || item.key }),
+      h("span", { class: "config-key mono", text: item.key }),
+      differsFromDefault ? h("button", {
+        class: "btn btn-ghost btn-sm config-reset", text: "恢复默认",
+        title: item.default === null ? "清空" : "重置为此项默认值",
+        onClick: () => {
+          state.configDraft[item.key] = item.default;
+          renderConfig();
+        },
+      }) : null,
+    ]),
+    control,
+    item.hint ? h("div", { class: "config-hint-block", text: item.hint }) : null,
+  ]);
+}
+
+function configControl(item, value) {
   const wrap = h("div", { class: "config-control" });
-  const commit = value => saveConfigItem(item, value);
+  const commit = v => { state.configDraft[item.key] = v; renderConfig(); };
   if (item.editable === false) {
     wrap.append(h("span", { class: "badge", text: "在「分组订阅管理」维护" }));
     return wrap;
   }
   if (item.type === "bool") {
     const input = h("input", { type: "checkbox" });
-    input.checked = !!item.value;
+    input.checked = !!value;
     input.addEventListener("change", () => commit(input.checked));
     wrap.append(h("label", { class: "toggle" }, [input, h("span", { class: "toggle-track" })]));
     return wrap;
   }
   if (item.type === "int" || item.type === "float") {
     const input = h("input", { type: "number", step: item.type === "float" ? "any" : "1" });
-    if (item.value !== null && item.value !== undefined) input.value = String(item.value);
+    if (value !== null && value !== undefined) input.value = String(value);
     input.addEventListener("change", () => {
       if (input.value.trim() === "") return;
       const num = Number(input.value);
@@ -1126,7 +1271,7 @@ function configControl(item) {
   }
   if (Array.isArray(item.options) && item.options.length) {
     const select = createSelect({
-      value: String(item.value ?? ""),
+      value: String(value ?? ""),
       options: item.options.map(o => ({ value: o, text: o })),
     });
     select.onChange(v => commit(v));
@@ -1136,8 +1281,8 @@ function configControl(item) {
   if (item.type === "text" || item.type === "list") {
     const area = h("textarea", { rows: item.type === "text" ? 3 : 4 });
     area.value = item.type === "list"
-      ? (Array.isArray(item.value) ? item.value.join("\n") : "")
-      : String(item.value ?? "");
+      ? (Array.isArray(value) ? value.join("\n") : "")
+      : String(value ?? "");
     area.addEventListener("change", () => {
       commit(item.type === "list"
         ? area.value.split("\n").map(s => s.trim()).filter(Boolean)
@@ -1149,23 +1294,24 @@ function configControl(item) {
     wrap.append(area);
     return wrap;
   }
+  if (item.type === "string" && item.key.toLowerCase().includes("provider")) {
+    const options = [{ value: "", text: "（留空 = 自动选择）" }];
+    for (const p of state.providers || []) {
+      options.push({ value: p.id, text: p.label || p.id });
+    }
+    if (value && !options.some(o => o.value === value)) {
+      options.push({ value, text: `${value}（当前值）` });
+    }
+    const select = createSelect({ value: String(value ?? ""), options });
+    select.onChange(v => { state.configDraft[item.key] = v; renderConfig(); });
+    wrap.append(select);
+    return wrap;
+  }
   const input = h("input", { type: "text" });
-  input.value = String(item.value ?? "");
+  input.value = String(value ?? "");
   input.addEventListener("change", () => commit(input.value));
   wrap.append(input);
   return wrap;
-}
-
-async function saveConfigItem(item, value) {
-  if (JSON.stringify(value) === JSON.stringify(item.value)) return;
-  try {
-    await apiPost("web/config/update", { key: item.key, value });
-    item.value = value;
-    showToast("已保存");
-  } catch (err) {
-    showAlert(`配置保存失败：${err.message || err}`, "error");
-    renderConfig();
-  }
 }
 
 /* --------------------------------------------------------------------------
@@ -1230,11 +1376,12 @@ function switchView(v) {
 function bindEvents() {
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
-    const dirty = state.groups.some(g => isGroupDirty(g.group_id));
+    const dirty = state.groups.some(g => isGroupDirty(g.group_id))
+      || Object.keys(state.configDraft).length > 0;
     if (!dirty) return reloadAll({ preserveDrafts: false });
     openConfirm({
       title: "刷新将丢弃未保存的修改？",
-      desc: "当前有分组的编辑尚未保存，刷新后这些修改将丢失。",
+      desc: "当前有分组的编辑以及未保存的配置修改，刷新后这些修改将丢失。",
       confirmText: "丢弃并刷新", danger: true,
       action: () => reloadAll({ preserveDrafts: false }),
     });
