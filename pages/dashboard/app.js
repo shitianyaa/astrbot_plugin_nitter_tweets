@@ -1146,7 +1146,8 @@ function configNavItem(g) {
   const count = configDirtyCount(g);
   return h("div", {
     class: `config-nav-item${g.key === state.configActive ? " active" : ""}`,
-    onClick: () => { if (state.configActive !== g.key) maybeLeaveConfigGroup(() => { state.configActive = g.key; state.configSearch = ""; renderConfig(); }); },
+    // 草稿跨组平铺、切组不丢弃任何东西,无需拦截确认
+    onClick: () => { if (state.configActive !== g.key) { state.configActive = g.key; state.configSearch = ""; renderConfig(); } },
   }, [
     h("span", { text: g.name }),
     count > 0
@@ -1383,11 +1384,16 @@ function switchView(v) {
 function bindEvents() {
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
-    const dirty = state.groups.some(g => isGroupDirty(g.group_id)) || configDraftDirty();
-    if (!dirty) return reloadAll({ preserveDrafts: false });
+    const groupsDirty = state.groups.some(g => isGroupDirty(g.group_id));
+    const configDirty = configDraftDirty();
+    if (!groupsDirty && !configDirty) return reloadAll({ preserveDrafts: false });
+    // 文案按实际脏来源拼接,避免只有其一为脏时以偏概全
+    const parts = [];
+    if (groupsDirty) parts.push("分组的编辑");
+    if (configDirty) parts.push("配置修改");
     openConfirm({
       title: "刷新将丢弃未保存的修改？",
-      desc: "当前有分组的编辑以及未保存的配置修改，刷新后这些修改将丢失。",
+      desc: `当前有未保存的${parts.join("和")}，刷新后这些修改将丢失。`,
       confirmText: "丢弃并刷新", danger: true,
       action: () => reloadAll({ preserveDrafts: false }),
     });

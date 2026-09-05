@@ -796,7 +796,6 @@ select { cursor: pointer; }
 .probe-check svg { width: 14px; height: 14px; }
 
 /* Config panel */
-.config-list { display: flex; flex-direction: column; gap: 16px; }
 .config-item { display: flex; flex-direction: column; gap: 5px; }
 .config-label { font-size: 13px; font-weight: 600; }
 .config-hint { font-size: 12px; color: var(--text-muted); }
