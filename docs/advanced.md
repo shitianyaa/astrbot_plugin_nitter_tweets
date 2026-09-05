@@ -91,28 +91,28 @@ flowchart TD
 
 ## WebUI 运维面板
 
-插件提供 AstrBot Plugin Pages 页面 `Nitter 推文面板`。这个页面用于日常查看和维护，不替代 AstrBot 设置页。
+插件提供 AstrBot Plugin Pages 页面 `Nitter 推文面板`。这个页面用于日常查看和维护，不替代 AstrBot 设置页。面板共 5 个 tab：控制台总览、分组订阅管理、推送历史、实例能力诊断和插件配置。
 
 | 页面 | 作用 |
 | --- | --- |
-| `概览` | 分别查看博主订阅、搜索订阅和 List 数量，以及重复/无效订阅、无效推送目标和全局配置诊断。 |
-| `分组订阅` | 左侧推送分组列表 + 右侧详情编辑；支持创建博主、标签或列表分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_reposts_enabled`、`filter_plain_text_enabled`、`push_targets` 和对应的 `watch_users`、`watch_queries`、`watch_lists`。类型创建后不可修改；每个目标下还可维护跨分组共享的作者黑名单。 |
-| `最近推送` | 查看成功、部分送达或发送失败历史；默认每页 10 条，最多 50 条；支持按分组、订阅源和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
-| `实例测试` | 管理员一次检查统一 `instances` 中每个自建 Nitter 的用户 RSS、用户 HTML、搜索和可选 List 能力；URL 留空测试全部实例，填写 URL 只测试该站。不写入配置或推送记录。 |
-| `缓存清理` | 清理普通媒体缓存或推送记录；推送记录清理不会删除关注账号、推送目标或媒体文件。 |
+| `控制台总览` | 分别查看博主订阅、搜索订阅和 List 数量，以及重复/无效订阅、无效推送目标、全局配置诊断和已配置实例；底部「维护与缓存清理」danger zone 可清理普通媒体缓存或推送记录，推送记录清理不会删除关注账号、推送目标或媒体文件。 |
+| `分组订阅管理` | 左侧推送分组列表 + 右侧详情编辑；支持创建博主、标签或列表分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_reposts_enabled`、`filter_plain_text_enabled`、`push_targets` 和对应的 `watch_users`、`watch_queries`、`watch_lists`。类型创建后不可修改；每个目标下还可维护跨分组共享的作者黑名单。 |
+| `推送历史` | 查看成功、部分送达或发送失败历史；默认每页 10 条，最多 50 条；支持按分组、订阅源和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
+| `实例能力诊断` | 管理员一次检查统一 `instances` 中每个自建 Nitter 的用户 RSS、用户 HTML、搜索和可选 List 能力；URL 留空测试全部实例，填写 URL 只测试该站。不写入配置或推送记录。 |
+| `插件配置` | 运行时读取 `_conf_schema.json`，可视化全部配置项；带 `invisible: true` 的项不显示（如 `target_blocked_users`），`tweet_groups`（推送分组）不在此处编辑。双栏布局：左栏搜索框加分组导航（显示各组配置项数与未保存修改数），右栏按类型渲染字段卡片，偏离默认值时可一键「恢复默认」；修改先写入草稿，经底部操作条统一「放弃更改」或「保存配置」，有未保存修改时离开或刷新会先确认。`translation_provider_id` 等含 provider 的字符串项渲染为 Provider 枚举下拉（选项来自运行中的翻译 Provider），留空 = 自动选择。与 AstrBot 设置页同源同对象，最后保存的生效。 |
 
 ### WebUI 分组管理 v2
 
 - `group_id` 只读展示，不支持在 WebUI 中修改。
 - 默认分组不可删除；删除自定义分组时会同时清理该分组的推送记录。
-- `最近推送` 中的失效分组检测只列出存在于推送历史、但当前 `tweet_groups` 不存在的 `group_id`；删除前需要确认，删除范围包括该 `group_id` 的推送历史和防重复推送记录。
+- `推送历史` 中的失效分组检测只列出存在于推送历史、但当前 `tweet_groups` 不存在的 `group_id`；删除前需要确认，删除范围包括该 `group_id` 的推送历史和防重复推送记录。
 - `check_interval_minutes` 仍是全局配置，分组编辑页只展示“继承全局”的有效值。
 - `push_targets` 支持在分组详情里新增或删除；点击保存后写回当前分组配置。删除推送目标不会删除关注账号、媒体、推送记录或发送历史。“检测目标”只校验 UMO 格式、平台实例是否存在和是否支持合并转发，不会向目标发送消息。
 - 目标作者黑名单按完整 UMO 归属，不属于某个 `tweet_group`；同一目标出现在多个分组时规则通用。Dashboard 可在目标下添加/删除用户名，命令 `/推文黑名单 添加 用户名`、`/推文黑名单 删除 用户名`、`/推文黑名单 查看` 默认使用当前会话目标，也可把 UMO 作为第一个参数。目标参数支持完整 UMO（如 `aiocqhttp:GroupMessage:123`）以及 `group:123` / `private:123` 简写；裸数字不会被视为目标，以免与数字用户名混淆。匹配按用户名精确且大小写不敏感，只影响后台分组推送；手动查询、被动链接预览和历史重推不自动套用。
 - 列表分组只接受正 `uint64` List ID。前端会检查 1-20 位纯数字及当前草稿/已有配置中的重复值；后端还会拒绝 `0` 和超过 `18446744073709551615` 的值。
 - `check_on_startup=true` 时，调度存储初始化完成后按分组顺序首检所有启用且同时配置订阅源和有效推送目标的分组；仅每日检查、仅间隔检查和没有定时槽位的分组都包含在首检范围内。缺少订阅源或目标的分组只记录跳过日志。
 
-WebUI 不编辑完整 `tweet_groups`，也不编辑 AI、媒体下载、Nitter 实例、并发与限流等配置。这些配置仍以 `_conf_schema.json` 对应的 AstrBot 设置页为准。
+面板与 AstrBot 设置页读写同一份插件配置，最后保存的生效；`tweet_groups` 只在「分组订阅管理」中维护。
 
 ## 配置参考
 
@@ -129,6 +129,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `cooldown_seconds` | 同一会话同一用户的命令冷却时间。 |
 | `filter_reposts_enabled` | Blogger、Tag、List 后台转发过滤总开关，默认开启。只有总开关与分组同名子开关都开启时才过滤；全局关闭时所有分组保留转发。Blogger 会比较 RSS item 主链接作者和订阅源，博主自己发布的引用或评论推文仍会保留。手动命令不受分组开关影响。 |
 | `auto_parse_tweet_links_enabled` | 是否被动解析聊天中的公开 X/Twitter status 链接，默认关闭。开启后无需命令；忽略 Bot 自身消息；翻译与「有译文时显示原文」跟随全局；不写 seen/push history；不受订阅、冷却和全局图/视频开关限制。同会话同帖约 60 秒防抖，单条消息最多 3 个不同链接。勿与同类链接解析插件同时开启以免重复回复。 |
+| `link_preview_arbiter_enabled` | 跨 Bot 仲裁，默认开启。OneBot 群聊中多个同类 Bot 只有赢的 Bot 解析回复，避免重复。通过 QQ 表情回应实现（会给消息贴永久表情标记）。单 Bot 环境可关闭以省去约 1s 延迟。协议移植自 [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser) 的 EmojiLikeArbiter。 |
 
 插件对 RSS、HTML/List、状态解析、媒体解析和下载统一使用内置浏览器请求标识；User-Agent 不再作为配置项，避免不同请求链路使用互相冲突的身份。各协议所需的 `Accept`、`Referer`、`Origin` 和 `Content-Type` 仍分别设置。
 
@@ -343,7 +344,6 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 - `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。
 - `group_type: tag`：只使用 `watch_queries`，通过 `instances` 的 HTML 搜索；seen 订阅源键为 `q:<casefold query>`。
 - `group_type: list`：只使用 `watch_lists`，通过 `instances` 的 HTML 获取公开 List 时间线；seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
-- **风险提示：Bot 若使用私人 QQ 号，不建议启用 Tag/List 分组定时搜索/推送**（HTML 查询与推送更频繁，有封号风险）。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
 - Tag/List 首轮真正没有搜索结果时不初始化 seen 或扫描水位；若有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤，则记录空扫描水位。
 - 管理命令：`/标签导入`、`/标签删除`；与 `/订阅导入`、`/订阅删除` 按类型互斥。

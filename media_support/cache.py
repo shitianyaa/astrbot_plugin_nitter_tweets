@@ -29,6 +29,15 @@ class MediaCacheCleanupResult:
     skipped_active: int = 0
 
 
+@dataclass(slots=True)
+class MediaCacheStats:
+    files: int = 0
+    images: int = 0
+    videos: int = 0
+    other: int = 0
+    bytes: int = 0
+
+
 class MediaCacheMixin:
     _protected_cache_dirs = frozenset({"staged"})
     _lease_lock = Lock()
@@ -214,6 +223,53 @@ class MediaCacheMixin:
             f"empty_dirs={result.removed_empty_dirs}"
         )
         return result
+
+    def cache_stats(self) -> MediaCacheStats:
+        """只读统计缓存目录存量(不删除、不登记日志);供面板维护区展示。"""
+        stats = MediaCacheStats()
+        seen_dirs: set[Path] = set()
+        for cache_dir in (self.cache_dir, self.legacy_cache_dir):
+            cache_dir = Path(cache_dir)
+            try:
+                resolved = cache_dir.resolve()
+            except (OSError, RuntimeError):
+                resolved = cache_dir
+            if resolved in seen_dirs:
+                continue
+            seen_dirs.add(resolved)
+            self._stat_cache_dir(cache_dir, stats)
+        return stats
+
+    @classmethod
+    def _stat_cache_dir(cls, cache_dir: Path, stats: MediaCacheStats) -> None:
+        cache_dir = Path(cache_dir)
+        if not cache_dir.exists():
+            return
+        for path in cache_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                relative = path.relative_to(cache_dir)
+            except ValueError:
+                continue
+            if (
+                relative.parts
+                and relative.parts[0].casefold() in cls._protected_cache_dirs
+            ):
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            stats.files += 1
+            stats.bytes += int(size)
+            kind = classify_media_path(path)
+            if kind == MEDIA_TYPE_IMAGE:
+                stats.images += 1
+            elif kind == MEDIA_TYPE_VIDEO:
+                stats.videos += 1
+            else:
+                stats.other += 1
 
     @classmethod
     def _clear_cache_dir(cls, cache_dir: Path, result: MediaCacheCleanupResult) -> None:

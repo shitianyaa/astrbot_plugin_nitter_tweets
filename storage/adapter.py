@@ -186,6 +186,11 @@ class StorageAdapter:
         storage_group_id = self._storage_group_id(group_id) if group_id else None
         return await asyncio.to_thread(sqlite.clear_seen_tweets, storage_group_id)
 
+    async def count_seen_records_by_group(self) -> dict[str, int]:
+        """Return read-only per-group seen tweet counts."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(sqlite.count_seen_tweets_by_group)
+
     async def delete_legacy_seen_kv(self) -> bool:
         """Delete legacy KV seen data so it cannot resurrect after reinstall."""
         delete_kv_data = getattr(self.owner, "delete_kv_data", None)
@@ -250,6 +255,7 @@ class StorageAdapter:
         username: str = "",
         limit: int = 50,
         offset: int = 0,
+        status: str = "",
     ) -> list[PushHistoryRecord]:
         """Return recent push history for all delivery outcomes."""
         sqlite = await self._ensure_sqlite_connected()
@@ -260,9 +266,12 @@ class StorageAdapter:
             username,
             limit,
             offset,
+            status,
         )
 
-    async def count_push_history(self, group_id: str = "", username: str = "") -> int:
+    async def count_push_history(
+        self, group_id: str = "", username: str = "", status: str = ""
+    ) -> int:
         """Return count of grouped push history records."""
         sqlite = await self._ensure_sqlite_connected()
         storage_group_id = self._storage_group_id(group_id) if group_id else ""
@@ -270,6 +279,7 @@ class StorageAdapter:
             sqlite.count_push_history,
             storage_group_id,
             username,
+            status,
         )
 
     async def get_push_history_group_summaries(self) -> list[PushHistoryGroupSummary]:

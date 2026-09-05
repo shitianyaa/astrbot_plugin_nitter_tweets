@@ -1,12 +1,14 @@
 __pycache__/
 *.py[cod]
 .claude/settings.local.json
+.zcode/
 .worktrees/
 cache/
 data/
 diagnostics/
 design_concept/
 docs/superpowers/plans/
+.superpowers/
 output/
 test/output/
 tests/downloads/

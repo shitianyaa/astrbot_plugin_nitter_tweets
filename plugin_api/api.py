@@ -17,6 +17,7 @@ try:
         save_subscription_config,
     )
     from ..scheduler import ScheduleGroup
+    from .api_config import WebAPIConfigMixin
     from .api_history import WebAPIHistoryMixin
     from .api_overview import WebAPIOverviewMixin
     from .api_probe import WebAPIProbeMixin
@@ -32,6 +33,7 @@ except ImportError:
     from config.subscriptions import (
         save_subscription_config,
     )
+    from plugin_api.api_config import WebAPIConfigMixin
     from plugin_api.api_history import WebAPIHistoryMixin
     from plugin_api.api_overview import WebAPIOverviewMixin
     from plugin_api.api_probe import WebAPIProbeMixin
@@ -52,6 +54,7 @@ class NitterWebAPI(
     WebAPISubscriptionsMixin,
     WebAPITargetBlacklistMixin,
     WebAPISerializersMixin,
+    WebAPIConfigMixin,
 ):
     """Backend API provider for the AstrBot Plugin Pages dashboard."""
 
@@ -76,12 +79,14 @@ class NitterWebAPI(
             ("web/history/orphans", "handle_history_orphans", ["GET"]),
             ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
-            ("web/check", "handle_check", ["POST"]),
             ("web/cache/clear", "handle_cache_clear", ["POST"]),
             ("web/seen/clear", "handle_seen_clear", ["POST"]),
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
             ("web/subscriptions/delete", "handle_subscriptions_delete", ["POST"]),
             ("web/mirror/probe", "handle_mirror_probe", ["POST"]),
+            ("web/config/schema", "handle_config_schema", ["GET"]),
+            ("web/config/update", "handle_config_update", ["POST"]),
+            ("web/config/providers", "handle_config_providers", ["GET"]),
         ]
         for route, handler_name, methods in routes:
             context.register_web_api(
@@ -101,13 +106,14 @@ class NitterWebAPI(
         async def action():
             group_id = str(request.args.get("group_id", "") or "").strip()
             username = str(request.args.get("username", "") or "").strip()
+            status = str(request.args.get("status", "") or "").strip()
             limit = self._parse_int(
                 request.args.get("limit"), 10, minimum=1, maximum=50
             )
             offset = self._parse_int(
                 request.args.get("offset"), 0, minimum=0, maximum=10_000_000
             )
-            return await self.build_history(group_id, username, limit, offset)
+            return await self.build_history(group_id, username, limit, offset, status)
 
         return await self._json_response(action)
 
@@ -166,15 +172,21 @@ class NitterWebAPI(
 
         return await self._json_response(action)
 
-    async def handle_check(self):
+    async def handle_cache_clear(self):
+        return await self._json_response(self.clear_cache)
+
+    async def handle_config_schema(self):
+        return await self._json_response(self.build_config_schema)
+
+    async def handle_config_update(self):
         async def action():
             data = await self._request_json()
-            return await self.run_check(data)
+            return await self.update_config_item(data)
 
         return await self._json_response(action)
 
-    async def handle_cache_clear(self):
-        return await self._json_response(self.clear_cache)
+    async def handle_config_providers(self):
+        return await self._json_response(self.list_providers)
 
     async def handle_seen_clear(self):
         async def action():
@@ -276,26 +288,6 @@ class NitterWebAPI(
             else:
                 payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
         return payload
-
-    async def run_check(self, data: dict[str, Any]) -> dict[str, Any]:
-        group_id = self._data_text(data, "group_id") or self._data_text(
-            data, "group_name"
-        )
-        group, error = self._resolve_group(group_id)
-        if error:
-            return self._error(error)
-        if not group.enabled:
-            return self._error(f"分组已停用：{self._group_label(group)}")
-
-        result = await self.scheduler.run_check(
-            reason="webui",
-            notify_no_updates=False,
-            group_name=group.group_id,
-        )
-        return self._ok(
-            message=result.format_message(),
-            result=self._serialize_check_result(result),
-        )
 
     async def clear_cache(self) -> dict[str, Any]:
         result = await asyncio.to_thread(self.plugin.media.clear_cache)

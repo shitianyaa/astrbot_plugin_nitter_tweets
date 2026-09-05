@@ -500,11 +500,7 @@ class NitterTweetScheduler(
     @staticmethod
     def _is_observable_check_reason(reason: str) -> bool:
         normalized = str(reason or "").strip().lower()
-        return (
-            normalized == "startup"
-            or normalized == "webui"
-            or normalized.startswith("manual")
-        )
+        return normalized == "startup" or normalized.startswith("manual")
 
     async def replay_push_history(
         self,

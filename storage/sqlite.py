@@ -506,6 +506,14 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 self._add_seen_ids_unlocked(group_id, seen_username, seen_ids)
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
+    def count_seen_tweets_by_group(self) -> dict[str, int]:
+        """按分组统计 seen 记录条数(只读,不含 scan_watermarks)."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            "SELECT group_id, COUNT(*) AS count FROM seen_tweets GROUP BY group_id"
+        ).fetchall()
+        return {str(row["group_id"]): int(row["count"] or 0) for row in rows}
+
     def clear_seen_tweets(self, group_id: str | None = None) -> int:
         """清理 seen 记录；group_id 为空时清理全部分组."""
         assert self.conn is not None
@@ -633,19 +641,28 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         username: str = "",
         limit: int = 50,
         offset: int = 0,
+        status: str = "",
     ) -> list[PushHistoryRecord]:
         """Return recent push history records for all delivery outcomes."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
-        params.extend(
-            [
+        having, having_params = self._push_history_having(status)
+        # 状态筛选才需要 latest-per-target 去重;无筛选时窗口函数是纯浪费
+        # (ponytail: 筛选路径全量扫过滤子集,几十万行后再考虑覆盖索引)
+        prefix = f"{self._push_history_latest_sql(where)}," if having else "WITH"
+        source = "latest_deliveries WHERE rn = 1" if having else f"push_history {where}"
+        params = (
+            params
+            + having_params
+            + [
                 max(1, min(int(limit or 50), 51)),
                 max(0, int(offset or 0)),
             ]
         )
         rows = self.conn.execute(
             f"""
-            WITH display_page AS (
+            {prefix}
+            display_page AS (
                 SELECT
                     group_id,
                     username,
@@ -654,9 +671,9 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                     original_link,
                     MAX(pushed_at) AS latest_pushed_at,
                     MAX(id) AS latest_id
-                FROM push_history
-                {where}
+                FROM {source}
                 GROUP BY group_id, username, status_id, source, original_link
+                {having}
                 ORDER BY latest_pushed_at DESC, latest_id DESC
                 LIMIT ? OFFSET ?
             )
@@ -678,21 +695,28 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         ).fetchall()
         return [self._push_history_record_from_row(row) for row in rows]
 
-    def count_push_history(self, group_id: str = "", username: str = "") -> int:
+    def count_push_history(
+        self, group_id: str = "", username: str = "", status: str = ""
+    ) -> int:
         """Return count of grouped push history records."""
         assert self.conn is not None
         where, params = self._push_history_filter(group_id, username)
+        having, having_params = self._push_history_having(status)
+        prefix = f"{self._push_history_latest_sql(where)}," if having else "WITH"
+        source = "latest_deliveries WHERE rn = 1" if having else f"push_history {where}"
         row = self.conn.execute(
             f"""
-            SELECT COUNT(*) AS count
-            FROM (
+            {prefix}
+            grouped_history AS (
                 SELECT 1
-                FROM push_history
-                {where}
+                FROM {source}
                 GROUP BY group_id, username, status_id, source, original_link
-            ) AS grouped_history
+                {having}
+            )
+            SELECT COUNT(*) AS count
+            FROM grouped_history
             """,
-            params,
+            params + having_params,
         ).fetchone()
         return int(row["count"] if row is not None else 0)
 
@@ -743,6 +767,61 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
             params.append(f"%{escaped_username}%")
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         return where, params
+
+    @staticmethod
+    def _push_history_latest_sql(where: str) -> str:
+        """每个 (分组键, 推送目标) 只保留最新一条送达结果的 CTE。
+
+        与 _group_history_records 的徽章一致：同一目标重推后以最新结果为准；
+        仅在带 status 筛选时拼入查询（无筛选时直接 GROUP BY，省一遍窗口排序）。
+        """
+        return f"""
+            WITH latest_deliveries AS (
+                SELECT
+                    group_id,
+                    username,
+                    status_id,
+                    source,
+                    original_link,
+                    delivery_status,
+                    pushed_at,
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY
+                            group_id,
+                            username,
+                            status_id,
+                            source,
+                            original_link,
+                            CASE WHEN target_umo = ''
+                                 THEN '__record__:' || id ELSE target_umo END
+                        ORDER BY pushed_at DESC, id DESC
+                    ) AS rn
+                FROM push_history
+                {where}
+            )
+        """
+
+    @staticmethod
+    def _push_history_having(status: str) -> tuple[str, list[Any]]:
+        """分组级状态筛选：匹配 _group_history_records 的徽章语义。
+
+        输入是 _push_history_latest_sql 去重后的「每目标最新送达结果」：
+        - success: 全部目标均送达成功
+        - failed: 全部目标均发送失败
+        - partial_failed: 存在失败或部分失败,但不全是失败
+        """
+        if status == "success":
+            return "HAVING SUM(delivery_status = ?) = COUNT(*)", ["success"]
+        if status == "failed":
+            return "HAVING SUM(delivery_status = ?) = COUNT(*)", ["failed"]
+        if status == "partial_failed":
+            return (
+                "HAVING SUM(delivery_status IN (?, ?)) > 0 "
+                "AND SUM(delivery_status = ?) < COUNT(*)",
+                ["failed", "partial_failed", "failed"],
+            )
+        return "", []
 
     def get_push_history_record(self, record_id: int) -> PushHistoryRecord | None:
         """Return one push history record by id."""

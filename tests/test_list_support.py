@@ -1,5 +1,6 @@
 """Twitter List config, HTML backend, WebUI, and status regressions."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -557,14 +558,14 @@ def test_webui_list_update_rejects_invalid_and_duplicate_ids():
 def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
     assert 'value: "list"' in source
     assert 'name: "createGroupType"' in source
     assert 'type: "radio"' in source
     assert 'attrs: { id: "createGroupType" }' not in source
     assert 'label: "List 分组"' in source
-    assert "不建议创建或启用标签分组和 List 分组" in source
-    assert source.count("text: PRIVATE_QQ_GROUP_WARNING") >= 2
+    assert "PRIVATE_QQ_GROUP_WARNING" not in source
     assert ".group-type-options" in style
     assert ".group-type-radio:checked + .group-type-option-body" in style
     assert "function addWatchList(groupId)" in source
@@ -576,6 +577,57 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
     assert 'rss_user: "用户 RSS"' in source
+    assert "localStorage" not in source
+    assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
+
+
+def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "web/target-blacklists/update" in source
+    assert "目标作者黑名单" in source
+    assert "function renderTargetBlacklist(group, draft)" in source
+    assert "function saveTargetBlacklist(target, users)" in source
+    assert "跨分组共享，仅影响后台推送" in source
+    assert "web/subscriptions/import" in source
+    assert "web/subscriptions/delete" in source
+    assert "批量导入 / 移除" in source
+    assert "间隔检查使用全局检查间隔" in source
+    assert "ban: '<circle" in source
+    assert (
+        "每行一个地址，不要用逗号分隔" in schema["basic"]["items"]["instances"]["hint"]
+    )
+    assert "`omit_status_url`（`tweet_groups` 分组字段）" in readme
+
+
+def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    assert "if (state.actionBusy) return null;" in source
+    assert '"data-busy-control": "true"' in source
+    assert 'apiGet("web/groups")' in source
+    assert 'apiGet("web/overview")' in source
+    assert "function renderEntityChips(container, group, draft)" in source
+    assert "renderEntityChips(container, group, draft)" in source
+    assert 'id: "saveGroupBtn"' not in source
+    assert "function confirmGroupMutation(gid" in source
+    assert 'confirmText: "添加并保存"' in source
+    assert 'confirmText: "移除并保存"' in source
+    assert "function commitGroupField(gid, field, value)" in source
+    assert "请先添加推送目标。" in source
+    assert "const showActionStatus = state.actionBusy;" in source
+    assert "body.ui-busy .view" in style
+    assert "transition: all" not in style
+    assert ".tweet-card:hover" in style
+    assert "background: var(--blue-soft);" in style
+    assert "border-color: var(--blue-border);" in style
+    assert ".groups-layout > * { min-width: 0; }" in style
+    assert 'id="actionStatus"' in index
+    assert 'aria-live="polite"' in index
 
 
 def test_status_and_export_render_list_group():
