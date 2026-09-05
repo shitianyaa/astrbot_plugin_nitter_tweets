@@ -105,9 +105,9 @@ tweet_groups:
 
 | 需求 | 做法 |
 | --- | --- |
-| 聊天里自动解析推文链接 | 打开 `auto_parse_tweet_links_enabled` |
+| 聊天里自动解析推文链接 | 打开 `auto_parse_tweet_links_enabled`（群聊多 Bot 默认按表情仲裁防重复） |
 | 批量把关注加入 Public List | 见 [List 指南](./docs/twitter-lists.md)（第三方扩展；X 约 24h ~100 次量级限额） |
-| WebUI 管分组 / 历史 / 实例诊断 | AstrBot 插件页「Nitter 推文面板」 |
+| WebUI 管分组 / 历史 / 实例诊断 / 配置 | AstrBot 插件页「Nitter 推文面板」 |
 
 ### 推送目标示例
 
@@ -169,7 +169,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `push.target_blocked_users` | 按完整 UMO 保存作者黑名单；命令和 Dashboard 维护，跨分组共享 |
 | `tweet_groups` | 订阅与推送分组 |
 | `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
-| `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
+| `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关；开启后 OneBot 群聊默认带跨 Bot 仲裁（`link_preview_arbiter_enabled` 可关） |
 | `brief_log_enabled` | 后台日志简略模式；开启时输出结构化检查摘要和关键失败信息 |
 | `omit_status_url`（`tweet_groups` 分组字段） | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |

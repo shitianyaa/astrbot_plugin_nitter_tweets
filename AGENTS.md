@@ -30,7 +30,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 | `scheduler/` | 高风险：检查、seen、推送编排 |
 | `media_support/` | RSS client、`html_backend`、媒体、**`status_link` / `status_resolve`** |
 | `delivery/` | 多平台发送；`force_media` 仅链接预览等显式路径 |
-| `rendering/`、`ai/`、`storage/`、`plugin_api/`、`shared/` | 渲染、翻译、SQLite、WebUI API、模型；`shared/observability.py` 负责脱敏日志和结构化任务摘要 |
+| `rendering/`、`ai/`、`storage/`、`plugin_api/`、`shared/` | 渲染、翻译、SQLite、WebUI API、模型；`shared/observability.py` 负责脱敏日志和结构化任务摘要；`shared/arbiter.py` 负责被动链接跨 Bot 表情仲裁 |
 
 完整模块关系：`docs/project/architecture.md`。
 
@@ -73,6 +73,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 入口：`@filter.regex` → `LinkPreviewMixin`；**无新命令**。
 - 忽略 Bot 自身消息；合法 status 链才 `stop_event`。
 - 解析：FxTwitter → VxTwitter → Syndication（`status_resolve`）；URL 白名单在 `status_link`。
+- 仲裁：`link_preview_arbiter_enabled`（**默认 true**），仅 OneBot 群聊：表情 289 占坑、124 胜出确认，`msg_time` 60s 时间片确定性轮转；表情 API 不可用退化为无仲裁，不阻塞解析。
 - 翻译跟全局 `translate_*`；原文显隐只跟全局 `show_original_when_translated`（无分组 hide）。
 - 媒体：`force_all_media` / send `force_media`（无视全局图视频开关与 `max_media_per_tweet`，仍受大小/时长/超时）。
 - 单消息最多 3 链；防抖同 UMO+status_id（实现上应在**成功后**再记；见 Progress/审查）。

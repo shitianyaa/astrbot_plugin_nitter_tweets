@@ -123,3 +123,4 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。
 - `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数。
+- `shared/arbiter.py`: 被动链接跨 Bot 表情仲裁（EmojiLikeArbiter 协议，表情 289 占坑 / 124 胜出确认）。
