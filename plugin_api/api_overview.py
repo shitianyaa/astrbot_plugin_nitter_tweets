@@ -243,27 +243,28 @@ class WebAPIOverviewMixin:
             )
         if groups:
             items.extend(WebAPIOverviewMixin._overview_group_diagnostics(groups))
-
-        if not items:
-            items.append(
-                {
-                    "key": "ok",
-                    "level": "ok",
-                    "title": "当前没有需要处理的提示",
-                    "detail": "关键状态未发现异常。",
-                }
-            )
         return items
 
     @staticmethod
     def _overview_group_diagnostics(
         groups: list[ScheduleGroup],
     ) -> list[dict[str, str]]:
+        disabled_groups = [group for group in groups if not group.enabled]
         enabled_groups = [group for group in groups if group.enabled]
-        if not enabled_groups:
-            return []
 
         items: list[dict[str, str]] = []
+        for group in disabled_groups:
+            items.append(
+                {
+                    "key": "group_disabled",
+                    "level": "info",
+                    "title": "分组已停用",
+                    "detail": f"{group.name} 不参与定时检查与推送。",
+                    "group_id": group.group_id,
+                }
+            )
+        if not enabled_groups:
+            return items
         no_watch_users = [
             group
             for group in enabled_groups

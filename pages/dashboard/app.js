@@ -63,6 +63,7 @@ const ICONS = {
   rss: '<path d="M4 11a9 9 0 019 9M4 4a16 16 0 0116 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="5" cy="19" r="1.5" fill="currentColor"/>',
   search: '<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   external: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  chevron: '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 function svgIcon(name, size = 20) {
@@ -164,6 +165,100 @@ function formatBytes(n) {
   if (!Number.isFinite(n) || n <= 0) return "0 KB";
   if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
   return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+/* --------------------------------------------------------------------------
+   Select(自绘下拉,替代原生 select 的割裂观感)
+   -------------------------------------------------------------------------- */
+let openDropdown = null;
+
+function createSelect({ id = "", value = "", options = [] } = {}) {
+  const root = h("div", { class: "dd" });
+  if (id) root.id = id;
+  let current = String(value ?? "");
+  let opts = options.map(o => ({ value: String(o.value), text: o.text }));
+  let onChange = null;
+
+  const labelEl = h("span", { class: "dd-label" });
+  const trigger = h("button", {
+    type: "button", class: "dd-trigger", "aria-haspopup": "listbox", "aria-expanded": "false",
+  }, [labelEl, h("span", { class: "dd-caret", html: svgIcon("chevron", 14) })]);
+  const list = h("div", { class: "dd-list", role: "listbox", hidden: true });
+  root.append(trigger, list);
+
+  const labelOf = v => (opts.find(o => o.value === v) || { text: v }).text;
+  function syncTrigger() { labelEl.textContent = labelOf(current); }
+  function renderList() {
+    list.replaceChildren(...opts.map(o => h("button", {
+      type: "button",
+      class: `dd-option${o.value === current ? " selected" : ""}`,
+      role: "option",
+      "aria-selected": o.value === current ? "true" : "false",
+      text: o.text,
+      onClick: () => { pick(o.value); close(); },
+    })));
+  }
+  function pick(v) {
+    const changed = v !== current;
+    current = v;
+    syncTrigger();
+    renderList();
+    if (changed && typeof onChange === "function") onChange(current);
+  }
+  function onDocClick(e) { if (!root.contains(e.target)) close(); }
+  function open() {
+    if (openDropdown && openDropdown !== api) openDropdown._close();
+    renderList();
+    list.hidden = false;
+    root.classList.add("open");
+    trigger.setAttribute("aria-expanded", "true");
+    document.addEventListener("click", onDocClick, true);
+    openDropdown = api;
+    (list.querySelector(".dd-option.selected") || list.firstElementChild)?.focus();
+  }
+  function close() {
+    list.hidden = true;
+    root.classList.remove("open");
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onDocClick, true);
+    if (openDropdown === api) openDropdown = null;
+  }
+  trigger.addEventListener("click", () => (list.hidden ? open() : close()));
+  trigger.addEventListener("keydown", e => {
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) { e.preventDefault(); open(); }
+  });
+  list.addEventListener("keydown", e => {
+    const items = [...list.querySelectorAll(".dd-option")];
+    const idx = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); items[Math.min(idx + 1, items.length - 1)]?.focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); items[Math.max(idx - 1, 0)]?.focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); trigger.focus(); }
+    else if (e.key === "Tab") close();
+  });
+
+  const api = { _close: close };
+  Object.defineProperty(root, "value", {
+    get: () => current,
+    set: v => pick(String(v ?? "")),
+  });
+  root.setOptions = next => {
+    opts = next.map(o => ({ value: String(o.value), text: o.text }));
+    if (!opts.some(o => o.value === current)) current = opts[0]?.value ?? "";
+    syncTrigger();
+    if (!list.hidden) renderList();
+  };
+  root.onChange = fn => { onChange = fn; };
+  syncTrigger();
+  return root;
+}
+
+function upgradeSelect(el) {
+  if (!el || el.tagName !== "SELECT") return el;
+  const value = el.value;
+  const options = [...el.options].map(o => ({ value: o.value, text: o.textContent }));
+  const custom = createSelect({ id: el.id, value, options });
+  el.replaceWith(custom);
+  return custom;
 }
 function setBusy(isBusy) {
   state.loading = isBusy;
@@ -625,14 +720,15 @@ function renderOverview() {
   const cfg = p.config_summary || {}; const inst = p.instances || [];
   const att = p.attention_items || [];
 
-  // Metric cards with icons
+  // Metric cards with icons(除调度器外点击跳转分组管理)
+  const goGroups = () => document.querySelector('[data-view="groups"]')?.click();
   const metrics = h("div", { class: "metrics-grid" }, [
     metric("home", "调度器", s.running ? "运行中" : "已停用"),
-    metric("list", "启用分组", `${c.enabled_groups || 0} / ${c.groups || 0}`),
-    metric("user", "博主订阅", c.watch_users || 0),
-    metric("hash", "搜索订阅", c.watch_queries || 0),
-    metric("rss", "List 订阅", c.watch_lists || 0),
-    metric("send", "推送目标", c.push_targets || 0),
+    metric("list", "启用分组", `${c.enabled_groups || 0} / ${c.groups || 0}`, goGroups),
+    metric("user", "博主订阅", c.watch_users || 0, goGroups),
+    metric("hash", "搜索订阅", c.watch_queries || 0, goGroups),
+    metric("rss", "List 订阅", c.watch_lists || 0, goGroups),
+    metric("send", "推送目标", c.push_targets || 0, goGroups),
   ]);
 
   // Attention items
@@ -642,7 +738,7 @@ function renderOverview() {
       h("span", { class: "badge badge-warn", text: `${att.length} 项` }),
     ]),
     ...att.map(item => h("div", {
-      class: `alert-item ${item.level === "error" ? "danger" : item.level === "warn" ? "warn" : "info"}`,
+      class: `alert-item ${item.level === "error" ? "danger" : item.level === "warning" || item.level === "warn" ? "warn" : "info"}`,
     }, [
       h("span", {}, [
         h("strong", { text: `${item.title || ""}: ` }),
@@ -707,13 +803,16 @@ function renderOverview() {
         h("p", { text: "可能导致历史推文再次推送" }),
         h("p", { text: seenInfo ? `当前共 ${seenInfo.total} 条记录` : "当前记录数：未知" }),
         h("div", { class: "actions" }, [
-          h("select", { id: "seenSelect", style: { width: "auto" } }, [
-            h("option", { value: "", text: "全部分组" }),
-            ...state.groups.map(g => h("option", {
-              value: g.group_id,
-              text: `${g.name}（${seenByGroup[g.group_id] ?? 0} 条）`,
-            })),
-          ]),
+          createSelect({
+            id: "seenSelect",
+            options: [
+              { value: "", text: "全部分组" },
+              ...state.groups.map(g => ({
+                value: g.group_id,
+                text: `${g.name}（${seenByGroup[g.group_id] ?? 0} 条）`,
+              })),
+            ],
+          }),
           h("button", { class: "btn btn-danger btn-sm", text: "重置", onClick: confirmClearSeen }),
         ]),
       ]),
@@ -723,8 +822,11 @@ function renderOverview() {
   root.replaceChildren(metrics, ...(attPanel ? [attPanel] : []), configPanel, dz);
 }
 
-function metric(icon, label, value) {
-  return h("div", { class: "metric" }, [
+function metric(icon, label, value, onClick) {
+  return h("div", {
+    class: `metric${onClick ? " clickable" : ""}`,
+    ...(onClick ? { role: "button", tabindex: "0", onClick, onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } } : {}),
+  }, [
     h("div", { class: "metric-icon", html: svgIcon(icon, 16) }),
     h("div", { class: "metric-text" }, [
       h("span", { class: "metric-label", text: label }),
@@ -743,11 +845,11 @@ function renderHistory() {
   const recs = (data && data.records) || [];
 
   // Sync group dropdown
-  if (els.historyGroupSelect && !els.historyGroupSelect.children.length) {
-    els.historyGroupSelect.replaceChildren(
-      h("option", { value: "", text: "所有分组" }),
-      ...state.groups.map(g => h("option", { value: g.group_id, text: g.name })),
-    );
+  if (els.historyGroupSelect?.setOptions) {
+    els.historyGroupSelect.setOptions([
+      { value: "", text: "所有分组" },
+      ...state.groups.map(g => ({ value: g.group_id, text: g.name })),
+    ]);
   }
   // Pager
   if (els.historyPageLabel && data) {
@@ -1080,6 +1182,8 @@ function boot() {
     bridge = window.AstrBotPluginPage;
     if (!bridge) throw new Error("AstrBot 页面桥接不可用");
     initEls();
+    els.historyGroupSelect = upgradeSelect(els.historyGroupSelect);
+    els.historyStatusSelect = upgradeSelect(els.historyStatusSelect);
     initTheme();
     bindEvents();
     reloadAll({ preserveDrafts: false });
