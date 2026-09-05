@@ -68,3 +68,67 @@ class WebAPIConfigMixin:
                 }
             )
         return self._ok(groups=groups, total=editable_count)
+
+    async def update_config_item(self, data: dict[str, Any]) -> dict[str, Any]:
+        key = self._data_text(data, "key")
+        raw = data.get("value")
+        schema = await asyncio.to_thread(_load_schema)
+        found: tuple[str, dict[str, Any]] | None = None
+        for group_key, group_schema in schema.items():
+            if (
+                not isinstance(group_schema, dict)
+                or group_schema.get("type") != "object"
+            ):
+                continue
+            item_schema = group_schema.get("items", {}).get(key)
+            if item_schema is not None:
+                found = (group_key, item_schema)
+                break
+        if found is None:
+            return self._error(f"未知配置项：{key}")
+        group_key, item_schema = found
+        item_type = str(item_schema.get("type", "string"))
+        if item_type in _NON_EDITABLE_ITEM_TYPES:
+            return self._error("该配置项在「分组订阅管理」维护，不支持此处修改")
+        try:
+            value = _coerce_config_value(item_type, raw, item_schema)
+        except (TypeError, ValueError) as exc:
+            return self._error(str(exc) or "取值不合法")
+        config = self.config
+        group = config.get(group_key)
+        if not isinstance(group, dict):
+            group = {}
+        group[key] = value
+        config[group_key] = group
+        save_config = getattr(config, "save_config", None)
+        if callable(save_config):
+            save_config()
+        return self._ok(key=key, value=value)
+
+
+def _coerce_config_value(item_type: str, raw: Any, item_schema: dict[str, Any]) -> Any:
+    if item_type == "bool":
+        if isinstance(raw, bool):
+            return raw
+        raise ValueError("该配置项需要布尔值")
+    if item_type in {"int", "float"}:
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError("该配置项需要数字")
+        if item_type == "int":
+            if number != int(number):
+                raise ValueError("该配置项需要整数")
+            return int(number)
+        return number
+    if item_type == "list":
+        if isinstance(raw, list):
+            return [str(line).strip() for line in raw if str(line).strip()]
+        if isinstance(raw, str):
+            return [line.strip() for line in raw.splitlines() if line.strip()]
+        raise ValueError("该配置项需要字符串列表")
+    text = "" if raw is None else str(raw)
+    options = item_schema.get("options")
+    if options and text not in {str(o) for o in options}:
+        raise ValueError(f"取值必须是 {list(options)} 之一")
+    return text

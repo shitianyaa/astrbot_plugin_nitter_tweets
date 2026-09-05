@@ -84,3 +84,57 @@ def test_schema_skips_invisible_items():
     result = asyncio.run(_Host(config).build_config_schema())
     push = next(g for g in result["groups"] if g["key"] == "push")
     assert "target_blocked_users" not in {i["key"] for i in push["items"]}
+
+
+def test_update_coerces_and_writes_grouped_location():
+    config = _FakeConfig()
+    host = _Host(config)
+    result = asyncio.run(
+        host.update_config_item({"key": "default_limit", "value": "15"})
+    )
+    assert result["success"] is True
+    assert result["value"] == 15
+    assert config["basic"]["default_limit"] == 15
+    assert config.saved == 1
+
+
+def test_update_rejects_bad_number_and_option():
+    config = _FakeConfig()
+    host = _Host(config)
+    bad_number = asyncio.run(
+        host.update_config_item({"key": "request_timeout", "value": "abc"})
+    )
+    assert bad_number["success"] is False
+    bad_option = asyncio.run(
+        host.update_config_item({"key": "media_quality", "value": "ultra"})
+    )
+    assert bad_option["success"] is False
+    assert config.saved == 0
+
+
+def test_update_bool_and_list():
+    config = _FakeConfig()
+    host = _Host(config)
+    ok_bool = asyncio.run(
+        host.update_config_item({"key": "filter_reposts_enabled", "value": False})
+    )
+    assert ok_bool["success"] is True and ok_bool["value"] is False
+    ok_list = asyncio.run(
+        host.update_config_item(
+            {"key": "instances", "value": [" http://a:8080 ", "", "http://b:8080"]}
+        )
+    )
+    assert ok_list["value"] == ["http://a:8080", "http://b:8080"]
+
+
+def test_update_rejects_unknown_and_template_list():
+    config = _FakeConfig()
+    host = _Host(config)
+    unknown = asyncio.run(host.update_config_item({"key": "nope", "value": 1}))
+    assert unknown["success"] is False
+    template = asyncio.run(
+        host.update_config_item({"key": "tweet_groups", "value": []})
+    )
+    assert template["success"] is False
+    assert "分组订阅管理" in template["error"]
+    assert config.saved == 0
