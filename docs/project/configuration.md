@@ -29,7 +29,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 `auto_parse_tweet_links_enabled`（`basic`，默认 `false`）：被动解析聊天中的公开 status 链接；不进 `tweet_groups` 模板。翻译与 `show_original_when_translated` 跟随全局 AI 配置。
 
-Dashboard 实例测试一次检查统一 `instances` 的用户 RSS、用户 HTML、搜索和可选 List。URL 留空时按配置顺序测试全部实例；填写 URL 时只测试该站。
+Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用户 HTML、搜索和可选 List。URL 留空时按配置顺序测试全部实例；填写 URL 时只测试该站。
 
 ## `tweet_groups`
 
