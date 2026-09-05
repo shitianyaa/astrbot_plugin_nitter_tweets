@@ -557,14 +557,14 @@ def test_webui_list_update_rejects_invalid_and_duplicate_ids():
 def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
     assert 'value: "list"' in source
     assert 'name: "createGroupType"' in source
     assert 'type: "radio"' in source
     assert 'attrs: { id: "createGroupType" }' not in source
     assert 'label: "List 分组"' in source
-    assert "不建议创建或启用标签分组和 List 分组" in source
-    assert source.count("text: PRIVATE_QQ_GROUP_WARNING") >= 2
+    assert "PRIVATE_QQ_GROUP_WARNING" not in source
     assert ".group-type-options" in style
     assert ".group-type-radio:checked + .group-type-option-body" in style
     assert "function addWatchList(groupId)" in source
@@ -576,6 +576,8 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
     assert 'rss_user: "用户 RSS"' in source
+    assert "localStorage" not in source
+    assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
 
 
 def test_status_and_export_render_list_group():

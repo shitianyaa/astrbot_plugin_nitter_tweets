@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+from astrbot.api import logger
 
 try:
     from ..config import (
@@ -110,8 +113,37 @@ class WebAPIOverviewMixin:
             attention_items=self._overview_attention_items(
                 counts, scheduler_state, instances, groups
             ),
+            maintenance=await self._maintenance_snapshot(),
             terminology=self._terminology(),
         )
+
+    async def _maintenance_snapshot(self) -> dict[str, Any]:
+        """维护区存量快照:媒体缓存与 seen 记录计数;失败降级,不影响总览。"""
+        cache = None
+        try:
+            stats = await asyncio.to_thread(self.plugin.media.cache_stats)
+            cache = {
+                "files": stats.files,
+                "images": stats.images,
+                "videos": stats.videos,
+                "other": stats.other,
+                "bytes": stats.bytes,
+            }
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] 读取媒体缓存统计失败: {type(exc).__name__}: {exc}"
+            )
+        try:
+            seen_by_group = await self.storage.count_seen_records_by_group()
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] 读取 seen 统计失败: {type(exc).__name__}: {exc}"
+            )
+            seen_by_group = {}
+        return {
+            "cache": cache,
+            "seen": {"total": sum(seen_by_group.values()), "by_group": seen_by_group},
+        }
 
     async def build_groups(self) -> dict[str, Any]:
         groups = self._schedule_groups()
@@ -211,27 +243,28 @@ class WebAPIOverviewMixin:
             )
         if groups:
             items.extend(WebAPIOverviewMixin._overview_group_diagnostics(groups))
-
-        if not items:
-            items.append(
-                {
-                    "key": "ok",
-                    "level": "ok",
-                    "title": "当前没有需要处理的提示",
-                    "detail": "关键状态未发现异常。",
-                }
-            )
         return items
 
     @staticmethod
     def _overview_group_diagnostics(
         groups: list[ScheduleGroup],
     ) -> list[dict[str, str]]:
+        disabled_groups = [group for group in groups if not group.enabled]
         enabled_groups = [group for group in groups if group.enabled]
-        if not enabled_groups:
-            return []
 
         items: list[dict[str, str]] = []
+        for group in disabled_groups:
+            items.append(
+                {
+                    "key": "group_disabled",
+                    "level": "info",
+                    "title": "分组已停用",
+                    "detail": f"{group.name} 不参与定时检查与推送。",
+                    "group_id": group.group_id,
+                }
+            )
+        if not enabled_groups:
+            return items
         no_watch_users = [
             group
             for group in enabled_groups

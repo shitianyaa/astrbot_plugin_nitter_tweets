@@ -258,7 +258,7 @@
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时选择「博主分组」「标签分组」或「列表分组」。三类分组分别填写关注账号、搜索订阅或公开 List ID。共用推送目标与检查/过滤；group_id 自动生成。风险提示：Bot 若使用私人 QQ 号，不建议启用标签或列表分组定时功能。",
+        "hint": "添加时选择「博主分组」「标签分组」或「列表分组」。三类分组分别填写关注账号、搜索订阅或公开 List ID。共用推送目标与检查/过滤；group_id 自动生成。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -405,7 +405,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示。风险提示：若 Bot 使用私人 QQ 号登录，不建议启用标签分组定时搜索/推送。"
+                "hint": "用于 /推文检查 分组名 和 /推文状态 展示。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -418,7 +418,7 @@
                 "description": "启用分组",
                 "type": "bool",
                 "default": true,
-                "hint": "使用私人 QQ 号作为 Bot 时，建议不要开启标签分组（定时搜索与推送较频繁，有封号风险）。"
+                "hint": "控制该分组是否参与定时检查与推送。"
               },
               "group_type": {
                 "description": "分组类型",

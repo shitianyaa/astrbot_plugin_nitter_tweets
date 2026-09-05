@@ -6,7 +6,7 @@
 
 - 手动查询：`/推文 用户名 [数量]`
 - 搜索：`/推文搜索 查询 [数量]`（`#` 为标签，否则短语）
-- 实例测试：`/镜像测试 [用户名] [数量] 实例URL` 测单站用户时间线；Dashboard 一次检查 RSS、用户 HTML、搜索和可选 List，留空 URL 测试全部配置实例。
+- 实例能力诊断：`/镜像测试 [用户名] [数量] 实例URL` 测单站用户时间线；Dashboard 一次检查 RSS、用户 HTML、搜索和可选 List，留空 URL 测试全部配置实例。
 - 后台检查：按 `tweet_groups` 分组扫描 Blogger RSS 或 Tag/List HTML，以独立扫描基准和 seen 识别并推送全部新推文。
 - 被动链接预览：可选解析聊天中的公开 status 链接，复用翻译、媒体和平台发送链路。
 - 分组类型：Blogger（`watch_users`）、Tag（`watch_queries`）和 List（`watch_lists`）；摘要分别使用“n 位博主”“n 个搜索订阅”“n 个 List”。
@@ -22,7 +22,7 @@
 
 - 处理 Blogger 公开 RSS；RSS 失败或无结果时自动尝试同一实例的 HTML 用户页；Tag/List 使用同一实例列表的 HTML。
 - 不绕过 X/Twitter、Nitter、xdown 或消息平台限制。
-- SQLite 会保存运行所需的分组、订阅源和目标配置、seen、独立扫描基准组，以及最近推送所需的 push history 快照；push history 用于 WebUI 历史查看和重推，不会主动抓取或归档订阅源的全部历史推文。
+- SQLite 会保存运行所需的分组、订阅源和目标配置、seen、独立扫描基准组，以及推送历史所需的 push history 快照；push history 用于 WebUI 历史查看和重推，不会主动抓取或归档订阅源的全部历史推文。
 - 手动查询不写入 seen、扫描基准或 push history。
 - 历史重推属于原分组，是不受目标作者黑名单和 `media_only_enabled` 限制的显式恢复操作。
 - 后台检查首次启用订阅源只初始化 seen 和最近最多 20 个扫描基准 ID，不推送历史；Tag/List 真正空首轮保持未初始化，有原始结果但全被过滤时记录空扫描水位。

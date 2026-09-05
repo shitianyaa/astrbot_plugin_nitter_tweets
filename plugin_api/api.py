@@ -17,6 +17,7 @@ try:
         save_subscription_config,
     )
     from ..scheduler import ScheduleGroup
+    from .api_config import WebAPIConfigMixin
     from .api_history import WebAPIHistoryMixin
     from .api_overview import WebAPIOverviewMixin
     from .api_probe import WebAPIProbeMixin
@@ -32,6 +33,7 @@ except ImportError:
     from config.subscriptions import (
         save_subscription_config,
     )
+    from plugin_api.api_config import WebAPIConfigMixin
     from plugin_api.api_history import WebAPIHistoryMixin
     from plugin_api.api_overview import WebAPIOverviewMixin
     from plugin_api.api_probe import WebAPIProbeMixin
@@ -52,6 +54,7 @@ class NitterWebAPI(
     WebAPISubscriptionsMixin,
     WebAPITargetBlacklistMixin,
     WebAPISerializersMixin,
+    WebAPIConfigMixin,
 ):
     """Backend API provider for the AstrBot Plugin Pages dashboard."""
 
@@ -82,6 +85,9 @@ class NitterWebAPI(
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
             ("web/subscriptions/delete", "handle_subscriptions_delete", ["POST"]),
             ("web/mirror/probe", "handle_mirror_probe", ["POST"]),
+            ("web/config/schema", "handle_config_schema", ["GET"]),
+            ("web/config/update", "handle_config_update", ["POST"]),
+            ("web/config/providers", "handle_config_providers", ["GET"]),
         ]
         for route, handler_name, methods in routes:
             context.register_web_api(
@@ -101,13 +107,14 @@ class NitterWebAPI(
         async def action():
             group_id = str(request.args.get("group_id", "") or "").strip()
             username = str(request.args.get("username", "") or "").strip()
+            status = str(request.args.get("status", "") or "").strip()
             limit = self._parse_int(
                 request.args.get("limit"), 10, minimum=1, maximum=50
             )
             offset = self._parse_int(
                 request.args.get("offset"), 0, minimum=0, maximum=10_000_000
             )
-            return await self.build_history(group_id, username, limit, offset)
+            return await self.build_history(group_id, username, limit, offset, status)
 
         return await self._json_response(action)
 
@@ -175,6 +182,19 @@ class NitterWebAPI(
 
     async def handle_cache_clear(self):
         return await self._json_response(self.clear_cache)
+
+    async def handle_config_schema(self):
+        return await self._json_response(self.build_config_schema)
+
+    async def handle_config_update(self):
+        async def action():
+            data = await self._request_json()
+            return await self.update_config_item(data)
+
+        return await self._json_response(action)
+
+    async def handle_config_providers(self):
+        return await self._json_response(self.list_providers)
 
     async def handle_seen_clear(self):
         async def action():
