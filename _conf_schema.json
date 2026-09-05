@@ -8,7 +8,7 @@
         "description": "自建 Nitter 实例列表",
         "type": "list",
         "default": [],
-        "hint": "填写你自己部署的 Nitter 地址；同一列表同时用于 RSS、HTML 搜索和 List。AstrBot 与 Nitter 在同一 Docker 网络时填 http://nitter:8080；不要在 AstrBot 容器内填写 127.0.0.1，除非 Nitter 就在同一个容器。公共实例已停止维护，不再提供默认地址。"
+        "hint": "填写你自己部署的 Nitter 地址，每行一个地址，不要用逗号分隔；同一列表同时用于 RSS、HTML 搜索和 List。AstrBot 与 Nitter 在同一 Docker 网络时填 http://nitter:8080；不要在 AstrBot 容器内填写 127.0.0.1，除非 Nitter 就在同一个容器。公共实例已停止维护，不再提供默认地址。"
       },
       "default_limit": {
         "description": "手动查询默认条数",

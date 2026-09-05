@@ -171,7 +171,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关 |
 | `brief_log_enabled` | 后台日志简略模式；开启时输出结构化检查摘要和关键失败信息 |
-| `omit_status_url` | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
+| `omit_status_url`（`tweet_groups` 分组字段） | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
 | `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8；默认值已把绝大多数视频排除在外 |
 | `translate_enabled` | 是否翻译 |
