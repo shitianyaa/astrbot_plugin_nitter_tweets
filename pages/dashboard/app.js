@@ -688,7 +688,10 @@ function renderTargetBlacklist(group, draft) {
       }}),
     ]),
     h("div", { class: "chip-list" }, users.length
-      ? users.map(u => h("span", { class: "chip chip-action mono", title: `移除 ${u}`, text: `@${u}`, onClick: () => saveTargetBlacklist(selected, users.filter(x => x !== u)) }))
+      ? users.map(u => h("span", { class: "chip mono" }, [
+          `@${u}`,
+          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => saveTargetBlacklist(selected, users.filter(x => x !== u)) }),
+        ]))
       : [h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "黑名单为空" })]),
   );
   return box;
