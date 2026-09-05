@@ -99,7 +99,7 @@ flowchart TD
 | `分组订阅管理` | 左侧推送分组列表 + 右侧详情编辑；支持创建博主、标签或列表分组，编辑 `name`、`enabled`、`interval_check_enabled`、`daily_check_times`、`filter_reposts_enabled`、`filter_plain_text_enabled`、`push_targets` 和对应的 `watch_users`、`watch_queries`、`watch_lists`。类型创建后不可修改；每个目标下还可维护跨分组共享的作者黑名单。 |
 | `推送历史` | 查看成功、部分送达或发送失败历史；默认每页 10 条，最多 50 条；支持按分组、订阅源和每页数量筛选，多个推送目标合并展示，可选择当前分组当前推送目标重新推送；可手动检测已推送但当前配置不存在的 `group_id`，确认后清理该分组运行数据。 |
 | `实例能力诊断` | 管理员一次检查统一 `instances` 中每个自建 Nitter 的用户 RSS、用户 HTML、搜索和可选 List 能力；URL 留空测试全部实例，填写 URL 只测试该站。不写入配置或推送记录。 |
-| `插件配置` | 运行时读取 `_conf_schema.json`，按类型渲染控件、可视化全部配置项；带 `invisible: true` 的项不显示（如 `target_blocked_users`），`tweet_groups`（推送分组）不在此处编辑。每项修改在失焦或切换时立即保存，与 AstrBot 设置页同源同对象，最后保存的生效。 |
+| `插件配置` | 运行时读取 `_conf_schema.json`，可视化全部配置项；带 `invisible: true` 的项不显示（如 `target_blocked_users`），`tweet_groups`（推送分组）不在此处编辑。双栏布局：左栏搜索框加分组导航（显示各组配置项数与未保存修改数），右栏按类型渲染字段卡片，偏离默认值时可一键「恢复默认」；修改先写入草稿，经底部操作条统一「放弃更改」或「保存配置」，有未保存修改时离开或刷新会先确认。`translation_provider_id` 等含 provider 的字符串项渲染为 Provider 枚举下拉（选项来自运行中的翻译 Provider），留空 = 自动选择。与 AstrBot 设置页同源同对象，最后保存的生效。 |
 
 ### WebUI 分组管理 v2
 
