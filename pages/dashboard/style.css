@@ -795,6 +795,14 @@ select { cursor: pointer; }
 .probe-check.skip { background: var(--surface-hover); color: var(--text-muted); }
 .probe-check svg { width: 14px; height: 14px; }
 
+/* Config panel */
+.config-list { display: flex; flex-direction: column; gap: 16px; }
+.config-item { display: flex; flex-direction: column; gap: 5px; }
+.config-label { font-size: 13px; font-weight: 600; }
+.config-hint { font-size: 12px; color: var(--text-muted); }
+.config-control input[type="text"], .config-control input[type="number"] { width: 240px; }
+.config-control textarea { width: 100%; max-width: 560px; resize: vertical; }
+
 /* ==========================================================================
    Dialog & Feedback
    ========================================================================== */

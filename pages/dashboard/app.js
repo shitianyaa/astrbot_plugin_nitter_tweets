@@ -9,7 +9,7 @@ let bridge = null;
 
 const state = {
   view: "overview", loading: false, actionBusy: false,
-  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {},
+  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {}, config: null,
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, historyOrphans: null, selectedGroupId: "",
   historyGroupId: "", historyUsername: "", historyLimit: 10,
@@ -24,7 +24,7 @@ function initEls() {
   const ids = [
     "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn",
     "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","toastContainer",
-    "overviewView","groupsView","historyView","mirrorView",
+    "overviewView","groupsView","historyView","mirrorView","configView",
     "createGroupBtn","groupList","groupEditor",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
     "historyOrphanBtn","historyPrevBtn","historyNextBtn","historyPageLabel",
@@ -327,8 +327,9 @@ async function reloadAll(options = {}) {
   renderAll();
   try {
     await bridge.ready();
-    const [ov, gr, bl] = await Promise.allSettled([
+    const [ov, gr, bl, cf] = await Promise.allSettled([
       apiGet("web/overview"), apiGet("web/groups"), apiGet("web/target-blacklists"),
+      apiGet("web/config/schema"),
     ]);
     const errors = [];
     if (ov.status === "fulfilled") state.overview = ov.value;
@@ -337,6 +338,8 @@ async function reloadAll(options = {}) {
     else errors.push(`分组加载失败：${gr.reason?.message || "请求失败"}`);
     if (bl.status === "fulfilled") state.targetBlacklists = bl.value.target_blacklists || [];
     else errors.push(`黑名单加载失败：${bl.reason?.message || "请求失败"}`);
+    if (cf.status === "fulfilled") state.config = cf.value;
+    else errors.push(`配置加载失败：${cf.reason?.message || "请求失败"}`);
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
     if (options.preserveDrafts === false) state.groupDrafts = {};
@@ -1067,6 +1070,101 @@ function probeCheck(label, item) {
 }
 
 /* --------------------------------------------------------------------------
+   Plugin Config — schema 驱动的配置查看与编辑
+   -------------------------------------------------------------------------- */
+function renderConfig() {
+  const root = els.configView;
+  if (!root) return;
+  const data = state.config;
+  if (!data || !Array.isArray(data.groups)) {
+    root.replaceChildren(h("div", { class: "panel", text: "配置加载失败或为空，请刷新重试" }));
+    return;
+  }
+  root.replaceChildren(...data.groups.map(group => h("div", { class: "panel" }, [
+    h("div", { class: "panel-head" }, [h("h3", { text: group.name })]),
+    h("div", { class: "config-list" }, group.items.map(configItem)),
+  ])));
+}
+
+function configItem(item) {
+  return h("div", { class: "config-item" }, [
+    h("span", { class: "config-label", text: item.description || item.key }),
+    configControl(item),
+    item.hint ? h("span", { class: "config-hint", text: item.hint }) : null,
+  ]);
+}
+
+function configControl(item) {
+  const wrap = h("div", { class: "config-control" });
+  const commit = value => saveConfigItem(item, value);
+  if (item.editable === false) {
+    wrap.append(h("span", { class: "badge", text: "在「分组订阅管理」维护" }));
+    return wrap;
+  }
+  if (item.type === "bool") {
+    const input = h("input", { type: "checkbox" });
+    input.checked = !!item.value;
+    input.addEventListener("change", () => commit(input.checked));
+    wrap.append(h("label", { class: "toggle" }, [input, h("span", { class: "toggle-track" })]));
+    return wrap;
+  }
+  if (item.type === "int" || item.type === "float") {
+    const input = h("input", { type: "number", step: item.type === "float" ? "any" : "1" });
+    if (item.value !== null && item.value !== undefined) input.value = String(item.value);
+    input.addEventListener("change", () => {
+      if (input.value.trim() === "") return;
+      const num = Number(input.value);
+      if (Number.isNaN(num)) { showToast("该配置项需要数字"); return; }
+      commit(num);
+    });
+    wrap.append(input);
+    return wrap;
+  }
+  if (Array.isArray(item.options) && item.options.length) {
+    const select = createSelect({
+      value: String(item.value ?? ""),
+      options: item.options.map(o => ({ value: o, text: o })),
+    });
+    select.onChange(v => commit(v));
+    wrap.append(select);
+    return wrap;
+  }
+  if (item.type === "text" || item.type === "list") {
+    const area = h("textarea", { rows: item.type === "text" ? 3 : 4 });
+    area.value = item.type === "list"
+      ? (Array.isArray(item.value) ? item.value.join("\n") : "")
+      : String(item.value ?? "");
+    area.addEventListener("change", () => {
+      commit(item.type === "list"
+        ? area.value.split("\n").map(s => s.trim()).filter(Boolean)
+        : area.value);
+    });
+    if (item.type === "list") {
+      wrap.append(h("span", { class: "config-hint", text: "每行一项" }));
+    }
+    wrap.append(area);
+    return wrap;
+  }
+  const input = h("input", { type: "text" });
+  input.value = String(item.value ?? "");
+  input.addEventListener("change", () => commit(input.value));
+  wrap.append(input);
+  return wrap;
+}
+
+async function saveConfigItem(item, value) {
+  if (JSON.stringify(value) === JSON.stringify(item.value)) return;
+  try {
+    await apiPost("web/config/update", { key: item.key, value });
+    item.value = value;
+    showToast("已保存");
+  } catch (err) {
+    showAlert(`配置保存失败：${err.message || err}`, "error");
+    renderConfig();
+  }
+}
+
+/* --------------------------------------------------------------------------
    Cleanup Actions
    -------------------------------------------------------------------------- */
 function confirmClearCache() {
@@ -1098,6 +1196,7 @@ const VIEW_META = {
   groups: { title: "分组订阅管理", desc: "维护博主、搜索与 List 规则" },
   history: { title: "推送历史", desc: "查看送达状态并重推" },
   mirror: { title: "实例能力诊断", desc: "测试 Nitter 实例连通性" },
+  config: { title: "插件配置", desc: "查看与修改插件设置（与 AstrBot 设置页同源，最后保存生效）" },
 };
 
 function renderAll() {
@@ -1107,6 +1206,7 @@ function renderAll() {
   else if (state.view === "groups") { renderGroupList(); renderGroupEditor(); }
   else if (state.view === "history") renderHistory();
   else if (state.view === "mirror") renderMirrorBase();
+  else if (state.view === "config") renderConfig();
 }
 
 function updateHeader() {
