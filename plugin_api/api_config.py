@@ -119,7 +119,8 @@ class WebAPIConfigMixin:
         providers: list[dict[str, Any]] = []
         seen: set[str] = set()
         try:
-            context = getattr(self, "context", None)
+            plugin = getattr(self, "plugin", None)
+            context = getattr(plugin, "context", None)
             manager = getattr(context, "provider_manager", None)
             raw = None
             if callable(getattr(context, "get_all_providers", None)):

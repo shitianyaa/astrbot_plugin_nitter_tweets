@@ -182,7 +182,7 @@ def test_list_providers_handles_list_and_dict_shapes():
         )
     )
     host = _Host(_FakeConfig())
-    host.context = providers_obj
+    host.plugin = SimpleNamespace(context=providers_obj)
     result = asyncio.run(host.list_providers())
     ids = [p["id"] for p in result["providers"]]
     assert ids == ["p1", "p2"]
@@ -195,6 +195,6 @@ def test_list_providers_handles_list_and_dict_shapes():
         )
     )
     host2 = _Host(_FakeConfig())
-    host2.context = dict_shape
+    host2.plugin = SimpleNamespace(context=dict_shape)
     result2 = asyncio.run(host2.list_providers())
     assert [p["id"] for p in result2["providers"]] == ["dk"]
