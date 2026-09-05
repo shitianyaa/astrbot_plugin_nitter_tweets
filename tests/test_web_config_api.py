@@ -151,6 +151,10 @@ def test_update_rejects_unknown_and_template_list():
     assert config.saved == 0
 
 
+class _FakeProviderType:
+    value = "chat_completion"
+
+
 class _Provider:
     def __init__(self, pid, name, model="", ptype="openai_compatible"):
         self._meta = SimpleNamespace(
@@ -175,7 +179,9 @@ def test_list_providers_handles_list_and_dict_shapes():
     providers_obj = SimpleNamespace(
         provider_manager=SimpleNamespace(
             get_all_providers=lambda: [
-                _Provider("p1", "OpenAI 主力", model="gpt-4o"),
+                _Provider(
+                    "p1", "OpenAI 主力", model="gpt-4o", ptype=_FakeProviderType()
+                ),
                 _Provider("p1", "重复应去重"),
                 _Provider("p2", "Gemini", ptype="gemini"),
             ]
@@ -187,7 +193,7 @@ def test_list_providers_handles_list_and_dict_shapes():
     ids = [p["id"] for p in result["providers"]]
     assert ids == ["p1", "p2"]
     assert result["providers"][0]["label"] == "OpenAI 主力 [p1]"
-    assert result["providers"][0]["type"] == "openai_compatible"
+    assert result["providers"][0]["type"] == "chat_completion"
 
     dict_shape = SimpleNamespace(
         provider_manager=SimpleNamespace(

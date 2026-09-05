@@ -161,7 +161,9 @@ def _provider_entry(provider: Any) -> dict[str, Any] | None:
         or getattr(provider, "name", None)
         or pid
     ).strip()
-    ptype = str(getattr(meta, "provider_type", "") or "")
+    ptype = getattr(meta, "provider_type", "") or ""
+    ptype = getattr(ptype, "value", ptype)
+    ptype = str(ptype)
     label = f"{name} [{pid}]" if name != pid else pid
     return {"id": pid, "name": name, "type": ptype, "label": label}
 
