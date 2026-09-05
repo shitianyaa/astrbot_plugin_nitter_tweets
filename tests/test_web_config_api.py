@@ -77,3 +77,10 @@ def test_schema_value_falls_back_to_flat_then_default():
     schedule = next(g for g in result["groups"] if g["key"] == "schedule")
     by_key = {i["key"]: i for i in schedule["items"]}
     assert by_key["check_interval_minutes"]["value"] == 99
+
+
+def test_schema_skips_invisible_items():
+    config = _FakeConfig({"push": {"target_blocked_users": ["12345"]}})
+    result = asyncio.run(_Host(config).build_config_schema())
+    push = next(g for g in result["groups"] if g["key"] == "push")
+    assert "target_blocked_users" not in {i["key"] for i in push["items"]}

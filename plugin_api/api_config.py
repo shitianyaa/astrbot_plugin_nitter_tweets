@@ -40,6 +40,8 @@ class WebAPIConfigMixin:
                 continue
             items: list[dict[str, Any]] = []
             for item_key, item_schema in group_schema.get("items", {}).items():
+                if item_schema.get("invisible"):
+                    continue
                 item_type = str(item_schema.get("type", "string"))
                 editable = item_type not in _NON_EDITABLE_ITEM_TYPES
                 if editable:
