@@ -272,8 +272,9 @@ function setBusy(isBusy) {
   document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
   document.body.classList.toggle("ui-busy", busy);
   if (els.actionStatus) {
-    els.actionStatus.hidden = !busy;
-    els.actionStatus.textContent = busy ? (state.busyLabel || "正在加载…") : "";
+    const showActionStatus = state.actionBusy;
+    els.actionStatus.hidden = !showActionStatus;
+    els.actionStatus.textContent = showActionStatus ? (state.busyLabel || "正在加载…") : "";
   }
 }
 
@@ -428,7 +429,7 @@ function isGroupDirty(groupId) {
 
 function updateDraft(groupId, field, val) {
   const d = state.groupDrafts[groupId]; if (!d) return;
-  d[field] = val; renderGroupList(); updateEditorControls(groupId);
+  d[field] = val; renderGroupList();
 }
 
 /* --------------------------------------------------------------------------
@@ -482,19 +483,11 @@ function selectGroup(gid, { force = false } = {}) {
 /* --------------------------------------------------------------------------
    Group Editor
    -------------------------------------------------------------------------- */
-function updateEditorControls(gid) {
-  const g = state.groups.find(x => x.group_id === gid); if (!g) return;
-  const dirty = isGroupDirty(gid);
-  const save = document.getElementById("saveGroupBtn");
-  if (save) save.disabled = !dirty;
-}
-
 function renderGroupEditor() {
   if (!els.groupEditor) return;
   const g = state.groups.find(x => x.group_id === state.selectedGroupId);
   if (!g) { els.groupEditor.replaceChildren(h("div", { class: "panel", style: { textAlign: "center", color: "var(--text-muted)" }, text: "请选择一个分组" })); return; }
   const d = state.groupDrafts[g.group_id] || snapshotGroup(g);
-  const dirty = isGroupDirty(g.group_id);
 
   // Head
   const head = h("div", { class: "panel-head" }, [
@@ -504,7 +497,6 @@ function renderGroupEditor() {
       h("span", { class: "mono", style: { color: "var(--text-muted)" }, text: g.group_id }),
     ]),
     h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("button", { id: "saveGroupBtn", class: "btn btn-sm btn-primary", text: "保存", disabled: !dirty, onClick: () => saveGroup(g.group_id) }),
       g.group_id !== "default" ? h("button", { class: "btn btn-sm btn-danger", html: svgIcon("trash", 14), text: "删除", onClick: () => confirmDeleteGroup(g.group_id) }) : null,
     ]),
   ]);
@@ -513,12 +505,15 @@ function renderGroupEditor() {
   const base = h("div", { class: "editor-grid" }, [
     h("label", { class: "field editor-grid-full" }, [
       h("span", { text: "分组名称" }),
-      h("input", { type: "text", value: d.name, onInput: e => updateDraft(g.group_id, "name", e.target.value.trim()) }),
+      h("input", { type: "text", value: d.name,
+        onInput: e => updateDraft(g.group_id, "name", e.target.value.trim()),
+        onChange: () => saveGroup(g.group_id, "分组名称已保存"),
+      }),
     ]),
-    toggleRow(d.enabled, "启用此分组", v => updateDraft(g.group_id, "enabled", v)),
-    toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(g.group_id, "filter_reposts_enabled", v)),
-    toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(g.group_id, "filter_plain_text_enabled", v)),
-    toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(g.group_id, "interval_check_enabled", v)),
+    toggleRow(d.enabled, "启用此分组", v => commitGroupField(g.group_id, "enabled", v)),
+    toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => commitGroupField(g.group_id, "filter_reposts_enabled", v)),
+    toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => commitGroupField(g.group_id, "filter_plain_text_enabled", v)),
+    toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => commitGroupField(g.group_id, "interval_check_enabled", v)),
     h("span", { class: "editor-grid-full", style: { fontSize: "12px", color: "var(--text-subtle)", marginTop: "-2px" }, text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
     h("label", { class: "field editor-grid-full" }, [
       h("span", { text: "每日定时触发时间（逗号或换行分隔，如 08:00, 20:00）" }),
@@ -534,7 +529,7 @@ function renderGroupEditor() {
           hint.style.display = dropped ? "" : "none";
         }
         updateDraft(g.group_id, "daily_check_times", valid);
-      } }),
+      }, onChange: () => saveGroup(g.group_id, "定时设置已保存") }),
       h("span", { id: "dailyTimesHint", class: "field-error", style: { display: "none" } }),
     ]),
   ]);
@@ -567,9 +562,18 @@ function renderEntityChips(container, group, draft) {
       iconEl(icon, 12), val,
       h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${val}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
         if (state.actionBusy) return;
-        const next = [...(draft[field] || [])]; next.splice(idx, 1);
-        updateDraft(group.group_id, field, next);
-        renderEntityChips(container, group, draft);
+        confirmGroupMutation(group.group_id, {
+          title: "移除订阅源？",
+          desc: `将移除 ${val}，确认后立即保存并刷新。`,
+          confirmText: "移除并保存",
+          danger: true,
+          successText: "订阅源已移除",
+          mutate: () => {
+            const next = [...(state.groupDrafts[group.group_id]?.[field] || [])];
+            next.splice(idx, 1);
+            updateDraft(group.group_id, field, next);
+          },
+        });
       }}),
     ]);
   }));
@@ -583,8 +587,7 @@ function renderEntities(group, draft) {
 
   const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
   const chipList = h("div", { class: "chip-list", "data-entity-chips": "true" });
-  const renderChips = () => renderEntityChips(chipList, group, draft);
-  renderChips();
+  renderEntityChips(chipList, group, draft);
 
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, [
     h("div", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [
@@ -602,12 +605,18 @@ function renderEntities(group, draft) {
         else {
           const inp = document.getElementById("newEntityInput");
           const v = inp?.value.trim(); if (!v) return;
-          const next = [...(draft[field] || [])];
-          if (isTag) next.push({ query: v, type: "tag" }); else next.push(v);
-          updateDraft(group.group_id, field, next);
-          renderChips();
-          inp.value = "";
-          inp.focus();
+          const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v);
+          if (existing) { showToast("订阅源已存在"); return; }
+          confirmGroupMutation(group.group_id, {
+            title: "添加订阅源？",
+            desc: `将添加 ${v}，确认后立即保存并刷新。`,
+            confirmText: "添加并保存",
+            successText: "订阅源已添加",
+            mutate: () => {
+              const current = state.groupDrafts[group.group_id]?.[field] || [];
+              updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
+            },
+          });
         }
       }}),
     ]),
@@ -622,23 +631,25 @@ function renderBulkSubscriptions(group) {
     if (state.actionBusy) return;
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
     if (!entries.length) { showToast("请先填写用户名"); return; }
-    withAction(async () => {
-      const res = await apiPost(endpoint, { group_id: group.group_id, entries });
-      delete state.groupDrafts[group.group_id];
-      const [groups, overview] = await Promise.all([
-        apiGet("web/groups"), apiGet("web/overview"),
-      ]);
-      state.groups = groups.groups || [];
-      state.overview = overview;
-      syncGroupDrafts();
-      const s = res?.summary || {};
-      const notes = [
-        s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
-        s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
-        s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
-      ].filter(Boolean);
-      return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
-    }, undefined, { reload: false, rerender: () => renderAll() });
+    const importing = endpoint.endsWith("/import");
+    openConfirm({
+      title: importing ? "确认导入订阅？" : "确认移除订阅？",
+      desc: `共 ${entries.length} 个用户名，确认后立即保存并刷新。`,
+      confirmText: importing ? "导入并保存" : "移除并保存",
+      danger: !importing,
+      action: () => withAction(async () => {
+        const res = await apiPost(endpoint, { group_id: group.group_id, entries });
+        delete state.groupDrafts[group.group_id];
+        await reloadGroupState();
+        const s = res?.summary || {};
+        const notes = [
+          s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
+          s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
+          s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
+        ].filter(Boolean);
+        return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
+      }, undefined, { reload: false, rerender: () => renderAll() }),
+    });
   };
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", borderTop: "1px solid var(--border)", paddingTop: "10px" } }, [
     h("span", { style: { fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" }, text: "批量导入 / 移除" }),
@@ -668,8 +679,19 @@ function renderTargets(group, draft) {
           targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
           info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
           h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
-            const next = [...targets]; next.splice(idx, 1);
-            updateDraft(group.group_id, "push_targets", next); renderGroupEditor();
+            if (state.actionBusy) return;
+            confirmGroupMutation(group.group_id, {
+              title: "移除推送目标？",
+              desc: `将移除 ${t}，确认后立即保存并刷新。`,
+              confirmText: "移除并保存",
+              danger: true,
+              successText: "推送目标已移除",
+              mutate: () => {
+                const next = [...(state.groupDrafts[group.group_id]?.push_targets || [])];
+                next.splice(idx, 1);
+                updateDraft(group.group_id, "push_targets", next);
+              },
+            });
           }}),
         ]);
       })
@@ -679,7 +701,18 @@ function renderTargets(group, draft) {
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
         const v = inp?.value.trim(); if (!v) return;
-        updateDraft(group.group_id, "push_targets", [...targets, v]); renderGroupEditor();
+        if (state.actionBusy) return;
+        if (targets.includes(v)) { showToast("推送目标已存在"); return; }
+        confirmGroupMutation(group.group_id, {
+          title: "添加推送目标？",
+          desc: `将添加 ${v}，确认后立即保存并刷新。`,
+          confirmText: "添加并保存",
+          successText: "推送目标已添加",
+          mutate: () => {
+            const current = state.groupDrafts[group.group_id]?.push_targets || [];
+            updateDraft(group.group_id, "push_targets", [...current, v]);
+          },
+        });
       }}),
     ]),
     renderTargetBlacklist(group, draft),
@@ -699,7 +732,7 @@ function renderTargetBlacklist(group, draft) {
     ]),
   ]);
   if (!targets.length) {
-    box.append(h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "请先添加并保存推送目标。" }));
+    box.append(h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "请先添加推送目标。" }));
     return box;
   }
   const select = createSelect({
@@ -717,13 +750,14 @@ function renderTargetBlacklist(group, draft) {
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
         const v = input.value.trim();
         if (!v) return;
-        saveTargetBlacklist(selected, [...users, v]);
+        if (users.includes(v.replace(/^@+/, ""))) { showToast("用户名已在黑名单"); return; }
+        confirmTargetBlacklist(selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
       }}),
     ]),
     h("div", { class: "chip-list" }, users.length
       ? users.map(u => h("span", { class: "chip mono" }, [
           `@${u}`,
-          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => saveTargetBlacklist(selected, users.filter(x => x !== u)) }),
+          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
         ]))
       : [h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "黑名单为空" })]),
   );
@@ -739,6 +773,16 @@ function saveTargetBlacklist(target, users) {
   }, "黑名单已更新", { reload: false, rerender: () => renderGroupEditor() });
 }
 
+function confirmTargetBlacklist(target, users, title, confirmText, danger) {
+  openConfirm({
+    title,
+    desc: "确认后立即保存并刷新黑名单。",
+    confirmText,
+    danger,
+    action: () => saveTargetBlacklist(target, users),
+  });
+}
+
 function addWatchList(groupId) {
   const inp = document.getElementById("newWatchListInput");
   const err = document.getElementById("entityError");
@@ -751,15 +795,51 @@ function addWatchList(groupId) {
   const d = state.groupDrafts[groupId]; if (!d) return;
   if ((d.watch_lists || []).includes(val)) { showError("List ID 已存在"); return; }
   if (err) err.style.display = "none";
-  updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]);
-  const chips = document.querySelector("#groupEditor [data-entity-chips]");
-  const group = state.groups.find(x => x.group_id === groupId);
-  if (chips && group) renderEntityChips(chips, group, d);
+  confirmGroupMutation(groupId, {
+    title: "添加 List 订阅？",
+    desc: `将添加 List ${val}，确认后立即保存并刷新。`,
+    confirmText: "添加并保存",
+    successText: "List 订阅已添加",
+    mutate: () => {
+      const current = state.groupDrafts[groupId]?.watch_lists || [];
+      updateDraft(groupId, "watch_lists", [...current, val]);
+    },
+  });
 }
 
 /* --------------------------------------------------------------------------
    Actions
    -------------------------------------------------------------------------- */
+async function reloadGroupState() {
+  const [groups, overview] = await Promise.all([
+    apiGet("web/groups"), apiGet("web/overview"),
+  ]);
+  state.groups = groups.groups || [];
+  state.overview = overview;
+  if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId)) {
+    state.selectedGroupId = state.groups[0]?.group_id || "";
+  }
+  syncGroupDrafts();
+}
+
+function confirmGroupMutation(gid, { title, desc, confirmText, danger = false, successText, mutate }) {
+  openConfirm({
+    title,
+    desc,
+    confirmText,
+    danger,
+    action: async () => {
+      mutate();
+      await saveGroup(gid, successText || "分组已保存");
+    },
+  });
+}
+
+function commitGroupField(gid, field, value) {
+  updateDraft(gid, field, value);
+  return saveGroup(gid, "分组设置已保存");
+}
+
 function createGroup() {
   const nameInput = h("input", { type: "text", value: "新订阅分组", style: { width: "100%", marginBottom: "10px" } });
   const options = [
@@ -787,12 +867,13 @@ function createGroup() {
   });
 }
 
-async function saveGroup(gid) {
+async function saveGroup(gid, successText = "分组已保存") {
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
     await apiPost("web/groups/update", d);
     delete state.groupDrafts[gid];
-  }, "分组保存成功");
+    await reloadGroupState();
+  }, successText, { reload: false, rerender: () => renderAll() });
 }
 
 function confirmDeleteGroup(gid) {

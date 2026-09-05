@@ -613,8 +613,18 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert 'apiGet("web/overview")' in source
     assert "function renderEntityChips(container, group, draft)" in source
     assert "renderEntityChips(container, group, draft)" in source
+    assert 'id: "saveGroupBtn"' not in source
+    assert "function confirmGroupMutation(gid" in source
+    assert 'confirmText: "添加并保存"' in source
+    assert 'confirmText: "移除并保存"' in source
+    assert "function commitGroupField(gid, field, value)" in source
+    assert "请先添加推送目标。" in source
+    assert "const showActionStatus = state.actionBusy;" in source
     assert "body.ui-busy .view" in style
     assert "transition: all" not in style
+    assert ".tweet-card:hover" in style
+    assert "background: var(--blue-soft);" in style
+    assert "border-color: var(--blue-border);" in style
     assert ".groups-layout > * { min-width: 0; }" in style
     assert 'id="actionStatus"' in index
     assert 'aria-live="polite"' in index

@@ -721,9 +721,13 @@ select { cursor: pointer; }
   display: flex;
   gap: 12px;
   box-shadow: var(--shadow-sm);
-  transition: background var(--transition);
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
-.tweet-card:hover { background: var(--surface-hover); }
+.tweet-card:hover {
+  background: var(--blue-soft);
+  border-color: var(--blue-border);
+  box-shadow: var(--shadow);
+}
 
 .tweet-avatar {
   width: 40px; height: 40px;
