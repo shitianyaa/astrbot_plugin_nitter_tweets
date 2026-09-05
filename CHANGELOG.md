@@ -7,6 +7,7 @@
 ### Added
 
 - 被动链接解析新增跨 Bot 仲裁（`link_preview_arbiter_enabled`，默认开启）：OneBot 群聊中多个同类 Bot 同时开启被动解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复，避免重复。会给被解析的消息贴上表情标记（永久）。协议移植自 [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser) 的 EmojiLikeArbiter。单 Bot 环境可关闭以省去约 1s 延迟。
+- WebUI 面板新增「插件配置」tab：读取 `_conf_schema.json` 可视化全部配置项（推送分组除外，在分组订阅管理维护），按类型渲染控件、改完失焦即保存，与 AstrBot 设置页同源。
 
 ### Changed
 
