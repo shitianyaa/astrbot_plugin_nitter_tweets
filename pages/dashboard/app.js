@@ -471,8 +471,6 @@ function updateEditorControls(gid) {
   const dirty = isGroupDirty(gid);
   const save = document.getElementById("saveGroupBtn");
   if (save) save.disabled = !dirty;
-  const chk = document.getElementById("checkGroupBtn");
-  if (chk) { chk.disabled = !g.enabled || dirty; chk.title = !g.enabled ? "分组停用" : dirty ? "请先保存" : ""; }
 }
 
 function renderGroupEditor() {
@@ -490,7 +488,6 @@ function renderGroupEditor() {
       h("span", { class: "mono", style: { color: "var(--text-muted)" }, text: g.group_id }),
     ]),
     h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("button", { id: "checkGroupBtn", class: "btn btn-sm", html: svgIcon("play", 14), text: "检查", disabled: !g.enabled || dirty, onClick: () => runCheck(g.group_id) }),
       h("button", { id: "saveGroupBtn", class: "btn btn-sm btn-primary", text: "保存", disabled: !dirty, onClick: () => saveGroup(g.group_id) }),
       g.group_id !== "default" ? h("button", { class: "btn btn-sm btn-danger", html: svgIcon("trash", 14), text: "删除", onClick: () => confirmDeleteGroup(g.group_id) }) : null,
     ]),
@@ -769,10 +766,6 @@ function confirmDeleteGroup(gid) {
       state.selectedGroupId = "";
     }, "分组已删除"),
   });
-}
-
-async function runCheck(gid) {
-  await withAction(() => apiPost("web/check", { group_id: gid }), "检查完成");
 }
 
 async function probeTargets(gid) {

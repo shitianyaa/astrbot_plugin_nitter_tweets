@@ -19,22 +19,6 @@ class WebAPISerializersMixin:
     """结果序列化与 data 取值。"""
 
     @staticmethod
-    def _serialize_check_result(result: Any) -> dict[str, Any]:
-        return {
-            "group_id": getattr(result, "group_id", ""),
-            "group_name": getattr(result, "group_name", ""),
-            "group_type": getattr(result, "group_type", "blogger") or "blogger",
-            "reason": getattr(result, "reason", ""),
-            "source_count": len(getattr(result, "users", []) or []),
-            "target_count": len(getattr(result, "targets", []) or []),
-            "skipped_reason": getattr(result, "skipped_reason", ""),
-            "new_tweet_count": getattr(result, "new_tweet_count", 0),
-            "failed_count": len(getattr(result, "failed_users", {}) or {}),
-            "pushed_target_successes": getattr(result, "pushed_target_successes", 0),
-            "pushed_target_attempts": getattr(result, "pushed_target_attempts", 0),
-        }
-
-    @staticmethod
     def _serialize_cache_result(result: Any) -> dict[str, int]:
         return {
             "removed": int(getattr(result, "removed", 0) or 0),

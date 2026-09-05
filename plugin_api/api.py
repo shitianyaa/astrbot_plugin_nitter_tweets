@@ -79,7 +79,6 @@ class NitterWebAPI(
             ("web/history/orphans", "handle_history_orphans", ["GET"]),
             ("web/history/orphans/delete", "handle_history_orphan_delete", ["POST"]),
             ("web/history/replay", "handle_history_replay", ["POST"]),
-            ("web/check", "handle_check", ["POST"]),
             ("web/cache/clear", "handle_cache_clear", ["POST"]),
             ("web/seen/clear", "handle_seen_clear", ["POST"]),
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
@@ -170,13 +169,6 @@ class NitterWebAPI(
         async def action():
             data = await self._request_json()
             return await self.replay_history(data)
-
-        return await self._json_response(action)
-
-    async def handle_check(self):
-        async def action():
-            data = await self._request_json()
-            return await self.run_check(data)
 
         return await self._json_response(action)
 
@@ -296,26 +288,6 @@ class NitterWebAPI(
             else:
                 payload["message"] = f"分组已删除，但数据库同步失败：{sync_error}"
         return payload
-
-    async def run_check(self, data: dict[str, Any]) -> dict[str, Any]:
-        group_id = self._data_text(data, "group_id") or self._data_text(
-            data, "group_name"
-        )
-        group, error = self._resolve_group(group_id)
-        if error:
-            return self._error(error)
-        if not group.enabled:
-            return self._error(f"分组已停用：{self._group_label(group)}")
-
-        result = await self.scheduler.run_check(
-            reason="webui",
-            notify_no_updates=False,
-            group_name=group.group_id,
-        )
-        return self._ok(
-            message=result.format_message(),
-            result=self._serialize_check_result(result),
-        )
 
     async def clear_cache(self) -> dict[str, Any]:
         result = await asyncio.to_thread(self.plugin.media.clear_cache)
