@@ -8,6 +8,7 @@ data/
 diagnostics/
 design_concept/
 docs/superpowers/plans/
+.superpowers/
 output/
 test/output/
 tests/downloads/
