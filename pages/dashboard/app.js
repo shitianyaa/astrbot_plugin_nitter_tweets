@@ -1113,7 +1113,8 @@ function renderConfig() {
   const totalDirty = groups.reduce((n, g) => n + configDirtyCount(g), 0);
 
   // 左:分组导航
-  const nav = h("div", { class: "config-nav" }, [
+  const nav = h("div", { class: "panel config-nav" }, [
+    h("div", { class: "panel-head" }, [h("h3", { text: "配置分组" })]),
     h("input", {
       type: "text", placeholder: "搜索配置…", value: state.configSearch,
       onInput: onConfigSearchInput,

@@ -790,7 +790,13 @@ select { cursor: pointer; }
   border-radius: var(--radius); box-shadow: var(--shadow-sm);
 }
 .config-actionbar .actions { display: flex; gap: 8px; }
-.config-nav { display: flex; flex-direction: column; gap: 8px; }
+.config-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 132px;
+}
 .config-nav > input { width: 100%; }
 .config-nav-list { display: flex; flex-direction: column; gap: 4px; }
 .config-nav-item {
@@ -825,6 +831,7 @@ select { cursor: pointer; }
 @media (max-width: 900px) {
   .config-layout { grid-template-columns: 1fr; }
   .config-actionbar { top: 0; }
+  .config-nav { position: static; }
 }
 
 /* ==========================================================================
