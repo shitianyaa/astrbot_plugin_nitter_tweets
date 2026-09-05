@@ -81,7 +81,8 @@
       <!-- Main -->
       <main class="main">
 
-        <div id="alert" class="alert" hidden style="margin: 0 20px;"></div>
+        <div id="alert" class="alert" role="status" aria-live="polite" hidden style="margin: 0 20px;"></div>
+        <div id="actionStatus" class="action-status" role="status" aria-live="polite" hidden></div>
 
         <div class="view-container">
           <section id="overviewView" class="view active"></section>
@@ -165,7 +166,7 @@
         </div>
       </main>
 
-      <div id="toastContainer"></div>
+      <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
       <div id="confirmDialog" class="dialog" hidden>
         <div class="dialog-panel">

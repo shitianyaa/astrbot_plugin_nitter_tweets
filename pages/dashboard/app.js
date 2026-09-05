@@ -9,6 +9,7 @@ let bridge = null;
 
 const state = {
   view: "overview", loading: false, actionBusy: false,
+  busyLabel: "",
   overview: null, groups: [], groupDrafts: {}, targetProbeResults: {},
   config: null, configError: false,
   configDraft: {}, configSearch: "", configActive: "", configSaving: false, providers: [],
@@ -25,7 +26,7 @@ const els = {};
 function initEls() {
   const ids = [
     "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn",
-    "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","toastContainer",
+    "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","actionStatus","toastContainer",
     "overviewView","groupsView","historyView","mirrorView","configView",
     "createGroupBtn","groupList","groupEditor",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
@@ -265,8 +266,15 @@ function upgradeSelect(el) {
 }
 function setBusy(isBusy) {
   state.loading = isBusy;
+  const busy = isBusy || state.actionBusy;
   [els.refreshBtn, els.createGroupBtn, els.historyRefreshBtn, els.historyOrphanBtn,
-   els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn].forEach(b => { if (b) b.disabled = isBusy || state.actionBusy; });
+   els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn].forEach(b => { if (b) b.disabled = busy; });
+  document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
+  document.body.classList.toggle("ui-busy", busy);
+  if (els.actionStatus) {
+    els.actionStatus.hidden = !busy;
+    els.actionStatus.textContent = busy ? (state.busyLabel || "正在加载…") : "";
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -311,23 +319,28 @@ function toggleTheme() {
    Action wrapper & reloadAll (deferred imports to avoid circular)
    -------------------------------------------------------------------------- */
 async function withAction(action, successText, { reload = true, rerender = null } = {}) {
+  if (state.actionBusy) return null;
   state.actionBusy = true; setBusy(true); hideAlert();
   try {
     const res = await action();
-    state.actionBusy = false;
     if (reload) {
+      state.busyLabel = "正在刷新…";
+      setBusy(true);
       const ok = await reloadAll();
       if (!ok) return res;
     } else if (rerender) { setBusy(false); rerender(); }
     showAlert(successText || res?.message || "操作完成");
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
-  finally { state.actionBusy = false; setBusy(false); }
+  finally { state.actionBusy = false; state.busyLabel = ""; setBusy(false); }
 }
 
 async function reloadAll(options = {}) {
+  const ownBusyLabel = !state.actionBusy && !state.busyLabel;
+  if (ownBusyLabel) state.busyLabel = "正在加载…";
   setBusy(true); hideAlert();
   renderAll();
+  setBusy(true);
   try {
     await bridge.ready();
     const [ov, gr, bl, cf, pv] = await Promise.allSettled([
@@ -366,7 +379,10 @@ async function reloadAll(options = {}) {
     if (errors.length) showAlert(`部分数据未加载：${errors.join("；")}`, "warn");
     return errors.length === 0;
   } catch (err) { showAlert(err.message, "error"); return false; }
-  finally { setBusy(false); }
+  finally {
+    if (ownBusyLabel) state.busyLabel = "";
+    setBusy(false);
+  }
 }
 ;// groups.js — Group List, Editor, Draft System & Subscriptions
 
@@ -541,44 +557,57 @@ function toggleRow(checked, label, onChange) {
   ]);
 }
 
+function renderEntityChips(container, group, draft) {
+  const isTag = group.group_type === "tag";
+  const icon = isTag ? "hash" : group.group_type === "list" ? "rss" : "user";
+  const field = isTag ? "watch_queries" : group.group_type === "list" ? "watch_lists" : "watch_users";
+  container.replaceChildren(...(draft[field] || []).map((item, idx) => {
+    const val = typeof item === "object" ? item.query : item;
+    return h("span", { class: "chip mono" }, [
+      iconEl(icon, 12), val,
+      h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${val}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
+        if (state.actionBusy) return;
+        const next = [...(draft[field] || [])]; next.splice(idx, 1);
+        updateDraft(group.group_id, field, next);
+        renderEntityChips(container, group, draft);
+      }}),
+    ]);
+  }));
+}
+
 function renderEntities(group, draft) {
   const isTag = group.group_type === "tag";
   const isList = group.group_type === "list";
   const icon = isTag ? "hash" : isList ? "rss" : "user";
   const label = isTag ? "搜索查询词" : isList ? "Twitter List ID" : "博主用户名";
-  const list = isTag ? draft.watch_queries : isList ? draft.watch_lists : draft.watch_users;
+
+  const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
+  const chipList = h("div", { class: "chip-list", "data-entity-chips": "true" });
+  const renderChips = () => renderEntityChips(chipList, group, draft);
+  renderChips();
 
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, [
     h("div", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [
       iconEl(icon, 16), `订阅源 — ${label}`,
     ]),
-    h("div", { class: "chip-list" },
-      (list || []).map((item, idx) => {
-        const val = typeof item === "object" ? item.query : item;
-        return h("span", { class: "chip mono" }, [
-          iconEl(icon, 12), val,
-          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
-            const next = [...list]; next.splice(idx, 1);
-            updateDraft(group.group_id, isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users", next);
-            renderGroupEditor();
-          }}),
-        ]);
-      })
-    ),
-    h("div", { style: { display: "flex", gap: "6px" } }, [
+    chipList,
+    h("div", { class: "input-action-row entity-input-row", style: { display: "flex", gap: "6px" } }, [
       h("input", { id: isList ? "newWatchListInput" : "newEntityInput", type: "text", placeholder: isTag ? "#tag 或关键词" : isList ? "纯数字 List ID" : "推特用户名", style: { width: "240px" }, onInput: () => {
         const err = document.getElementById("entityError");
         if (err) err.style.display = "none";
       } }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
+        if (state.actionBusy) return;
         if (isList) { addWatchList(group.group_id); }
         else {
           const inp = document.getElementById("newEntityInput");
           const v = inp?.value.trim(); if (!v) return;
-          const next = [...(list || [])];
+          const next = [...(draft[field] || [])];
           if (isTag) next.push({ query: v, type: "tag" }); else next.push(v);
-          updateDraft(group.group_id, isTag ? "watch_queries" : "watch_lists", next);
-          renderGroupEditor();
+          updateDraft(group.group_id, field, next);
+          renderChips();
+          inp.value = "";
+          inp.focus();
         }
       }}),
     ]),
@@ -590,11 +619,18 @@ function renderEntities(group, draft) {
 function renderBulkSubscriptions(group) {
   const area = h("textarea", { rows: 3, style: { width: "100%" }, placeholder: "每行一个用户名，也可用逗号分隔" });
   const run = endpoint => {
+    if (state.actionBusy) return;
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
     if (!entries.length) { showToast("请先填写用户名"); return; }
     withAction(async () => {
       const res = await apiPost(endpoint, { group_id: group.group_id, entries });
       delete state.groupDrafts[group.group_id];
+      const [groups, overview] = await Promise.all([
+        apiGet("web/groups"), apiGet("web/overview"),
+      ]);
+      state.groups = groups.groups || [];
+      state.overview = overview;
+      syncGroupDrafts();
       const s = res?.summary || {};
       const notes = [
         s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
@@ -602,14 +638,14 @@ function renderBulkSubscriptions(group) {
         s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
       ].filter(Boolean);
       return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
-    });
+    }, undefined, { reload: false, rerender: () => renderAll() });
   };
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", borderTop: "1px solid var(--border)", paddingTop: "10px" } }, [
     h("span", { style: { fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" }, text: "批量导入 / 移除" }),
     area,
-    h("div", { style: { display: "flex", gap: "6px" } }, [
-      h("button", { class: "btn btn-sm", text: "导入", onClick: () => run("web/subscriptions/import") }),
-      h("button", { class: "btn btn-sm", text: "移除", onClick: () => run("web/subscriptions/delete") }),
+    h("div", { class: "input-action-row bulk-actions", style: { display: "flex", gap: "6px" } }, [
+      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "导入", onClick: () => run("web/subscriptions/import") }),
+      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "移除", onClick: () => run("web/subscriptions/delete") }),
     ]),
   ]);
 }
@@ -638,7 +674,7 @@ function renderTargets(group, draft) {
         ]);
       })
     ),
-    h("div", { style: { display: "flex", gap: "6px" } }, [
+    h("div", { class: "input-action-row target-input-row", style: { display: "flex", gap: "6px" } }, [
       h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456", style: { width: "320px" } }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
@@ -676,7 +712,7 @@ function renderTargetBlacklist(group, draft) {
   select.onChange(v => { state.targetBlacklistTarget = v; renderGroupEditor(); });
   const input = h("input", { type: "text", placeholder: "用户名或 @用户名", style: { width: "200px" } });
   box.append(
-    h("div", { style: { display: "flex", gap: "6px", alignItems: "center" } }, [
+    h("div", { class: "input-action-row blacklist-input-row", style: { display: "flex", gap: "6px", alignItems: "center" } }, [
       select, input,
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
         const v = input.value.trim();
@@ -715,7 +751,10 @@ function addWatchList(groupId) {
   const d = state.groupDrafts[groupId]; if (!d) return;
   if ((d.watch_lists || []).includes(val)) { showError("List ID 已存在"); return; }
   if (err) err.style.display = "none";
-  updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]); renderGroupEditor();
+  updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]);
+  const chips = document.querySelector("#groupEditor [data-entity-chips]");
+  const group = state.groups.find(x => x.group_id === groupId);
+  if (chips && group) renderEntityChips(chips, group, d);
 }
 
 /* --------------------------------------------------------------------------

@@ -602,6 +602,24 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
     assert "`omit_status_url`（`tweet_groups` 分组字段）" in readme
 
 
+def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    assert "if (state.actionBusy) return null;" in source
+    assert '"data-busy-control": "true"' in source
+    assert 'apiGet("web/groups")' in source
+    assert 'apiGet("web/overview")' in source
+    assert "function renderEntityChips(container, group, draft)" in source
+    assert "renderEntityChips(container, group, draft)" in source
+    assert "body.ui-busy .view" in style
+    assert "transition: all" not in style
+    assert ".groups-layout > * { min-width: 0; }" in style
+    assert 'id="actionStatus"' in index
+    assert 'aria-live="polite"' in index
+
+
 def test_status_and_export_render_list_group():
     config = {
         "tweet_groups": [
