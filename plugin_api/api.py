@@ -17,6 +17,7 @@ try:
         save_subscription_config,
     )
     from ..scheduler import ScheduleGroup
+    from .api_config import WebAPIConfigMixin
     from .api_history import WebAPIHistoryMixin
     from .api_overview import WebAPIOverviewMixin
     from .api_probe import WebAPIProbeMixin
@@ -32,6 +33,7 @@ except ImportError:
     from config.subscriptions import (
         save_subscription_config,
     )
+    from plugin_api.api_config import WebAPIConfigMixin
     from plugin_api.api_history import WebAPIHistoryMixin
     from plugin_api.api_overview import WebAPIOverviewMixin
     from plugin_api.api_probe import WebAPIProbeMixin
@@ -52,6 +54,7 @@ class NitterWebAPI(
     WebAPISubscriptionsMixin,
     WebAPITargetBlacklistMixin,
     WebAPISerializersMixin,
+    WebAPIConfigMixin,
 ):
     """Backend API provider for the AstrBot Plugin Pages dashboard."""
 
@@ -82,6 +85,8 @@ class NitterWebAPI(
             ("web/subscriptions/import", "handle_subscriptions_import", ["POST"]),
             ("web/subscriptions/delete", "handle_subscriptions_delete", ["POST"]),
             ("web/mirror/probe", "handle_mirror_probe", ["POST"]),
+            ("web/config/schema", "handle_config_schema", ["GET"]),
+            ("web/config/update", "handle_config_update", ["POST"]),
         ]
         for route, handler_name, methods in routes:
             context.register_web_api(
@@ -176,6 +181,16 @@ class NitterWebAPI(
 
     async def handle_cache_clear(self):
         return await self._json_response(self.clear_cache)
+
+    async def handle_config_schema(self):
+        return await self._json_response(self.build_config_schema)
+
+    async def handle_config_update(self):
+        async def action():
+            data = await self._request_json()
+            return await self.update_config_item(data)
+
+        return await self._json_response(action)
 
     async def handle_seen_clear(self):
         async def action():
