@@ -432,6 +432,7 @@ body.ui-busy .view textarea { cursor: wait; }
   animation: status-spin 0.8s linear infinite;
 }
 @keyframes status-spin { to { transform: rotate(360deg); } }
+.action-status[hidden] { display: none; }
 
 /* Form fields */
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
