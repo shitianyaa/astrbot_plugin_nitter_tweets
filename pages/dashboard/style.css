@@ -812,6 +812,7 @@ select { cursor: pointer; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow-sm);
 }
+.config-actionbar .actions { display: flex; gap: 8px; }
 .config-nav { display: flex; flex-direction: column; gap: 8px; }
 .config-nav > input { width: 100%; }
 .config-nav-list { display: flex; flex-direction: column; gap: 4px; }

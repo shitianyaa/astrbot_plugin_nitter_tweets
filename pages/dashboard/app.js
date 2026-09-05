@@ -1090,6 +1090,12 @@ function configDirtyCount(group) {
     && JSON.stringify(state.configDraft[i.key]) !== JSON.stringify(i.value)).length;
 }
 
+// 守卫与操作条同口径的"真脏":仅统计与当前值不同的草稿键,
+// 等值残键(改走又改回等)不触发离开确认;保存时会由 saveConfigDraft 清理。
+function configDraftDirty() {
+  return (state.config?.groups || []).some(g => configDirtyCount(g) > 0);
+}
+
 function renderConfig() {
   const root = els.configView;
   if (!root) return;
@@ -1177,8 +1183,7 @@ function onConfigSearchInput(e) {
 }
 
 function maybeLeaveConfigGroup(action) {
-  const dirty = Object.keys(state.configDraft).length > 0;
-  if (!dirty) { action(); return; }
+  if (!configDraftDirty()) { action(); return; }
   openConfirm({
     title: "放弃未保存的配置修改？",
     desc: "当前配置有未保存的修改，继续将丢失。",
@@ -1188,11 +1193,13 @@ function maybeLeaveConfigGroup(action) {
 }
 
 async function saveConfigDraft() {
-  const changed = Object.entries(state.configDraft)
-    .filter(([key, val]) => {
-      const item = findConfigItem(key);
-      return item && JSON.stringify(val) !== JSON.stringify(item.value);
-    });
+  const changed = [];
+  for (const [key, val] of Object.entries(state.configDraft)) {
+    const item = findConfigItem(key);
+    if (!item) { delete state.configDraft[key]; continue; }
+    if (JSON.stringify(val) === JSON.stringify(item.value)) { delete state.configDraft[key]; continue; }
+    changed.push([key, val]);
+  }
   if (!changed.length) { state.configDraft = {}; renderConfig(); return; }
   state.configSaving = true; renderConfig();
   const failed = [];
@@ -1376,8 +1383,7 @@ function switchView(v) {
 function bindEvents() {
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
-    const dirty = state.groups.some(g => isGroupDirty(g.group_id))
-      || Object.keys(state.configDraft).length > 0;
+    const dirty = state.groups.some(g => isGroupDirty(g.group_id)) || configDraftDirty();
     if (!dirty) return reloadAll({ preserveDrafts: false });
     openConfirm({
       title: "刷新将丢弃未保存的修改？",
