@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 from plugin_api.api_config import WebAPIConfigMixin
 
@@ -148,3 +149,52 @@ def test_update_rejects_unknown_and_template_list():
     assert template["success"] is False
     assert "分组订阅管理" in template["error"]
     assert config.saved == 0
+
+
+class _Provider:
+    def __init__(self, pid, name, model="", ptype="openai_compatible"):
+        self._meta = SimpleNamespace(
+            id=pid, name=name, model=model, provider_type=ptype
+        )
+
+    def meta(self):
+        return self._meta
+
+
+def test_schema_items_carry_default():
+    config = _FakeConfig()
+    result = asyncio.run(_Host(config).build_config_schema())
+    basic = next(g for g in result["groups"] if g["key"] == "basic")
+    by_key = {i["key"]: i for i in basic["items"]}
+    assert by_key["default_limit"]["default"] == _schema_default(
+        "basic", "default_limit"
+    )
+
+
+def test_list_providers_handles_list_and_dict_shapes():
+    providers_obj = SimpleNamespace(
+        provider_manager=SimpleNamespace(
+            get_all_providers=lambda: [
+                _Provider("p1", "OpenAI 主力", model="gpt-4o"),
+                _Provider("p1", "重复应去重"),
+                _Provider("p2", "Gemini", ptype="gemini"),
+            ]
+        )
+    )
+    host = _Host(_FakeConfig())
+    host.context = providers_obj
+    result = asyncio.run(host.list_providers())
+    ids = [p["id"] for p in result["providers"]]
+    assert ids == ["p1", "p2"]
+    assert result["providers"][0]["label"] == "OpenAI 主力 [p1]"
+    assert result["providers"][0]["type"] == "openai_compatible"
+
+    dict_shape = SimpleNamespace(
+        provider_manager=SimpleNamespace(
+            get_all_providers=lambda: {"dk": SimpleNamespace(id="dk", name="字典形")}
+        )
+    )
+    host2 = _Host(_FakeConfig())
+    host2.context = dict_shape
+    result2 = asyncio.run(host2.list_providers())
+    assert [p["id"] for p in result2["providers"]] == ["dk"]

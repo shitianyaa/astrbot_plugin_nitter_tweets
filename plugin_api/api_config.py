@@ -12,6 +12,13 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from astrbot.api import logger
+except ImportError:
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+try:
     from ..config.compat import config_get
 except ImportError:
     from config.compat import config_get
@@ -53,6 +60,7 @@ class WebAPIConfigMixin:
                         "type": item_type,
                         "description": str(item_schema.get("description", item_key)),
                         "hint": str(item_schema.get("hint", "")),
+                        "default": item_schema.get("default"),
                         "options": [str(o) for o in item_schema.get("options", [])]
                         or None,
                         "value": config_get(
@@ -105,6 +113,56 @@ class WebAPIConfigMixin:
         if callable(save_config):
             save_config()
         return self._ok(key=key, value=value)
+
+    async def list_providers(self) -> dict[str, Any]:
+        """枚举 AstrBot 已装配的 LLM Provider,供配置面板下拉选择。"""
+        providers: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        try:
+            context = getattr(self, "context", None)
+            manager = getattr(context, "provider_manager", None)
+            raw = None
+            if callable(getattr(context, "get_all_providers", None)):
+                raw = context.get_all_providers()
+            elif manager is not None:
+                raw = manager.get_all_providers()
+            if isinstance(raw, dict):
+                iterable = list(raw.values())
+            elif isinstance(raw, (list, tuple)):
+                iterable = list(raw)
+            else:
+                iterable = []
+            for provider in iterable:
+                entry = _provider_entry(provider)
+                if entry and entry["id"] not in seen:
+                    seen.add(entry["id"])
+                    providers.append(entry)
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] 枚举 Provider 列表失败: {type(exc).__name__}: {exc}"
+            )
+        return self._ok(providers=providers)
+
+
+def _provider_entry(provider: Any) -> dict[str, Any] | None:
+    meta = provider.meta() if callable(getattr(provider, "meta", None)) else None
+    pid = str(
+        getattr(meta, "id", None)
+        or getattr(provider, "id", None)
+        or getattr(provider, "provider_id", None)
+        or ""
+    ).strip()
+    if not pid:
+        return None
+    name = str(
+        getattr(meta, "name", None)
+        or getattr(meta, "model", None)
+        or getattr(provider, "name", None)
+        or pid
+    ).strip()
+    ptype = str(getattr(meta, "provider_type", "") or "")
+    label = f"{name} [{pid}]" if name != pid else pid
+    return {"id": pid, "name": name, "type": ptype, "label": label}
 
 
 def _coerce_config_value(item_type: str, raw: Any, item_schema: dict[str, Any]) -> Any:
