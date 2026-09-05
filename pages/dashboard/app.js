@@ -9,7 +9,7 @@ let bridge = null;
 
 const state = {
   view: "overview", loading: false, actionBusy: false,
-  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {}, config: null,
+  overview: null, groups: [], groupDrafts: {}, targetProbeResults: {}, config: null, configError: false,
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, historyOrphans: null, selectedGroupId: "",
   historyGroupId: "", historyUsername: "", historyLimit: 10,
@@ -338,8 +338,8 @@ async function reloadAll(options = {}) {
     else errors.push(`分组加载失败：${gr.reason?.message || "请求失败"}`);
     if (bl.status === "fulfilled") state.targetBlacklists = bl.value.target_blacklists || [];
     else errors.push(`黑名单加载失败：${bl.reason?.message || "请求失败"}`);
-    if (cf.status === "fulfilled") state.config = cf.value;
-    else errors.push(`配置加载失败：${cf.reason?.message || "请求失败"}`);
+    if (cf.status === "fulfilled") { state.config = cf.value; state.configError = false; }
+    else { state.configError = true; errors.push(`配置加载失败：${cf.reason?.message || "请求失败"}`); }
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
     if (options.preserveDrafts === false) state.groupDrafts = {};
@@ -1076,8 +1076,12 @@ function renderConfig() {
   const root = els.configView;
   if (!root) return;
   const data = state.config;
-  if (!data || !Array.isArray(data.groups)) {
-    root.replaceChildren(h("div", { class: "panel", text: "配置加载失败或为空，请刷新重试" }));
+  if (!data) {
+    root.replaceChildren(h("div", { class: "panel", text: state.configError ? "配置加载失败，请刷新重试" : "正在加载..." }));
+    return;
+  }
+  if (!Array.isArray(data.groups)) {
+    root.replaceChildren(h("div", { class: "panel", text: "配置数据异常，请刷新重试" }));
     return;
   }
   root.replaceChildren(...data.groups.map(group => h("div", { class: "panel" }, [
