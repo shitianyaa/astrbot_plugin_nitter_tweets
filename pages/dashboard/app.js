@@ -59,6 +59,7 @@ const ICONS = {
   check: '<path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   alert: '<path d="M12 2L1 21h22zM12 9v6m0 3v.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   close: '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  ban: '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="m5.5 5.5 13 13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>',
   sun: '<circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4 4l1.4 1.4M18.6 18.6L20 20M2 12h2M20 12h2M4 20l1.4-1.4M18.6 5.4L20 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="9" r="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M21 15l-5-5L5 21" fill="none" stroke="currentColor" stroke-width="2"/>',
   video: '<rect x="2" y="6" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 10l6-3v10l-6-3z" fill="none" stroke="currentColor" stroke-width="2"/>',
@@ -505,6 +506,7 @@ function renderGroupEditor() {
     toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(g.group_id, "filter_reposts_enabled", v)),
     toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(g.group_id, "filter_plain_text_enabled", v)),
     toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(g.group_id, "interval_check_enabled", v)),
+    h("span", { class: "editor-grid-full", style: { fontSize: "12px", color: "var(--text-subtle)", marginTop: "-2px" }, text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
     h("label", { class: "field editor-grid-full" }, [
       h("span", { text: "每日定时触发时间（逗号或换行分隔，如 08:00, 20:00）" }),
       h("input", { type: "text", value: (d.daily_check_times || []).join(", "), onInput: e => {
@@ -584,6 +586,34 @@ function renderEntities(group, draft) {
       }}),
     ]),
     isList ? h("span", { id: "entityError", class: "field-error", style: { display: "none" } }) : null,
+    (!isTag && !isList) ? renderBulkSubscriptions(group) : null,
+  ]);
+}
+
+function renderBulkSubscriptions(group) {
+  const area = h("textarea", { rows: 3, style: { width: "100%" }, placeholder: "每行一个用户名，也可用逗号分隔" });
+  const run = endpoint => {
+    const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
+    if (!entries.length) { showToast("请先填写用户名"); return; }
+    withAction(async () => {
+      const res = await apiPost(endpoint, { group_id: group.group_id, entries });
+      delete state.groupDrafts[group.group_id];
+      const s = res?.summary || {};
+      const notes = [
+        s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
+        s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
+        s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
+      ].filter(Boolean);
+      return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
+    });
+  };
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px", borderTop: "1px solid var(--border)", paddingTop: "10px" } }, [
+    h("span", { style: { fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" }, text: "批量导入 / 移除" }),
+    area,
+    h("div", { style: { display: "flex", gap: "6px" } }, [
+      h("button", { class: "btn btn-sm", text: "导入", onClick: () => run("web/subscriptions/import") }),
+      h("button", { class: "btn btn-sm", text: "移除", onClick: () => run("web/subscriptions/delete") }),
+    ]),
   ]);
 }
 
@@ -619,7 +649,58 @@ function renderTargets(group, draft) {
         updateDraft(group.group_id, "push_targets", [...targets, v]); renderGroupEditor();
       }}),
     ]),
+    renderTargetBlacklist(group, draft),
   ]);
+}
+
+function renderTargetBlacklist(group, draft) {
+  const targets = draft.push_targets || [];
+  const rows = Array.isArray(state.targetBlacklists) ? state.targetBlacklists : [];
+  if (!targets.includes(state.targetBlacklistTarget)) state.targetBlacklistTarget = targets[0] || "";
+  const selected = state.targetBlacklistTarget;
+  const users = [...((rows.find(r => r.target_umo === selected) || {}).blocked_users || [])];
+  const box = h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "12px" } }, [
+    h("div", { style: { display: "flex", alignItems: "baseline", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [
+      iconEl("ban", 16), "目标作者黑名单",
+      h("span", { style: { fontWeight: 400, fontSize: "12px" }, text: "跨分组共享，仅影响后台推送" }),
+    ]),
+  ]);
+  if (!targets.length) {
+    box.append(h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "请先添加并保存推送目标。" }));
+    return box;
+  }
+  const select = createSelect({
+    value: selected,
+    options: targets.map(t => {
+      const { label, id } = replayTargetParts(t);
+      return { value: t, text: id ? `${label} · ${replayTargetShortId(id)}` : label };
+    }),
+  });
+  select.onChange(v => { state.targetBlacklistTarget = v; renderGroupEditor(); });
+  const input = h("input", { type: "text", placeholder: "用户名或 @用户名", style: { width: "200px" } });
+  box.append(
+    h("div", { style: { display: "flex", gap: "6px", alignItems: "center" } }, [
+      select, input,
+      h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
+        const v = input.value.trim();
+        if (!v) return;
+        saveTargetBlacklist(selected, [...users, v]);
+      }}),
+    ]),
+    h("div", { class: "chip-list" }, users.length
+      ? users.map(u => h("span", { class: "chip chip-action mono", title: `移除 ${u}`, text: `@${u}`, onClick: () => saveTargetBlacklist(selected, users.filter(x => x !== u)) }))
+      : [h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "黑名单为空" })]),
+  );
+  return box;
+}
+
+function saveTargetBlacklist(target, users) {
+  withAction(async () => {
+    await apiPost("web/target-blacklists/update", { target_umo: target, blocked_users: users });
+    const rest = state.targetBlacklists.filter(r => r.target_umo !== target);
+    if (users.length) rest.push({ target_umo: target, blocked_users: [...users] });
+    state.targetBlacklists = rest.sort((a, b) => a.target_umo.localeCompare(b.target_umo));
+  }, "黑名单已更新", { reload: false, rerender: () => renderGroupEditor() });
 }
 
 function addWatchList(groupId) {

@@ -1,5 +1,6 @@
 """Twitter List config, HTML backend, WebUI, and status regressions."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -578,6 +579,27 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert 'rss_user: "用户 RSS"' in source
     assert "localStorage" not in source
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
+
+
+def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "web/target-blacklists/update" in source
+    assert "目标作者黑名单" in source
+    assert "function renderTargetBlacklist(group, draft)" in source
+    assert "function saveTargetBlacklist(target, users)" in source
+    assert "跨分组共享，仅影响后台推送" in source
+    assert "web/subscriptions/import" in source
+    assert "web/subscriptions/delete" in source
+    assert "批量导入 / 移除" in source
+    assert "间隔检查使用全局检查间隔" in source
+    assert "ban: '<circle" in source
+    assert (
+        "每行一个地址，不要用逗号分隔" in schema["basic"]["items"]["instances"]["hint"]
+    )
+    assert "`omit_status_url`（`tweet_groups` 分组字段）" in readme
 
 
 def test_status_and_export_render_list_group():
