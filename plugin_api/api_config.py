@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,8 @@ def _coerce_config_value(item_type: str, raw: Any, item_schema: dict[str, Any]) 
             number = float(raw)
         except (TypeError, ValueError):
             raise ValueError("该配置项需要数字")
+        if not math.isfinite(number):
+            raise ValueError("该配置项需要有限数字")
         if item_type == "int":
             if number != int(number):
                 raise ValueError("该配置项需要整数")

@@ -127,6 +127,16 @@ def test_update_bool_and_list():
     assert ok_list["value"] == ["http://a:8080", "http://b:8080"]
 
 
+def test_update_rejects_non_finite_number():
+    config = _FakeConfig()
+    host = _Host(config)
+    result = asyncio.run(
+        host.update_config_item({"key": "request_timeout", "value": "inf"})
+    )
+    assert result["success"] is False
+    assert config.saved == 0
+
+
 def test_update_rejects_unknown_and_template_list():
     config = _FakeConfig()
     host = _Host(config)
