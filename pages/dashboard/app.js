@@ -1297,7 +1297,7 @@ function configControl(item, value) {
         : area.value);
     });
     if (item.type === "list") {
-      wrap.append(h("span", { class: "config-hint", text: "每行一项" }));
+      area.placeholder = "每行一项";
     }
     wrap.append(area);
     return wrap;

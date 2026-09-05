@@ -146,34 +146,44 @@ a:hover { text-decoration: underline; }
    ========================================================================== */
 
 .shell {
-  display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 
-/* Sidebar */
-.rail {
-  background: var(--bg);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  padding: 16px 12px;
-  gap: 16px;
+/* 顶部头部(原左侧栏+顶栏合并):品牌+导航+系统状态+操作 */
+.topheader {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  height: 100vh;
-  overflow-y: auto;
+  z-index: 50;
 }
-.rail .brand-name { color: var(--text); }
-.rail .brand-sub, .rail .rail-section-title, .rail .health-row .label { color: var(--text-muted); }
-.rail .brand-logo { background: var(--text); color: var(--bg); }
+.th-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px clamp(20px, 4vw, 48px);
+  border-bottom: 1px solid var(--border);
+}
+.th-spacer { flex: 1 1 0; }
+.th-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px clamp(20px, 4vw, 48px);
+}
+.th-sub .health-card { margin-left: auto; }
+.th-sub .topbar-title { font-size: 13px; font-weight: 600; }
+.brand-logo { background: var(--text); color: var(--bg); }
 
 /* Brand */
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 8px;
+  padding: 0;
 }
 .brand-logo {
   display: grid;
@@ -197,11 +207,12 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
-/* Nav */
+/* Nav(横向 pill) */
 .nav {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .tab {
   background: transparent;
@@ -210,14 +221,12 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-sans);
   font-size: 14px;
   font-weight: 500;
-  padding: 10px 16px;
-  border-radius: 8px;
-  text-align: left;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
+  gap: 8px;
   transition: background var(--transition), color var(--transition);
 }
 .tab svg { width: 18px; height: 18px; flex-shrink: 0; }
@@ -230,28 +239,18 @@ a:hover { text-decoration: underline; }
 .tab:hover { color: var(--blue); background: var(--surface-hover); }
 .tab.active svg { color: var(--blue); }
 
-/* Health card */
-.rail-section-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--text-subtle);
-  padding: 0 16px 4px;
-}
+/* 系统状态(横向内联) */
 .health-card {
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
 .health-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12px;
 }
 .health-row .label { color: var(--text-muted); }
 .pill-status {
@@ -272,31 +271,10 @@ a:hover { text-decoration: underline; }
 .pill-danger .dot { background: var(--red); }
 .pill-muted { background: var(--surface-hover); color: var(--text-muted); }
 .pill-muted .dot { background: var(--text-subtle); }
-.rail .pill-muted { background: var(--surface-hover); color: var(--text-muted); }
 
 /* Main */
 .main { display: flex; flex-direction: column; min-width: 0; }
 
-/* Topbar */
-.topbar {
-  min-height: 64px;
-  height: auto;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px clamp(20px, 4vw, 48px);
-  position: sticky;
-  top: 0;
-  z-index: 50;
-}
-.topbar h1 {
-  font-size: 17px;
-  font-weight: 700;
-  margin: 0;
-  letter-spacing: 0;
-}
 .topbar-sub { font-size: 13px; color: var(--text-muted); margin-left: 8px; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .topbar-actions .mono { font-size: 12px; color: var(--text-muted); }
@@ -831,8 +809,9 @@ select { cursor: pointer; }
 .config-fields { display: flex; flex-direction: column; gap: 12px; }
 .config-item {
   display: flex; flex-direction: column; gap: 6px;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   padding: 12px 14px; background: var(--surface);
+  box-shadow: var(--shadow-sm);
 }
 .config-item-head { display: flex; align-items: center; gap: 8px; }
 .config-label { font-size: 13px; font-weight: 600; }
@@ -986,28 +965,15 @@ select { cursor: pointer; }
 }
 
 @media (max-width: 900px) {
-  .shell { display: block; }
-  .rail {
-    position: static;
-    height: auto;
-    min-height: 0;
-    padding: 12px 16px;
-    gap: 12px;
-  }
-  .brand { padding: 2px 0; }
-  .nav { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-  .tab { width: auto; flex: 1 1 180px; padding: 9px 12px; }
-  .rail-section-title { padding: 2px 0 0; }
-  .health-card { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .health-row { min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; }
-  .topbar { position: static; }
+  .th-main { padding: 8px 14px; gap: 8px 12px; }
+  .tab { padding: 7px 12px; }
   .view-container { max-width: none; }
 }
 
 @media (max-width: 680px) {
-  .topbar { align-items: flex-start; }
+  .th-main { padding: 8px 12px; }
+  .th-sub { padding: 4px 12px; }
   .topbar-actions { gap: 6px; }
-  .topbar-sub { display: block; margin: 2px 0 0; }
   .view-container { padding: 16px 14px 28px; }
   .groups-layout, .editor-grid, .danger-grid { grid-template-columns: 1fr; }
   .editor-grid-full { grid-column: auto; }
@@ -1015,8 +981,6 @@ select { cursor: pointer; }
   .toolbar .field, .toolbar select, .toolbar input { width: 100% !important; }
   .pager { width: 100%; margin-left: 0; justify-content: space-between; }
   .pager .btn { flex: 1; }
-  .health-card { grid-template-columns: 1fr; }
-  .health-row { flex-direction: row; align-items: center; justify-content: space-between; }
   .panel { padding: 14px; }
 }
 
