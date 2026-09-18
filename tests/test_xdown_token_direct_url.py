@@ -55,6 +55,8 @@ def _service() -> MediaService:
     service = object.__new__(MediaService)
     service.xdown_url = "https://xdown.app/api/ajaxSearch"
     service.timeout = 25.0
+    service.media_quality = "high"
+    service._resolve_candidates_from_status = lambda _tweet: []  # type: ignore[method-assign]
     return service
 
 

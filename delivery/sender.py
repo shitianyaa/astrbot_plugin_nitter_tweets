@@ -31,7 +31,7 @@ try:
         resolve_send_video_attachments,
     )
     from ..rendering import TweetMessageRenderer
-    from ..shared import TweetItem
+    from ..shared import TweetItem, sanitize_sensitive_text
     from .media_transport import MediaTransportPolicy, TransportConfig, TransportMemo
     from .outcomes import SendAttempt, SendOutcome
     from .platforms import PlatformDeliveryRegistry, PlatformResolver
@@ -67,7 +67,7 @@ except ImportError:
     from delivery.sender_merged import SenderMergedForwardMixin
     from delivery.sender_transport import SenderTransportMixin
     from rendering import TweetMessageRenderer
-    from shared import TweetItem
+    from shared import TweetItem, sanitize_sensitive_text
 
 
 class TweetSender(
@@ -88,6 +88,7 @@ class TweetSender(
         "设为 medium/low，或调小「单个媒体大小上限 MB」(media_max_size_mb)）。"
     )
     forward_reject_plain_fallback_enabled: bool = False
+    last_send_rejected: bool = False
 
     def __init__(self, config=None):
         config = config or {}
@@ -98,6 +99,7 @@ class TweetSender(
             config_get(config, "forward_reject_plain_fallback_enabled", False),
             False,
         )
+        self.last_send_rejected = False
         self.renderer = TweetMessageRenderer(
             send_image_attachments=self.send_image_attachments,
             send_video_attachments=self.send_video_attachments,
@@ -146,8 +148,11 @@ class TweetSender(
         on_sent_progress=None,
         force_media: bool = False,
     ) -> bool:
+        self.last_send_rejected = False
         sender = self._sender_for_media(force_media)
-        return await sender._send_with_current_media_flags(
+        if sender is not self:
+            sender.last_send_rejected = False
+        accepted = await sender._send_with_current_media_flags(
             event,
             username,
             instance,
@@ -161,6 +166,9 @@ class TweetSender(
             link_style=link_style,
             on_sent_progress=on_sent_progress,
         )
+        if sender is not self:
+            self.last_send_rejected = sender.last_send_rejected
+        return accepted
 
     async def _send_with_current_media_flags(
         self,
@@ -177,6 +185,7 @@ class TweetSender(
         link_style: str = "plain",
         on_sent_progress=None,
     ) -> bool:
+        self.last_send_rejected = False
         sent_count = 0
         total = len(tweets)
 
@@ -455,10 +464,22 @@ class TweetSender(
         # 先判拒收：这两个签名都明确表示「没送到」，而它们的文本里含
         # "Timeout" 字样，交给 _is_uncertain_delivery_error 会被误判成
         # 「可能已送达」而跳过降级（ActionFailed 不可导入时尤其明显）。
-        if self._is_content_rejected_error(exc):
+        if self._is_content_rejected_error(
+            exc
+        ) or self._is_forward_payload_rejected_error(exc):
+            self.last_send_rejected = True
+            clean_target = sanitize_sensitive_text(str(target or "-"))
+            clean_reason = (
+                "合并转发被平台拒收 (retcode 1200 / res_id 校验失败)"
+                if ("res_id" in error.lower() or "1200" in error)
+                else "内容被目标平台拒收"
+            )
             logger.warning(
                 "[NitterTweets] 发送被目标平台拒收，不再重发相同内容: "
-                f"label={label}, target={target or '-'}, error={error}"
+                f"label={label}, target={clean_target}, reason={clean_reason}"
+            )
+            logger.debug(
+                f"[NitterTweets] 发送被目标平台拒收详情: label={label}, target={clean_target}, error={sanitize_sensitive_text(str(exc))}"
             )
             # 只表达「同样的字节别再发一遍」。retryable 保持 True，让既有的
             # 有损降级链（去视频、拆分、降级直发、纯文本）照常运行——那些都是
@@ -479,9 +500,10 @@ class TweetSender(
                 error=error,
                 warning=warning,
             )
-        if target:
+        clean_target = sanitize_sensitive_text(str(target or ""))
+        if clean_target:
             logger.warning(
-                f"[NitterTweets] 发送失败: label={label}, target={target}, error={error}"
+                f"[NitterTweets] 发送失败: label={label}, target={clean_target}, error={error}"
             )
         else:
             logger.warning(f"[NitterTweets] 发送失败: label={label}, error={error}")

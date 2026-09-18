@@ -2,6 +2,44 @@
 
 所有重要变更都会记录在这里。
 
+## [1.7.0] - 2026-09-18
+
+### Added & Fixed
+
+- **统一媒体管线与多分辨率自适应降级**：
+  - 彻底打通 FxTwitter、Nitter HTML 及被动链接的完整视频多格式（4K、1080p、720p、480p 等）候选池，杜绝过早硬编码单一画质导致候选丢失。
+  - 修复 FxTwitter 大视频在超出大小上限时无法自动降级直接被跳过的断层缺陷；当选中画质超过 `media_max_size_mb` 时，自动顺延向下借档（例如 4K 32MB 超限自动降为 1080p 9.3MB 顺畅发送）。
+  - Nitter RSS 媒体解析优先走内部 `status_resolve` 极速获取官方 CDN 变体池，降低对外部不可控第三方 `xdown.app` 的依赖。
+- **推图指令视频专线与特许放行**：
+  - 指令 `/推图` 支持类型参数：`/推图 用户名 [数量] [视频/图片]` 与 `/推图 用户名 [视频/图片]`。
+  - 显式指定视频时，上游结合多页翻页专线搜集视频推文，发送层局部特许放行视频下载与发送（`force_media=True`），零全局状态污染。
+- **风控二分排雷提速与日志降噪**：
+  - 合并转发遭遇腾讯内容风控（`retcode 1200 / res_id 校验失败`）时，跳过无意义的同包底层重复重试，毫秒级进入二分排雷，耗时大幅削减。
+  - 格式化脱敏风控警告日志，消除几十位长哈希密文视觉污染。
+- **配置 Schema 与文档描述精简**：
+  - 精简澄清 `filter_plain_text_enabled`（只推包含图片/视频推文）与 `media_only_enabled`（只发媒体图片/视频，去除正文文本与翻译）。
+  - 完善 `media_max_size_mb` 与 `send_video_attachments` 的特性说明。
+
+## [1.6.1] - 2026-09-18
+
+### Fixed & Improved
+
+- **URL 标准化与 Localhost 清理**：
+  - 扩展 `URL_LIKE_RE` 正则以完整匹配 `localhost`（如 `http://localhost:8080`）、IPv4 地址及通用 HTTP/HTTPS 链接。
+  - `normalize_external_links` 新增对 Nitter 引用推文链接（如 `http://localhost/username/status/123#m`）的自动识别，改写为规范的 `https://x.com/username/status/123`。
+  - `strip_external_links` 在剥离外部链接后，清理因链接被移除而残留的孤立引用破折号行（如 `^—\s*$`），避免渲染空白破折号。
+- **FxTwitter 媒体抓取翻页与 Overfetch**：
+  - `fetch_user_timeline` 实现游标跟随翻页循环（受 `max_pages` 深度控制），在纯文本过滤或转发过滤导致候选不足时自动向后翻页直至满足请求数量或游标耗尽。
+  - `skip_plain_text=True` 时首屏初始请求量提高至 `max(20, min(count * 2, 100))`，彻底消除 `count=1` 导致的 upstream HTTP 500 报错并扩大媒体候选窗口。
+- **手动命令转发过滤统一**：
+  - 手动 `/推文` 与 `/推图` 统一接入全局 `filter_reposts_enabled` 总开关，默认开启过滤转发，关闭时完整保留转发。
+  - 手动命令在调用 FxTwitter 时透传 `html_max_pages` 作为最大翻页深度限制。
+- **审计日志与触发原因文案优化**：
+  - 移除硬编码带感叹号的文案 `手动命令 (！推文检查)`；调度器日志格式化统一为 `手动检查`。
+  - `safe_task_log` 动态映射手动操作类型：`user_media` -> `推图`、`user_timeline` -> `推文`、`tweet_search` -> `推文搜索`、`tweet_pic_search` -> `推文搜图`、`trends` -> `推特热搜`、`mirror_test` -> `镜像测试`，格式化为 `手动命令 (操作名)`。
+- **配置文档与 Schema 同步**：
+  - `_conf_schema.json` 与 `docs/project/configuration.md` 更新 `html_max_pages` 说明，明确其同时控制 FxTwitter 媒体翻页深度；更新 `filter_reposts_enabled` 说明，标注手动 `/推文` 与 `/推图` 亦遵循此全局总开关。
+
 ## [1.6.0] - 2026-09-16
 
 ### Added

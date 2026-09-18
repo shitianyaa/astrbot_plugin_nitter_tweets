@@ -69,6 +69,10 @@ try:
     )
     from .html_backend.parser import prefer_pbs_quality
     from .network import build_request_headers, compat_urlopen
+    from .status_link import StatusLink
+    from .status_resolve import (
+        resolve_status_tweet,
+    )
     from .xdown import XdownMediaCandidate, XdownMediaParser
 except ImportError:
     import video_probe
@@ -81,6 +85,10 @@ except ImportError:
     )
     from html_backend.parser import prefer_pbs_quality
     from network import build_request_headers, compat_urlopen
+    from status_link import StatusLink
+    from status_resolve import (
+        resolve_status_tweet,
+    )
     from xdown import XdownMediaCandidate, XdownMediaParser
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
@@ -215,23 +223,55 @@ class MediaService(MediaCacheMixin):
     async def _resolve_and_download_with_status(
         self, tweet: TweetItem, *, force_all_media: bool = False
     ) -> tuple[list[TweetMedia], str]:
-        media_urls = [
-            TweetMedia(
-                media.kind,
-                media.url,
-                duration_seconds=media.duration_seconds,
-                fallback_url=media.fallback_url,
-            )
-            for media in tweet.media
-            if media.url
-        ]
-        candidates_found = bool(media_urls)
-        if not media_urls:
+        candidates_found = False
+        media_urls: list[TweetMedia] = []
+
+        tweet_cands = getattr(tweet, "media_candidates", None)
+        tweet_media = getattr(tweet, "media", None) or []
+
+        if tweet_cands:
+            candidates_found = True
+            media_urls = self._normalize_media_candidates(tweet, tweet_cands)
+        elif tweet_media:
+            video_items = [m for m in tweet_media if getattr(m, "is_video", False)]
+            if video_items:
+                candidates = [
+                    XdownMediaCandidate(
+                        kind=m.kind,
+                        url=m.url,
+                        resolution=self._extract_video_resolution("", m.url),
+                        duration_seconds=m.duration_seconds,
+                        fallback_url=m.fallback_url,
+                    )
+                    for m in tweet_media
+                    if getattr(m, "url", None)
+                ]
+                candidates_found = bool(candidates)
+                media_urls = self._normalize_media_candidates(tweet, candidates)
+            else:
+                candidates_found = True
+                media_urls = [
+                    TweetMedia(
+                        media.kind,
+                        media.url,
+                        duration_seconds=media.duration_seconds,
+                        fallback_url=media.fallback_url,
+                    )
+                    for media in tweet_media
+                    if getattr(media, "url", None)
+                ]
+        else:
             resolved = await asyncio.to_thread(self._resolve_media_urls, tweet)
             candidates_found = bool(
                 getattr(resolved, "candidates_found", bool(resolved))
             )
             media_urls = list(resolved)
+
+        for item in media_urls:
+            if getattr(item, "is_image", False):
+                quality = getattr(self, "media_quality", "high") or "high"
+                item.url = prefer_pbs_quality(item.url, quality)
+
         if not media_urls:
             return [], (
                 MEDIA_STATUS_POLICY_SKIPPED
@@ -414,7 +454,48 @@ class MediaService(MediaCacheMixin):
         log = logger.warning if log_warning else logger.info
         log(f"[NitterTweets] {message}: {tweet.x_url}")
 
-    def _resolve_media_candidates(self, tweet: TweetItem) -> list[XdownMediaCandidate]:
+    def _resolve_candidates_from_status(
+        self, tweet: TweetItem
+    ) -> list[XdownMediaCandidate]:
+        status_id = getattr(tweet, "status_id", "")
+        if not status_id:
+            return []
+        try:
+            link = StatusLink(
+                username=getattr(tweet, "username", "") or "i",
+                status_id=status_id,
+                canonical_url=getattr(tweet, "x_url", ""),
+            )
+            status_item = resolve_status_tweet(
+                link, timeout=min(self.timeout, 8.0), media_quality=self.media_quality
+            )
+            if getattr(status_item, "media_candidates", None):
+                return list(status_item.media_candidates)
+            if getattr(status_item, "media", None):
+                return [
+                    XdownMediaCandidate(
+                        kind=m.kind,
+                        url=prefer_pbs_quality(m.url, self.media_quality)
+                        if getattr(m, "is_image", False)
+                        else m.url,
+                        resolution=self._extract_video_resolution("", m.url)
+                        if getattr(m, "is_video", False)
+                        else None,
+                        duration_seconds=m.duration_seconds,
+                        fallback_url=m.fallback_url,
+                    )
+                    for m in status_item.media
+                ]
+        except Exception as exc:
+            logger.info(
+                f"[NitterTweets] 内部 status_resolve 获取媒体候选失败，回退 xdown: "
+                f"tweet={_safe_url(getattr(tweet, 'x_url', ''))}, error={type(exc).__name__}: {_safe_text(exc)}"
+            )
+        return []
+
+    def _resolve_candidates_from_xdown(
+        self, tweet: TweetItem
+    ) -> list[XdownMediaCandidate]:
         data = urlencode({"q": tweet.x_url, "lang": "zh-cn"}).encode("utf-8")
         request = Request(
             self.xdown_url,
@@ -484,6 +565,12 @@ class MediaService(MediaCacheMixin):
             )
         return result
 
+    def _resolve_media_candidates(self, tweet: TweetItem) -> list[XdownMediaCandidate]:
+        candidates = self._resolve_candidates_from_status(tweet)
+        if candidates:
+            return candidates
+        return self._resolve_candidates_from_xdown(tweet)
+
     def _resolve_media_urls(self, tweet: TweetItem) -> list[TweetMedia]:
         candidates = self._resolve_media_candidates(tweet)
         return _ResolvedMediaUrls(
@@ -511,7 +598,7 @@ class MediaService(MediaCacheMixin):
             if skipped_images:
                 logger.info(
                     "[NitterTweets] 检测到视频/GIF，跳过同条推文中的图片候选: "
-                    f"skipped={skipped_images}, tweet={tweet.x_url}"
+                    f"skipped={skipped_images}, tweet={_safe_url(getattr(tweet, 'x_url', ''))}"
                 )
             return [
                 TweetMedia(
@@ -525,7 +612,9 @@ class MediaService(MediaCacheMixin):
         return [
             TweetMedia(
                 item.kind,
-                item.url,
+                prefer_pbs_quality(item.url, self.media_quality)
+                if item.kind == MEDIA_TYPE_IMAGE
+                else item.url,
                 duration_seconds=item.duration_seconds,
                 fallback_url=item.fallback_url,
             )
@@ -559,6 +648,28 @@ class MediaService(MediaCacheMixin):
             selected = max(known, key=lambda item: item.resolution or 0)
         return self._downgrade_oversized_video(tweet, known, selected)
 
+    def _get_candidate_size(self, candidate: XdownMediaCandidate) -> int | None:
+        if candidate.size_bytes is not None:
+            return candidate.size_bytes
+        if candidate.bitrate and candidate.duration_seconds:
+            try:
+                estimated = int(candidate.bitrate * candidate.duration_seconds / 8)
+                if estimated > 0:
+                    candidate.size_bytes = estimated
+                    return estimated
+            except (TypeError, ValueError, OverflowError):
+                pass
+        probe = self._probe_remote_media(
+            candidate.url, need_duration=candidate.duration_seconds is None
+        )
+        if probe:
+            if candidate.size_bytes is None and probe.get("size_bytes"):
+                candidate.size_bytes = probe.get("size_bytes")
+            if candidate.duration_seconds is None and probe.get("duration"):
+                candidate.duration_seconds = probe.get("duration")
+            return candidate.size_bytes
+        return None
+
     def _downgrade_oversized_video(
         self,
         tweet: TweetItem,
@@ -566,14 +677,14 @@ class MediaService(MediaCacheMixin):
         selected: XdownMediaCandidate,
     ) -> XdownMediaCandidate:
         """下载前预检：选中档超 size 上限时降到下一低分辨率档。"""
-        size = selected.size_bytes
+        size = self._get_candidate_size(selected)
         if size is None or size <= self.max_bytes:
             return selected
         # 按 resolution 降序找第一个不超限（或大小未知）的更低档。
         for item in sorted(known, key=lambda i: i.resolution or 0, reverse=True):
             if (item.resolution or 0) >= (selected.resolution or 0):
                 continue
-            item_size = item.size_bytes
+            item_size = self._get_candidate_size(item)
             if item_size is None or item_size <= self.max_bytes:
                 self._add_media_warning(
                     tweet,
@@ -598,7 +709,9 @@ class MediaService(MediaCacheMixin):
             duration = item.duration_seconds
             # 缺时长或大小时做一次 Range 探测：缺时长则同时探时长与大小，
             # 仅缺大小时只读 1 字节拿 Content-Range 的 total。
-            if duration is None or item.size_bytes is None:
+            if duration is None or (
+                item.size_bytes is None and not (item.bitrate and item.duration_seconds)
+            ):
                 probe = self._probe_remote_media(
                     item.url, need_duration=duration is None
                 )
@@ -624,7 +737,7 @@ class MediaService(MediaCacheMixin):
             logger.info(
                 "[NitterTweets] 跳过超长视频候选: "
                 f"longest={self._format_duration(longest)}, "
-                f"limit={self._format_duration(max_seconds)}, tweet={tweet.x_url}"
+                f"limit={self._format_duration(max_seconds)}, tweet={_safe_url(getattr(tweet, 'x_url', ''))}"
             )
         return allowed
 

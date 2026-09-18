@@ -15,6 +15,11 @@ except ImportError:
 from .base import DeliveryAdapter
 from .outcomes import SendOutcome
 
+try:
+    from ..shared.observability import sanitize_sensitive_text
+except ImportError:
+    from shared.observability import sanitize_sensitive_text
+
 
 class DefaultDeliveryAdapter(DeliveryAdapter):
     @staticmethod
@@ -787,6 +792,15 @@ class DefaultDeliveryAdapter(DeliveryAdapter):
         link_style: str = "plain",
     ) -> bool:
         sender = self.sender
+        if getattr(sender, "last_send_rejected", False) and not getattr(
+            sender, "forward_reject_plain_fallback_enabled", False
+        ):
+            target = getattr(sender, "_event_target", lambda _e: "")(event)
+            logger.warning(
+                f"[NitterTweets] 发送因内容风控被拒收，跳过纯文本降级: "
+                f"{len(tweets)} 条推文 (target={sanitize_sensitive_text(str(target or '-'))})"
+            )
+            return False
         attempt = await sender._send_event_chain(
             event,
             self._message_chain(

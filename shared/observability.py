@@ -70,10 +70,19 @@ _GROUP_TYPE_LABELS = {
 }
 
 _TRIGGER_LABELS = {
-    "manual_command": "手动命令 (！推文检查)",
+    "manual_command": "手动命令",
     "passive_link": "聊天消息中的推文链接",
     "interval": "定时轮询",
     "cron": "Cron 定时",
+}
+
+_MANUAL_OP_LABELS = {
+    "user_media": "推图",
+    "user_timeline": "推文",
+    "tweet_search": "推文搜索",
+    "tweet_pic_search": "推文搜图",
+    "trends": "推特热搜",
+    "mirror_test": "镜像测试",
 }
 
 _TASK_LABELS = {
@@ -176,6 +185,12 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     if trigger:
         trigger_str = str(trigger).strip()
         trigger_label = _TRIGGER_LABELS.get(trigger_str, trigger_str)
+        if trigger_str == "manual_command":
+            op = str(fields.get("operation") or "").strip()
+            if op in _MANUAL_OP_LABELS:
+                trigger_label = f"手动命令 ({_MANUAL_OP_LABELS[op]})"
+            else:
+                trigger_label = "手动命令"
         lines.append(f"  触发原因: {trigger_label}")
 
     # 5. Effective Instance

@@ -35,9 +35,15 @@ def extract_video_resolution(label: str, url: str) -> int | None:
     if p_matches:
         return max(p_matches)
 
+    if re.search(r"(?i)\b4k\b", text):
+        return 2160
+    if re.search(r"(?i)\b2k\b", text):
+        return 1440
+
     size_matches = [
-        max(int(width), int(height))
+        min(int(width), int(height))
         for width, height in re.findall(r"(?i)(\d{3,4})x(\d{3,4})", text)
+        if min(int(width), int(height)) >= 100
     ]
     if size_matches:
         return max(size_matches)

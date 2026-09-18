@@ -114,3 +114,54 @@ def test_medium_downgrades_when_median_exceeds_size_limit():
     assert selected is not None
     # medium 中位 = 720p(30MB，超 25MB 上限)→ 降级到 360p(2MB，不超)
     assert selected.resolution == 360
+
+
+def test_fxtwitter_candidates_downgrades_from_4k_to_1080p():
+    """Verify FxTwitter 4K variant (over 25MB) auto-downgrades to 1080p variant."""
+    cands = [
+        XdownMediaCandidate(
+            kind="video",
+            url="https://video.twimg.com/vid/720.mp4",
+            resolution=720,
+            duration_seconds=18.0,
+            bitrate=2_176_000,
+        ),
+        XdownMediaCandidate(
+            kind="video",
+            url="https://video.twimg.com/vid/1080.mp4",
+            resolution=1080,
+            duration_seconds=18.0,
+            bitrate=10_368_000,
+        ),
+        XdownMediaCandidate(
+            kind="video",
+            url="https://video.twimg.com/vid/2160.mp4",
+            resolution=2160,
+            duration_seconds=18.0,
+            bitrate=25_128_000,
+        ),
+    ]
+    service = _service(25 * MB)
+    service.media_quality = "high"
+    allowed = service._filter_video_duration_candidates(TWEET, cands)
+    selected = service._select_video_candidate(TWEET, allowed)
+    assert selected is not None
+    # 2160p estimated ~56MB (> 25MB) -> auto-downgrades to 1080p (~23MB <= 25MB)
+    assert selected.resolution == 1080
+    assert "1080.mp4" in selected.url
+
+
+def test_fxtwitter_candidates_filters_oversized_duration():
+    """Verify video exceeding max_video_duration_seconds is filtered out."""
+    cands = [
+        XdownMediaCandidate(
+            kind="video",
+            url="https://video.twimg.com/vid/720.mp4",
+            resolution=720,
+            duration_seconds=600.0,  # 10 minutes > 8 minutes (480s)
+            bitrate=1_000_000,
+        ),
+    ]
+    service = _service(25 * MB)
+    allowed = service._filter_video_duration_candidates(TWEET, cands)
+    assert len(allowed) == 0

@@ -13,10 +13,22 @@ try:
     from .html_backend.parser import prefer_pbs_quality
     from .network import build_request_headers, safe_urlopen
     from .status_link import StatusLink
+    from .video_probe import (
+        coerce_duration_seconds,
+        duration_from_mapping,
+        extract_video_resolution,
+    )
+    from .xdown import XdownMediaCandidate
 except ImportError:
     from media_support.html_backend.parser import prefer_pbs_quality
     from media_support.network import build_request_headers, safe_urlopen
     from media_support.status_link import StatusLink
+    from media_support.video_probe import (
+        coerce_duration_seconds,
+        duration_from_mapping,
+        extract_video_resolution,
+    )
+    from media_support.xdown import XdownMediaCandidate
     from shared.utils import TweetItem, TweetMedia, format_tweet_published
 
 logger = logging.getLogger("astrbot")
@@ -36,13 +48,27 @@ def _kind_from_type(value: str) -> str:
     return "image"
 
 
-def _append_media(bucket: list[TweetMedia], *, kind: str, url: str) -> None:
+def _append_media(
+    bucket: list[TweetMedia],
+    *,
+    kind: str,
+    url: str,
+    duration_seconds: float | None = None,
+    fallback_url: str = "",
+) -> None:
     link = str(url or "").strip()
     if not link.startswith(("http://", "https://")):
         return
     if any(item.url == link for item in bucket):
         return
-    bucket.append(TweetMedia(kind=kind, url=link))
+    bucket.append(
+        TweetMedia(
+            kind=kind,
+            url=link,
+            duration_seconds=duration_seconds,
+            fallback_url=fallback_url,
+        )
+    )
 
 
 def _text_from_structured_raw(value: Any) -> str:
@@ -94,15 +120,31 @@ def _media_from_fxtwitter(payload: dict[str, Any]) -> list[TweetMedia]:
     if not isinstance(items, list):
         items = []
     result: list[TweetMedia] = []
+    top_duration = coerce_duration_seconds(
+        payload.get("duration") or payload.get("duration_seconds")
+    )
     for item in items:
         if not isinstance(item, dict):
             continue
         kind = _kind_from_type(str(item.get("type") or "photo"))
         url = item.get("url") or item.get("thumbnail_url") or ""
+        duration = (
+            coerce_duration_seconds(
+                item.get("duration") or item.get("duration_seconds")
+            )
+            or top_duration
+        )
+        if duration is None and item.get("duration_millis"):
+            try:
+                duration = float(item["duration_millis"]) / 1000.0
+            except (TypeError, ValueError):
+                pass
         if kind in {"video", "dynamic"}:
             # Prefer highest quality variants when present.
-            variants = item.get("variants") or item.get("video_info", {}).get(
-                "variants"
+            variants = (
+                item.get("variants")
+                or item.get("formats")
+                or (item.get("video_info") or {}).get("variants")
             )
             best = ""
             best_bitrate = -1
@@ -110,8 +152,15 @@ def _media_from_fxtwitter(payload: dict[str, Any]) -> list[TweetMedia]:
                 for variant in variants:
                     if not isinstance(variant, dict):
                         continue
-                    vurl = str(variant.get("url") or "").strip()
+                    vurl = str(variant.get("url") or variant.get("src") or "").strip()
                     if not vurl:
+                        continue
+                    content_type = str(variant.get("content_type") or "").lower()
+                    if (
+                        "mpegurl" in content_type
+                        or vurl.endswith(".m3u8")
+                        or ".m3u8?" in vurl
+                    ):
                         continue
                     try:
                         bitrate = int(variant.get("bitrate") or 0)
@@ -121,7 +170,130 @@ def _media_from_fxtwitter(payload: dict[str, Any]) -> list[TweetMedia]:
                         best_bitrate = bitrate
                         best = vurl
             url = best or url
-        _append_media(result, kind=kind, url=str(url))
+        _append_media(result, kind=kind, url=str(url), duration_seconds=duration)
+    return result
+
+
+def _candidates_from_fxtwitter(payload: dict[str, Any]) -> list[XdownMediaCandidate]:
+    media_block = payload.get("media") or {}
+    items = media_block.get("all") if isinstance(media_block, dict) else None
+    if not isinstance(items, list):
+        items = []
+    result: list[XdownMediaCandidate] = []
+    top_duration = coerce_duration_seconds(
+        payload.get("duration") or payload.get("duration_seconds")
+    )
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = _kind_from_type(str(item.get("type") or "photo"))
+        if kind == "image":
+            url = str(item.get("url") or item.get("thumbnail_url") or "").strip()
+            if url:
+                result.append(XdownMediaCandidate(kind="image", url=url))
+            continue
+
+        item_duration = (
+            coerce_duration_seconds(
+                item.get("duration") or item.get("duration_seconds")
+            )
+            or top_duration
+        )
+        if item_duration is None and item.get("duration_millis"):
+            try:
+                item_duration = float(item["duration_millis"]) / 1000.0
+            except (TypeError, ValueError):
+                pass
+
+        variants = (
+            item.get("variants")
+            or item.get("formats")
+            or (item.get("video_info") or {}).get("variants")
+            or []
+        )
+        variant_candidates: list[XdownMediaCandidate] = []
+        if isinstance(variants, list):
+            seen_vurls: set[str] = set()
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                vurl = str(variant.get("url") or variant.get("src") or "").strip()
+                if not vurl or vurl in seen_vurls:
+                    continue
+                content_type = str(variant.get("content_type") or "").lower()
+                if (
+                    "mpegurl" in content_type
+                    or vurl.endswith(".m3u8")
+                    or ".m3u8?" in vurl
+                ):
+                    continue
+                seen_vurls.add(vurl)
+                try:
+                    bitrate = int(variant.get("bitrate") or 0)
+                except (TypeError, ValueError):
+                    bitrate = 0
+
+                res = None
+                if variant.get("resolution"):
+                    try:
+                        res = int(variant["resolution"])
+                    except (TypeError, ValueError):
+                        res = extract_video_resolution(str(variant["resolution"]), "")
+                if res is None and variant.get("width") and variant.get("height"):
+                    try:
+                        w, h = int(variant["width"]), int(variant["height"])
+                        if w > 0 and h > 0:
+                            res = min(w, h)
+                    except (TypeError, ValueError):
+                        pass
+                if res is None:
+                    res = extract_video_resolution("", vurl)
+
+                v_dur = coerce_duration_seconds(
+                    variant.get("duration") or variant.get("duration_seconds")
+                )
+                dur = v_dur if v_dur is not None else item_duration
+
+                size_bytes = None
+                for skey in ("size_bytes", "filesize", "file_size", "size"):
+                    if variant.get(skey):
+                        try:
+                            size_bytes = int(variant[skey])
+                            break
+                        except (TypeError, ValueError):
+                            pass
+
+                label = f"下载 MP4 ({res}p)" if res else "下载 MP4"
+                variant_candidates.append(
+                    XdownMediaCandidate(
+                        kind=kind,
+                        url=vurl,
+                        label=label,
+                        resolution=res,
+                        duration_seconds=dur,
+                        fallback_url="",
+                        size_bytes=size_bytes,
+                        bitrate=bitrate,
+                    )
+                )
+
+        if variant_candidates:
+            result.extend(variant_candidates)
+        else:
+            url = str(item.get("url") or item.get("thumbnail_url") or "").strip()
+            if url:
+                res = extract_video_resolution("", url)
+                label = f"下载 MP4 ({res}p)" if res else "下载 MP4"
+                result.append(
+                    XdownMediaCandidate(
+                        kind=kind,
+                        url=url,
+                        label=label,
+                        resolution=res,
+                        duration_seconds=item_duration,
+                        fallback_url="",
+                    )
+                )
     return result
 
 
@@ -134,13 +306,51 @@ def _media_from_vxtwitter(payload: dict[str, Any]) -> list[TweetMedia]:
                 continue
             kind = _kind_from_type(str(item.get("type") or "image"))
             url = item.get("url") or item.get("thumbnail_url") or ""
-            _append_media(result, kind=kind, url=str(url))
+            duration = duration_from_mapping(item)
+            _append_media(result, kind=kind, url=str(url), duration_seconds=duration)
     if result:
         return result
     urls = payload.get("mediaURLs") or payload.get("media_urls") or []
     if isinstance(urls, list):
         for url in urls:
             _append_media(result, kind="image", url=str(url))
+    return result
+
+
+def _candidates_from_vxtwitter(payload: dict[str, Any]) -> list[XdownMediaCandidate]:
+    result: list[XdownMediaCandidate] = []
+    extended = payload.get("media_extended")
+    if isinstance(extended, list):
+        for item in extended:
+            if not isinstance(item, dict):
+                continue
+            kind = _kind_from_type(str(item.get("type") or "image"))
+            url = str(item.get("url") or item.get("thumbnail_url") or "").strip()
+            if not url:
+                continue
+            duration = duration_from_mapping(item)
+            res = (
+                extract_video_resolution("", url)
+                if kind in {"video", "dynamic"}
+                else None
+            )
+            result.append(
+                XdownMediaCandidate(
+                    kind=kind,
+                    url=url,
+                    label=f"下载 MP4 ({res}p)" if res else "",
+                    resolution=res,
+                    duration_seconds=duration,
+                )
+            )
+    if result:
+        return result
+    urls = payload.get("mediaURLs") or payload.get("media_urls") or []
+    if isinstance(urls, list):
+        for url in urls:
+            u = str(url).strip()
+            if u:
+                result.append(XdownMediaCandidate(kind="image", url=u))
     return result
 
 
@@ -159,6 +369,7 @@ def _media_from_syndication(payload: dict[str, Any]) -> list[TweetMedia]:
                 _append_media(result, kind="image", url=str(item))
     video = payload.get("video")
     if isinstance(video, dict):
+        duration = duration_from_mapping(video)
         variants = video.get("variants") or []
         best = ""
         best_bitrate = -1
@@ -178,11 +389,80 @@ def _media_from_syndication(payload: dict[str, Any]) -> list[TweetMedia]:
                     best = vurl
         if best:
             kind = "dynamic" if "tweet_video_thumb" in str(video) else "video"
-            # gif-like
             vtype = str(video.get("video_type") or video.get("type") or "").lower()
             if "gif" in vtype:
                 kind = "dynamic"
-            _append_media(result, kind=kind, url=best)
+            _append_media(result, kind=kind, url=best, duration_seconds=duration)
+    return result
+
+
+def _candidates_from_syndication(
+    payload: dict[str, Any],
+) -> list[XdownMediaCandidate]:
+    result: list[XdownMediaCandidate] = []
+    photos = payload.get("photos") or []
+    if isinstance(photos, list):
+        for item in photos:
+            if isinstance(item, dict):
+                url = str(item.get("url") or item.get("src") or "").strip()
+            else:
+                url = str(item).strip()
+            if url:
+                result.append(XdownMediaCandidate(kind="image", url=url))
+    video = payload.get("video")
+    if isinstance(video, dict):
+        duration = duration_from_mapping(video)
+        kind = "dynamic" if "tweet_video_thumb" in str(video) else "video"
+        vtype = str(video.get("video_type") or video.get("type") or "").lower()
+        if "gif" in vtype:
+            kind = "dynamic"
+        variants = video.get("variants") or []
+        variant_candidates: list[XdownMediaCandidate] = []
+        if isinstance(variants, list):
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                vurl = str(variant.get("src") or variant.get("url") or "").strip()
+                if not vurl:
+                    continue
+                content_type = str(variant.get("content_type") or "").lower()
+                if (
+                    "mpegurl" in content_type
+                    or vurl.endswith(".m3u8")
+                    or ".m3u8?" in vurl
+                ):
+                    continue
+                try:
+                    bitrate = int(variant.get("bitrate") or 0)
+                except (TypeError, ValueError):
+                    bitrate = 0
+                res = extract_video_resolution("", vurl)
+                label = f"下载 MP4 ({res}p)" if res else "下载 MP4"
+                variant_candidates.append(
+                    XdownMediaCandidate(
+                        kind=kind,
+                        url=vurl,
+                        label=label,
+                        resolution=res,
+                        duration_seconds=duration,
+                        bitrate=bitrate,
+                    )
+                )
+        if variant_candidates:
+            result.extend(variant_candidates)
+        else:
+            url = str(video.get("url") or video.get("src") or "").strip()
+            if url:
+                res = extract_video_resolution("", url)
+                result.append(
+                    XdownMediaCandidate(
+                        kind=kind,
+                        url=url,
+                        label=f"下载 MP4 ({res}p)" if res else "下载 MP4",
+                        resolution=res,
+                        duration_seconds=duration,
+                    )
+                )
     return result
 
 
@@ -229,7 +509,8 @@ def _tweet_from_fx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
     status_url = str(tw.get("url") or link.canonical_url).strip()
     published = format_tweet_published(str(tw.get("created_at") or "").strip())
     media = _media_from_fxtwitter(tw)
-    if not text and not media:
+    candidates = _candidates_from_fxtwitter(tw)
+    if not text and not media and not candidates:
         return None
     if not status_url:
         status_url = link.canonical_url
@@ -241,6 +522,7 @@ def _tweet_from_fx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
         link=status_url,
         published=published,
         media=media,
+        media_candidates=candidates,
     )
 
 
@@ -256,7 +538,8 @@ def _tweet_from_vx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
         str(data.get("date") or data.get("created_at") or "").strip()
     )
     media = _media_from_vxtwitter(data)
-    if not text and not media:
+    candidates = _candidates_from_vxtwitter(data)
+    if not text and not media and not candidates:
         return None
     if username:
         status_url = f"https://x.com/{username}/status/{link.status_id}"
@@ -265,6 +548,7 @@ def _tweet_from_vx(link: StatusLink, data: dict[str, Any]) -> TweetItem | None:
         link=status_url,
         published=published,
         media=media,
+        media_candidates=candidates,
     )
 
 
@@ -274,7 +558,8 @@ def _tweet_from_syndication(link: StatusLink, data: dict[str, Any]) -> TweetItem
     username = str(user.get("screen_name") or link.username or "").lstrip("@")
     published = format_tweet_published(str(data.get("created_at") or "").strip())
     media = _media_from_syndication(data)
-    if not text and not media:
+    candidates = _candidates_from_syndication(data)
+    if not text and not media and not candidates:
         return None
     status_url = (
         f"https://x.com/{username}/status/{link.status_id}"
@@ -286,6 +571,7 @@ def _tweet_from_syndication(link: StatusLink, data: dict[str, Any]) -> TweetItem
         link=status_url,
         published=published,
         media=media,
+        media_candidates=candidates,
     )
 
 
@@ -303,6 +589,9 @@ def _apply_image_quality(tweet: TweetItem, quality: str) -> None:
         if getattr(media, "kind", "") != "image":
             continue
         media.url = prefer_pbs_quality(media.url, tier)
+    for cand in getattr(tweet, "media_candidates", []):
+        if getattr(cand, "kind", "") == "image":
+            cand.url = prefer_pbs_quality(cand.url, tier)
 
 
 def resolve_status_tweet(

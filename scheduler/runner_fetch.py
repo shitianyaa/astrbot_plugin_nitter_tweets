@@ -68,6 +68,16 @@ class SchedulerFetchMixin:
             .lower()
         )
 
+    @property
+    def html_max_pages(self) -> int:
+        owner = getattr(self, "owner", None)
+        if owner is not None and hasattr(owner, "html_max_pages"):
+            return max(1, int(getattr(owner, "html_max_pages", 3) or 3))
+        return max(
+            1,
+            int(config_get(getattr(self, "config", {}), "html_max_pages", 3) or 3),
+        )
+
     def _get_fxtwitter_client(self) -> FxTwitterClient | None:
         client = getattr(self, "fxtwitter", None)
         if client is not None:
@@ -141,6 +151,7 @@ class SchedulerFetchMixin:
                             count=fetch_limit,
                             skip_plain_text=skip_plain_text,
                             filter_reposts=filter_reposts,
+                            max_pages=self.html_max_pages,
                         )
                         scanned_ids = [t.status_id for t in tweets if t.status_id]
                         anchor_ids = [t.status_id for t in tweets[:20] if t.status_id]
@@ -468,6 +479,7 @@ class SchedulerFetchMixin:
                     count=fetch_limit,
                     skip_plain_text=skip_plain_text,
                     filter_reposts=filter_reposts,
+                    max_pages=self.html_max_pages,
                 )
                 scanned_ids = [t.status_id for t in tweets if t.status_id]
                 anchor_ids = [t.status_id for t in tweets[:20] if t.status_id]

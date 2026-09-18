@@ -16,10 +16,15 @@ try:
         format_tweet_published,
     )
     from .network import build_request_headers, safe_urlopen
-    from .status_resolve import _extract_status_text, _media_from_fxtwitter
+    from .status_resolve import (
+        _candidates_from_fxtwitter,
+        _extract_status_text,
+        _media_from_fxtwitter,
+    )
 except ImportError:
     from media_support.network import build_request_headers, safe_urlopen
     from media_support.status_resolve import (
+        _candidates_from_fxtwitter,
         _extract_status_text,
         _media_from_fxtwitter,
     )
@@ -152,7 +157,8 @@ class FxTwitterClient:
 
         text = _extract_status_text(tw)
         media = _media_from_fxtwitter(tw)
-        if not text and not media:
+        candidates = _candidates_from_fxtwitter(tw)
+        if not text and not media and not candidates:
             return None
 
         status_url = str(tw.get("url") or "").strip()
@@ -187,6 +193,7 @@ class FxTwitterClient:
             published=published,
             media=media,
             is_retweet=is_retweet,
+            media_candidates=candidates,
         )
 
     def fetch_user_timeline(
@@ -196,10 +203,22 @@ class FxTwitterClient:
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
         cursor: str | None = None,
+        max_pages: int = 3,
+        media_filter: str = "",
     ) -> tuple[list[TweetItem], str | None]:
         clean_user = username.strip().lstrip("@")
         if not clean_user:
             return [], None
+
+        target_count = max(0, int(count))
+        if target_count == 0:
+            return [], None
+
+        mf = str(media_filter or "").strip().lower()
+        if mf == "video":
+            skip_plain_text = True
+        elif mf in ("image", "photo"):
+            skip_plain_text = True
 
         # 转推守卫：仅当 skip_plain_text=True 且 filter_reposts=True 时允许调用 /media；
         # 若 filter_reposts=False，必须调用 /statuses 并在本地过滤纯文本，防止转推媒体丢失；
@@ -208,30 +227,62 @@ class FxTwitterClient:
         else:
             endpoint = f"{self.base_url}/2/profile/{clean_user}/statuses"
 
-        params: dict[str, Any] = {"count": max(1, min(count, 100))}
-        if cursor:
-            params["cursor"] = cursor
+        if skip_plain_text:
+            per_page = max(20, min(target_count * 2, 100))
+        else:
+            per_page = max(1, min(target_count, 100))
 
-        url = f"{endpoint}?{urlencode(params)}"
-        data = self._fetch_json(url)
+        pages_limit = max(1, int(max_pages or 3))
+        accumulated: list[TweetItem] = []
+        current_cursor = cursor
+        pages_fetched = 0
+        last_cursor = None
+        cursor_stalled = False
 
-        next_cursor = self._extract_cursor(data)
-        raw_results = self._extract_results(data)
+        while len(accumulated) < target_count and pages_fetched < pages_limit:
+            params: dict[str, Any] = {"count": per_page}
+            if current_cursor:
+                params["cursor"] = current_cursor
 
-        tweets: list[TweetItem] = []
-        for raw in raw_results:
-            tweet = self._tweet_from_payload(raw)
-            if tweet is None:
-                continue
-            # 转推过滤
-            if filter_reposts and tweet.is_retweet:
-                continue
-            # 纯文本过滤
-            if skip_plain_text and not tweet.media:
-                continue
-            tweets.append(tweet)
+            url = f"{endpoint}?{urlencode(params)}"
+            data = self._fetch_json(url)
+            pages_fetched += 1
 
-        return tweets[:count], next_cursor
+            last_cursor = self._extract_cursor(data)
+            raw_results = self._extract_results(data)
+            if not raw_results:
+                break
+
+            if not last_cursor or last_cursor == current_cursor:
+                cursor_stalled = True
+            elif current_cursor is None and last_cursor:
+                # 初始页（未传入游标）拿到的游标若非空，继续下一页循环时若需要可作为 current_cursor
+                pass
+
+            for raw in raw_results:
+                tweet = self._tweet_from_payload(raw)
+                if tweet is None:
+                    continue
+                # 转推过滤
+                if filter_reposts and tweet.is_retweet:
+                    continue
+                # 媒体类型过滤
+                if mf == "video":
+                    if not any(m.is_video for m in tweet.media):
+                        continue
+                elif mf in ("image", "photo"):
+                    if not any(m.is_image for m in tweet.media):
+                        continue
+                elif skip_plain_text and not tweet.media:
+                    continue
+                accumulated.append(tweet)
+
+            if cursor_stalled or len(accumulated) >= target_count:
+                break
+            current_cursor = last_cursor
+
+        effective_cursor = None if (cursor_stalled or not last_cursor) else last_cursor
+        return accumulated[:target_count], effective_cursor
 
     def search_tweets(
         self,

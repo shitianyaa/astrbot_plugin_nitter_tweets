@@ -81,3 +81,4 @@ class XdownMediaCandidate:
     duration_seconds: float | None = None
     fallback_url: str = ""
     size_bytes: int | None = None
+    bitrate: int | None = None
