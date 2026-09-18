@@ -34,7 +34,7 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
 
-相关：`cooldown_seconds`、`search_max_limit`、`html_min_interval`、`html_max_pages`。`request_timeout`、`retry_attempts`、`retry_delay_seconds` 同时作用于 RSS 和 HTML。
+相关：`cooldown_seconds`、`search_max_limit`、`html_min_interval`、`html_max_pages`（同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度）。`request_timeout`、`retry_attempts`、`retry_delay_seconds` 同时作用于 RSS 和 HTML。
 
 `auto_parse_tweet_links_enabled`（`basic`，默认 `false`）：被动解析聊天中的公开 status 链接；不进 `tweet_groups` 模板。翻译与 `show_original_when_translated` 跟随全局 AI 配置。
 
@@ -64,7 +64,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
 - `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
 
-全局 `filter_reposts_enabled` 是 Blogger、Tag、List 后台检查的总开关。实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动命令不读取分组子开关。
+全局 `filter_reposts_enabled` 是后台检查与手动命令的转发过滤总开关。后台检查的实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动 `/推文` 与 `/推图` 命令亦遵循此全局总开关（手动命令不读取分组子开关）。
 
 全局 AI：
 

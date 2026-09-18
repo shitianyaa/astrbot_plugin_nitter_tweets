@@ -327,9 +327,10 @@ class ScheduledCheckResult:
             if self.media_only_skipped or self.media_only_retrying
             else ""
         )
+        reason_display = "手动检查" if self.reason.startswith("manual") else self.reason
         return (
             "[NitterTweets] 定时检查完成: "
-            f"group={self.group_id}, type={self.group_type}, reason={self.reason}, "
+            f"group={self.group_id}, type={self.group_type}, reason={reason_display}, "
             f"sources={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
@@ -364,7 +365,7 @@ class ScheduledCheckResult:
         lines.append(f"  订阅类型: {type_cn} (共 {sources_count} 个源)")
 
         reason_display = (
-            "手动命令 (！推文检查)"
+            "手动检查"
             if self.reason.startswith("manual")
             else f"定时检查 ({self.reason})"
             if self.reason.startswith("interval") or self.reason.startswith("cron")

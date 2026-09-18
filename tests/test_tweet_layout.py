@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from rendering.tweets import TweetMessageRenderer as R
+from shared.utils import normalize_external_links, strip_external_links
 
 
 def _tw(**kw):
@@ -453,3 +454,77 @@ def test_merged_nodes_media_only_single_node_with_author():
     kinds = [_kind(c) for c in node.content]
     assert kinds == ["plain", "image"]
     assert (node.uin, node.name) == ("@nasa", "@nasa")
+
+
+def test_normalize_external_links_rewrites_nitter_quote_urls():
+    assert (
+        normalize_external_links("Check http://localhost/nasa/status/123456#m")
+        == "Check https://x.com/nasa/status/123456"
+    )
+    assert (
+        normalize_external_links("Check http://localhost:8080/nasa/status/123456#m")
+        == "Check https://x.com/nasa/status/123456"
+    )
+    assert (
+        normalize_external_links("Check http://127.0.0.1:8080/user_x/statuses/789")
+        == "Check https://x.com/user_x/status/789"
+    )
+    assert (
+        normalize_external_links("Check https://nitter.example.org/alice/status/999#m")
+        == "Check https://x.com/alice/status/999"
+    )
+
+
+def test_strip_external_links_removes_localhost_and_orphaned_dashes():
+    assert (
+        strip_external_links("Quote test\n— http://localhost/nasa/status/123#m")
+        == "Quote test"
+    )
+    assert (
+        strip_external_links("Quote test\n\n— http://localhost:8080/nasa/status/123#m")
+        == "Quote test"
+    )
+    assert strip_external_links("— http://localhost/nasa/status/123#m") == ""
+    assert strip_external_links("— http://127.0.0.1:8080/nasa/status/123#m") == ""
+
+
+def test_renderer_omit_status_url_cleans_localhost_quote_dashes():
+    tw = _tw(
+        text="Great finding!\n— http://localhost/someone/status/123#m",
+        username="nasa",
+    )
+    out = R.format_tweet(0, "nasa", tw, omit_status_url=True, link_style="plain")
+    assert "http://localhost" not in out
+    assert "—" not in out
+    assert "Great finding!" in out
+
+
+def test_renderer_keep_status_url_normalizes_quote_link():
+    tw = _tw(
+        text="Great finding!\n— http://localhost:8080/someone/status/123#m",
+        username="nasa",
+    )
+    out = R.format_tweet(0, "nasa", tw, omit_status_url=False, link_style="plain")
+    assert "http://localhost:8080" not in out
+    assert "https://x.com/someone/status/123" in out
+    assert "Great finding!" in out
+
+
+def test_normalize_external_links_does_not_rewrite_arbitrary_urls():
+    assert (
+        normalize_external_links("https://example.com/alice/status/999")
+        == "https://example.com/alice/status/999"
+    )
+    assert (
+        normalize_external_links("https://github.com/torvalds/status/12345")
+        == "https://github.com/torvalds/status/12345"
+    )
+    assert (
+        normalize_external_links("https://status.io/team/status/123")
+        == "https://status.io/team/status/123"
+    )
+
+
+def test_strip_external_links_preserves_legitimate_dash_lines():
+    text = "第一段\n—\n第二段\n——\n第三段"
+    assert strip_external_links(text) == text

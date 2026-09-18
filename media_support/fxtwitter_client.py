@@ -196,9 +196,14 @@ class FxTwitterClient:
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
         cursor: str | None = None,
+        max_pages: int = 3,
     ) -> tuple[list[TweetItem], str | None]:
         clean_user = username.strip().lstrip("@")
         if not clean_user:
+            return [], None
+
+        target_count = max(0, int(count))
+        if target_count == 0:
             return [], None
 
         # 转推守卫：仅当 skip_plain_text=True 且 filter_reposts=True 时允许调用 /media；
@@ -208,30 +213,54 @@ class FxTwitterClient:
         else:
             endpoint = f"{self.base_url}/2/profile/{clean_user}/statuses"
 
-        params: dict[str, Any] = {"count": max(1, min(count, 100))}
-        if cursor:
-            params["cursor"] = cursor
+        if skip_plain_text:
+            per_page = max(20, min(target_count * 2, 100))
+        else:
+            per_page = max(1, min(target_count, 100))
 
-        url = f"{endpoint}?{urlencode(params)}"
-        data = self._fetch_json(url)
+        pages_limit = max(1, int(max_pages or 3))
+        accumulated: list[TweetItem] = []
+        current_cursor = cursor
+        pages_fetched = 0
+        last_cursor = None
+        cursor_stalled = False
 
-        next_cursor = self._extract_cursor(data)
-        raw_results = self._extract_results(data)
+        while len(accumulated) < target_count and pages_fetched < pages_limit:
+            params: dict[str, Any] = {"count": per_page}
+            if current_cursor:
+                params["cursor"] = current_cursor
 
-        tweets: list[TweetItem] = []
-        for raw in raw_results:
-            tweet = self._tweet_from_payload(raw)
-            if tweet is None:
-                continue
-            # 转推过滤
-            if filter_reposts and tweet.is_retweet:
-                continue
-            # 纯文本过滤
-            if skip_plain_text and not tweet.media:
-                continue
-            tweets.append(tweet)
+            url = f"{endpoint}?{urlencode(params)}"
+            data = self._fetch_json(url)
+            pages_fetched += 1
 
-        return tweets[:count], next_cursor
+            last_cursor = self._extract_cursor(data)
+            raw_results = self._extract_results(data)
+            if not raw_results:
+                break
+
+            for raw in raw_results:
+                tweet = self._tweet_from_payload(raw)
+                if tweet is None:
+                    continue
+                # 转推过滤
+                if filter_reposts and tweet.is_retweet:
+                    continue
+                # 纯文本过滤
+                if skip_plain_text and not tweet.media:
+                    continue
+                accumulated.append(tweet)
+
+            if last_cursor and last_cursor == current_cursor:
+                cursor_stalled = True
+                break
+
+            if len(accumulated) >= target_count or not last_cursor:
+                break
+            current_cursor = last_cursor
+
+        effective_cursor = None if (cursor_stalled or not last_cursor) else last_cursor
+        return accumulated[:target_count], effective_cursor
 
     def search_tweets(
         self,

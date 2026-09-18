@@ -30,7 +30,7 @@ try:
     from .media_support.status_link import STATUS_LINK_REGEX
     from .plugin_api import NitterWebAPI
     from .scheduler import NitterTweetScheduler
-    from .shared import clamp_float
+    from .shared import clamp_float, clamp_int
 except ImportError:
     from ai import TweetTranslator
     from command_handlers import (
@@ -53,14 +53,14 @@ except ImportError:
     from media_support.status_link import STATUS_LINK_REGEX
     from plugin_api import NitterWebAPI
     from scheduler import NitterTweetScheduler
-    from shared import clamp_float
+    from shared import clamp_float, clamp_int
 
 
 @register(
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "1.6.0",
+    "1.6.1",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
@@ -115,6 +115,10 @@ class NitterTweetsPlugin(
         self.search_max_limit = self._parse_positive_limit(
             config_get(config, "search_max_limit", 10), 10
         )
+        self.filter_reposts_enabled = parse_config_bool(
+            config_get(config, "filter_reposts_enabled", True), True
+        )
+        self.html_max_pages = clamp_int(config_get(config, "html_max_pages", 3), 1, 10)
         self._cooldowns: dict[str, float] = {}
         self._search_session_store = None  # lazy SearchSessionStore
         self.scheduler.start(reason="__init__")

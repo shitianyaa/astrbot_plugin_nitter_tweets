@@ -803,7 +803,7 @@ async def test_manual_cmd_tweet_pic_mix_fx_success(monkeypatch):
     await host._cmd_tweets_impl(event, "nasa", "5", is_media_only=True)
 
     mock_fx.fetch_user_timeline.assert_called_once_with(
-        "nasa", count=5, skip_plain_text=True, filter_reposts=True
+        "nasa", count=5, skip_plain_text=True, filter_reposts=True, max_pages=3
     )
     mock_nitter.fetch_user.assert_not_called()
     assert len(logged_tasks) == 1
@@ -840,10 +840,10 @@ async def test_manual_cmd_tweet_pic_mix_fx_error_falls_back_to_nitter(monkeypatc
     await host._cmd_tweets_impl(event, "nasa", "5", is_media_only=True)
 
     mock_fx.fetch_user_timeline.assert_called_once_with(
-        "nasa", count=5, skip_plain_text=True, filter_reposts=True
+        "nasa", count=5, skip_plain_text=True, filter_reposts=True, max_pages=3
     )
     mock_nitter.fetch_user.assert_called_once_with(
-        "nasa", 5, filter_reposts=False, skip_plain_text=True
+        "nasa", 5, filter_reposts=True, skip_plain_text=True
     )
     assert len(logged_tasks) == 1
     assert logged_tasks[0]["operation"] == "user_media"
@@ -1426,3 +1426,85 @@ async def test_manual_search_buffer_cancelled_before_delivery_preserves_reserved
     assert len(buf) == 2
     remaining = buf.take(2)
     assert [t.status_id for t in remaining] == ["3001", "3002"]
+
+
+@pytest.mark.asyncio
+async def test_manual_cmd_tweets_respects_global_filter_reposts_disabled():
+    """Verify /推文 with filter_reposts_enabled=False passes filter_reposts=False to FX."""
+    mock_nitter = MagicMock()
+    mock_nitter.fetch_user = AsyncMock()
+
+    mock_fx = MagicMock()
+    mock_fx.base_url = "https://api.fxtwitter.com"
+    mock_fx.fetch_user_timeline = MagicMock(
+        return_value=([_make_tweet("nasa", "1001")], None)
+    )
+
+    host = DummyManualHost(
+        {"fetch_backend": "mix", "filter_reposts_enabled": False},
+        mock_nitter,
+        mock_fx,
+    )
+    event = MagicMock()
+    event.send = AsyncMock()
+    event.stop_event = MagicMock()
+    event.plain_result.side_effect = lambda v: v
+
+    await host._cmd_tweets_impl(event, "nasa", "5")
+
+    mock_fx.fetch_user_timeline.assert_called_once_with(
+        "nasa", count=5, skip_plain_text=False, filter_reposts=False, max_pages=3
+    )
+
+
+@pytest.mark.asyncio
+async def test_manual_cmd_tweet_pic_respects_global_filter_reposts_disabled():
+    """Verify /推图 with filter_reposts_enabled=False passes filter_reposts=False to FX and Nitter fallback."""
+    mock_nitter = MagicMock()
+    mock_nitter.fetch_user = AsyncMock(
+        return_value=("http://nitter.test", [_make_tweet("nasa", "1001")])
+    )
+
+    mock_fx = MagicMock()
+    mock_fx.fetch_user_timeline = MagicMock(
+        side_effect=FxTwitterNotFoundError("User not found 404")
+    )
+
+    host = DummyManualHost(
+        {"fetch_backend": "mix", "filter_reposts_enabled": False},
+        mock_nitter,
+        mock_fx,
+    )
+    event = MagicMock()
+    event.send = AsyncMock()
+    event.stop_event = MagicMock()
+    event.plain_result.side_effect = lambda v: v
+
+    await host._cmd_tweets_impl(event, "nasa", "5", is_media_only=True)
+
+    mock_fx.fetch_user_timeline.assert_called_once_with(
+        "nasa", count=5, skip_plain_text=True, filter_reposts=False, max_pages=3
+    )
+    mock_nitter.fetch_user.assert_called_once_with(
+        "nasa", 5, filter_reposts=False, skip_plain_text=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_scheduler_fetch_passes_configured_html_max_pages():
+    mock_fx = MagicMock()
+    mock_fx.base_url = "https://api.fxtwitter.com"
+    mock_fx.fetch_user_timeline = MagicMock(return_value=([], None))
+    mock_nitter = MagicMock()
+
+    runner = DummyRunner(
+        {"fetch_backend": "fx", "html_max_pages": 5}, mock_nitter, mock_fx
+    )
+    group = _blogger_group(["alice"])
+
+    await runner._fetch_group_users(
+        group, fetch_limit=10, skip_plain_text=False, scan_watermarks={}
+    )
+    mock_fx.fetch_user_timeline.assert_called_once_with(
+        "alice", count=10, skip_plain_text=False, filter_reposts=True, max_pages=5
+    )

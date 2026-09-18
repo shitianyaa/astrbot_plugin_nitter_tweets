@@ -2,6 +2,26 @@
 
 所有重要变更都会记录在这里。
 
+## [1.6.1] - 2026-09-18
+
+### Fixed & Improved
+
+- **URL 标准化与 Localhost 清理**：
+  - 扩展 `URL_LIKE_RE` 正则以完整匹配 `localhost`（如 `http://localhost:8080`）、IPv4 地址及通用 HTTP/HTTPS 链接。
+  - `normalize_external_links` 新增对 Nitter 引用推文链接（如 `http://localhost/username/status/123#m`）的自动识别，改写为规范的 `https://x.com/username/status/123`。
+  - `strip_external_links` 在剥离外部链接后，清理因链接被移除而残留的孤立引用破折号行（如 `^—\s*$`），避免渲染空白破折号。
+- **FxTwitter 媒体抓取翻页与 Overfetch**：
+  - `fetch_user_timeline` 实现游标跟随翻页循环（受 `max_pages` 深度控制），在纯文本过滤或转发过滤导致候选不足时自动向后翻页直至满足请求数量或游标耗尽。
+  - `skip_plain_text=True` 时首屏初始请求量提高至 `max(20, min(count * 2, 100))`，彻底消除 `count=1` 导致的 upstream HTTP 500 报错并扩大媒体候选窗口。
+- **手动命令转发过滤统一**：
+  - 手动 `/推文` 与 `/推图` 统一接入全局 `filter_reposts_enabled` 总开关，默认开启过滤转发，关闭时完整保留转发。
+  - 手动命令在调用 FxTwitter 时透传 `html_max_pages` 作为最大翻页深度限制。
+- **审计日志与触发原因文案优化**：
+  - 移除硬编码带感叹号的文案 `手动命令 (！推文检查)`；调度器日志格式化统一为 `手动检查`。
+  - `safe_task_log` 动态映射手动操作类型：`user_media` -> `推图`、`user_timeline` -> `推文`、`tweet_search` -> `推文搜索`、`tweet_pic_search` -> `推文搜图`、`trends` -> `推特热搜`、`mirror_test` -> `镜像测试`，格式化为 `手动命令 (操作名)`。
+- **配置文档与 Schema 同步**：
+  - `_conf_schema.json` 与 `docs/project/configuration.md` 更新 `html_max_pages` 说明，明确其同时控制 FxTwitter 媒体翻页深度；更新 `filter_reposts_enabled` 说明，标注手动 `/推文` 与 `/推图` 亦遵循此全局总开关。
+
 ## [1.6.0] - 2026-09-16
 
 ### Added

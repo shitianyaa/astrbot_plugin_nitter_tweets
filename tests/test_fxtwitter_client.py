@@ -67,12 +67,12 @@ class TestFxTwitterClientRoutesAndGuards:
         monkeypatch.setattr(client, "_fetch_json", mock_fetch_json)
 
         tweets, next_cursor = client.fetch_user_timeline(
-            "@user", count=5, skip_plain_text=False, filter_reposts=True
+            "@user", count=1, skip_plain_text=False, filter_reposts=True
         )
 
         assert len(requested_urls) == 1
         assert "/2/profile/user/statuses" in requested_urls[0]
-        assert "count=5" in requested_urls[0]
+        assert "count=1" in requested_urls[0]
         assert next_cursor == "cur_bottom"
         assert len(tweets) == 1
         assert tweets[0].status_id == "2"
@@ -255,6 +255,125 @@ class TestFxTwitterClientRoutesAndGuards:
         monkeypatch.setattr(client, "_fetch_json", mock_fetch_json)
         client.fetch_user_timeline("user", cursor="cur_xyz")
         assert "cursor=cur_xyz" in requested_urls[0]
+
+    def test_user_timeline_pagination_skip_plain_text(self, monkeypatch):
+        """skip_plain_text=True: overfetches (count=20) and follows cursor when accumulated < count."""
+        client = FxTwitterClient()
+        requested_urls: list[str] = []
+
+        page1_data = {
+            "code": 200,
+            "results": [
+                {
+                    "type": "status",
+                    "id": "1",
+                    "text": "Photo 1",
+                    "url": "https://x.com/user/status/1",
+                    "media": {
+                        "all": [{"type": "photo", "url": "https://pbs.twimg.com/1.jpg"}]
+                    },
+                }
+            ],
+            "cursor": {"bottom": "cursor_p2"},
+        }
+        page2_data = {
+            "code": 200,
+            "results": [
+                {
+                    "type": "status",
+                    "id": "2",
+                    "text": "Photo 2",
+                    "url": "https://x.com/user/status/2",
+                    "media": {
+                        "all": [{"type": "photo", "url": "https://pbs.twimg.com/2.jpg"}]
+                    },
+                }
+            ],
+            "cursor": {"bottom": "cursor_p3"},
+        }
+
+        def mock_fetch_json(url: str, **kwargs) -> dict[str, Any]:
+            requested_urls.append(url)
+            if "cursor=cursor_p2" in url:
+                return page2_data
+            return page1_data
+
+        monkeypatch.setattr(client, "_fetch_json", mock_fetch_json)
+
+        tweets, next_cursor = client.fetch_user_timeline(
+            "user", count=2, skip_plain_text=True, filter_reposts=True
+        )
+
+        assert len(requested_urls) == 2
+        assert "count=20" in requested_urls[0]
+        assert "/2/profile/user/media" in requested_urls[0]
+        assert "cursor=cursor_p2" in requested_urls[1]
+        assert next_cursor == "cursor_p3"
+        assert len(tweets) == 2
+        assert [t.status_id for t in tweets] == ["1", "2"]
+
+    def test_user_timeline_pagination_stops_at_max_pages(self, monkeypatch):
+        """Pagination terminates after max_pages even if accumulated < count."""
+        client = FxTwitterClient()
+        requested_urls: list[str] = []
+
+        page_counter = 0
+
+        def mock_fetch_json(url: str, **kwargs) -> dict[str, Any]:
+            nonlocal page_counter
+            page_counter += 1
+            requested_urls.append(url)
+            return {
+                "code": 200,
+                "results": [
+                    {
+                        "type": "status",
+                        "id": str(page_counter),
+                        "text": f"Photo {page_counter}",
+                        "url": f"https://x.com/user/status/{page_counter}",
+                        "media": {
+                            "all": [
+                                {
+                                    "type": "photo",
+                                    "url": f"https://pbs.twimg.com/{page_counter}.jpg",
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "cursor": {"bottom": f"cursor_p{page_counter + 1}"},
+            }
+
+        monkeypatch.setattr(client, "_fetch_json", mock_fetch_json)
+
+        tweets, next_cursor = client.fetch_user_timeline(
+            "user", count=10, skip_plain_text=True, filter_reposts=True, max_pages=2
+        )
+
+        assert len(requested_urls) == 2
+        assert len(tweets) == 2
+        assert next_cursor == "cursor_p3"
+
+    def test_user_timeline_stalled_cursor_returns_none_next_cursor(self, monkeypatch):
+        client = FxTwitterClient()
+        data = {
+            "code": 200,
+            "results": [
+                {
+                    "type": "status",
+                    "id": "1",
+                    "text": "Hi",
+                    "url": "https://x.com/u/status/1",
+                }
+            ],
+            "cursor": {"bottom": "cur_same"},
+        }
+        monkeypatch.setattr(client, "_fetch_json", lambda url, **kw: data)
+        tweets, next_cursor = client.fetch_user_timeline(
+            "u", count=10, cursor="cur_same"
+        )
+        assert len(tweets) == 1
+        assert next_cursor is None
 
 
 class TestFxTwitterClientSearch:

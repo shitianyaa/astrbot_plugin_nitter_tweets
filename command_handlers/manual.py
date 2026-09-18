@@ -205,6 +205,22 @@ class ManualCommandMixin:
         op_name = "user_media" if is_media_only else "user_timeline"
 
         fx = self._get_fxtwitter_client()
+        effective_filter_reposts = bool(
+            getattr(
+                self,
+                "filter_reposts_enabled",
+                config_get(getattr(self, "config", {}), "filter_reposts_enabled", True),
+            )
+        )
+        effective_max_pages = int(
+            getattr(
+                self,
+                "html_max_pages",
+                config_get(getattr(self, "config", {}), "html_max_pages", 3),
+            )
+            or 3
+        )
+
         if backend in ("mix", "fx") and fx is not None:
             try:
                 fx_tweets, _ = await asyncio.to_thread(
@@ -212,7 +228,8 @@ class ManualCommandMixin:
                     username,
                     count=int(limit),
                     skip_plain_text=is_media_only,
-                    filter_reposts=is_media_only,
+                    filter_reposts=effective_filter_reposts,
+                    max_pages=effective_max_pages,
                 )
                 instance = "FxTwitter"
                 tweets = fx_tweets
@@ -247,7 +264,7 @@ class ManualCommandMixin:
                 self.nitter.begin_run_host_skip()
             try:
                 try:
-                    fetch_kwargs = {"filter_reposts": False}
+                    fetch_kwargs = {"filter_reposts": effective_filter_reposts}
                     if is_media_only:
                         fetch_kwargs["skip_plain_text"] = True
                     nitter_inst, tweets = await self.nitter.fetch_user(
@@ -256,7 +273,7 @@ class ManualCommandMixin:
                     instance = f"Nitter ({nitter_inst})" if nitter_inst else "Nitter"
                 except TypeError:
                     nitter_inst, tweets = await self.nitter.fetch_user(
-                        username, limit, filter_reposts=False
+                        username, limit, filter_reposts=effective_filter_reposts
                     )
                     instance = f"Nitter ({nitter_inst})" if nitter_inst else "Nitter"
                     if is_media_only and tweets:
@@ -899,7 +916,7 @@ class ManualCommandMixin:
                 )
                 # Preserve compatibility with older overrides that returned
                 # None/True without invoking the new progress callback.
-                if sent is not False:
+                if sent is not False and sent_count == 0:
                     record_sent(len(tweets))
                 return sent_count
             finally:
@@ -1045,6 +1062,26 @@ class ManualCommandMixin:
         remaining = list(tweets[sent_count:])
         if not remaining:
             return True
+
+        if getattr(self.sender, "last_send_rejected", False) and not getattr(
+            self.sender, "forward_reject_plain_fallback_enabled", False
+        ):
+            notice = (
+                "⚠️ 部分推文触发平台风控，已自动略过。"
+                if sent_count > 0
+                else "⚠️ 内容触发平台风控，已自动略过。"
+            )
+            try:
+                if hasattr(event, "plain_result"):
+                    await event.send(event.plain_result(notice))
+                else:
+                    await event.send(MessageChain([Plain(notice)]))
+            except Exception as exc:
+                logger.warning(
+                    f"[NitterTweets] 发送风控略过提示失败: {sanitize_sensitive_text(str(exc))}"
+                )
+            return sent_count > 0
+
         remaining_start_index = tweet_start_index + sent_count
         remaining_notices = notices if sent_count == 0 else []
         remaining_header = header_text if sent_count == 0 else ""

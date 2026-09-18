@@ -196,8 +196,10 @@ def format_subscription_source(source: str, group_type: str = "blogger") -> str:
 
 
 URL_LIKE_RE = re.compile(
-    r"(?i)(?<![@\w])(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}"
-    r"(?:/[^\s<>()]*)?"
+    r"(?i)(?<![@\w])(?:"
+    r"https?://[^\s<>()]+"
+    r"|(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:/[^\s<>()]*)?"
+    r")"
 )
 PIPED_WATCH_RE = re.compile(
     r"(?i)\b(?:https?://)?(?:www\.)?piped\.video/watch\?v=([A-Za-z0-9_-]+)"
@@ -207,6 +209,37 @@ PIPED_SHORT_RE = re.compile(
     r"(?i)\b(?:https?://)?(?:www\.)?piped\.video/([A-Za-z0-9_-]+)"
     r"(?:[^\s<>()]*)?"
 )
+_DEFAULT_NITTER_HOST_PAT = (
+    r"(?:"
+    r"localhost|"
+    r"127(?:\.\d{1,3}){3}|"
+    r"10(?:\.\d{1,3}){3}|"
+    r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|"
+    r"192\.168(?:\.\d{1,3}){2}|"
+    r"[a-z0-9.-]*nitter[a-z0-9.-]*"
+    r")"
+)
+_DEFAULT_NITTER_HOST_RE = re.compile(rf"^{_DEFAULT_NITTER_HOST_PAT}$", re.IGNORECASE)
+
+NITTER_STATUS_URL_RE = re.compile(
+    rf"(?i)(?<![@\w])https?://{_DEFAULT_NITTER_HOST_PAT}(?::\d+)?/([A-Za-z0-9_]{{1,15}})/status(?:es)?/(\d+)(?:#\w+)?"
+)
+_REGISTERED_NITTER_HOSTS: set[str] = set()
+
+
+def register_nitter_instances(instances: list[str]) -> None:
+    for inst in instances:
+        if not inst:
+            continue
+        try:
+            parsed = urlparse(inst if "://" in inst else f"https://{inst}")
+            host = (parsed.hostname or "").lower().strip()
+            if host:
+                _REGISTERED_NITTER_HOSTS.add(host)
+        except Exception:
+            continue
+
+
 TRAILING_URL_PUNCT = ".,;:!?)）】』」\"'"
 
 
@@ -238,6 +271,20 @@ def clean_text(raw: str) -> str:
 def normalize_external_links(text: str) -> str:
     text = PIPED_WATCH_RE.sub(r"https://youtu.be/\1", text or "")
     text = PIPED_SHORT_RE.sub(r"https://youtu.be/\1", text)
+    text = NITTER_STATUS_URL_RE.sub(r"https://x.com/\1/status/\2", text)
+
+    custom_hosts = [
+        re.escape(h)
+        for h in _REGISTERED_NITTER_HOSTS
+        if h and not _DEFAULT_NITTER_HOST_RE.match(h)
+    ]
+    if custom_hosts:
+        custom_re = re.compile(
+            r"(?i)(?<![@\w])https?://(?:"
+            + "|".join(custom_hosts)
+            + r")(?::\d+)?/([A-Za-z0-9_]{1,15})/status(?:es)?/(\d+)(?:#\w+)?"
+        )
+        text = custom_re.sub(r"https://x.com/\1/status/\2", text)
     return text
 
 
@@ -255,11 +302,16 @@ def extract_external_links(text: str) -> list[str]:
 
 
 def strip_external_links(text: str) -> str:
-    stripped = URL_LIKE_RE.sub("", normalize_external_links(text or ""))
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in stripped.splitlines()]
+    normalized = normalize_external_links(text or "")
+    orig_lines = normalized.splitlines()
     cleaned: list[str] = []
-    for line in lines:
-        if line or (cleaned and cleaned[-1]):
+    for orig in orig_lines:
+        line = re.sub(r"[ \t]+", " ", URL_LIKE_RE.sub("", orig)).strip()
+        if line:
+            if re.fullmatch(r"^[—–―]+\s*$", line) and URL_LIKE_RE.search(orig):
+                continue
+            cleaned.append(line)
+        elif not line and cleaned and cleaned[-1]:
             cleaned.append(line)
     while cleaned and not cleaned[-1]:
         cleaned.pop()
@@ -311,6 +363,7 @@ def load_instances(value) -> list[str]:
             item = f"https://{item}"
         if item not in instances:
             instances.append(item)
+    register_nitter_instances(instances)
     return instances or DEFAULT_INSTANCES
 
 

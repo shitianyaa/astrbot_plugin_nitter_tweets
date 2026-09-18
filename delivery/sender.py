@@ -88,6 +88,7 @@ class TweetSender(
         "设为 medium/low，或调小「单个媒体大小上限 MB」(media_max_size_mb)）。"
     )
     forward_reject_plain_fallback_enabled: bool = False
+    last_send_rejected: bool = False
 
     def __init__(self, config=None):
         config = config or {}
@@ -98,6 +99,7 @@ class TweetSender(
             config_get(config, "forward_reject_plain_fallback_enabled", False),
             False,
         )
+        self.last_send_rejected = False
         self.renderer = TweetMessageRenderer(
             send_image_attachments=self.send_image_attachments,
             send_video_attachments=self.send_video_attachments,
@@ -146,8 +148,11 @@ class TweetSender(
         on_sent_progress=None,
         force_media: bool = False,
     ) -> bool:
+        self.last_send_rejected = False
         sender = self._sender_for_media(force_media)
-        return await sender._send_with_current_media_flags(
+        if sender is not self:
+            sender.last_send_rejected = False
+        accepted = await sender._send_with_current_media_flags(
             event,
             username,
             instance,
@@ -161,6 +166,9 @@ class TweetSender(
             link_style=link_style,
             on_sent_progress=on_sent_progress,
         )
+        if sender is not self:
+            self.last_send_rejected = sender.last_send_rejected
+        return accepted
 
     async def _send_with_current_media_flags(
         self,
@@ -177,6 +185,7 @@ class TweetSender(
         link_style: str = "plain",
         on_sent_progress=None,
     ) -> bool:
+        self.last_send_rejected = False
         sent_count = 0
         total = len(tweets)
 
@@ -455,7 +464,10 @@ class TweetSender(
         # 先判拒收：这两个签名都明确表示「没送到」，而它们的文本里含
         # "Timeout" 字样，交给 _is_uncertain_delivery_error 会被误判成
         # 「可能已送达」而跳过降级（ActionFailed 不可导入时尤其明显）。
-        if self._is_content_rejected_error(exc):
+        if self._is_content_rejected_error(
+            exc
+        ) or self._is_forward_payload_rejected_error(exc):
+            self.last_send_rejected = True
             logger.warning(
                 "[NitterTweets] 发送被目标平台拒收，不再重发相同内容: "
                 f"label={label}, target={target or '-'}, error={error}"
