@@ -40,6 +40,21 @@ function initEls() {
   els.tabs = document.querySelectorAll(".tab");
   els.views = document.querySelectorAll(".view");
 }
+function initStickyOffsets() {
+  const header = document.querySelector(".topheader");
+  if (!header) return;
+  const sync = () => {
+    const height = Math.ceil(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty("--topheader-height", `${height}px`);
+  };
+  sync();
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(sync).observe(header);
+  } else {
+    window.addEventListener("resize", sync);
+  }
+}
+
 
 /* --------------------------------------------------------------------------
    Inline SVG Icon Library (zero network requests)
@@ -1330,7 +1345,7 @@ function renderConfig() {
         onClick: () => maybeLeaveConfigGroup(() => { state.configDraft = {}; renderConfig(); }),
       }),
       h("button", {
-        class: "btn btn-sm btn-primary", text: state.configSaving ? "保存中…" : "保存配置",
+        class: "btn btn-sm btn-primary", text: state.configSaving ? "保存并重载中…" : "保存并重载",
         disabled: !totalDirty || state.configSaving,
         onClick: saveConfigDraft,
       }),
@@ -1401,19 +1416,21 @@ async function saveConfigDraft() {
   }
   if (!changed.length) { state.configDraft = {}; renderConfig(); return; }
   state.configSaving = true; renderConfig();
-  const failed = [];
-  for (const [key, value] of changed) {
-    try {
-      await apiPost("web/config/update", { key, value });
+  try {
+    const result = await apiPost("web/config/save", { changes: Object.fromEntries(changed) });
+    for (const [key, value] of Object.entries(result.values || {})) {
       const item = findConfigItem(key);
       if (item) item.value = value;
       delete state.configDraft[key];
-    } catch (err) { failed.push(`${key}：${err.message || err}`); }
+    }
+    if (result.reloaded) showToast("配置已保存，插件已热重载");
+    else showAlert(result.warning || "配置已保存，但插件热重载失败", "error");
+  } catch (err) {
+    showAlert(err.message || "保存配置失败", "error");
+  } finally {
+    state.configSaving = false;
+    renderConfig();
   }
-  state.configSaving = false;
-  if (failed.length) showAlert(`部分配置保存失败：${failed.join("；")}`, "error");
-  else showToast("配置已保存");
-  renderConfig();
 }
 
 function findConfigItem(key) {
@@ -1643,6 +1660,7 @@ function boot() {
     bridge = window.AstrBotPluginPage;
     if (!bridge) throw new Error("AstrBot 页面桥接不可用");
     initEls();
+    initStickyOffsets();
     els.historyGroupSelect = upgradeSelect(els.historyGroupSelect);
     els.historyStatusSelect = upgradeSelect(els.historyStatusSelect);
     initTheme();

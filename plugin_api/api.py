@@ -86,6 +86,7 @@ class NitterWebAPI(
             ("web/mirror/probe", "handle_mirror_probe", ["POST"]),
             ("web/config/schema", "handle_config_schema", ["GET"]),
             ("web/config/update", "handle_config_update", ["POST"]),
+            ("web/config/save", "handle_config_save", ["POST"]),
             ("web/config/providers", "handle_config_providers", ["GET"]),
         ]
         for route, handler_name, methods in routes:
@@ -182,6 +183,13 @@ class NitterWebAPI(
         async def action():
             data = await self._request_json()
             return await self.update_config_item(data)
+
+        return await self._json_response(action)
+
+    async def handle_config_save(self):
+        async def action():
+            data = await self._request_json()
+            return await self.save_config_and_reload(data)
 
         return await self._json_response(action)
 

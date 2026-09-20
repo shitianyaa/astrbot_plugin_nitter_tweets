@@ -832,9 +832,9 @@ select { cursor: pointer; }
 /* Config panel V2:双栏 + 字段卡片 */
 .config-layout { display: grid; grid-template-columns: minmax(200px, 0.3fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .config-actionbar {
-  position: sticky; top: 72px; z-index: 40;
+  position: sticky; top: calc(var(--topheader-height, 72px) + 8px); z-index: 40;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 14px; margin-bottom: 12px;
+  padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow-sm);
 }
@@ -844,7 +844,7 @@ select { cursor: pointer; }
   flex-direction: column;
   gap: 10px;
   position: sticky;
-  top: 132px;
+  top: calc(var(--topheader-height, 72px) + 68px);
 }
 .config-nav > input { width: 100%; }
 .config-nav-list { display: flex; flex-direction: column; gap: 4px; }
@@ -879,7 +879,6 @@ select { cursor: pointer; }
 }
 @media (max-width: 900px) {
   .config-layout { grid-template-columns: 1fr; }
-  .config-actionbar { top: 0; }
   .config-nav { position: static; }
 }
 

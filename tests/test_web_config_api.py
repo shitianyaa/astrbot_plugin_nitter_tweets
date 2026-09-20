@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
+
+import pytest
 
 from plugin_api.api_config import WebAPIConfigMixin
 
@@ -97,6 +100,156 @@ def test_update_coerces_and_writes_grouped_location():
     assert result["value"] == 15
     assert config["basic"]["default_limit"] == 15
     assert config.saved == 1
+
+
+def test_batch_update_is_atomic_and_saves_once():
+    config = _FakeConfig()
+    host = _Host(config)
+    result = asyncio.run(
+        host.update_config_items(
+            {
+                "changes": {
+                    "default_limit": "15",
+                    "send_image_attachments": False,
+                }
+            }
+        )
+    )
+    assert result["success"] is True
+    assert result["count"] == 2
+    assert config["basic"]["default_limit"] == 15
+    assert config["media"]["send_image_attachments"] is False
+    assert config.saved == 1
+
+    invalid_config = _FakeConfig()
+    invalid_host = _Host(invalid_config)
+    invalid = asyncio.run(
+        invalid_host.update_config_items(
+            {"changes": {"default_limit": "15", "request_timeout": "bad"}}
+        )
+    )
+    assert invalid["success"] is False
+    assert invalid_config == {}
+    assert invalid_config.saved == 0
+
+
+def test_batch_update_restores_config_when_save_fails():
+    class _FailingConfig(_FakeConfig):
+        def save_config(self):
+            self.saved += 1
+            raise OSError("save failed")
+
+    original_basic = {"default_limit": 7, "request_timeout": 12}
+    config = _FailingConfig({"basic": original_basic})
+    host = _Host(config)
+
+    with pytest.raises(OSError, match="save failed"):
+        asyncio.run(
+            host.update_config_items(
+                {
+                    "changes": {
+                        "default_limit": "15",
+                        "send_image_attachments": False,
+                    }
+                }
+            )
+        )
+
+    assert config == {"basic": original_basic}
+    assert config["basic"] is original_basic
+    assert config.saved == 1
+
+
+def test_save_config_reloads_exact_current_plugin_once():
+    config = _FakeConfig()
+    calls = []
+
+    class _Manager:
+        async def reload(self, plugin_name):
+            calls.append(plugin_name)
+            return True, None
+
+    plugin = SimpleNamespace()
+    metadata = SimpleNamespace(name="astrbot_plugin_nitter_tweets", star_cls=plugin)
+    plugin.context = SimpleNamespace(
+        _star_manager=_Manager(), get_all_stars=lambda: [metadata]
+    )
+    host = _Host(config)
+    host.plugin = plugin
+
+    result = asyncio.run(
+        host.save_config_and_reload({"changes": {"default_limit": "9"}})
+    )
+
+    assert result["success"] is True
+    assert result["reloaded"] is True
+    assert config.saved == 1
+    assert calls == ["astrbot_plugin_nitter_tweets"]
+
+
+def test_save_config_does_not_reload_when_validation_fails():
+    config = _FakeConfig()
+    calls = []
+
+    class _Manager:
+        async def reload(self, plugin_name):
+            calls.append(plugin_name)
+            return True, None
+
+    plugin = SimpleNamespace()
+    metadata = SimpleNamespace(name="astrbot_plugin_nitter_tweets", star_cls=plugin)
+    plugin.context = SimpleNamespace(
+        _star_manager=_Manager(), get_all_stars=lambda: [metadata]
+    )
+    host = _Host(config)
+    host.plugin = plugin
+
+    result = asyncio.run(
+        host.save_config_and_reload({"changes": {"request_timeout": "bad"}})
+    )
+
+    assert result["success"] is False
+    assert config.saved == 0
+    assert calls == []
+
+
+def test_save_config_reports_saved_when_reload_fails(monkeypatch):
+    config = _FakeConfig()
+    log_events = []
+    monkeypatch.setattr(
+        "plugin_api.api_config.safe_log",
+        lambda level, event_name, **fields: log_events.append(
+            (level, event_name, fields)
+        ),
+    )
+
+    class _Manager:
+        async def reload(self, plugin_name):
+            return False, "reload failed"
+
+    plugin = SimpleNamespace()
+    metadata = SimpleNamespace(name="astrbot_plugin_nitter_tweets", star_cls=plugin)
+    plugin.context = SimpleNamespace(
+        _star_manager=_Manager(), get_all_stars=lambda: [metadata]
+    )
+    host = _Host(config)
+    host.plugin = plugin
+
+    result = asyncio.run(
+        host.save_config_and_reload({"changes": {"default_limit": "11"}})
+    )
+
+    assert result["success"] is True
+    assert result["saved"] is True
+    assert result["reloaded"] is False
+    assert config.saved == 1
+    assert log_events == [
+        (
+            logging.WARNING,
+            "config_reload_failed",
+            {"status": "saved", "error": "RuntimeError: reload failed"},
+        )
+    ]
 
 
 def test_update_rejects_bad_number_and_option():
