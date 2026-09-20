@@ -237,3 +237,56 @@ def test_host_failure_status_falls_back_to_message_matching():
 
     assert _format_host_failure(RuntimeError("a.example HTTP 403")) == "HTTP 403"
     assert _format_host_failure(TimeoutError("read timed out")) == "TimeoutError"
+
+
+def test_pool_rotate_fail_logs_redact_instance_urls_and_sensitive_info():
+    """Verify pool rotate failure logs redact raw instance URLs and sensitive parameters."""
+    hosts = ["https://a.example"]
+    pool = _pool(hosts)
+    pool.config.max_global_retries = 1
+    logged: list[str] = []
+    pool.log = MagicMock(side_effect=lambda msg: logged.append(str(msg)))
+
+    # 1. fetch_user
+    pool._paginate_user = MagicMock(
+        side_effect=RuntimeError(
+            "connect failed to https://my-nitter.internal:8443/nasa?auth=supersecret"
+        )
+    )
+    with pytest.raises(RuntimeError):
+        pool.fetch_user("nasa", 5)
+    user_fail_logs = [m for m in logged if "user fail" in m]
+    assert len(user_fail_logs) == 1
+    assert "https://my-nitter.internal:8443" not in user_fail_logs[0]
+    assert "supersecret" not in user_fail_logs[0]
+    assert "实例地址" in user_fail_logs[0]
+
+    # 2. search
+    logged.clear()
+    pool._paginate_search = MagicMock(
+        side_effect=RuntimeError(
+            "connect failed to https://my-search.internal:8443/search?auth=supersecret"
+        )
+    )
+    with pytest.raises(RuntimeError):
+        pool.search("foo", 5, kind="phrase")
+    search_fail_logs = [m for m in logged if "search fail" in m]
+    assert len(search_fail_logs) == 1
+    assert "https://my-search.internal:8443" not in search_fail_logs[0]
+    assert "supersecret" not in search_fail_logs[0]
+    assert "实例地址" in search_fail_logs[0]
+
+    # 3. fetch_list
+    logged.clear()
+    pool._paginate_list = MagicMock(
+        side_effect=RuntimeError(
+            "connect failed to https://my-list.internal:8443/list?auth=supersecret"
+        )
+    )
+    with pytest.raises(RuntimeError):
+        pool.fetch_list("9999", 5)
+    list_fail_logs = [m for m in logged if "list fail" in m]
+    assert len(list_fail_logs) == 1
+    assert "https://my-list.internal:8443" not in list_fail_logs[0]
+    assert "supersecret" not in list_fail_logs[0]
+    assert "实例地址" in list_fail_logs[0]

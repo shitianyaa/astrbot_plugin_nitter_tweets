@@ -178,7 +178,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `send_batch_summary_enabled` | 是否发送推送统计与概括摘要（默认开）；关闭后进入极简纯净模式，全链路不再发送批次横幅、合并统计头节点及推文末尾的 📎 附件统计行，仅保留推文核心内容 |
 | `push.target_blocked_users` | 按完整 UMO 保存作者黑名单；命令和 Dashboard 维护，跨分组共享 |
 | `tweet_groups` | 订阅与推送分组 |
-| `filter_reposts_enabled` | 后台转发过滤（全局；分组还有子开关） |
+| `filter_reposts_enabled` | 后台与手动（/推文、/推图）转发过滤总开关（分组另设子开关；/镜像测试始终保留转发；/推文搜索固定过滤纯转推） |
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关；开启后 OneBot 群聊默认带跨 Bot 仲裁（`link_preview_arbiter_enabled` 可关） |
 | `brief_log_enabled` | 后台日志简略模式；开启时输出结构化检查摘要和关键失败信息 |
 | `omit_status_url`（`tweet_groups` 分组字段） | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |

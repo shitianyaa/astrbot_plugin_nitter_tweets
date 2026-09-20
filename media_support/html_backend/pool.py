@@ -10,10 +10,10 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 try:
-    from ...shared.observability import redact_instance_urls
+    from ...shared.observability import redact_instance_urls, sanitize_sensitive_text
     from ...shared.utils import TweetItem
 except ImportError:  # pragma: no cover
-    from shared.observability import redact_instance_urls
+    from shared.observability import redact_instance_urls, sanitize_sensitive_text
     from shared.utils import TweetItem
 
 try:
@@ -360,8 +360,9 @@ class HtmlNitterPool:
                 self.log(f"user empty, rotate next ({index}/{total})")
             except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
+                safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
-                self.log(f"user fail, rotate next (#{index}/{total}): {exc}")
+                self.log(f"user fail, rotate next (#{index}/{total}): {safe_err}")
         if empty_success_base is not None:
             self.log(f"user empty after rotate hosts={total}")
             return empty_success_base, []
@@ -511,9 +512,10 @@ class HtmlNitterPool:
                 self.log(f"search empty, rotate next ({index}/{total})")
             except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
+                safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
                 attempts.append(f"#{index}={_format_host_failure(exc)}")
-                self.log(f"search fail, rotate next (#{index}/{total}): {exc}")
+                self.log(f"search fail, rotate next (#{index}/{total}): {safe_err}")
         if empty_success_base is not None:
             empty_success_result.host_attempts = attempts
             self.log(
@@ -650,9 +652,10 @@ class HtmlNitterPool:
                 errors.append(redact_instance_urls(f"#{index}: empty"))
                 self.log(f"list empty, rotate next ({index}/{total})")
             except Exception as exc:
+                safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
                 attempts.append(f"#{index}={_format_host_failure(exc)}")
-                self.log(f"list fail, rotate next (#{index}/{total}): {exc}")
+                self.log(f"list fail, rotate next (#{index}/{total}): {safe_err}")
 
         if empty_success_base is not None:
             empty_success_result.host_attempts = attempts

@@ -714,7 +714,9 @@ class ScheduledCheckResult:
 
         if self.baseline_rebuild_failed_users:
             items = [
-                f"{self._subscription_label(user)}: {redact_instance_urls(error)}"
+                sanitize_diagnostic(
+                    f"{self._subscription_label(user)}: {redact_instance_urls(error)}"
+                )
                 for user, error in self.baseline_rebuild_failed_users.items()
             ]
             lines.append(
@@ -790,7 +792,9 @@ class ScheduledCheckResult:
 
         if self.failed_users:
             items = [
-                f"{self._failure_label(user)}: {redact_instance_urls(error)}"
+                sanitize_diagnostic(
+                    f"{self._failure_label(user)}: {redact_instance_urls(error)}"
+                )
                 for user, error in self.failed_users.items()
             ]
             lines.append("失败: " + _format_limited_values(items, separator="; "))

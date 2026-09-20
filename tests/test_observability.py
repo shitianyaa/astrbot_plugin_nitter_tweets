@@ -267,3 +267,29 @@ def test_scheduled_check_result_reason_display_manual():
 
     summary = result.format_log_summary()
     assert "reason=手动检查" in summary
+
+
+def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeypatch):
+    """Verify safe_task_log redacts bare instance URLs in instance, failover_trace, and error_detail."""
+    mock_logger = MagicMock()
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
+
+    safe_task_log(
+        logging.WARNING,
+        "任务失败",
+        operation="fetch",
+        instance="https://my-internal.nitter.corp:8443",
+        failover_trace="https://h1.lan[429] ➔ https://h2.lan[500]",
+        error_detail="Timeout connecting to https://secret.backend:8080/api?token=abc",
+    )
+
+    assert mock_logger.log.called
+    _lvl, message = mock_logger.log.call_args[0]
+    assert "https://my-internal.nitter.corp:8443" not in message
+    assert "https://h1.lan" not in message
+    assert "https://h2.lan" not in message
+    assert "https://secret.backend:8080" not in message
+    assert "token=abc" not in message
+    assert "生效实例: 实例地址" in message
+    assert "轮换轨迹: 实例地址 ➔ 实例地址" in message
+    assert "失败详情: Timeout connecting to 实例地址" in message

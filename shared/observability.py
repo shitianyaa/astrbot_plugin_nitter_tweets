@@ -152,7 +152,7 @@ def redact_instance_urls(text: str) -> str:
     """
     if not text:
         return ""
-    return _BARE_URL_RE.sub("实例地址", text)
+    return _BARE_URL_RE.sub("实例地址", str(text))
 
 
 def sanitize_diagnostic(value: object) -> str:
@@ -210,14 +210,18 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     if instance:
         inst_str = str(instance).strip()
         if inst_str:
-            lines.append(f"  生效实例: {sanitize_diagnostic(inst_str)}")
+            lines.append(
+                f"  生效实例: {sanitize_diagnostic(redact_instance_urls(inst_str))}"
+            )
 
     # 6. Failover Trace
     failover_trace = fields.get("failover_trace")
     if failover_trace:
         trace_str = str(failover_trace).strip()
         if trace_str:
-            lines.append(f"  轮换轨迹: {sanitize_diagnostic(trace_str)}")
+            lines.append(
+                f"  轮换轨迹: {sanitize_diagnostic(redact_instance_urls(trace_str))}"
+            )
 
     # 7. Tweet Summary
     tweet_count = fields.get("tweet_count")
@@ -278,7 +282,9 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     # 11. Error Details (if any)
     error_detail = fields.get("error_detail")
     if error_detail:
-        lines.append(f"  失败详情: {sanitize_diagnostic(error_detail)}")
+        lines.append(
+            f"  失败详情: {sanitize_diagnostic(redact_instance_urls(str(error_detail)))}"
+        )
 
     # 12. Elapsed Time
     elapsed_ms = fields.get("elapsed_ms")

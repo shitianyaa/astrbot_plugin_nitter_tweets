@@ -64,6 +64,7 @@ class DummyManualHost(ManualCommandMixin):
         self.sender = MagicMock()
         self.sender.should_merge_for_event = MagicMock(return_value=False)
         self.media = MagicMock()
+        self.media.attach_media_with_results = AsyncMock(return_value=[])
         self.media.cleanup_after_send = MagicMock()
 
     def _cooldown_left(self, event, scope="tweet") -> float:
@@ -1549,3 +1550,67 @@ async def test_manual_cmd_tweet_pic_video_mode_passes_media_filter_and_force_med
         media_filter="video",
     )
     assert captured_kwargs.get("force_media") is True
+
+
+@pytest.mark.asyncio
+async def test_manual_cmd_tweet_pic_nitter_video_and_image_attaches_media_before_filter(
+    monkeypatch,
+):
+    """Verify Nitter manual /推图 in video/image mode attaches media before filtering."""
+    video_item = TweetMedia(kind="video", url="https://video.twimg.com/1.mp4")
+    image_item = TweetMedia(kind="image", url="https://pbs.twimg.com/1.jpg")
+    raw_tweet1 = _make_tweet("nasa", "1001")
+    raw_tweet2 = _make_tweet("nasa", "1002")
+
+    async def fake_attach(tweets, *, force_all_media=False):
+        for t in tweets:
+            if t.status_id == "1001":
+                t.media = [video_item]
+            elif t.status_id == "1002":
+                t.media = [image_item]
+        return []
+
+    mock_nitter = MagicMock()
+    mock_nitter.fetch_user = AsyncMock(
+        return_value=("http://nitter.test", [raw_tweet1, raw_tweet2])
+    )
+
+    host = DummyManualHost({"fetch_backend": "nitter"}, mock_nitter, None)
+    host.media.attach_media_with_results = AsyncMock(side_effect=fake_attach)
+
+    event = MagicMock()
+    event.send = AsyncMock()
+    event.stop_event = MagicMock()
+    event.plain_result.side_effect = lambda v: v
+
+    captured_tweets = []
+
+    async def fake_send_tweets(evt, usr, inst, tws, **kwargs):
+        captured_tweets.extend(tws)
+        return len(tws)
+
+    host._send_tweets_response = fake_send_tweets
+
+    # 1. Test video mode
+    await host._cmd_tweets_impl(
+        event, "nasa", "5", media_type_arg="视频", is_media_only=True
+    )
+    host.media.attach_media_with_results.assert_awaited_with(
+        [raw_tweet1, raw_tweet2], force_all_media=True
+    )
+    assert len(captured_tweets) == 1
+    assert captured_tweets[0].status_id == "1001"
+
+    # 2. Test image mode
+    captured_tweets.clear()
+    host.media.attach_media_with_results.reset_mock()
+    raw_tweet1.media = []
+    raw_tweet2.media = []
+    await host._cmd_tweets_impl(
+        event, "nasa", "5", media_type_arg="图片", is_media_only=True
+    )
+    host.media.attach_media_with_results.assert_awaited_with(
+        [raw_tweet1, raw_tweet2], force_all_media=False
+    )
+    assert len(captured_tweets) == 1
+    assert captured_tweets[0].status_id == "1002"

@@ -336,3 +336,24 @@ def test_status_summary_does_not_read_or_display_seen_indexes():
     assert "1 个 List" in summary
     assert "已记录索引" not in summary
     status._get_seen_map.assert_not_awaited()
+
+
+def test_format_message_redacts_instance_urls_and_sanitizes_failed_and_rebuild():
+    """Verify format_message applies sanitize_diagnostic and redact_instance_urls to failed/rebuild users."""
+    result = ScheduledCheckResult(
+        reason="scheduled",
+        group_type="blogger",
+        users=["nasa", "spacex"],
+        failed_users={
+            "nasa": "fetch failed at http://192.168.1.50:8080/timeline?token=secret123"
+        },
+        baseline_rebuild_failed_users={
+            "spacex": "rebuild failed at https://nitter.internal/rebuild?key=supersecret"
+        },
+    )
+    msg = result.format_message()
+    assert "http://192.168.1.50:8080" not in msg
+    assert "https://nitter.internal" not in msg
+    assert "secret123" not in msg
+    assert "supersecret" not in msg
+    assert "实例地址" in msg

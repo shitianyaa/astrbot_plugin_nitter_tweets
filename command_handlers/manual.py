@@ -316,6 +316,10 @@ class ManualCommandMixin:
                     instance = "Nitter"
                     if is_media_only and tweets:
                         tweets = [t for t in tweets if bool(t.media)]
+                if (is_video_mode or media_filter == "image") and tweets:
+                    await self.media.attach_media_with_results(
+                        tweets, force_all_media=is_video_mode
+                    )
                 if is_video_mode and tweets:
                     tweets = [t for t in tweets if any(m.is_video for m in t.media)]
                 elif media_filter == "image" and tweets:
