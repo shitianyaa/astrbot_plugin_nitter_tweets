@@ -12,10 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-try:
-    from astrbot.api import logger
-except ImportError:
-    logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 try:
     from ..config.compat import config_get

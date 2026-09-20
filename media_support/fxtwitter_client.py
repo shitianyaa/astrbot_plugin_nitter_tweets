@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import logging
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -33,7 +32,15 @@ except ImportError:
         format_tweet_published,
     )
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
+
+__all__ = [
+    "DEFAULT_FXTWITTER_BASE_URL",
+    "FxTwitterClient",
+    "FxTwitterError",
+    "FxTwitterNotFoundError",
+    "logger",
+]
 
 DEFAULT_FXTWITTER_BASE_URL = "https://api.fxtwitter.com"
 MAX_RESPONSE_BYTES = 5_000_000

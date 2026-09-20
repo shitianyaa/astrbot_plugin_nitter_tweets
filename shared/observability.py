@@ -7,13 +7,9 @@ Inspired by modern AstrBot plugin observability patterns:
 
 from __future__ import annotations
 
-import logging
 import re
 
-try:
-    from astrbot.api import logger
-except ImportError:  # pragma: no cover
-    logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 LOG_PREFIX = "[NitterTweets]"
 

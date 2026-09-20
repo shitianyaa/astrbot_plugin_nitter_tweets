@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from typing import Any
 from urllib.request import Request
@@ -31,7 +30,7 @@ except ImportError:
     from media_support.xdown import XdownMediaCandidate
     from shared.utils import TweetItem, TweetMedia, format_tweet_published
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_RESPONSE_BYTES = 1_500_000
