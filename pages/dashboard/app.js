@@ -1237,9 +1237,16 @@ function renderMirrorBase() {
 async function probeMirror(e) {
   if (e) e.preventDefault();
   if (state.actionBusy) return;
+  const username = els.mirrorUsername.value.trim();
+  const query = els.mirrorQuery.value.trim();
+  const list_id = els.mirrorListId.value.trim();
+  if (!username && !query && !list_id) {
+    showToast("请至少填写一项测试目标（用户名、搜索标签或关键词、List ID）");
+    return;
+  }
   const payload = {
-    username: els.mirrorUsername.value.trim() || "nasa",
-    query: els.mirrorQuery.value.trim() || "nasa",
+    username: username || undefined,
+    query: query || undefined,
     list_id: els.mirrorListId.value.trim() || undefined,
     limit: parseInt(els.mirrorLimit.value, 10) || 5,
     instance: els.mirrorInstance.value.trim() || undefined,
@@ -1261,9 +1268,9 @@ async function probeMirror(e) {
           h("span", { class: `badge ${r.success ? "badge-ok" : "badge-danger"}`, text: r.success ? "全部可用" : "有异常" }),
         ]),
         h("div", { class: "probe-checks" }, [
-          probeCheck("RSS", checks.rss_user),
-          probeCheck("HTML", checks.html_user),
-          probeCheck("搜索", checks.search),
+          checks.rss_user ? probeCheck("RSS", checks.rss_user) : null,
+          checks.html_user ? probeCheck("HTML", checks.html_user) : null,
+          checks.search ? probeCheck("搜索", checks.search) : null,
           checks.list ? probeCheck("List", checks.list) : null,
         ]),
       ]);

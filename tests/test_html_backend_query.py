@@ -460,6 +460,8 @@ def test_web_probe_all_rss_instances_is_serial_and_keeps_partial_failures():
         "https://rss-a.example",
         "https://rss-b.example",
     ]
+    plugin.nitter.search.assert_not_called()
+    assert "search" not in result["results"][0]["checks"]
 
 
 def test_web_probe_all_instances_returns_all_failed_rows():
@@ -487,12 +489,85 @@ def test_web_probe_all_instances_returns_all_failed_rows():
     assert result["success"] is True
     assert result["summary"] == {"total": 1, "succeeded": 0, "failed": 1}
     assert result["results"][0]["success"] is False
+    assert "rss_user" not in result["results"][0]["checks"]
+    assert "html_user" not in result["results"][0]["checks"]
+    nitter.fetch_tweets_from_instance.assert_not_called()
+    nitter.fetch_user_html.assert_not_called()
     nitter.search.assert_called_once_with(
         "#AI",
         5,
         kind="tag",
         instance="https://search-a.example",
     )
+
+
+def test_web_probe_requires_at_least_one_target():
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=SimpleNamespace(instances=["https://mirror.example"]),
+    )
+    api = NitterWebAPI(plugin)
+    res = asyncio.run(api.probe_mirror({"instance": "https://mirror.example"}))
+    assert res["success"] is False
+    assert "请至少填写一项测试目标" in res["error"]
+
+
+def test_web_probe_list_only():
+    nitter = SimpleNamespace(
+        instances=["https://mirror.example"],
+        fetch_tweets_from_instance=AsyncMock(),
+        fetch_user_html=MagicMock(),
+        search=MagicMock(),
+        fetch_list=MagicMock(
+            return_value=("https://mirror.example", [_probe_tweet("10")])
+        ),
+    )
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=nitter,
+    )
+    api = NitterWebAPI(plugin)
+    res = asyncio.run(
+        api.probe_mirror(
+            {
+                "list_id": "12345678",
+                "instance": "https://mirror.example",
+            }
+        )
+    )
+    assert res["success"] is True
+    assert res["results"][0]["success"] is True
+    assert "list" in res["results"][0]["checks"]
+    assert "rss_user" not in res["results"][0]["checks"]
+    assert "html_user" not in res["results"][0]["checks"]
+    assert "search" not in res["results"][0]["checks"]
+    nitter.fetch_list.assert_called_once_with(
+        "12345678", 5, instance="https://mirror.example"
+    )
+    nitter.fetch_tweets_from_instance.assert_not_called()
+    nitter.fetch_user_html.assert_not_called()
+    nitter.search.assert_not_called()
+
+
+def test_web_probe_invalid_list_id_rejects():
+    plugin = SimpleNamespace(
+        config={},
+        default_limit=5,
+        nitter=SimpleNamespace(instances=["https://mirror.example"]),
+    )
+    api = NitterWebAPI(plugin)
+    res = asyncio.run(
+        api.probe_mirror(
+            {
+                "list_id": "not-digits",
+                "instance": "https://mirror.example",
+            }
+        )
+    )
+    assert res["success"] is False
+    assert "List ID 必须为纯数字" in res["error"]
 
 
 def test_web_probe_all_requires_configured_instances_but_single_url_stays_compatible():

@@ -145,11 +145,11 @@
                 <span style="font-size: 12px; color: var(--text-muted)">不写推送记录</span>
               </div>
               <div class="editor-grid">
-                <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" value="nasa" /></label>
-                <label class="field"><span>搜索关键词</span><input id="mirrorQuery" type="text" value="nasa" /></label>
-                <label class="field"><span>List ID（可选）</span><input id="mirrorListId" type="text" placeholder="纯数字" /></label>
-                <label class="field"><span>数量</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" /></label>
-                <label class="field editor-grid-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="http://nitter:8080" /></label>
+                <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" placeholder="如 nasa，留空跳过" /></label>
+                <label class="field"><span>搜索标签或关键词</span><input id="mirrorQuery" type="text" placeholder="如 #AI 或关键词，留空跳过" /></label>
+                <label class="field"><span>List ID（可选）</span><input id="mirrorListId" type="text" placeholder="仅限数字，留空跳过" /></label>
+                <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" /></label>
+                <label class="field editor-grid-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" /></label>
               </div>
               <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                 <div style="display: flex; align-items: center; gap: 8px;">

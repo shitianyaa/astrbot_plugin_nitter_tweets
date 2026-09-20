@@ -145,19 +145,32 @@ class WebAPIProbeMixin:
             maximum=50,
         )
 
-        username = normalize_username(self._data_text(data, "username") or "nasa")
-        if not username:
-            return self._error("关注账号格式无效")
-        raw_query = (self._data_text(data, "query") or username).strip()
-        if len(raw_query) > MAX_QUERY_LENGTH:
-            return self._error(f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）")
-        query = normalize_query(raw_query)
-        if not query:
-            return self._error("请填写搜索内容（#标签 或短语）")
-        kind = query_kind(query)
+        raw_username = self._data_text(data, "username")
+        username = ""
+        if raw_username:
+            username = normalize_username(raw_username)
+            if not username:
+                return self._error("关注账号格式无效")
+
+        raw_query = self._data_text(data, "query").strip()
+        query = ""
+        kind = ""
+        if raw_query:
+            if len(raw_query) > MAX_QUERY_LENGTH:
+                return self._error(f"搜索内容过长（最多 {MAX_QUERY_LENGTH} 字符）")
+            query = normalize_query(raw_query)
+            if not query:
+                return self._error("请填写搜索内容（#标签 或短语）")
+            kind = query_kind(query)
+
         list_id = self._data_text(data, "list_id")
         if list_id and not list_id.isdigit():
             return self._error("List ID 必须为纯数字")
+
+        if not username and not query and not list_id:
+            return self._error(
+                "请至少填写一项测试目标（用户名、搜索标签或关键词、List ID）"
+            )
 
         raw_instance = self._data_text(data, "instance")
         if raw_instance:
@@ -218,10 +231,10 @@ class WebAPIProbeMixin:
         self,
         instance: str,
         *,
-        username: str,
-        query: str,
-        kind: str,
-        list_id: str,
+        username: str = "",
+        query: str = "",
+        kind: str = "",
+        list_id: str = "",
         limit: int,
     ) -> dict[str, Any]:
         checks: dict[str, dict[str, Any]] = {}
@@ -255,31 +268,37 @@ class WebAPIProbeMixin:
                     "tweets": [],
                 }
 
-        async def rss_call():
-            return await self.plugin.nitter.fetch_tweets_from_instance(
-                instance, username, limit
-            )
+        if username:
 
-        async def user_html_call():
-            return await asyncio.to_thread(
-                self.plugin.nitter.fetch_user_html,
-                username,
-                limit,
-                instance=instance,
-            )
+            async def rss_call():
+                return await self.plugin.nitter.fetch_tweets_from_instance(
+                    instance, username, limit
+                )
 
-        async def search_call():
-            return await asyncio.to_thread(
-                self.plugin.nitter.search,
-                query,
-                limit,
-                kind=kind,
-                instance=instance,
-            )
+            async def user_html_call():
+                return await asyncio.to_thread(
+                    self.plugin.nitter.fetch_user_html,
+                    username,
+                    limit,
+                    instance=instance,
+                )
 
-        await run_check("rss_user", rss_call)
-        await run_check("html_user", user_html_call)
-        await run_check("search", search_call)
+            await run_check("rss_user", rss_call)
+            await run_check("html_user", user_html_call)
+
+        if query:
+
+            async def search_call():
+                return await asyncio.to_thread(
+                    self.plugin.nitter.search,
+                    query,
+                    limit,
+                    kind=kind,
+                    instance=instance,
+                )
+
+            await run_check("search", search_call)
+
         if list_id:
 
             async def list_call():
