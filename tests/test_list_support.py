@@ -621,7 +621,7 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "请先添加推送目标。" in source
     assert "hideAlert();\n  state.view = v;" in source
     assert "body.ui-busy .view" in style
-    assert "#alert,\n#actionStatus {" in style
+    assert ".notice-stack {" in style
     assert "background-color: var(--surface);" in style
     assert (
         "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
@@ -637,34 +637,38 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
     assert ".groups-layout > * { min-width: 0; }" in style
-    assert 'id="actionStatus"' in index
-    assert 'id="alertCloseBtn"' in index
-    assert 'id="actionStatusCloseBtn"' in index
-    assert "state.actionStatusDismissed = true;" in source
+    assert 'id="noticeStack"' in index
+    assert "actionStatusDismissed" not in source
     assert ".feedback-close" in style
     assert 'aria-live="polite"' in index
 
 
-def test_dashboard_banner_renders_at_most_one_at_a_time():
-    """顶部横幅互斥：两个元素的 hidden 只有 renderBanner 一个出口。"""
+def test_dashboard_notice_stack_stacks_and_auto_dismisses():
+    """顶部通知栈：多条通知垂直排列不重叠，各自停留 NOTICE_TTL 后自动移除。"""
     source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
-    assert "function renderBanner() {" in source
-    assert source.count("els.alert.hidden =") == 1
-    assert source.count("els.actionStatus.hidden =") == 1
-    # 优先级：进行中提示压住结果提示，且结果提示不会在动作期间消失
-    assert "const showStatus = !!statusText && !state.actionStatusDismissed;" in source
-    assert "const showAlert = !showStatus && !!state.alertMessage;" in source
-    # 两条动作路径都在开始时清掉上一条结果提示，语义一致
-    assert (
-        source.count(
-            "state.actionBusy = true; state.actionStatusDismissed = false; "
-            "setBusy(true); hideAlert();"
-        )
-        == 2
-    )
-    # 横幅高度实测写入 CSS 变量，内容与历史工具栏据此避让
+    assert 'id="noticeStack"' in index
+    # 固定 + flex column：多条通知按加入顺序垂直排列，不可能互相重叠
+    stack = style.split(".notice-stack {", 1)[1].split("}", 1)[0]
+    assert "position: fixed;" in stack
+    assert "display: flex;" in stack
+    assert "flex-direction: column;" in stack
+    assert "gap:" in stack
+    # 所有提示共用一个入栈出口，各自计时自动消失
+    assert "const NOTICE_TTL = 4000;" in source
+    assert "function pushNotice(kind, text, ttl = NOTICE_TTL)" in source
+    assert "function dismissNotice(node)" in source
+    assert "node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);" in source
+    assert "clearTimeout(node._noticeTimer);" in source
+    assert "function syncStatusNotice()" in source
+    # 旧的互斥横幅实现已彻底移除
+    assert "actionStatusDismissed" not in source
+    assert "renderBanner" not in source
+    assert "els.alert.hidden" not in source
+    assert "els.actionStatus.hidden" not in source
+    # 通知栈高度实测写入 CSS 变量，内容与历史工具栏据此避让
     assert (
         'document.documentElement.style.setProperty("--banner-offset", offset)'
         in source

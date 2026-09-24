@@ -457,18 +457,19 @@ body.ui-busy .view textarea { cursor: wait; }
 .feedback-close:hover { background: rgba(127, 127, 127, 0.14); }
 .feedback-close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 
-/* 顶部横幅：同一时刻最多一个可见（app.js renderBanner 保证） */
-#alert,
-#actionStatus {
+/* 顶部通知栈：所有提示垂直排列，互不重叠；每条停留后由 app.js 自动移除 */
+.notice-stack {
   position: fixed;
   top: calc(var(--topheader-height, 72px) + 8px);
   left: 50%;
   width: min(calc(100vw - 40px), 1200px);
-  margin: 0 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   transform: translateX(-50%);
   z-index: 60;
-  box-shadow: var(--shadow);
 }
+.notice-stack > * { margin: 0 !important; box-shadow: var(--shadow); }
 
 /* 横幅高度随文案换行变化，由 JS 实测写入 --banner-offset（无横幅时为 0） */
 .main > .view-container { padding-top: calc(24px + var(--banner-offset, 0px)); }
