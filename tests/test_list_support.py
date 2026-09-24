@@ -620,13 +620,34 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "function commitGroupField(gid, field, value)" in source
     assert "请先添加推送目标。" in source
     assert "const showActionStatus = state.actionBusy;" in source
+    assert "hideAlert();\n  state.view = v;" in source
     assert "body.ui-busy .view" in style
+    assert "#alert,\n#actionStatus {" in style
+    assert "background-color: var(--surface);" in style
+    assert (
+        "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
+        in style
+    )
+    assert "#alert:not([hidden]) ~ .view-container," in style
+    assert "padding-top: 60px;" in style
+    assert "#historyView > .toolbar {" in style
+    assert "top: calc(var(--topheader-height, 0px) + 8px);" in style
+    assert "top: calc(var(--topheader-height, 0px) + 60px);" in style
     assert "transition: all" not in style
     assert ".tweet-card:hover" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
     assert ".groups-layout > * { min-width: 0; }" in style
     assert 'id="actionStatus"' in index
+    assert 'id="alertCloseBtn"' in index
+    assert 'id="actionStatusCloseBtn"' in index
+    assert (
+        'function showAlert(msg, type = "success") {\n'
+        "  if (!els.alert) return;\n"
+        "  state.actionStatusDismissed = true;" in source
+    )
+    assert "state.actionStatusDismissed = true;" in source
+    assert ".feedback-close" in style
     assert 'aria-live="polite"' in index
 
 

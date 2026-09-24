@@ -18,7 +18,7 @@ const state = {
   historyGroupId: "", historyUsername: "", historyLimit: 10,
   historyStatus: "",
   historyOffset: 0, seenGroupId: "",
-  pendingAction: null, lastFocusedElement: null, lastUpdated: "",
+  pendingAction: null, lastFocusedElement: null, lastUpdated: "", actionStatusDismissed: false,
 };
 
 const els = {};
@@ -26,7 +26,8 @@ const els = {};
 function initEls() {
   const ids = [
     "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn",
-    "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","actionStatus","toastContainer",
+    "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","alertMessage","alertCloseBtn",
+    "actionStatus","actionStatusMessage","actionStatusCloseBtn","toastContainer",
     "overviewView","groupsView","historyView","mirrorView","configView",
     "createGroupBtn","groupList","groupEditor",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
@@ -144,11 +145,17 @@ async function apiPost(endpoint, body) {
    -------------------------------------------------------------------------- */
 function showAlert(msg, type = "success") {
   if (!els.alert) return;
+  state.actionStatusDismissed = true;
+  if (els.actionStatus) els.actionStatus.hidden = true;
   els.alert.className = `alert ${type}`;
-  els.alert.textContent = msg;
+  if (els.alertMessage) els.alertMessage.textContent = msg;
   els.alert.hidden = false;
 }
-function hideAlert() { if (els.alert) { els.alert.hidden = true; els.alert.textContent = ""; } }
+function hideAlert() {
+  if (!els.alert) return;
+  els.alert.hidden = true;
+  if (els.alertMessage) els.alertMessage.textContent = "";
+}
 function showToast(msg) {
   if (!els.toastContainer) return;
   const t = h("div", { class: "toast", text: msg });
@@ -288,8 +295,10 @@ function setBusy(isBusy) {
   document.body.classList.toggle("ui-busy", busy);
   if (els.actionStatus) {
     const showActionStatus = state.actionBusy;
-    els.actionStatus.hidden = !showActionStatus;
-    els.actionStatus.textContent = showActionStatus ? (state.busyLabel || "正在加载…") : "";
+    els.actionStatus.hidden = !showActionStatus || state.actionStatusDismissed;
+    if (els.actionStatusMessage) {
+      els.actionStatusMessage.textContent = showActionStatus ? (state.busyLabel || "正在加载…") : "";
+    }
   }
 }
 
@@ -336,7 +345,7 @@ function toggleTheme() {
    -------------------------------------------------------------------------- */
 async function withAction(action, successText, { reload = true, rerender = null } = {}) {
   if (state.actionBusy) return null;
-  state.actionBusy = true; setBusy(true); hideAlert();
+  state.actionBusy = true; state.actionStatusDismissed = false; setBusy(true); hideAlert();
   try {
     const res = await action();
     if (reload) {
@@ -1251,7 +1260,7 @@ async function probeMirror(e) {
     limit: parseInt(els.mirrorLimit.value, 10) || 5,
     instance: els.mirrorInstance.value.trim() || undefined,
   };
-  state.actionBusy = true; setBusy(true);
+  state.actionBusy = true; state.actionStatusDismissed = false; setBusy(true);
   els.mirrorResult.replaceChildren(h("div", { class: "panel", text: "探测中..." }));
   try {
     const res = await apiPost("web/mirror/probe", payload);
@@ -1597,6 +1606,7 @@ function updateHeader() {
 
 function switchView(v) {
   if (!v || state.view === v) return;
+  hideAlert();
   state.view = v;
   els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === v));
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
@@ -1604,6 +1614,11 @@ function switchView(v) {
 }
 
 function bindEvents() {
+  els.alertCloseBtn?.addEventListener("click", hideAlert);
+  els.actionStatusCloseBtn?.addEventListener("click", () => {
+    state.actionStatusDismissed = true;
+    if (els.actionStatus) els.actionStatus.hidden = true;
+  });
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
     const groupsDirty = state.groups.some(g => isGroupDirty(g.group_id));

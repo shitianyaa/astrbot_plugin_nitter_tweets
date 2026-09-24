@@ -81,8 +81,14 @@
       <!-- Main -->
       <main class="main">
 
-        <div id="alert" class="alert" role="status" aria-live="polite" hidden style="margin: 0 20px;"></div>
-        <div id="actionStatus" class="action-status" role="status" aria-live="polite" hidden></div>
+        <div id="alert" class="alert" role="status" aria-live="polite" hidden style="margin: 0 20px;">
+          <span id="alertMessage" class="feedback-message"></span>
+          <button id="alertCloseBtn" class="feedback-close" type="button" aria-label="关闭提示" title="关闭">&times;</button>
+        </div>
+        <div id="actionStatus" class="action-status" role="status" aria-live="polite" hidden>
+          <span id="actionStatusMessage" class="feedback-message"></span>
+          <button id="actionStatusCloseBtn" class="feedback-close" type="button" aria-label="关闭提示" title="关闭">&times;</button>
+        </div>
 
         <div class="view-container">
           <section id="overviewView" class="view active"></section>

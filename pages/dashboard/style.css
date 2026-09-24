@@ -416,7 +416,7 @@ body.ui-busy .view textarea { cursor: wait; }
   padding: 8px 12px;
   border: 1px solid var(--blue-border);
   border-radius: var(--radius-sm);
-  background: var(--blue-soft);
+  background: linear-gradient(var(--blue-soft), var(--blue-soft)), var(--surface);
   color: var(--blue);
   font-size: 13px;
   font-weight: 600;
@@ -433,6 +433,43 @@ body.ui-busy .view textarea { cursor: wait; }
 }
 @keyframes status-spin { to { transform: rotate(360deg); } }
 .action-status[hidden] { display: none; }
+
+.feedback-message {
+  min-width: 0;
+  flex: 1;
+}
+
+.feedback-close {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: currentColor;
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.feedback-close:hover { background: rgba(127, 127, 127, 0.14); }
+.feedback-close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+
+#alert,
+#actionStatus {
+  position: fixed;
+  top: calc(var(--topheader-height, 0px) + 8px);
+  left: 50%;
+  width: min(calc(100vw - 40px), 1200px);
+  max-height: 44px;
+  margin: 0 !important;
+  overflow: auto;
+  transform: translateX(-50%);
+  z-index: 60;
+  box-shadow: var(--shadow);
+}
 
 /* Form fields */
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
@@ -706,6 +743,24 @@ select { cursor: pointer; }
 }
 .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
+#alert:not([hidden]) ~ .view-container,
+#actionStatus:not([hidden]) ~ .view-container {
+  padding-top: 60px;
+}
+
+@media (min-width: 681px) {
+  #historyView > .toolbar {
+    position: sticky;
+    top: calc(var(--topheader-height, 0px) + 8px);
+    z-index: 40;
+  }
+
+  #alert:not([hidden]) ~ .view-container #historyView > .toolbar,
+  #actionStatus:not([hidden]) ~ .view-container #historyView > .toolbar {
+    top: calc(var(--topheader-height, 0px) + 60px);
+  }
+}
+
 /* Group type options */
 .group-type-options { display: flex; gap: 8px; }
 .group-type-radio:checked + .group-type-option-body { border-color: var(--blue); }
@@ -948,14 +1003,19 @@ select { cursor: pointer; }
 }
 
 .alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
+  background-color: var(--surface);
 }
-.alert.success { background: var(--green-soft); color: var(--green); }
-.alert.error { background: var(--red-soft); color: var(--red); }
-.alert.warn { background: var(--yellow-soft); color: #b07800; }
+.alert[hidden] { display: none; }
+.alert.success { background-image: linear-gradient(var(--green-soft), var(--green-soft)); color: var(--green); }
+.alert.error { background-image: linear-gradient(var(--red-soft), var(--red-soft)); color: var(--red); }
+.alert.warn { background-image: linear-gradient(var(--yellow-soft), var(--yellow-soft)); color: #b07800; }
 
 #toastContainer {
   position: fixed;
