@@ -457,19 +457,21 @@ body.ui-busy .view textarea { cursor: wait; }
 .feedback-close:hover { background: rgba(127, 127, 127, 0.14); }
 .feedback-close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 
+/* 顶部横幅：同一时刻最多一个可见（app.js renderBanner 保证） */
 #alert,
 #actionStatus {
   position: fixed;
-  top: calc(var(--topheader-height, 0px) + 8px);
+  top: calc(var(--topheader-height, 72px) + 8px);
   left: 50%;
   width: min(calc(100vw - 40px), 1200px);
-  max-height: 44px;
   margin: 0 !important;
-  overflow: auto;
   transform: translateX(-50%);
   z-index: 60;
   box-shadow: var(--shadow);
 }
+
+/* 横幅高度随文案换行变化，由 JS 实测写入 --banner-offset（无横幅时为 0） */
+.main > .view-container { padding-top: calc(24px + var(--banner-offset, 0px)); }
 
 /* Form fields */
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
@@ -743,21 +745,11 @@ select { cursor: pointer; }
 }
 .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-#alert:not([hidden]) ~ .view-container,
-#actionStatus:not([hidden]) ~ .view-container {
-  padding-top: 60px;
-}
-
 @media (min-width: 681px) {
   #historyView > .toolbar {
     position: sticky;
-    top: calc(var(--topheader-height, 0px) + 8px);
+    top: calc(var(--topheader-height, 72px) + 8px + var(--banner-offset, 0px));
     z-index: 40;
-  }
-
-  #alert:not([hidden]) ~ .view-container #historyView > .toolbar,
-  #actionStatus:not([hidden]) ~ .view-container #historyView > .toolbar {
-    top: calc(var(--topheader-height, 0px) + 60px);
   }
 }
 
@@ -1094,6 +1086,7 @@ select { cursor: pointer; }
   .editor-grid-full { grid-column: auto; }
   .toolbar { align-items: stretch; }
   .toolbar .field, .toolbar select, .toolbar input { width: 100% !important; }
+  .main > .view-container { padding-top: calc(16px + var(--banner-offset, 0px)); }
   .pager { width: 100%; margin-left: 0; justify-content: space-between; }
   .pager .btn { flex: 1; }
   .panel { padding: 14px; }

@@ -18,7 +18,8 @@ const state = {
   historyGroupId: "", historyUsername: "", historyLimit: 10,
   historyStatus: "",
   historyOffset: 0, seenGroupId: "",
-  pendingAction: null, lastFocusedElement: null, lastUpdated: "", actionStatusDismissed: false,
+  pendingAction: null, lastFocusedElement: null, lastUpdated: "",
+  alertMessage: "", alertType: "success", actionStatusDismissed: false, bannerOffset: "",
 };
 
 const els = {};
@@ -49,6 +50,7 @@ function initStickyOffsets() {
     document.documentElement.style.setProperty("--topheader-height", `${height}px`);
   };
   sync();
+  window.addEventListener("resize", syncBannerOffset);
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(sync).observe(header);
   } else {
@@ -143,18 +145,45 @@ async function apiPost(endpoint, body) {
 /* --------------------------------------------------------------------------
    Feedback
    -------------------------------------------------------------------------- */
+/* 顶部横幅：renderBanner 是唯一写 hidden 的出口，保证同一时刻最多一个可见。
+   优先级：进行中提示 > 结果提示。动作期间被压住的结果提示，最迟在动作结束
+   （withAction / probeMirror 的 finally → setBusy(false)）时渲染出来，不会丢失。 */
+function renderBanner() {
+  const statusText = state.actionBusy ? (state.busyLabel || "正在加载…") : "";
+  const showStatus = !!statusText && !state.actionStatusDismissed;
+  const showAlert = !showStatus && !!state.alertMessage;
+
+  if (els.actionStatus) {
+    els.actionStatus.hidden = !showStatus;
+    if (els.actionStatusMessage) {
+      els.actionStatusMessage.textContent = showStatus ? statusText : "";
+    }
+  }
+  if (els.alert) {
+    els.alert.className = `alert ${state.alertType || "success"}`;
+    els.alert.hidden = !showAlert;
+    if (els.alertMessage) els.alertMessage.textContent = showAlert ? state.alertMessage : "";
+  }
+  syncBannerOffset();
+}
+/* 横幅高度随文案换行变化，用实测高度驱动内容预留与历史工具栏吸顶偏移 */
+function syncBannerOffset() {
+  const visible = (els.alert && !els.alert.hidden) ? els.alert
+    : (els.actionStatus && !els.actionStatus.hidden) ? els.actionStatus : null;
+  const height = visible ? Math.ceil(visible.getBoundingClientRect().height) : 0;
+  const offset = height ? `${height + 8}px` : "0px";
+  if (state.bannerOffset === offset) return;
+  state.bannerOffset = offset;
+  document.documentElement.style.setProperty("--banner-offset", offset);
+}
 function showAlert(msg, type = "success") {
-  if (!els.alert) return;
-  state.actionStatusDismissed = true;
-  if (els.actionStatus) els.actionStatus.hidden = true;
-  els.alert.className = `alert ${type}`;
-  if (els.alertMessage) els.alertMessage.textContent = msg;
-  els.alert.hidden = false;
+  state.alertMessage = msg;
+  state.alertType = type;
+  renderBanner();
 }
 function hideAlert() {
-  if (!els.alert) return;
-  els.alert.hidden = true;
-  if (els.alertMessage) els.alertMessage.textContent = "";
+  state.alertMessage = "";
+  renderBanner();
 }
 function showToast(msg) {
   if (!els.toastContainer) return;
@@ -293,13 +322,7 @@ function setBusy(isBusy) {
    els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn].forEach(b => { if (b) b.disabled = busy; });
   document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
   document.body.classList.toggle("ui-busy", busy);
-  if (els.actionStatus) {
-    const showActionStatus = state.actionBusy;
-    els.actionStatus.hidden = !showActionStatus || state.actionStatusDismissed;
-    if (els.actionStatusMessage) {
-      els.actionStatusMessage.textContent = showActionStatus ? (state.busyLabel || "正在加载…") : "";
-    }
-  }
+  renderBanner();
 }
 
 /* --------------------------------------------------------------------------
@@ -1260,7 +1283,7 @@ async function probeMirror(e) {
     limit: parseInt(els.mirrorLimit.value, 10) || 5,
     instance: els.mirrorInstance.value.trim() || undefined,
   };
-  state.actionBusy = true; state.actionStatusDismissed = false; setBusy(true);
+  state.actionBusy = true; state.actionStatusDismissed = false; setBusy(true); hideAlert();
   els.mirrorResult.replaceChildren(h("div", { class: "panel", text: "探测中..." }));
   try {
     const res = await apiPost("web/mirror/probe", payload);
@@ -1617,7 +1640,7 @@ function bindEvents() {
   els.alertCloseBtn?.addEventListener("click", hideAlert);
   els.actionStatusCloseBtn?.addEventListener("click", () => {
     state.actionStatusDismissed = true;
-    if (els.actionStatus) els.actionStatus.hidden = true;
+    renderBanner();
   });
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
