@@ -663,6 +663,9 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);" in source
     assert "clearTimeout(node._noticeTimer);" in source
     assert "function syncStatusNotice()" in source
+    # 结果出现时原地改写进行中提示的节点，不做“移除 + 新增”
+    assert "function promoteStatusNotice(kind, text, ttl = NOTICE_TTL)" in source
+    assert "if (state.statusNotice && promoteStatusNotice(kind, msg)) return;" in source
     # 旧的互斥横幅实现已彻底移除
     assert "actionStatusDismissed" not in source
     assert "renderBanner" not in source

@@ -235,8 +235,26 @@ function syncBannerOffset() {
   state.bannerOffset = offset;
   document.documentElement.style.setProperty("--banner-offset", offset);
 }
+/* 结果提示出现时，直接把进行中提示原地改写成结果，避免“移除 + 新增”两次跳动 */
+function promoteStatusNotice(kind, text, ttl = NOTICE_TTL) {
+  const node = state.statusNotice;
+  const message = node && node.querySelector(".feedback-message");
+  if (!message) return null;
+  node.className = NOTICE_CLASS[kind];
+  node.dataset.kind = kind;
+  node.dataset.key = noticeKey(kind, text);
+  message.textContent = text;
+  armNoticeTimer(node, ttl);
+  state.statusNotice = null;
+  state.statusNoticeClosed = true;   // 本次动作内不再重建进行中提示
+  syncBannerOffset();
+  return node;
+}
+
 function showAlert(msg, type = "success") {
-  pushNotice(type, msg);
+  const kind = NOTICE_CLASS[type] ? type : "success";
+  if (state.statusNotice && promoteStatusNotice(kind, msg)) return;
+  pushNotice(kind, msg);
 }
 function hideAlert() {
   clearNotices(["success", "warn", "error"]);
