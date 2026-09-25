@@ -589,7 +589,7 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
     assert "web/target-blacklists/update" in source
     assert "目标作者黑名单" in source
     assert "function renderTargetBlacklist(group, draft)" in source
-    assert "function saveTargetBlacklist(target, users)" in source
+    assert "function saveTargetBlacklist(gid, target, users)" in source
     assert "跨分组共享，仅影响后台推送" in source
     assert "web/subscriptions/import" in source
     assert "web/subscriptions/delete" in source
@@ -619,15 +619,171 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert 'confirmText: "移除并保存"' in source
     assert "function commitGroupField(gid, field, value)" in source
     assert "请先添加推送目标。" in source
-    assert "const showActionStatus = state.actionBusy;" in source
+    assert "hideAlert();\n  state.view = v;" in source
     assert "body.ui-busy .view" in style
+    assert ".notice-stack {" in style
+    assert "background-color: var(--surface);" in style
+    assert (
+        "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
+        in style
+    )
+    assert "#historyView > .toolbar {" in style
+    # 次级吸顶统一引用吸附线 + 通知让位；配置操作栏曾与通知栈同位吸顶互相遮挡
+    assert "--sticky-top: calc(var(--topheader-height) + 8px);" in style
+    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in style
+    config_bar = style.split(".config-actionbar {", 1)[1].split("}", 1)[0]
+    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in config_bar
+    # 吸附线兜底值只允许出现在 :root 定义里，禁止各规则再手写 topheader 魔法数
+    assert "var(--topheader-height," not in style
+    # rerender 分支不再提前解除 busy，结果提示仍原地改写进行中节点
+    assert "} else if (rerender) await rerender();" in source
+    assert "setBusy(false); rerender();" not in source
+    # 删除废弃分组残留后的 rerender 直接走纯查询渲染：外层动作未结束时
+    # 内层 withAction 会因 actionBusy 互斥直接 return，孤儿列表不会刷新
+    assert "async function renderHistoryOrphans()" in source
+    assert (
+        'await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });'
+        in source
+    )
+    assert "rerender: () => renderHistoryOrphans().catch" in source
     assert "transition: all" not in style
     assert ".tweet-card:hover" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
     assert ".groups-layout > * { min-width: 0; }" in style
-    assert 'id="actionStatus"' in index
+    assert 'id="noticeStack"' in index
+    assert "actionStatusDismissed" not in source
+    assert ".feedback-close" in style
     assert 'aria-live="polite"' in index
+
+
+def test_dashboard_notice_stack_stacks_and_auto_dismisses():
+    """顶部通知栈：多条通知垂直排列不重叠；结果提示停留 NOTICE_TTL 后自动移除，
+    进行中提示不挂计时、跟随动作生命周期。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="noticeStack"' in index
+    # 固定 + flex column：多条通知按加入顺序垂直排列，不可能互相重叠
+    stack = style.split(".notice-stack {", 1)[1].split("}", 1)[0]
+    assert "position: fixed;" in stack
+    assert "display: flex;" in stack
+    assert "flex-direction: column;" in stack
+    assert "gap:" in stack
+    # 所有提示共用一个入栈出口，各自计时自动消失
+    assert "const NOTICE_TTL = 4000;" in source
+    assert "function pushNotice(kind, text, ttl = NOTICE_TTL)" in source
+    assert "function dismissNotice(node)" in source
+    assert "node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);" in source
+    assert "clearTimeout(node._noticeTimer);" in source
+    # 进行中提示不挂自动消失计时（ttl=0），长动作的顶部指示不会中途消失
+    assert "if (!ttl) return;" in source
+    assert 'pushNotice("status", text, 0);' in source
+    assert "function syncStatusNotice()" in source
+    # 结果出现时原地改写进行中提示的节点，不做“移除 + 新增”
+    assert "function promoteStatusNotice(kind, text, ttl = NOTICE_TTL)" in source
+    assert "if (state.statusNotice && promoteStatusNotice(kind, msg)) return;" in source
+    # 旧的互斥横幅实现已彻底移除
+    assert "actionStatusDismissed" not in source
+    assert "renderBanner" not in source
+    assert "els.alert.hidden" not in source
+    assert "els.actionStatus.hidden" not in source
+    # 通知栈高度实测写入 CSS 变量，内容与历史工具栏据此避让
+    assert (
+        'document.documentElement.style.setProperty("--banner-offset", offset)'
+        in source
+    )
+    assert "padding-top: calc(24px + var(--banner-offset));" in style
+    assert "padding-top: calc(16px + var(--banner-offset));" in style
+    # 关闭按钮与“关闭后本动作内不再重建”机制（PR #83 承重点）在 JS 侧的存在
+    assert "onclick: () => dismissNotice(node)" in source
+    assert "state.statusNoticeClosed = false" in source
+    assert "state.statusNoticeClosed = true" in source
+    assert "if (state.statusNoticeClosed) return;" in source
+    # 子节点不再自带 role="status"（容器统一播报防重复），错误提示用 role="alert"
+    assert 'role: type === "error" ? "alert" : null' in source
+    assert 'role: "status"' not in source
+    assert 'if (kind === "error") node.setAttribute("role", "alert");' in source
+    # 旧静态横幅时代的 hidden 死规则已清理（.dialog[hidden] 仍在用，不在清理范围）
+    assert ".alert[hidden]" not in style
+    assert ".action-status[hidden]" not in style
+    # 长文案不再被裁成内部滚动条；overflow 负断言限定通知相关规则块（含每个选择器的
+    # 全部出现，如 .alert { 的暗色覆写块），避免误伤无关组件
+    notice_css = "".join(
+        part.split("}", 1)[0]
+        for selector in (".notice-stack {", ".action-status {", ".alert {")
+        for part in style.split(selector)[1:]
+    )
+    assert "max-height: 44px" not in style
+    assert "overflow" not in notice_css
+
+
+def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
+    """隔离区的无效推送目标/订阅源必须在编辑器可见、可显式移除，
+    且随保存按原文回写（否则保存任意字段都会静默清除它们）。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+
+    # 服务器隔离条目进 draft 并随 payload 回写（有效 + 无效合并）
+    assert (
+        "snap.invalid_push_targets = Array.isArray(group.invalid_push_targets) "
+        "? [...group.invalid_push_targets] : [];" in source
+    )
+    assert (
+        "snap.invalid_watch_users = Array.isArray(group.invalid_watch_users) "
+        "? [...group.invalid_watch_users] : [];" in source
+    )
+    assert "function buildGroupPayload(d)" in source
+    assert (
+        "push_targets: [...(d.push_targets || []), ...(d.invalid_push_targets || [])]"
+        in source
+    )
+    assert (
+        "watch_users: [...(d.watch_users || []), ...(d.invalid_watch_users || [])]"
+        in source
+    )
+    assert 'apiPost("web/groups/update", buildGroupPayload(d))' in source
+    # 无效条目 UI：可见 + 可显式移除
+    assert "function renderInvalidTargets(group, draft, probe)" in source
+    assert "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" in source
+    assert 'class: "chip chip-invalid"' in source
+    assert ".chip.chip-invalid" in style
+    # 查重覆盖有效 + 无效，且用实时 draft（免确认路径保存失败重试不重复追加）
+    assert (
+        "const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);"
+        in source
+    )
+    assert "disabled: !targets.length && !invalidTargets.length" in source
+    assert "(draft.invalid_watch_users || []).includes(v)" in source
+    # probe 结果缓存失效 + summary 徽章
+    assert "delete state.targetProbeResults[gid];" in source
+    assert "state.targetProbeResults = {};" in source
+    assert "连通性 ${probe.summary.valid}/${probe.summary.total}" in source
+
+
+def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
+    """击键与保存流水线的性能护栏：rAF 合帧、脏检查缓存、响应原位替换、
+    targets 区块局部重建、添加目标免确认。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    # 击键路径：updateDraft 不再每键全量重建列表；rAF 合帧 + WeakMap 缓存
+    assert "function scheduleGroupListRender()" in source
+    assert "draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);" in source
+    assert "const groupSnapJsonCache = new WeakMap();" in source
+    assert "d[field] = val; renderGroupList();" not in source
+    # 保存流水线：update 响应回带的最新分组原位替换，省一次 web/groups 拉取
+    assert (
+        "state.groups = state.groups.map(g => "
+        "(g.group_id === res.group.group_id ? res.group : g));" in source
+    )
+    # 添加推送目标免确认（纯增量可逆）；旧确认文案已移除（订阅源添加的保留）
+    assert 'saveGroup(group.group_id, "推送目标已添加")' in source
+    assert '"添加推送目标？"' not in source
+    assert 'confirmText: "添加并保存"' in source
+    # probe/黑名单只重建 targets 区块，不整棵重建编辑器
+    assert "function rerenderTargetsSection(gid)" in source
+    assert '"data-editor-section": "targets"' in source
+    assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
 
 
 def test_status_and_export_render_list_group():

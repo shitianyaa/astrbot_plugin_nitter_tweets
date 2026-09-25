@@ -19,6 +19,7 @@ const state = {
   historyStatus: "",
   historyOffset: 0, seenGroupId: "",
   pendingAction: null, lastFocusedElement: null, lastUpdated: "",
+  statusNotice: null, statusNoticeClosed: false, bannerOffset: "",
 };
 
 const els = {};
@@ -26,7 +27,7 @@ const els = {};
 function initEls() {
   const ids = [
     "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn",
-    "railSchedulerStatus","railScheduleStatus","railTargetStatus","alert","actionStatus","toastContainer",
+    "railSchedulerStatus","railScheduleStatus","railTargetStatus","noticeStack","toastContainer",
     "overviewView","groupsView","historyView","mirrorView","configView",
     "createGroupBtn","groupList","groupEditor",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
@@ -48,6 +49,7 @@ function initStickyOffsets() {
     document.documentElement.style.setProperty("--topheader-height", `${height}px`);
   };
   sync();
+  window.addEventListener("resize", syncBannerOffset);
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(sync).observe(header);
   } else {
@@ -142,13 +144,125 @@ async function apiPost(endpoint, body) {
 /* --------------------------------------------------------------------------
    Feedback
    -------------------------------------------------------------------------- */
-function showAlert(msg, type = "success") {
-  if (!els.alert) return;
-  els.alert.className = `alert ${type}`;
-  els.alert.textContent = msg;
-  els.alert.hidden = false;
+/* 顶部通知栈：所有提示都进同一个栈，垂直排列，互不重叠。
+   结果提示停留 NOTICE_TTL 后自动移除；进行中提示不挂计时，跟随动作生命周期。 */
+const NOTICE_TTL = 4000;
+const NOTICE_MAX = 4;
+const NOTICE_CLASS = {
+  status: "action-status",
+  success: "alert success",
+  warn: "alert warn",
+  error: "alert error",
+};
+
+function noticeKey(kind, text) { return `${kind}\u0000${text}`; }
+
+function armNoticeTimer(node, ttl) {
+  if (node._noticeTimer) { clearTimeout(node._noticeTimer); node._noticeTimer = null; }
+  if (!ttl) return;   // ttl=0：生命周期驱动的通知（进行中提示），不挂自动消失计时
+  node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);
 }
-function hideAlert() { if (els.alert) { els.alert.hidden = true; els.alert.textContent = ""; } }
+
+function pushNotice(kind, text, ttl = NOTICE_TTL) {
+  if (!els.noticeStack) return null;
+  const type = NOTICE_CLASS[kind] ? kind : "success";
+  // 同一条提示重复出现时只刷新停留时长，不叠加重复项
+  const key = noticeKey(type, text);
+  const dup = Array.from(els.noticeStack.children).find(n => n.dataset.key === key);
+  if (dup) { armNoticeTimer(dup, ttl); return dup; }
+
+  const node = h("div", {
+    class: NOTICE_CLASS[type], role: type === "error" ? "alert" : null, dataset: { key, kind: type },
+  }, [
+    h("span", { class: "feedback-message", text }),
+    h("button", {
+      class: "feedback-close", type: "button", title: "关闭", "aria-label": "关闭提示",
+      onclick: () => dismissNotice(node), text: "×",
+    }),
+  ]);
+  els.noticeStack.appendChild(node);
+  while (els.noticeStack.children.length > NOTICE_MAX) {
+    dismissNotice(els.noticeStack.firstElementChild);
+  }
+  armNoticeTimer(node, ttl);
+  syncBannerOffset();
+  return node;
+}
+
+function dismissNotice(node) {
+  if (!node) return;
+  if (node._noticeTimer) { clearTimeout(node._noticeTimer); node._noticeTimer = null; }
+  node.remove();
+  if (node === state.statusNotice) {
+    // 手动关闭或到点消失后，本次动作内不再重建
+    state.statusNotice = null;
+    state.statusNoticeClosed = true;
+  }
+  syncBannerOffset();
+}
+
+function clearNotices(kinds) {
+  if (!els.noticeStack) return;
+  const wanted = new Set(kinds);
+  Array.from(els.noticeStack.children)
+    .filter(n => wanted.has(n.dataset.kind))
+    .forEach(dismissNotice);
+}
+
+/* 进行中提示跟随动作生命周期：actionBusy 上升时创建，动作结束时移除或被结果
+   原地改写；不挂自动消失计时，长动作的顶部指示不会中途消失 */
+function syncStatusNotice() {
+  const text = state.actionBusy ? (state.busyLabel || "正在加载…") : "";
+  if (!text) {
+    if (state.statusNotice) dismissNotice(state.statusNotice);
+    state.statusNoticeClosed = false;
+    return;
+  }
+  if (state.statusNotice) {
+    const message = state.statusNotice.querySelector(".feedback-message");
+    if (message && message.textContent !== text) message.textContent = text;
+    state.statusNotice.dataset.key = noticeKey("status", text);
+    syncBannerOffset();
+    return;
+  }
+  if (state.statusNoticeClosed) return;
+  state.statusNotice = pushNotice("status", text, 0);
+}
+
+/* 通知栈高度随条数与换行变化，用实测高度驱动内容预留与历史工具栏吸顶偏移 */
+function syncBannerOffset() {
+  const height = els.noticeStack ? Math.ceil(els.noticeStack.getBoundingClientRect().height) : 0;
+  const offset = height ? `${height + 8}px` : "0px";
+  if (state.bannerOffset === offset) return;
+  state.bannerOffset = offset;
+  document.documentElement.style.setProperty("--banner-offset", offset);
+}
+/* 结果提示出现时，直接把进行中提示原地改写成结果，避免“移除 + 新增”两次跳动 */
+function promoteStatusNotice(kind, text, ttl = NOTICE_TTL) {
+  const node = state.statusNotice;
+  const message = node && node.querySelector(".feedback-message");
+  if (!message) return null;
+  node.className = NOTICE_CLASS[kind];
+  if (kind === "error") node.setAttribute("role", "alert");
+  else node.removeAttribute("role");
+  node.dataset.kind = kind;
+  node.dataset.key = noticeKey(kind, text);
+  message.textContent = text;
+  armNoticeTimer(node, ttl);
+  state.statusNotice = null;
+  state.statusNoticeClosed = true;   // 本次动作内不再重建进行中提示
+  syncBannerOffset();
+  return node;
+}
+
+function showAlert(msg, type = "success") {
+  const kind = NOTICE_CLASS[type] ? type : "success";
+  if (state.statusNotice && promoteStatusNotice(kind, msg)) return;
+  pushNotice(kind, msg);
+}
+function hideAlert() {
+  clearNotices(["success", "warn", "error"]);
+}
 function showToast(msg) {
   if (!els.toastContainer) return;
   const t = h("div", { class: "toast", text: msg });
@@ -286,11 +400,7 @@ function setBusy(isBusy) {
    els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn].forEach(b => { if (b) b.disabled = busy; });
   document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
   document.body.classList.toggle("ui-busy", busy);
-  if (els.actionStatus) {
-    const showActionStatus = state.actionBusy;
-    els.actionStatus.hidden = !showActionStatus;
-    els.actionStatus.textContent = showActionStatus ? (state.busyLabel || "正在加载…") : "";
-  }
+  syncStatusNotice();
 }
 
 /* --------------------------------------------------------------------------
@@ -344,7 +454,7 @@ async function withAction(action, successText, { reload = true, rerender = null 
       setBusy(true);
       const ok = await reloadAll();
       if (!ok) return res;
-    } else if (rerender) { setBusy(false); rerender(); }
+    } else if (rerender) await rerender();
     showAlert(successText || res?.message || "操作完成");
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
@@ -376,7 +486,7 @@ async function reloadAll(options = {}) {
     if (pv.status === "fulfilled") state.providers = pv.value.providers || [];
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
-    if (options.preserveDrafts === false) { state.groupDrafts = {}; state.configDraft = {}; }
+    if (options.preserveDrafts === false) { state.groupDrafts = {}; state.configDraft = {}; state.targetProbeResults = {}; }
     syncGroupDrafts();
     try {
       state.history = await apiGet("web/history", {
@@ -426,7 +536,21 @@ function snapshotGroup(group) {
     } else { snap[f] = group[f] || ""; }
   }
   snap.group_id = group.group_id; snap.group_type = group.group_type;
+  // 服务器隔离的无效条目：随 draft 一起回写（update_group 原样落盘），
+  // 否则保存任意字段都会把配置里的无效条目静默清除
+  snap.invalid_push_targets = Array.isArray(group.invalid_push_targets) ? [...group.invalid_push_targets] : [];
+  snap.invalid_watch_users = Array.isArray(group.invalid_watch_users) ? [...group.invalid_watch_users] : [];
   return snap;
+}
+
+/* 保存 payload：无效条目按原文随有效列表一起回写（update_group 不做 UMO 校验、
+   原样落盘），落实"完整重建、保留畸形条目"的写回语义；显式删除 = 从列表移除 */
+function buildGroupPayload(d) {
+  return {
+    ...d,
+    push_targets: [...(d.push_targets || []), ...(d.invalid_push_targets || [])],
+    watch_users: [...(d.watch_users || []), ...(d.invalid_watch_users || [])],
+  };
 }
 
 function syncGroupDrafts() {
@@ -435,16 +559,50 @@ function syncGroupDrafts() {
   }
 }
 
+/* 脏检查缓存：服务器快照 JSON 按分组对象身份缓存（state.groups 整体换新时
+   自动失效）；draft JSON 按修订号缓存。元数据放 WeakMap 而非 draft 属性，
+   保证 stringify 结果与 POST payload 形状不变。 */
+const groupSnapJsonCache = new WeakMap();
+const draftRevCache = new WeakMap();
+const draftJsonCache = new WeakMap();
+
+function draftJson(d) {
+  const rev = draftRevCache.get(d) || 0;
+  const cached = draftJsonCache.get(d);
+  if (cached && cached.rev === rev) return cached.json;
+  const json = JSON.stringify(d);
+  draftJsonCache.set(d, { rev, json });
+  return json;
+}
+
 function isGroupDirty(groupId) {
   const g = state.groups.find(x => x.group_id === groupId);
   const d = state.groupDrafts[groupId];
   if (!g || !d) return false;
-  return JSON.stringify(snapshotGroup(g)) !== JSON.stringify(d);
+  let snapJson = groupSnapJsonCache.get(g);
+  if (snapJson === undefined) {
+    snapJson = JSON.stringify(snapshotGroup(g));
+    groupSnapJsonCache.set(g, snapJson);
+  }
+  return snapJson !== draftJson(d);
+}
+
+let groupListRenderPending = false;
+/* 每键只调度一次列表重渲（rAF 合帧），列表重建成本不再随击键线性叠加 */
+function scheduleGroupListRender() {
+  if (groupListRenderPending) return;
+  groupListRenderPending = true;
+  requestAnimationFrame(() => {
+    groupListRenderPending = false;
+    renderGroupList();
+  });
 }
 
 function updateDraft(groupId, field, val) {
   const d = state.groupDrafts[groupId]; if (!d) return;
-  d[field] = val; renderGroupList();
+  d[field] = val;
+  draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);
+  scheduleGroupListRender();
 }
 
 /* --------------------------------------------------------------------------
@@ -551,12 +709,22 @@ function renderGroupEditor() {
 
   // Subscription entities section
   const entities = renderEntities(g, d);
-  // Push targets section
-  const targets = renderTargets(g, d);
+  // Push targets section（data-editor-section 供 rerenderTargetsSection 局部重建）
+  const targets = h("div", { "data-editor-section": "targets" }, renderTargets(g, d));
 
   els.groupEditor.replaceChildren(h("div", { class: "panel" }, [
     head, base, entities, targets,
   ]));
+}
+
+/* targets 区块局部重建：probe/黑名单等只影响该区块的操作不必整棵重建编辑器 */
+function rerenderTargetsSection(gid) {
+  if (gid !== state.selectedGroupId) return;   // 请求在途时用户已切换分组，跳过过期重渲
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = g ? (state.groupDrafts[g.group_id] || snapshotGroup(g)) : null;
+  const section = els.groupEditor?.querySelector('[data-editor-section="targets"]');
+  if (!g || !d || !section) { renderGroupEditor(); return; }
+  section.replaceChildren(renderTargets(g, d));
 }
 
 function toggleRow(checked, label, onChange) {
@@ -569,9 +737,10 @@ function toggleRow(checked, label, onChange) {
 
 function renderEntityChips(container, group, draft) {
   const isTag = group.group_type === "tag";
-  const icon = isTag ? "hash" : group.group_type === "list" ? "rss" : "user";
-  const field = isTag ? "watch_queries" : group.group_type === "list" ? "watch_lists" : "watch_users";
-  container.replaceChildren(...(draft[field] || []).map((item, idx) => {
+  const isList = group.group_type === "list";
+  const icon = isTag ? "hash" : isList ? "rss" : "user";
+  const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
+  const nodes = (draft[field] || []).map((item, idx) => {
     const val = typeof item === "object" ? item.query : item;
     return h("span", { class: "chip mono" }, [
       iconEl(icon, 12), val,
@@ -591,7 +760,32 @@ function renderEntityChips(container, group, draft) {
         });
       }}),
     ]);
-  }));
+  });
+  // 无效订阅源（仅博主分组的 watch_users 有隔离区）：可见、可显式移除
+  if (!isTag && !isList) {
+    (draft.invalid_watch_users || []).forEach((val, idx) => {
+      nodes.push(h("span", { class: "chip chip-invalid mono", title: val }, [
+        iconEl(icon, 12), val,
+        h("span", { class: "badge badge-danger", text: "无效" }),
+        h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${val}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
+          if (state.actionBusy) return;
+          confirmGroupMutation(group.group_id, {
+            title: "移除无效订阅源？",
+            desc: `将从配置中移除 ${val}，确认后立即保存并刷新。`,
+            confirmText: "移除并保存",
+            danger: true,
+            successText: "无效订阅源已移除",
+            mutate: () => {
+              const next = [...(state.groupDrafts[group.group_id]?.invalid_watch_users || [])];
+              next.splice(idx, 1);
+              updateDraft(group.group_id, "invalid_watch_users", next);
+            },
+          });
+        }}),
+      ]));
+    });
+  }
+  container.replaceChildren(...nodes);
 }
 
 function renderEntities(group, draft) {
@@ -620,7 +814,8 @@ function renderEntities(group, draft) {
         else {
           const inp = document.getElementById("newEntityInput");
           const v = inp?.value.trim(); if (!v) return;
-          const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v);
+          const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v)
+            || (draft.invalid_watch_users || []).includes(v);
           if (existing) { showToast("订阅源已存在"); return; }
           confirmGroupMutation(group.group_id, {
             title: "添加订阅源？",
@@ -678,12 +873,20 @@ function renderBulkSubscriptions(group) {
 
 function renderTargets(group, draft) {
   const targets = draft.push_targets || [];
+  const invalidTargets = draft.invalid_push_targets || [];
   const probe = state.targetProbeResults[group.group_id];
 
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "12px" } }, [
     h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, [
       h("span", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [iconEl("send", 16), "推送目标 (UMO)"]),
-      h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length, onClick: () => probeTargets(group.group_id) }),
+      h("span", { style: { display: "flex", alignItems: "center", gap: "6px" } }, [
+        probe?.summary ? h("span", {
+          class: `badge ${probe.summary.invalid ? "badge-warn" : "badge-ok"}`,
+          title: `平台在线 ${probe.summary.platform_found}/${probe.summary.total}，支持合并转发 ${probe.summary.supports_merged_forward}/${probe.summary.total}`,
+          text: `连通性 ${probe.summary.valid}/${probe.summary.total}`,
+        }) : null,
+        h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length && !invalidTargets.length, onClick: () => probeTargets(group.group_id) }),
+      ]),
     ]),
     h("div", { class: "chip-list" },
       targets.map((t, idx) => {
@@ -711,26 +914,53 @@ function renderTargets(group, draft) {
         ]);
       })
     ),
+    renderInvalidTargets(group, draft, probe),
     h("div", { class: "input-action-row target-input-row", style: { display: "flex", gap: "6px" } }, [
       h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456", style: { width: "320px" } }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
         const v = inp?.value.trim(); if (!v) return;
         if (state.actionBusy) return;
-        if (targets.includes(v)) { showToast("推送目标已存在"); return; }
-        confirmGroupMutation(group.group_id, {
-          title: "添加推送目标？",
-          desc: `将添加 ${v}，确认后立即保存并刷新。`,
-          confirmText: "添加并保存",
-          successText: "推送目标已添加",
-          mutate: () => {
-            const current = state.groupDrafts[group.group_id]?.push_targets || [];
-            updateDraft(group.group_id, "push_targets", [...current, v]);
-          },
-        });
+        // 免确认路径用实时 draft 查重，避免保存失败重试时重复追加
+        const live = state.groupDrafts[group.group_id] || draft;
+        const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);
+        if (known.has(v)) { showToast("推送目标已存在"); return; }
+        // 纯增量可逆操作，不走确认弹窗（移除/删除类仍保留确认）
+        updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
+        saveGroup(group.group_id, "推送目标已添加");
       }}),
     ]),
     renderTargetBlacklist(group, draft),
+  ]);
+}
+
+/* 无效推送目标：后端隔离保存的条目，在此可见、可显式移除；保存时按原文回写保留 */
+function renderInvalidTargets(group, draft, probe) {
+  const invalid = draft.invalid_push_targets || [];
+  if (!invalid.length) return null;
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, [
+    h("span", { style: { fontSize: "12px", color: "var(--text-muted)" }, text: "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" }),
+    h("div", { class: "chip-list" },
+      invalid.map((t, idx) => h("span", { class: "chip chip-invalid", title: t }, [
+        h("span", { text: t }),
+        probe?.targets?.find(x => x.umo === t.trim()) ? h("span", { class: "badge badge-danger", text: "无效" }) : null,
+        h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${t}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
+          if (state.actionBusy) return;
+          confirmGroupMutation(group.group_id, {
+            title: "移除无效推送目标？",
+            desc: `将从配置中移除 ${t}，确认后立即保存并刷新。`,
+            confirmText: "移除并保存",
+            danger: true,
+            successText: "无效推送目标已移除",
+            mutate: () => {
+              const next = [...(state.groupDrafts[group.group_id]?.invalid_push_targets || [])];
+              next.splice(idx, 1);
+              updateDraft(group.group_id, "invalid_push_targets", next);
+            },
+          });
+        }}),
+      ]))
+    ),
   ]);
 }
 
@@ -757,7 +987,7 @@ function renderTargetBlacklist(group, draft) {
       return { value: t, text: id ? `${label} · ${replayTargetShortId(id)}` : label };
     }),
   });
-  select.onChange(v => { state.targetBlacklistTarget = v; renderGroupEditor(); });
+  select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(group.group_id); });
   const input = h("input", { type: "text", placeholder: "用户名或 @用户名", style: { width: "200px" } });
   box.append(
     h("div", { class: "input-action-row blacklist-input-row", style: { display: "flex", gap: "6px", alignItems: "center" } }, [
@@ -766,35 +996,35 @@ function renderTargetBlacklist(group, draft) {
         const v = input.value.trim();
         if (!v) return;
         if (users.includes(v.replace(/^@+/, ""))) { showToast("用户名已在黑名单"); return; }
-        confirmTargetBlacklist(selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
+        confirmTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
       }}),
     ]),
     h("div", { class: "chip-list" }, users.length
       ? users.map(u => h("span", { class: "chip mono" }, [
           `@${u}`,
-          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
+          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(group.group_id, selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
         ]))
       : [h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "黑名单为空" })]),
   );
   return box;
 }
 
-function saveTargetBlacklist(target, users) {
+function saveTargetBlacklist(gid, target, users) {
   withAction(async () => {
     await apiPost("web/target-blacklists/update", { target_umo: target, blocked_users: users });
     const rest = state.targetBlacklists.filter(r => r.target_umo !== target);
     if (users.length) rest.push({ target_umo: target, blocked_users: [...users] });
     state.targetBlacklists = rest.sort((a, b) => a.target_umo.localeCompare(b.target_umo));
-  }, "黑名单已更新", { reload: false, rerender: () => renderGroupEditor() });
+  }, "黑名单已更新", { reload: false, rerender: () => rerenderTargetsSection(gid) });
 }
 
-function confirmTargetBlacklist(target, users, title, confirmText, danger) {
+function confirmTargetBlacklist(gid, target, users, title, confirmText, danger) {
   openConfirm({
     title,
     desc: "确认后立即保存并刷新黑名单。",
     confirmText,
     danger,
-    action: () => saveTargetBlacklist(target, users),
+    action: () => saveTargetBlacklist(gid, target, users),
   });
 }
 
@@ -885,9 +1115,21 @@ function createGroup() {
 async function saveGroup(gid, successText = "分组已保存") {
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
-    await apiPost("web/groups/update", d);
+    const res = await apiPost("web/groups/update", buildGroupPayload(d));
     delete state.groupDrafts[gid];
-    await reloadGroupState();
+    delete state.targetProbeResults[gid];
+    if (res?.group) {
+      // update 响应自带最新分组（与 web/groups 同一序列化），原位替换省一次拉取
+      state.groups = state.groups.map(g => (g.group_id === res.group.group_id ? res.group : g));
+      try {
+        state.overview = await apiGet("web/overview");
+      } catch (err) {
+        await reloadGroupState();
+      }
+    } else {
+      await reloadGroupState();
+    }
+    syncGroupDrafts();
   }, successText, { reload: false, rerender: () => renderAll() });
 }
 
@@ -898,6 +1140,7 @@ function confirmDeleteGroup(gid) {
     danger: true,
     action: () => withAction(async () => {
       await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
+      delete state.targetProbeResults[gid];
       state.selectedGroupId = "";
     }, "分组已删除"),
   });
@@ -906,7 +1149,7 @@ function confirmDeleteGroup(gid) {
 async function probeTargets(gid) {
   await withAction(async () => {
     const res = await apiPost("web/targets/probe", { group_id: gid });
-    state.targetProbeResults[gid] = res; renderGroupEditor();
+    state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);
   }, "探测完成", { reload: false });
 }
 ;// views.js — Overview, Tweet-feed History, Probe & Danger Zone
@@ -1143,22 +1386,26 @@ async function loadHistoryPage(delta) {
   }, "翻页完成", { reload: false });
 }
 
+/* 孤儿列表的纯查询渲染：检测按钮经 detectHistoryOrphans 走 busy 仪式，
+   删除残留后的 rerender 直接调用本函数（外层动作未结束时 withAction 会空转） */
+async function renderHistoryOrphans() {
+  const res = await apiGet("web/history/orphans");
+  const ops = res.orphans || [];
+  if (!ops.length) {
+    els.historyOrphanResult.replaceChildren(h("div", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }));
+    return;
+  }
+  els.historyOrphanResult.replaceChildren(h("div", { class: "panel" }, [
+    h("div", { class: "panel-head" }, [h("h3", { text: `废弃分组残留 (${ops.length})` })]),
+    h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
+      `${o.group_id} (${o.record_count}条)`,
+      h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
+    ]))),
+  ]));
+}
+
 async function detectHistoryOrphans() {
-  await withAction(async () => {
-    const res = await apiGet("web/history/orphans");
-    const ops = res.orphans || [];
-    if (!ops.length) {
-      els.historyOrphanResult.replaceChildren(h("div", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }));
-      return;
-    }
-    els.historyOrphanResult.replaceChildren(h("div", { class: "panel" }, [
-      h("div", { class: "panel-head" }, [h("h3", { text: `废弃分组残留 (${ops.length})` })]),
-      h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
-        `${o.group_id} (${o.record_count}条)`,
-        h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
-      ]))),
-    ]));
-  }, "检测完成", { reload: false });
+  await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });
 }
 
 function confirmDeleteOrphan(gid) {
@@ -1166,7 +1413,7 @@ function confirmDeleteOrphan(gid) {
     title: `删除废弃分组 [${gid}] 历史？`,
     desc: "该分组已不存在，删除后相关记录彻底清除。",
     danger: true,
-    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: detectHistoryOrphans }),
+    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: () => renderHistoryOrphans().catch(err => showAlert(err.message || "孤儿列表刷新失败", "warn")) }),
   });
 }
 
@@ -1251,7 +1498,7 @@ async function probeMirror(e) {
     limit: parseInt(els.mirrorLimit.value, 10) || 5,
     instance: els.mirrorInstance.value.trim() || undefined,
   };
-  state.actionBusy = true; setBusy(true);
+  state.actionBusy = true; setBusy(true); hideAlert();
   els.mirrorResult.replaceChildren(h("div", { class: "panel", text: "探测中..." }));
   try {
     const res = await apiPost("web/mirror/probe", payload);
@@ -1597,6 +1844,7 @@ function updateHeader() {
 
 function switchView(v) {
   if (!v || state.view === v) return;
+  hideAlert();
   state.view = v;
   els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === v));
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
