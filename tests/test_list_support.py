@@ -719,6 +719,46 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "overflow" not in notice_css
 
 
+def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
+    """隔离区的无效推送目标/订阅源必须在编辑器可见、可显式移除，
+    且随保存按原文回写（否则保存任意字段都会静默清除它们）。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+
+    # 服务器隔离条目进 draft 并随 payload 回写（有效 + 无效合并）
+    assert (
+        "snap.invalid_push_targets = Array.isArray(group.invalid_push_targets) "
+        "? [...group.invalid_push_targets] : [];" in source
+    )
+    assert (
+        "snap.invalid_watch_users = Array.isArray(group.invalid_watch_users) "
+        "? [...group.invalid_watch_users] : [];" in source
+    )
+    assert "function buildGroupPayload(d)" in source
+    assert (
+        "push_targets: [...(d.push_targets || []), ...(d.invalid_push_targets || [])]"
+        in source
+    )
+    assert (
+        "watch_users: [...(d.watch_users || []), ...(d.invalid_watch_users || [])]"
+        in source
+    )
+    assert 'apiPost("web/groups/update", buildGroupPayload(d))' in source
+    # 无效条目 UI：可见 + 可显式移除
+    assert "function renderInvalidTargets(group, draft, probe)" in source
+    assert "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" in source
+    assert 'class: "chip chip-invalid"' in source
+    assert ".chip.chip-invalid" in style
+    # 查重覆盖有效 + 无效；探测按钮对纯无效分组可用
+    assert "const known = new Set([...targets, ...invalidTargets]);" in source
+    assert "disabled: !targets.length && !invalidTargets.length" in source
+    assert "(draft.invalid_watch_users || []).includes(v)" in source
+    # probe 结果缓存失效 + summary 徽章
+    assert "delete state.targetProbeResults[gid];" in source
+    assert "state.targetProbeResults = {};" in source
+    assert "连通性 ${probe.summary.valid}/${probe.summary.total}" in source
+
+
 def test_status_and_export_render_list_group():
     config = {
         "tweet_groups": [

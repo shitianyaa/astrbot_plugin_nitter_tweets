@@ -110,7 +110,12 @@ def set_import_group_users(
             continue
         if normalize_group_id(parsed.group_id) != target_group_id:
             continue
-        raw_group["watch_users"] = users
+        raw_group["watch_users"] = [
+            *users,
+            # 保留后端隔离的无效条目原文：导入/移除只应改动有效列表，
+            # 静默清除会让用户失去修复入口
+            *parsed.users_info.invalid_entries,
+        ]
         config_set(config, "tweet_groups", raw_groups)
         return
 

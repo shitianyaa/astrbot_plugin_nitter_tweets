@@ -486,7 +486,7 @@ async function reloadAll(options = {}) {
     if (pv.status === "fulfilled") state.providers = pv.value.providers || [];
     if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId))
       state.selectedGroupId = state.groups[0]?.group_id || "";
-    if (options.preserveDrafts === false) { state.groupDrafts = {}; state.configDraft = {}; }
+    if (options.preserveDrafts === false) { state.groupDrafts = {}; state.configDraft = {}; state.targetProbeResults = {}; }
     syncGroupDrafts();
     try {
       state.history = await apiGet("web/history", {
@@ -536,7 +536,21 @@ function snapshotGroup(group) {
     } else { snap[f] = group[f] || ""; }
   }
   snap.group_id = group.group_id; snap.group_type = group.group_type;
+  // 服务器隔离的无效条目：随 draft 一起回写（update_group 原样落盘），
+  // 否则保存任意字段都会把配置里的无效条目静默清除
+  snap.invalid_push_targets = Array.isArray(group.invalid_push_targets) ? [...group.invalid_push_targets] : [];
+  snap.invalid_watch_users = Array.isArray(group.invalid_watch_users) ? [...group.invalid_watch_users] : [];
   return snap;
+}
+
+/* 保存 payload：无效条目按原文随有效列表一起回写（update_group 不做 UMO 校验、
+   原样落盘），落实"完整重建、保留畸形条目"的写回语义；显式删除 = 从列表移除 */
+function buildGroupPayload(d) {
+  return {
+    ...d,
+    push_targets: [...(d.push_targets || []), ...(d.invalid_push_targets || [])],
+    watch_users: [...(d.watch_users || []), ...(d.invalid_watch_users || [])],
+  };
 }
 
 function syncGroupDrafts() {
@@ -679,9 +693,10 @@ function toggleRow(checked, label, onChange) {
 
 function renderEntityChips(container, group, draft) {
   const isTag = group.group_type === "tag";
-  const icon = isTag ? "hash" : group.group_type === "list" ? "rss" : "user";
-  const field = isTag ? "watch_queries" : group.group_type === "list" ? "watch_lists" : "watch_users";
-  container.replaceChildren(...(draft[field] || []).map((item, idx) => {
+  const isList = group.group_type === "list";
+  const icon = isTag ? "hash" : isList ? "rss" : "user";
+  const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
+  const nodes = (draft[field] || []).map((item, idx) => {
     const val = typeof item === "object" ? item.query : item;
     return h("span", { class: "chip mono" }, [
       iconEl(icon, 12), val,
@@ -701,7 +716,32 @@ function renderEntityChips(container, group, draft) {
         });
       }}),
     ]);
-  }));
+  });
+  // 无效订阅源（仅博主分组的 watch_users 有隔离区）：可见、可显式移除
+  if (!isTag && !isList) {
+    (draft.invalid_watch_users || []).forEach((val, idx) => {
+      nodes.push(h("span", { class: "chip chip-invalid mono", title: val }, [
+        iconEl(icon, 12), val,
+        h("span", { class: "badge badge-danger", text: "无效" }),
+        h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${val}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
+          if (state.actionBusy) return;
+          confirmGroupMutation(group.group_id, {
+            title: "移除无效订阅源？",
+            desc: `将从配置中移除 ${val}，确认后立即保存并刷新。`,
+            confirmText: "移除并保存",
+            danger: true,
+            successText: "无效订阅源已移除",
+            mutate: () => {
+              const next = [...(state.groupDrafts[group.group_id]?.invalid_watch_users || [])];
+              next.splice(idx, 1);
+              updateDraft(group.group_id, "invalid_watch_users", next);
+            },
+          });
+        }}),
+      ]));
+    });
+  }
+  container.replaceChildren(...nodes);
 }
 
 function renderEntities(group, draft) {
@@ -730,7 +770,8 @@ function renderEntities(group, draft) {
         else {
           const inp = document.getElementById("newEntityInput");
           const v = inp?.value.trim(); if (!v) return;
-          const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v);
+          const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v)
+            || (draft.invalid_watch_users || []).includes(v);
           if (existing) { showToast("订阅源已存在"); return; }
           confirmGroupMutation(group.group_id, {
             title: "添加订阅源？",
@@ -788,12 +829,20 @@ function renderBulkSubscriptions(group) {
 
 function renderTargets(group, draft) {
   const targets = draft.push_targets || [];
+  const invalidTargets = draft.invalid_push_targets || [];
   const probe = state.targetProbeResults[group.group_id];
 
   return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", borderTop: "1px solid var(--border)", paddingTop: "12px" } }, [
     h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } }, [
       h("span", { style: { display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, fontSize: "13px", color: "var(--text-muted)" } }, [iconEl("send", 16), "推送目标 (UMO)"]),
-      h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length, onClick: () => probeTargets(group.group_id) }),
+      h("span", { style: { display: "flex", alignItems: "center", gap: "6px" } }, [
+        probe?.summary ? h("span", {
+          class: `badge ${probe.summary.invalid ? "badge-warn" : "badge-ok"}`,
+          title: `平台在线 ${probe.summary.platform_found}/${probe.summary.total}，支持合并转发 ${probe.summary.supports_merged_forward}/${probe.summary.total}`,
+          text: `连通性 ${probe.summary.valid}/${probe.summary.total}`,
+        }) : null,
+        h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length && !invalidTargets.length, onClick: () => probeTargets(group.group_id) }),
+      ]),
     ]),
     h("div", { class: "chip-list" },
       targets.map((t, idx) => {
@@ -821,13 +870,15 @@ function renderTargets(group, draft) {
         ]);
       })
     ),
+    renderInvalidTargets(group, draft, probe),
     h("div", { class: "input-action-row target-input-row", style: { display: "flex", gap: "6px" } }, [
       h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456", style: { width: "320px" } }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
         const v = inp?.value.trim(); if (!v) return;
         if (state.actionBusy) return;
-        if (targets.includes(v)) { showToast("推送目标已存在"); return; }
+        const known = new Set([...targets, ...invalidTargets]);
+        if (known.has(v)) { showToast("推送目标已存在"); return; }
         confirmGroupMutation(group.group_id, {
           title: "添加推送目标？",
           desc: `将添加 ${v}，确认后立即保存并刷新。`,
@@ -841,6 +892,36 @@ function renderTargets(group, draft) {
       }}),
     ]),
     renderTargetBlacklist(group, draft),
+  ]);
+}
+
+/* 无效推送目标：后端隔离保存的条目，在此可见、可显式移除；保存时按原文回写保留 */
+function renderInvalidTargets(group, draft, probe) {
+  const invalid = draft.invalid_push_targets || [];
+  if (!invalid.length) return null;
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, [
+    h("span", { style: { fontSize: "12px", color: "var(--text-muted)" }, text: "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" }),
+    h("div", { class: "chip-list" },
+      invalid.map((t, idx) => h("span", { class: "chip chip-invalid", title: t }, [
+        h("span", { text: t }),
+        probe?.targets?.find(x => x.umo === t.trim()) ? h("span", { class: "badge badge-danger", text: "无效" }) : null,
+        h("button", { class: "btn-icon", title: "移除", "aria-label": `移除 ${t}`, style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => {
+          if (state.actionBusy) return;
+          confirmGroupMutation(group.group_id, {
+            title: "移除无效推送目标？",
+            desc: `将从配置中移除 ${t}，确认后立即保存并刷新。`,
+            confirmText: "移除并保存",
+            danger: true,
+            successText: "无效推送目标已移除",
+            mutate: () => {
+              const next = [...(state.groupDrafts[group.group_id]?.invalid_push_targets || [])];
+              next.splice(idx, 1);
+              updateDraft(group.group_id, "invalid_push_targets", next);
+            },
+          });
+        }}),
+      ]))
+    ),
   ]);
 }
 
@@ -995,8 +1076,9 @@ function createGroup() {
 async function saveGroup(gid, successText = "分组已保存") {
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
-    await apiPost("web/groups/update", d);
+    await apiPost("web/groups/update", buildGroupPayload(d));
     delete state.groupDrafts[gid];
+    delete state.targetProbeResults[gid];
     await reloadGroupState();
   }, successText, { reload: false, rerender: () => renderAll() });
 }
@@ -1008,6 +1090,7 @@ function confirmDeleteGroup(gid) {
     danger: true,
     action: () => withAction(async () => {
       await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
+      delete state.targetProbeResults[gid];
       state.selectedGroupId = "";
     }, "分组已删除"),
   });

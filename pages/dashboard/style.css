@@ -614,6 +614,8 @@ select { cursor: pointer; }
 .chip-action { cursor: pointer; transition: background var(--transition); }
 .chip-action:hover { background: var(--blue-soft); border-color: var(--blue-border); }
 .chip .btn-icon:hover:not(:disabled) { color: var(--red); background: var(--red-soft); }
+/* 无效条目（推送目标/订阅源）：后端隔离保存的原文，可显式移除 */
+.chip.chip-invalid { border-style: dashed; color: var(--text-muted); background: transparent; }
 
 /* ==========================================================================
    Overview
