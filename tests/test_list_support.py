@@ -688,9 +688,20 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     )
     assert "padding-top: calc(24px + var(--banner-offset));" in style
     assert "padding-top: calc(16px + var(--banner-offset));" in style
-    # 长文案不再被裁成内部滚动条
+    # 关闭按钮与“关闭后本动作内不再重建”机制（PR #83 承重点）在 JS 侧的存在
+    assert "onclick: () => dismissNotice(node)" in source
+    assert "state.statusNoticeClosed = false" in source
+    assert "state.statusNoticeClosed = true" in source
+    assert "if (state.statusNoticeClosed) return;" in source
+    # 长文案不再被裁成内部滚动条；overflow 负断言限定通知相关规则块（含每个选择器的
+    # 全部出现，如 .alert { 的暗色覆写块），避免误伤无关组件
+    notice_css = "".join(
+        part.split("}", 1)[0]
+        for selector in (".notice-stack {", ".action-status {", ".alert {")
+        for part in style.split(selector)[1:]
+    )
     assert "max-height: 44px" not in style
-    assert "overflow: auto;" not in style
+    assert "overflow" not in notice_css
 
 
 def test_status_and_export_render_list_group():
