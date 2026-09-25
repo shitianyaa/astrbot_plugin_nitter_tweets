@@ -638,6 +638,11 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     # rerender 分支不再提前解除 busy，结果提示仍原地改写进行中节点
     assert "} else if (rerender) rerender();" in source
     assert "setBusy(false); rerender();" not in source
+    # 删除废弃分组残留后的 rerender 直接走纯查询渲染：外层动作未结束时
+    # 内层 withAction 会因 actionBusy 互斥直接 return，孤儿列表不会刷新
+    assert "async function renderHistoryOrphans()" in source
+    assert 'await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });' in source
+    assert "rerender: () => renderHistoryOrphans().catch" in source
     assert "transition: all" not in style
     assert ".tweet-card:hover" in style
     assert "background: var(--blue-soft);" in style

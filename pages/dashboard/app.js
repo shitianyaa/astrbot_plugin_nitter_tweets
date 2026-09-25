@@ -1253,22 +1253,26 @@ async function loadHistoryPage(delta) {
   }, "翻页完成", { reload: false });
 }
 
+/* 孤儿列表的纯查询渲染：检测按钮经 detectHistoryOrphans 走 busy 仪式，
+   删除残留后的 rerender 直接调用本函数（外层动作未结束时 withAction 会空转） */
+async function renderHistoryOrphans() {
+  const res = await apiGet("web/history/orphans");
+  const ops = res.orphans || [];
+  if (!ops.length) {
+    els.historyOrphanResult.replaceChildren(h("div", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }));
+    return;
+  }
+  els.historyOrphanResult.replaceChildren(h("div", { class: "panel" }, [
+    h("div", { class: "panel-head" }, [h("h3", { text: `废弃分组残留 (${ops.length})` })]),
+    h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
+      `${o.group_id} (${o.record_count}条)`,
+      h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
+    ]))),
+  ]));
+}
+
 async function detectHistoryOrphans() {
-  await withAction(async () => {
-    const res = await apiGet("web/history/orphans");
-    const ops = res.orphans || [];
-    if (!ops.length) {
-      els.historyOrphanResult.replaceChildren(h("div", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }));
-      return;
-    }
-    els.historyOrphanResult.replaceChildren(h("div", { class: "panel" }, [
-      h("div", { class: "panel-head" }, [h("h3", { text: `废弃分组残留 (${ops.length})` })]),
-      h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
-        `${o.group_id} (${o.record_count}条)`,
-        h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
-      ]))),
-    ]));
-  }, "检测完成", { reload: false });
+  await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });
 }
 
 function confirmDeleteOrphan(gid) {
@@ -1276,7 +1280,7 @@ function confirmDeleteOrphan(gid) {
     title: `删除废弃分组 [${gid}] 历史？`,
     desc: "该分组已不存在，删除后相关记录彻底清除。",
     danger: true,
-    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: detectHistoryOrphans }),
+    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: () => renderHistoryOrphans().catch(err => showAlert(err.message || "孤儿列表刷新失败", "warn")) }),
   });
 }
 
