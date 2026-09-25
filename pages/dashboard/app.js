@@ -719,6 +719,7 @@ function renderGroupEditor() {
 
 /* targets 区块局部重建：probe/黑名单等只影响该区块的操作不必整棵重建编辑器 */
 function rerenderTargetsSection(gid) {
+  if (gid !== state.selectedGroupId) return;   // 请求在途时用户已切换分组，跳过过期重渲
   const g = state.groups.find(x => x.group_id === gid);
   const d = g ? (state.groupDrafts[g.group_id] || snapshotGroup(g)) : null;
   const section = els.groupEditor?.querySelector('[data-editor-section="targets"]');
