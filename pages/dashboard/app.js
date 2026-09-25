@@ -559,16 +559,50 @@ function syncGroupDrafts() {
   }
 }
 
+/* 脏检查缓存：服务器快照 JSON 按分组对象身份缓存（state.groups 整体换新时
+   自动失效）；draft JSON 按修订号缓存。元数据放 WeakMap 而非 draft 属性，
+   保证 stringify 结果与 POST payload 形状不变。 */
+const groupSnapJsonCache = new WeakMap();
+const draftRevCache = new WeakMap();
+const draftJsonCache = new WeakMap();
+
+function draftJson(d) {
+  const rev = draftRevCache.get(d) || 0;
+  const cached = draftJsonCache.get(d);
+  if (cached && cached.rev === rev) return cached.json;
+  const json = JSON.stringify(d);
+  draftJsonCache.set(d, { rev, json });
+  return json;
+}
+
 function isGroupDirty(groupId) {
   const g = state.groups.find(x => x.group_id === groupId);
   const d = state.groupDrafts[groupId];
   if (!g || !d) return false;
-  return JSON.stringify(snapshotGroup(g)) !== JSON.stringify(d);
+  let snapJson = groupSnapJsonCache.get(g);
+  if (snapJson === undefined) {
+    snapJson = JSON.stringify(snapshotGroup(g));
+    groupSnapJsonCache.set(g, snapJson);
+  }
+  return snapJson !== draftJson(d);
+}
+
+let groupListRenderPending = false;
+/* 每键只调度一次列表重渲（rAF 合帧），列表重建成本不再随击键线性叠加 */
+function scheduleGroupListRender() {
+  if (groupListRenderPending) return;
+  groupListRenderPending = true;
+  requestAnimationFrame(() => {
+    groupListRenderPending = false;
+    renderGroupList();
+  });
 }
 
 function updateDraft(groupId, field, val) {
   const d = state.groupDrafts[groupId]; if (!d) return;
-  d[field] = val; renderGroupList();
+  d[field] = val;
+  draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);
+  scheduleGroupListRender();
 }
 
 /* --------------------------------------------------------------------------
@@ -675,12 +709,21 @@ function renderGroupEditor() {
 
   // Subscription entities section
   const entities = renderEntities(g, d);
-  // Push targets section
-  const targets = renderTargets(g, d);
+  // Push targets section（data-editor-section 供 rerenderTargetsSection 局部重建）
+  const targets = h("div", { "data-editor-section": "targets" }, renderTargets(g, d));
 
   els.groupEditor.replaceChildren(h("div", { class: "panel" }, [
     head, base, entities, targets,
   ]));
+}
+
+/* targets 区块局部重建：probe/黑名单等只影响该区块的操作不必整棵重建编辑器 */
+function rerenderTargetsSection(gid) {
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = g ? (state.groupDrafts[g.group_id] || snapshotGroup(g)) : null;
+  const section = els.groupEditor?.querySelector('[data-editor-section="targets"]');
+  if (!g || !d || !section) { renderGroupEditor(); return; }
+  section.replaceChildren(renderTargets(g, d));
 }
 
 function toggleRow(checked, label, onChange) {
@@ -877,18 +920,13 @@ function renderTargets(group, draft) {
         const inp = document.getElementById("newTargetInput");
         const v = inp?.value.trim(); if (!v) return;
         if (state.actionBusy) return;
-        const known = new Set([...targets, ...invalidTargets]);
+        // 免确认路径用实时 draft 查重，避免保存失败重试时重复追加
+        const live = state.groupDrafts[group.group_id] || draft;
+        const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);
         if (known.has(v)) { showToast("推送目标已存在"); return; }
-        confirmGroupMutation(group.group_id, {
-          title: "添加推送目标？",
-          desc: `将添加 ${v}，确认后立即保存并刷新。`,
-          confirmText: "添加并保存",
-          successText: "推送目标已添加",
-          mutate: () => {
-            const current = state.groupDrafts[group.group_id]?.push_targets || [];
-            updateDraft(group.group_id, "push_targets", [...current, v]);
-          },
-        });
+        // 纯增量可逆操作，不走确认弹窗（移除/删除类仍保留确认）
+        updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
+        saveGroup(group.group_id, "推送目标已添加");
       }}),
     ]),
     renderTargetBlacklist(group, draft),
@@ -948,7 +986,7 @@ function renderTargetBlacklist(group, draft) {
       return { value: t, text: id ? `${label} · ${replayTargetShortId(id)}` : label };
     }),
   });
-  select.onChange(v => { state.targetBlacklistTarget = v; renderGroupEditor(); });
+  select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(group.group_id); });
   const input = h("input", { type: "text", placeholder: "用户名或 @用户名", style: { width: "200px" } });
   box.append(
     h("div", { class: "input-action-row blacklist-input-row", style: { display: "flex", gap: "6px", alignItems: "center" } }, [
@@ -957,35 +995,35 @@ function renderTargetBlacklist(group, draft) {
         const v = input.value.trim();
         if (!v) return;
         if (users.includes(v.replace(/^@+/, ""))) { showToast("用户名已在黑名单"); return; }
-        confirmTargetBlacklist(selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
+        confirmTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
       }}),
     ]),
     h("div", { class: "chip-list" }, users.length
       ? users.map(u => h("span", { class: "chip mono" }, [
           `@${u}`,
-          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
+          h("button", { class: "btn-icon", title: "移除", style: { width: "24px", height: "24px" }, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(group.group_id, selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
         ]))
       : [h("span", { style: { fontSize: "12px", color: "var(--text-subtle)" }, text: "黑名单为空" })]),
   );
   return box;
 }
 
-function saveTargetBlacklist(target, users) {
+function saveTargetBlacklist(gid, target, users) {
   withAction(async () => {
     await apiPost("web/target-blacklists/update", { target_umo: target, blocked_users: users });
     const rest = state.targetBlacklists.filter(r => r.target_umo !== target);
     if (users.length) rest.push({ target_umo: target, blocked_users: [...users] });
     state.targetBlacklists = rest.sort((a, b) => a.target_umo.localeCompare(b.target_umo));
-  }, "黑名单已更新", { reload: false, rerender: () => renderGroupEditor() });
+  }, "黑名单已更新", { reload: false, rerender: () => rerenderTargetsSection(gid) });
 }
 
-function confirmTargetBlacklist(target, users, title, confirmText, danger) {
+function confirmTargetBlacklist(gid, target, users, title, confirmText, danger) {
   openConfirm({
     title,
     desc: "确认后立即保存并刷新黑名单。",
     confirmText,
     danger,
-    action: () => saveTargetBlacklist(target, users),
+    action: () => saveTargetBlacklist(gid, target, users),
   });
 }
 
@@ -1076,10 +1114,21 @@ function createGroup() {
 async function saveGroup(gid, successText = "分组已保存") {
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
-    await apiPost("web/groups/update", buildGroupPayload(d));
+    const res = await apiPost("web/groups/update", buildGroupPayload(d));
     delete state.groupDrafts[gid];
     delete state.targetProbeResults[gid];
-    await reloadGroupState();
+    if (res?.group) {
+      // update 响应自带最新分组（与 web/groups 同一序列化），原位替换省一次拉取
+      state.groups = state.groups.map(g => (g.group_id === res.group.group_id ? res.group : g));
+      try {
+        state.overview = await apiGet("web/overview");
+      } catch (err) {
+        await reloadGroupState();
+      }
+    } else {
+      await reloadGroupState();
+    }
+    syncGroupDrafts();
   }, successText, { reload: false, rerender: () => renderAll() });
 }
 
@@ -1099,7 +1148,7 @@ function confirmDeleteGroup(gid) {
 async function probeTargets(gid) {
   await withAction(async () => {
     const res = await apiPost("web/targets/probe", { group_id: gid });
-    state.targetProbeResults[gid] = res; renderGroupEditor();
+    state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);
   }, "探测完成", { reload: false });
 }
 ;// views.js — Overview, Tweet-feed History, Probe & Danger Zone

@@ -589,7 +589,7 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
     assert "web/target-blacklists/update" in source
     assert "目标作者黑名单" in source
     assert "function renderTargetBlacklist(group, draft)" in source
-    assert "function saveTargetBlacklist(target, users)" in source
+    assert "function saveTargetBlacklist(gid, target, users)" in source
     assert "跨分组共享，仅影响后台推送" in source
     assert "web/subscriptions/import" in source
     assert "web/subscriptions/delete" in source
@@ -749,14 +749,41 @@ def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
     assert "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" in source
     assert 'class: "chip chip-invalid"' in source
     assert ".chip.chip-invalid" in style
-    # 查重覆盖有效 + 无效；探测按钮对纯无效分组可用
-    assert "const known = new Set([...targets, ...invalidTargets]);" in source
+    # 查重覆盖有效 + 无效，且用实时 draft（免确认路径保存失败重试不重复追加）
+    assert (
+        "const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);"
+        in source
+    )
     assert "disabled: !targets.length && !invalidTargets.length" in source
     assert "(draft.invalid_watch_users || []).includes(v)" in source
     # probe 结果缓存失效 + summary 徽章
     assert "delete state.targetProbeResults[gid];" in source
     assert "state.targetProbeResults = {};" in source
     assert "连通性 ${probe.summary.valid}/${probe.summary.total}" in source
+
+
+def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
+    """击键与保存流水线的性能护栏：rAF 合帧、脏检查缓存、响应原位替换、
+    targets 区块局部重建、添加目标免确认。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    # 击键路径：updateDraft 不再每键全量重建列表；rAF 合帧 + WeakMap 缓存
+    assert "function scheduleGroupListRender()" in source
+    assert "draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);" in source
+    assert "const groupSnapJsonCache = new WeakMap();" in source
+    assert "d[field] = val; renderGroupList();" not in source
+    # 保存流水线：update 响应回带的最新分组原位替换，省一次 web/groups 拉取
+    assert (
+        "state.groups = state.groups.map(g => "
+        "(g.group_id === res.group.group_id ? res.group : g));" in source
+    )
+    # 添加推送目标免确认（纯增量可逆）；旧确认文案已移除（订阅源添加的保留）
+    assert 'saveGroup(group.group_id, "推送目标已添加")' in source
+    assert '"添加推送目标？"' not in source
+    assert 'confirmText: "添加并保存"' in source
+    # probe/黑名单只重建 targets 区块，不整棵重建编辑器
+    assert "function rerenderTargetsSection(gid)" in source
+    assert '"data-editor-section": "targets"' in source
+    assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
 
 
 def test_status_and_export_render_list_group():
