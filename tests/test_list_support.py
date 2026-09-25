@@ -628,10 +628,16 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
         in style
     )
     assert "#historyView > .toolbar {" in style
-    assert (
-        "top: calc(var(--topheader-height, 72px) + 8px + var(--banner-offset, 0px));"
-        in style
-    )
+    # 次级吸顶统一引用吸附线 + 通知让位；配置操作栏曾与通知栈同位吸顶互相遮挡
+    assert "--sticky-top: calc(var(--topheader-height) + 8px);" in style
+    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in style
+    config_bar = style.split(".config-actionbar {", 1)[1].split("}", 1)[0]
+    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in config_bar
+    # 吸附线兜底值只允许出现在 :root 定义里，禁止各规则再手写 topheader 魔法数
+    assert "var(--topheader-height," not in style
+    # rerender 分支不再提前解除 busy，结果提示仍原地改写进行中节点
+    assert "} else if (rerender) rerender();" in source
+    assert "setBusy(false); rerender();" not in source
     assert "transition: all" not in style
     assert ".tweet-card:hover" in style
     assert "background: var(--blue-soft);" in style
@@ -644,7 +650,8 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
 
 
 def test_dashboard_notice_stack_stacks_and_auto_dismisses():
-    """顶部通知栈：多条通知垂直排列不重叠，各自停留 NOTICE_TTL 后自动移除。"""
+    """顶部通知栈：多条通知垂直排列不重叠；结果提示停留 NOTICE_TTL 后自动移除，
+    进行中提示不挂计时、跟随动作生命周期。"""
     source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
@@ -662,6 +669,9 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "function dismissNotice(node)" in source
     assert "node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);" in source
     assert "clearTimeout(node._noticeTimer);" in source
+    # 进行中提示不挂自动消失计时（ttl=0），长动作的顶部指示不会中途消失
+    assert "if (!ttl) return;" in source
+    assert 'pushNotice("status", text, 0);' in source
     assert "function syncStatusNotice()" in source
     # 结果出现时原地改写进行中提示的节点，不做“移除 + 新增”
     assert "function promoteStatusNotice(kind, text, ttl = NOTICE_TTL)" in source
@@ -676,8 +686,8 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
         'document.documentElement.style.setProperty("--banner-offset", offset)'
         in source
     )
-    assert "padding-top: calc(24px + var(--banner-offset, 0px));" in style
-    assert "padding-top: calc(16px + var(--banner-offset, 0px));" in style
+    assert "padding-top: calc(24px + var(--banner-offset));" in style
+    assert "padding-top: calc(16px + var(--banner-offset));" in style
     # 长文案不再被裁成内部滚动条
     assert "max-height: 44px" not in style
     assert "overflow: auto;" not in style

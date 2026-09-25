@@ -144,8 +144,8 @@ async function apiPost(endpoint, body) {
 /* --------------------------------------------------------------------------
    Feedback
    -------------------------------------------------------------------------- */
-/* 顶部通知栈：所有提示都进同一个栈，垂直排列，各自停留 NOTICE_TTL 后自动移除。
-   同一个栈保证任意时刻都不会出现两条提示重叠。 */
+/* 顶部通知栈：所有提示都进同一个栈，垂直排列，互不重叠。
+   结果提示停留 NOTICE_TTL 后自动移除；进行中提示不挂计时，跟随动作生命周期。 */
 const NOTICE_TTL = 4000;
 const NOTICE_MAX = 4;
 const NOTICE_CLASS = {
@@ -158,7 +158,8 @@ const NOTICE_CLASS = {
 function noticeKey(kind, text) { return `${kind}\u0000${text}`; }
 
 function armNoticeTimer(node, ttl) {
-  if (node._noticeTimer) clearTimeout(node._noticeTimer);
+  if (node._noticeTimer) { clearTimeout(node._noticeTimer); node._noticeTimer = null; }
+  if (!ttl) return;   // ttl=0：生命周期驱动的通知（进行中提示），不挂自动消失计时
   node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);
 }
 
@@ -208,7 +209,8 @@ function clearNotices(kinds) {
     .forEach(dismissNotice);
 }
 
-/* 进行中提示跟随动作生命周期：actionBusy 上升时创建，动作结束时移除 */
+/* 进行中提示跟随动作生命周期：actionBusy 上升时创建，动作结束时移除或被结果
+   原地改写；不挂自动消失计时，长动作的顶部指示不会中途消失 */
 function syncStatusNotice() {
   const text = state.actionBusy ? (state.busyLabel || "正在加载…") : "";
   if (!text) {
@@ -224,7 +226,7 @@ function syncStatusNotice() {
     return;
   }
   if (state.statusNoticeClosed) return;
-  state.statusNotice = pushNotice("status", text);
+  state.statusNotice = pushNotice("status", text, 0);
 }
 
 /* 通知栈高度随条数与换行变化，用实测高度驱动内容预留与历史工具栏吸顶偏移 */
@@ -450,7 +452,7 @@ async function withAction(action, successText, { reload = true, rerender = null 
       setBusy(true);
       const ok = await reloadAll();
       if (!ok) return res;
-    } else if (rerender) { setBusy(false); rerender(); }
+    } else if (rerender) rerender();
     showAlert(successText || res?.message || "操作完成");
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }

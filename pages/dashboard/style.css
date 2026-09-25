@@ -41,6 +41,13 @@
   --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.12);
 
   --transition: 0.2s ease;
+
+  /* 顶部吸附体系：默认值兜底，app.js 实测顶栏/横幅高度后以内联样式覆盖 */
+  --topheader-height: 72px;
+  --banner-offset: 0px;
+  /* 顶栏下第一吸附线：通知栈的锚点。凡要给通知让路的次级吸顶元素一律
+     top: calc(var(--sticky-top) + var(--banner-offset))，禁止再手写 topheader 魔法数 */
+  --sticky-top: calc(var(--topheader-height) + 8px);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -457,10 +464,10 @@ body.ui-busy .view textarea { cursor: wait; }
 .feedback-close:hover { background: rgba(127, 127, 127, 0.14); }
 .feedback-close:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
 
-/* 顶部通知栈：所有提示垂直排列，互不重叠；每条停留后由 app.js 自动移除 */
+/* 顶部通知栈：所有提示垂直排列，互不重叠；结果提示停留后由 app.js 自动移除 */
 .notice-stack {
   position: fixed;
-  top: calc(var(--topheader-height, 72px) + 8px);
+  top: var(--sticky-top);
   left: 50%;
   width: min(calc(100vw - 40px), 1200px);
   display: flex;
@@ -472,7 +479,7 @@ body.ui-busy .view textarea { cursor: wait; }
 .notice-stack > * { margin: 0 !important; box-shadow: var(--shadow); }
 
 /* 横幅高度随文案换行变化，由 JS 实测写入 --banner-offset（无横幅时为 0） */
-.main > .view-container { padding-top: calc(24px + var(--banner-offset, 0px)); }
+.main > .view-container { padding-top: calc(24px + var(--banner-offset)); }
 
 /* Form fields */
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
@@ -749,7 +756,7 @@ select { cursor: pointer; }
 @media (min-width: 681px) {
   #historyView > .toolbar {
     position: sticky;
-    top: calc(var(--topheader-height, 72px) + 8px + var(--banner-offset, 0px));
+    top: calc(var(--sticky-top) + var(--banner-offset));
     z-index: 40;
   }
 }
@@ -880,7 +887,7 @@ select { cursor: pointer; }
 /* Config panel V2:双栏 + 字段卡片 */
 .config-layout { display: grid; grid-template-columns: minmax(200px, 0.3fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .config-actionbar {
-  position: sticky; top: calc(var(--topheader-height, 72px) + 8px); z-index: 40;
+  position: sticky; top: calc(var(--sticky-top) + var(--banner-offset)); z-index: 40;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--border);
@@ -892,7 +899,7 @@ select { cursor: pointer; }
   flex-direction: column;
   gap: 10px;
   position: sticky;
-  top: calc(var(--topheader-height, 72px) + 68px);
+  top: calc(var(--sticky-top) + var(--banner-offset) + 60px);
 }
 .config-nav > input { width: 100%; }
 .config-nav-list { display: flex; flex-direction: column; gap: 4px; }
@@ -1087,7 +1094,7 @@ select { cursor: pointer; }
   .editor-grid-full { grid-column: auto; }
   .toolbar { align-items: stretch; }
   .toolbar .field, .toolbar select, .toolbar input { width: 100% !important; }
-  .main > .view-container { padding-top: calc(16px + var(--banner-offset, 0px)); }
+  .main > .view-container { padding-top: calc(16px + var(--banner-offset)); }
   .pager { width: 100%; margin-left: 0; justify-content: space-between; }
   .pager .btn { flex: 1; }
   .panel { padding: 14px; }
