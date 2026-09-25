@@ -454,7 +454,7 @@ async function withAction(action, successText, { reload = true, rerender = null 
       setBusy(true);
       const ok = await reloadAll();
       if (!ok) return res;
-    } else if (rerender) rerender();
+    } else if (rerender) await rerender();
     showAlert(successText || res?.message || "操作完成");
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
