@@ -693,6 +693,13 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "state.statusNoticeClosed = false" in source
     assert "state.statusNoticeClosed = true" in source
     assert "if (state.statusNoticeClosed) return;" in source
+    # 子节点不再自带 role="status"（容器统一播报防重复），错误提示用 role="alert"
+    assert 'role: type === "error" ? "alert" : null' in source
+    assert 'role: "status"' not in source
+    assert 'if (kind === "error") node.setAttribute("role", "alert");' in source
+    # 旧静态横幅时代的 hidden 死规则已清理（.dialog[hidden] 仍在用，不在清理范围）
+    assert ".alert[hidden]" not in style
+    assert ".action-status[hidden]" not in style
     # 长文案不再被裁成内部滚动条；overflow 负断言限定通知相关规则块（含每个选择器的
     # 全部出现，如 .alert { 的暗色覆写块），避免误伤无关组件
     notice_css = "".join(

@@ -172,7 +172,7 @@ function pushNotice(kind, text, ttl = NOTICE_TTL) {
   if (dup) { armNoticeTimer(dup, ttl); return dup; }
 
   const node = h("div", {
-    class: NOTICE_CLASS[type], role: "status", dataset: { key, kind: type },
+    class: NOTICE_CLASS[type], role: type === "error" ? "alert" : null, dataset: { key, kind: type },
   }, [
     h("span", { class: "feedback-message", text }),
     h("button", {
@@ -243,6 +243,8 @@ function promoteStatusNotice(kind, text, ttl = NOTICE_TTL) {
   const message = node && node.querySelector(".feedback-message");
   if (!message) return null;
   node.className = NOTICE_CLASS[kind];
+  if (kind === "error") node.setAttribute("role", "alert");
+  else node.removeAttribute("role");
   node.dataset.kind = kind;
   node.dataset.key = noticeKey(kind, text);
   message.textContent = text;
