@@ -29,6 +29,7 @@
 - [常用配置](#常用配置)
 - [常见问题](#常见问题)
 - [文档导航](#文档导航)
+- [相关项目](#相关项目)
 - [致谢](#致谢)
 - [许可证](#许可证)
 - [免责声明](#免责声明)
@@ -210,6 +211,12 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | [文档索引](./docs/README.md) | 全部 docs 入口 |
 | [CHANGELOG](./CHANGELOG.md) | 版本记录 |
 | [`_conf_schema.json`](./_conf_schema.json) | 配置真源 |
+
+## 相关项目
+
+- [nitter-cli](https://github.com/shitianyaa/nitter-cli)：同一作者的公开推文命令行客户端（附公开 Go SDK）。如果想给 Bot 更自主的能力，可以试试它：FxTwitter 公共 API 快车道 + 自建 Nitter 回退，覆盖单条推文、评论区、自帖串、引用、热搜、关注关系等本插件之外的端点，并支持持久化去重的 `watch` 监视与带命名模板的媒体下载；输出 NDJSON，适合 cron、systemd timer、Hermes 等调度器与 agent 直接编排调用。与本插件相互独立：插件负责 AstrBot 内的命令交互与分组推送，nitter-cli 负责进程外的自动化与编排。
+- [nitter-installer](https://github.com/shitianyaa/nitter-installer)：一键部署自建 Nitter 实例的脚本，见上文[一键部署 Nitter](#一键部署-nitter)。
+- [astrbot_plugin_forward_helper](https://github.com/shitianyaa/astrbot_plugin_forward_helper)：同作者的合并转发 demo 插件——把 QQ「合并转发」（Node/Nodes 聊天记录）封装成 agent 工具 `send_forward` 与可复用方法，不设门禁，平台不支持时自动降级逐条发送。
 
 ## 致谢
 

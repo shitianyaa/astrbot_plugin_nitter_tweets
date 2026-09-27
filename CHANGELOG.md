@@ -4,6 +4,10 @@
 
 ## [1.7.3] - 2026-09-25
 
+### Added
+
+- **README 新增「相关项目」**：推广同作者的 [nitter-cli](https://github.com/shitianyaa/nitter-cli)（公开推文 CLI + Go SDK，适合给 Bot/agent 更自主的进程外编排能力）、[nitter-installer](https://github.com/shitianyaa/nitter-installer) 与合并转发 demo 插件 [astrbot_plugin_forward_helper](https://github.com/shitianyaa/astrbot_plugin_forward_helper)。
+
 ### Fixed
 
 - **Dashboard 顶部反馈交互全面重做**：
