@@ -2,6 +2,18 @@
 
 所有重要变更都会记录在这里。
 
+## [1.8.0] - 2026-10-17（开发中，未发布）
+
+### Added
+
+- 共享 QueryService、Fx/Nitter 查询后端适配；保留手动和调度自身的发送/seen/水位语义。
+- 四个 AstrBot LLM 原生查询/趋势/管理员状态工具，事件预算、续页/刷新、按需媒体发送及权限脱敏。
+- `basic.llm_tools_enabled` 默认关闭工具，`nitter-tweets` Skill 独立启停；完全关闭须同时禁用 Skill。
+
+### Validation
+
+- P-03 本地测试已完成；P-05 真实 UI 重载、最低 AstrBot 4.26 兼容和平台媒体验证仍未完成；尚未正式发布。
+
 ## [1.7.3] - 2026-09-25
 
 ### Added

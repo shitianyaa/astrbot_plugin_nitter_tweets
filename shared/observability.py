@@ -67,6 +67,7 @@ _GROUP_TYPE_LABELS = {
 
 _TRIGGER_LABELS = {
     "manual_command": "手动命令",
+    "llm_tool": "LLM 工具",
     "passive_link": "聊天消息中的推文链接",
     "interval": "定时轮询",
     "cron": "Cron 定时",

@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.3-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.8.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -60,6 +60,8 @@
 更多界面说明见 [进阶说明 · WebUI](./docs/advanced.md#webui-运维面板)。
 
 ## 能做什么
+
+**1.8.0 开发中，未发布**：新增四个 AstrBot 原生 LLM 查询工具及独立 nitter-tweets Skill；默认关闭工具注册。详见 [进阶说明](./docs/advanced.md#llm-查询工具与-skill)。
 
 | 场景 | 能力 |
 | --- | --- |
@@ -166,6 +168,8 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 ## 常用配置
+
+`llm_tools_enabled`（基础设置，默认 `false`）仅控制四个 Nitter LLM 查询工具注册；独立的 `nitter-tweets` Skill 需要在 AstrBot Skill 管理中另行关闭，才能完全停用。
 
 完整默认值与 WebUI 文案见 [`_conf_schema.json`](./_conf_schema.json)。只列最常改的：
 

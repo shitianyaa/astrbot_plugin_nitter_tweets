@@ -85,6 +85,7 @@ REMOVED_FEATURE_CONFIG_NAMES = (
 CONFIG_GROUP_BY_KEY = {
     "storage_backend": "basic",
     "instances": "basic",
+    "llm_tools_enabled": "basic",
     "default_limit": "basic",
     "request_timeout": "basic",
     "retry_attempts": "basic",

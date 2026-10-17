@@ -4,6 +4,12 @@
     "type": "object",
     "hint": "Nitter 请求和手动查询的基础配置。",
     "items": {
+      "llm_tools_enabled": {
+        "description": "启用 Nitter LLM 查询工具",
+        "type": "bool",
+        "default": false,
+        "hint": "默认关闭。启用后提供四个 AstrBot LLM 查询/趋势/管理员状态工具；本开关只控制工具，不控制独立的 nitter-tweets Skill。完全关闭还需在 AstrBot Skill 管理中禁用 nitter-tweets。"
+      },
       "fetch_backend": {
         "description": "推文抓取后端策略",
         "type": "string",

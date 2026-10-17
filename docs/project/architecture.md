@@ -5,6 +5,8 @@
 ```text
 main.py
   -> command_handlers/
+  -> query.QueryService / LLMQueryController
+  -> command_handlers.llm_tools (四个原生 FunctionTools)
   -> media_support.NitterClient / MediaService / html_backend
   -> delivery.TweetSender
   -> ai.TweetTranslator
@@ -19,6 +21,8 @@ NitterTweetScheduler
   -> media_support.MediaService
   -> delivery.TweetSender
 ```
+
+手动命令、LLM 和调度共享 `query/` 的模型和后端适配；LLM 预算与会话缓存独立，不参与后台 seen、水位和发送状态机。四个工具由 `llm_tools_enabled` 控制注册，`skills/nitter-tweets/SKILL.md` 由 AstrBot Skill 管理独立启停；工具默认关闭。
 
 ## `main.py`
 

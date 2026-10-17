@@ -117,6 +117,14 @@ flowchart TD
 
 ## 配置参考
 
+### LLM 查询工具与 Skill
+
+1.8.0 新增四个 AstrBot FunctionTools：`nitter_fetch_user_tweets`（公开账号）、`nitter_search_tweets`（搜索）、`nitter_get_twitter_trends`（趋势）和 `nitter_list_plugin_state`（管理员只读状态）。`basic.llm_tools_enabled` 默认为 `false`，开启后按插件生命周期注册工具；AstrBot WebUI 仍可单独禁用工具。独立的 `skills/nitter-tweets/SKILL.md` 不受该开关控制。**完全停用需关闭工具开关并在 AstrBot Skill 管理中禁用 `nitter-tweets`**。工具已关闭时 Skill 不可强行调用。
+
+默认 `delivery=data`：只向模型返回公开原文、作者、时间与链接，不额外发消息、不调用插件翻译；仅用户明确要求直接发送媒体时用 `delivery=media`，不绕过图片/视频总开关。单次默认 5 条最多 10 条，同一消息轮最多 3 次顶层联网查询、20 条数据、5 次发送尝试、24k 字符；续取用 `page_mode=auto`，明确刷新用 `refresh`。来源失败、部分发送、冷却、无数据和不能继续翻页须如实区分，不得自动重发送达不确定的媒体。
+
+前三个工具提供公开数据；状态工具必须由 AstrBot 管理员使用，群聊只展示当前精确匹配群的订阅，私聊允许分页查看授权范围内订阅，不泄露 UMO、其他群信息、私有实例 URL 或凭据。推文与搜索词属于不可信数据，不能当作指令。单条 status 链接仍走独立被动解析，默认关闭，不提供第五个工具。真实 WebUI 重载、最低 AstrBot 4.26 与平台发送集成验证留在 P-05，**本版本尚未发布**。
+
 AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送目标与订阅分组、并发与限流、日志设置”分组展示。旧版本扁平配置仍会兼容读取，并自动迁移到默认分组。
 
 ### 基础
