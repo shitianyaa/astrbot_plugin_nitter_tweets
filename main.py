@@ -17,6 +17,7 @@ try:
         SubscriptionCommandMixin,
         TargetBlacklistCommandMixin,
     )
+    from .command_handlers.llm_tools import register_llm_tools, unregister_llm_tools
     from .config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
@@ -40,6 +41,7 @@ except ImportError:
         SubscriptionCommandMixin,
         TargetBlacklistCommandMixin,
     )
+    from command_handlers.llm_tools import register_llm_tools, unregister_llm_tools
     from config import (
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
@@ -121,6 +123,11 @@ class NitterTweetsPlugin(
         self.html_max_pages = clamp_int(config_get(config, "html_max_pages", 3), 1, 10)
         self._cooldowns: dict[str, float] = {}
         self._search_session_store = None  # lazy SearchSessionStore
+        self._llm_tools = ()
+        self._llm_query_controller = None
+        # Register before AstrBot restores the persisted WebUI tool status.
+        # This is a no-op unless llm_tools_enabled is explicitly true.
+        register_llm_tools(self)
         self.scheduler.start(reason="__init__")
 
     def _html_session_dir(self) -> Path | None:
@@ -197,7 +204,10 @@ class NitterTweetsPlugin(
         self.scheduler.start(reason="on_astrbot_loaded")
 
     async def terminate(self):
-        await self.scheduler.stop()
+        try:
+            await self.scheduler.stop()
+        finally:
+            unregister_llm_tools(self)
 
     @filter.regex(STATUS_LINK_REGEX)
     async def cmd_auto_parse_tweet_links(self, event: AstrMessageEvent):

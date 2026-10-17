@@ -102,6 +102,10 @@ class QueryBackends:
             raise ValueError("max_pages must be positive")
         attempts: list[str] = []
 
+        # Fx continuation tokens are not valid for Nitter RSS fallback.
+        if request.cursor and (self.mode == "nitter" or self.fx is None):
+            return fetch_error("timeline", backend="fx", source=request.username)
+
         if self.mode == "fx" and self.fx is None:
             return fetch_error(
                 "timeline",
@@ -117,6 +121,8 @@ class QueryBackends:
             )
             if media_filter:
                 fetch_kwargs["media_filter"] = media_filter
+            if request.cursor:
+                fetch_kwargs["cursor"] = request.cursor
             try:
                 tweets, cursor = await asyncio.to_thread(
                     self.fx.fetch_user_timeline,
@@ -125,7 +131,7 @@ class QueryBackends:
                 )
             except Exception as exc:
                 attempts.append("FxTwitter=失败")
-                if self.mode == "fx":
+                if self.mode == "fx" or request.cursor:
                     return fetch_error(
                         "timeline",
                         backend="fx",
@@ -196,6 +202,9 @@ class QueryBackends:
             raise ValueError("max_pages must be positive")
         attempts: list[str] = []
 
+        if request.cursor and (self.mode == "nitter" or self.fx is None):
+            return fetch_error("search", backend="fx", source=request.query)
+
         if self.mode == "fx" and self.fx is None:
             return fetch_error(
                 "search",
@@ -204,16 +213,19 @@ class QueryBackends:
             )
         if self.mode in ("mix", "fx") and self.fx is not None:
             try:
+                search_kwargs = dict(
+                    count=request.limit, is_media=media_only, feed=request.sort
+                )
+                if request.cursor:
+                    search_kwargs["cursor"] = request.cursor
                 tweets, cursor = await asyncio.to_thread(
                     self.fx.search_tweets,
                     request.query,
-                    count=request.limit,
-                    is_media=media_only,
-                    feed=request.sort,
+                    **search_kwargs,
                 )
             except Exception as exc:
                 attempts.append("FxTwitter=失败")
-                if self.mode == "fx":
+                if self.mode == "fx" or request.cursor:
                     return fetch_error(
                         "search",
                         backend="fx",

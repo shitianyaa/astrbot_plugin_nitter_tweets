@@ -32,6 +32,7 @@ class TimelineQuery:
     filter_reposts: bool = True
     max_pages: int = 3
     media_filter: str = ""
+    cursor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class SearchQuery:
     is_media: bool = False
     max_pages: int = 3
     media_type: str = ""
+    cursor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
