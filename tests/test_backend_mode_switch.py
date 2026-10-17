@@ -1614,3 +1614,44 @@ async def test_manual_cmd_tweet_pic_nitter_video_and_image_attaches_media_before
     )
     assert len(captured_tweets) == 1
     assert captured_tweets[0].status_id == "1002"
+
+
+@pytest.mark.asyncio
+async def test_query_migration_fx_blogger_keeps_non_html_counter_defaults():
+    nitter = MagicMock()
+    fx = MagicMock()
+    fx.fetch_user_timeline.return_value = ([_make_tweet("alice", "2001")], None)
+    runner = DummyRunner({"fetch_backend": "fx"}, nitter, fx)
+    group = _blogger_group(["alice"])
+
+    results = await runner._fetch_group_users(group, 10, False, {})
+    assert len(results) == 1
+    assert results[0].fetch_status == SourceStatus.SUCCESS
+    assert results[0].html_raw_item_count == 0
+    assert results[0].retweet_filtered == 0
+    assert results[0].host_attempts == ["FxTwitter=成功"]
+
+
+@pytest.mark.asyncio
+async def test_query_migration_list_rss_does_not_claim_html_parser_counts():
+    nitter = MagicMock()
+    nitter.fetch_list_for_scheduler = AsyncMock(
+        return_value=(
+            "https://nitter.test",
+            SchedulerFetchResult(
+                tweets=[_make_tweet("alice", "2001")],
+                scanned_status_ids=["2001"],
+                anchor_status_ids=["2001"],
+                complete=True,
+            ),
+        )
+    )
+    runner = DummyRunner({"fetch_backend": "nitter"}, nitter)
+    group = _list_group(["123456"])
+
+    results = await runner._fetch_group_users(group, 10, False, {})
+    assert len(results) == 1
+    assert results[0].tweets[0].status_id == "2001"
+    assert results[0].html_raw_item_count == 0
+    assert results[0].fetch_status == ""
+    assert results[0].host_attempts == []

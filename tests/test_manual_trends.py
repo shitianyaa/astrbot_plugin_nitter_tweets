@@ -201,7 +201,9 @@ class TestManualTrendsCommand:
         assert len(logged_tasks) == 1
         assert logged_tasks[0]["status"] == "抓取失败"
         assert logged_tasks[0]["instance"] == "FxTwitter"
-        assert logged_tasks[0]["error_detail"] == "Connection timeout"
+        # Shared query layer reports a stable error kind, not exception text
+        # that can include credential-bearing request URLs.
+        assert logged_tasks[0]["error_detail"] == "RuntimeError"
         assert logged_tasks[0]["warning"] is True
 
 
