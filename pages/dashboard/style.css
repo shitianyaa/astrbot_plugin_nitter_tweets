@@ -50,31 +50,9 @@
   --sticky-top: calc(var(--topheader-height) + 8px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15202b;
-    --bg-secondary: #192734;
-    --surface: #1c2938;
-    --surface-hover: #253341;
-    --border: #38444d;
-    --border-strong: #42536c;
-
-    --text: #e7e9ea;
-    --text-muted: #929aab;
-    --text-subtle: #717c8a;
-
-    --blue-soft: rgba(29, 155, 240, 0.15);
-    --green-soft: rgba(0, 186, 124, 0.15);
-    --yellow-soft: rgba(255, 212, 0, 0.12);
-    --red-soft: rgba(244, 33, 46, 0.15);
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.5);
-  }
-}
-
-body.dark-theme {
+/* 深色主题唯一出处：applyTheme 把 dark-theme/light-theme 类写在 <html> 上；
+   系统偏好在 initTheme 启动时判定后同样落类，故不再需要 prefers-color-scheme 媒体查询 */
+:root.dark-theme {
   --bg: #15202b;
   --bg-secondary: #192734;
   --surface: #1c2938;
@@ -94,28 +72,6 @@ body.dark-theme {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.5);
-}
-
-body.light-theme {
-  --bg: #f7f9f9;
-  --bg-secondary: #f7f9f9;
-  --surface: #ffffff;
-  --surface-hover: #f7f9f9;
-  --border: #eff3f4;
-  --border-strong: #cfd9de;
-
-  --text: #0f1419;
-  --text-muted: #536471;
-  --text-subtle: #71767b;
-
-  --blue-soft: rgba(29, 155, 240, 0.1);
-  --green-soft: rgba(0, 186, 124, 0.1);
-  --yellow-soft: rgba(255, 212, 0, 0.1);
-  --red-soft: rgba(244, 33, 46, 0.1);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-dialog: 0 12px 40px rgba(0, 0, 0, 0.12);
 }
 
 /* ==========================================================================
@@ -237,13 +193,13 @@ a:hover { text-decoration: underline; }
   transition: background var(--transition), color var(--transition);
 }
 .tab svg { width: 18px; height: 18px; flex-shrink: 0; }
-.tab:hover { background: var(--surface-hover); }
+/* hover 必须排在 .active 之前：两者特异性相同，靠源码顺序保证选中页签悬停时蓝底不丢 */
+.tab:hover { color: var(--blue); background: var(--surface-hover); }
 .tab.active {
   font-weight: 700;
   color: var(--blue);
   background: var(--blue-soft);
 }
-.tab:hover { color: var(--blue); background: var(--surface-hover); }
 .tab.active svg { color: var(--blue); }
 
 /* 系统状态(横向内联) */
@@ -327,6 +283,7 @@ a:hover { text-decoration: underline; }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 12px;
@@ -623,15 +580,14 @@ select { cursor: pointer; }
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
 }
 .metric {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
-  box-shadow: var(--shadow-sm);
+  padding: 12px 16px;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -647,7 +603,7 @@ select { cursor: pointer; }
 }
 .metric-icon {
   width: 32px; height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   display: grid;
   place-items: center;
   background: var(--blue-soft);
@@ -656,7 +612,7 @@ select { cursor: pointer; }
 }
 .metric-icon svg { width: 16px; height: 16px; }
 .metric-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-.metric-value { font-size: 24px; font-weight: 800; font-family: var(--font-sans); letter-spacing: -0.5px; }
+.metric-value { font-size: 24px; font-weight: 800; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
 .metric-value.mono { font-family: var(--font-mono); font-size: 20px; }
 
 /* Attention items */
@@ -675,11 +631,13 @@ select { cursor: pointer; }
 
 /* Danger zone */
 .danger-zone { border-color: var(--red-soft); }
+.light-theme .danger-zone { background: #fffafa; }
 .danger-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .danger-item {
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -694,7 +652,7 @@ select { cursor: pointer; }
 
 .groups-layout {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -704,13 +662,14 @@ select { cursor: pointer; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: calc(100vh - 180px);
+  /* 顶栏高度由 JS 实测写入 --topheader-height，通知栈占位走 --banner-offset，不再写死 */
+  max-height: calc(100vh - var(--topheader-height) - var(--banner-offset) - 96px);
   overflow-y: auto;
 }
 
 .group-item {
   padding: 10px 12px;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -722,6 +681,7 @@ select { cursor: pointer; }
 .group-item.active {
   background: var(--blue-soft);
   border-color: var(--blue-border);
+  box-shadow: inset 3px 0 0 var(--blue);
 }
 .group-item-row {
   display: flex;
@@ -753,6 +713,12 @@ select { cursor: pointer; }
 }
 .pager { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
+/* 历史筛选栏行内字段：label 与控件同行、控件定宽；窄屏宽度由 680px 断点接管拉满 */
+.toolbar-field { flex-direction: row; align-items: center; gap: 4px; }
+.toolbar-field select, .toolbar-field input { width: auto; }
+.toolbar-field input[type="text"] { width: 140px; }
+.toolbar-field input[type="number"] { width: 64px; }
+
 @media (min-width: 681px) {
   #historyView > .toolbar {
     position: sticky;
@@ -776,7 +742,6 @@ select { cursor: pointer; }
   padding: 14px 16px;
   display: flex;
   gap: 12px;
-  box-shadow: var(--shadow-sm);
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 .tweet-card:hover {
@@ -850,7 +815,6 @@ select { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
-  box-shadow: var(--shadow-sm);
 }
 .probe-instance-head {
   display: flex;
@@ -1046,14 +1010,24 @@ select { cursor: pointer; }
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
   background-color: var(--surface);
 }
-.alert.success { background-image: linear-gradient(var(--green-soft), var(--green-soft)); color: var(--green); }
-.alert.error { background-image: linear-gradient(var(--red-soft), var(--red-soft)); color: var(--red); }
-.alert.warn { background-image: linear-gradient(var(--yellow-soft), var(--yellow-soft)); color: #b07800; }
+.alert.success { border-color: #b6e0cf; background-image: linear-gradient(var(--green-soft), var(--green-soft)); color: var(--green); }
+.alert.error { border-color: #efb5b9; background-image: linear-gradient(var(--red-soft), var(--red-soft)); color: var(--red); }
+.alert.warn { border-color: #efd694; background-image: linear-gradient(var(--yellow-soft), var(--yellow-soft)); color: #b07800; }
+
+.boot-error {
+  padding: 20px;
+  border: 1px solid var(--red-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--red);
+  font-size: 14px;
+}
 
 #toastContainer {
   position: fixed;
@@ -1081,6 +1055,7 @@ select { cursor: pointer; }
 }
 
 /* SVG icon sizing in buttons/labels */
+.icon { flex: 0 0 auto; }
 .icon-sm { width: 16px; height: 16px; flex-shrink: 0; }
 .icon-md { width: 20px; height: 20px; flex-shrink: 0; }
 
@@ -1089,33 +1064,6 @@ select { cursor: pointer; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-subtle); }
-
-/* Refined dashboard layer */
-.icon { flex: 0 0 auto; }
-.topbar-title, .panel-head h2, .panel-head h3 { letter-spacing: 0; }
-.panel-head { gap: 12px; }
-.metrics-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
-.metric { padding: 12px 16px; box-shadow: none; }
-.metric-icon { border-radius: 8px; }
-.metric-value { letter-spacing: 0; font-variant-numeric: tabular-nums; }
-.groups-layout { grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr); }
-.group-item { border-radius: 8px; }
-.group-item.active { box-shadow: inset 3px 0 0 var(--blue); }
-.tweet-card, .probe-result { box-shadow: none; }
-.light-theme .danger-zone { background: #fffafa; }
-.danger-item { background: var(--surface); }
-.alert { border: 1px solid transparent; }
-.alert.success { border-color: #b6e0cf; }
-.alert.warn { border-color: #efd694; }
-.alert.error { border-color: #efb5b9; }
-.boot-error {
-  padding: 20px;
-  border: 1px solid var(--red-soft);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--red);
-  font-size: 14px;
-}
 
 @media (max-width: 900px) {
   .th-main { padding: 8px 14px; gap: 8px 12px; }
@@ -1131,7 +1079,7 @@ select { cursor: pointer; }
   .groups-layout, .editor-grid, .danger-grid { grid-template-columns: 1fr; }
   .editor-grid-full { grid-column: auto; }
   .toolbar { align-items: stretch; }
-  .toolbar .field, .toolbar select, .toolbar input { width: 100% !important; }
+  .toolbar .field, .toolbar .field select, .toolbar .field input { width: 100%; }
   .main > .view-container { padding-top: calc(16px + var(--banner-offset)); }
   .pager { width: 100%; margin-left: 0; justify-content: space-between; }
   .pager .btn { flex: 1; }

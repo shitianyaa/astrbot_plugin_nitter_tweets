@@ -1,6 +1,7 @@
 """Twitter List config, HTML backend, WebUI, and status regressions."""
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -577,7 +578,13 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
     assert 'rss_user: "用户 RSS"' in source
-    assert "localStorage" not in source
+    # AstrBot Pages iframe 使用 sandbox="allow-scripts allow-forms allow-downloads"
+    # （无 allow-same-origin），opaque origin 下 localStorage 访问必抛 SecurityError，
+    # 曾拖垮整页启动（529ee81）。因此页面内禁止访问它（注释里提及不算）。
+    for name, text in (("app.js", source), ("index.html", index)):
+        assert not re.search(r"localStorage\s*[.\[]", text), (
+            f"{name} 不得访问 localStorage：opaque origin 下必抛 SecurityError"
+        )
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
 
 

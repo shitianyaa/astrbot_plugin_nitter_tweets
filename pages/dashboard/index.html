@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Nitter 推文控制台</title>
     <link rel="stylesheet" href="./style.css" />
+    <script>
+      // 首帧即落主题类：深色用户不闪亮色首帧，boot 失败（无 bridge）时页面也保持主题。
+      // 只能跟随系统偏好：AstrBot Pages iframe 无 allow-same-origin，localStorage 不可用；
+      // 宿主主题由 app.js 的 initTheme 在 bridge 就绪后接管。
+      (function () {
+        var dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var root = document.documentElement;
+        root.classList.toggle("dark-theme", dark);
+        root.classList.toggle("light-theme", !dark);
+      })();
+    </script>
   </head>
   <body>
     <div class="shell">
@@ -104,26 +115,26 @@
 
           <section id="historyView" class="view">
             <div class="toolbar panel" style="padding: 10px 14px;">
-              <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
-                <span style="font-size: 13px; font-weight: 600;">分组</span>
-                <select id="historyGroupSelect" style="width: auto;"></select>
+              <div class="field toolbar-field">
+                <span>分组</span>
+                <select id="historyGroupSelect"></select>
               </div>
-              <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
-                <span style="font-size: 13px; font-weight: 600;">订阅源</span>
-                <input id="historyUsername" type="text" placeholder="用户名" style="width: 140px;" />
+              <div class="field toolbar-field">
+                <span>订阅源</span>
+                <input id="historyUsername" type="text" placeholder="用户名" />
               </div>
-              <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
-                <span style="font-size: 13px; font-weight: 600;">状态</span>
-                <select id="historyStatusSelect" style="width: auto;">
+              <div class="field toolbar-field">
+                <span>状态</span>
+                <select id="historyStatusSelect">
                   <option value="">全部</option>
                   <option value="success">已送达</option>
                   <option value="partial_failed">部分失败</option>
                   <option value="failed">发送失败</option>
                 </select>
               </div>
-              <div class="field" style="flex-direction: row; align-items: center; gap: 4px;">
-                <span style="font-size: 13px; font-weight: 600;">条数</span>
-                <input id="historyLimit" type="number" min="1" max="50" value="10" style="width: 64px;" />
+              <div class="field toolbar-field">
+                <span>条数</span>
+                <input id="historyLimit" type="number" min="1" max="50" value="10" />
               </div>
               <button id="historyRefreshBtn" class="btn btn-sm btn-primary" type="button">筛选</button>
               <button id="historyOrphanBtn" class="btn btn-sm btn-ghost" type="button">检查废弃</button>
@@ -169,7 +180,7 @@
 
       <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
 
-      <div id="confirmDialog" class="dialog" hidden>
+      <div id="confirmDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDesc" hidden>
         <div class="dialog-panel">
           <h3 id="confirmTitle" class="dialog-title">确认操作？</h3>
           <div id="confirmDesc" class="dialog-desc"></div>

@@ -425,20 +425,31 @@ function closeConfirm() {
 /* --------------------------------------------------------------------------
    Theme
    -------------------------------------------------------------------------- */
+/* 主题切换只在本次会话内生效，不做持久化：AstrBot Plugin Pages 的 iframe 使用
+   sandbox="allow-scripts allow-forms allow-downloads"（无 allow-same-origin），
+   opaque origin 下 localStorage 任何访问都抛 SecurityError，曾拖垮整页启动
+   （529ee81，见 Progress/2026-09-04.md）。跨会话主题由宿主 WebUI 负责，
+   onContext 会把宿主的主题推送下来。故页面内禁止出现 localStorage。 */
+let themePinned = false; // 用户手动切换后不再接受宿主主题推送
+
 function initTheme() {
   const context = bridge?.getContext?.() || {};
   const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  // 优先级：宿主主题 > 系统偏好
   applyTheme(typeof context.isDark === "boolean" ? context.isDark : prefersDark);
   bridge?.onContext?.(nextContext => {
-    if (typeof nextContext?.isDark === "boolean") applyTheme(nextContext.isDark);
+    if (!themePinned && typeof nextContext?.isDark === "boolean") applyTheme(nextContext.isDark);
   });
 }
 function applyTheme(isDark) {
-  document.body.classList.toggle("dark-theme", !!isDark);
-  document.body.classList.toggle("light-theme", !isDark);
+  // 主题类挂在 <html> 上：深色变量的唯一出处是 :root.dark-theme
+  document.documentElement.classList.toggle("dark-theme", !!isDark);
+  document.documentElement.classList.toggle("light-theme", !isDark);
 }
 function toggleTheme() {
-  applyTheme(!document.body.classList.contains("dark-theme"));
+  const next = !document.documentElement.classList.contains("dark-theme");
+  themePinned = true;
+  applyTheme(next);
 }
 
 /* --------------------------------------------------------------------------
@@ -1338,6 +1349,7 @@ function renderHistory() {
       h("label", { class: "tweet-select", title: "选择以批量重推" }, [
         h("input", {
           type: "checkbox",
+          "aria-label": `选择 ${r.username || "unknown"} 的记录以批量重推`,
           checked: state.historySelection.has(r.id),
           onChange: e => {
             if (e.target.checked) state.historySelection.add(r.id);
@@ -1357,8 +1369,8 @@ function renderHistory() {
           h("span", { class: "tweet-time mono", text: relativeTime(r.pushed_at), title: formatDateTime(r.pushed_at) || (r.pushed_at || "-") }),
           stBadge,
         ]),
-        // Tweet text
-        h("div", { class: "tweet-text" }, [
+        // Tweet text（两行截断，title 保留全文供悬停查看）
+        h("div", { class: "tweet-text", title: r.text_preview || null }, [
           r.original_link ? h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" } }) : null,
           r.text_preview || "(无文字内容)",
         ]),
