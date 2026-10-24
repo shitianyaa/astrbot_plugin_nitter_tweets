@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .claude/settings.local.json
+# Machine-local agent rules (branch/env/instance boundaries); never published
+AGENTS.local.md
 .zcode/
 .worktrees/
 cache/
@@ -27,3 +29,6 @@ Progress/
 # Ad-hoc debug scripts and captured output (keep on disk; the real suite lives
 # under tests/)
 /testignore/
+
+# Playwright MCP session artifacts (console logs, page snapshots; regenerated per run)
+.playwright-mcp/
