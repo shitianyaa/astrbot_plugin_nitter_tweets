@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.3-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.4-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -199,13 +199,14 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 - 历史重推属于原分组，只能选择该分组当前目标，不自动套用目标黑名单。
 - seen 按分组和订阅源隔离，但同一分组内的多个推送目标共享 seen。
 - 发送调用失败会停止自动重试并写失败历史；发送前准备失败仍保留重试机会。
+- FxTwitter 线路报 404 多为匿名调用频控（社区观察约每小时 150 次/IP），请增大检查间隔或减少订阅数量，详见 [常见问题](./docs/faq.md)。
 
 ## 文档导航
 
 | 文档 | 内容 |
 | --- | --- |
 | [进阶说明](./docs/advanced.md) | 平台、流程、全配置、行为边界、诊断 |
-| [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败与水位 |
+| [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败、水位与后端限流 |
 | [List 订阅](./docs/twitter-lists.md) | Public List、导入关注、故障排查 |
 | [实例指南](./docs/instances-guide.md) | 容器地址、统一实例、协议行为与可信来源提醒 |
 | [文档索引](./docs/README.md) | 全部 docs 入口 |
