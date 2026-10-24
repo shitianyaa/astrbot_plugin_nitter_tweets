@@ -16,7 +16,7 @@ const state = {
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, historyOrphans: null, selectedGroupId: "",
   historyGroupId: "", historyUsername: "", historyLimit: 10,
-  historyStatus: "",
+  historyStatus: "", historySelection: new Set(),
   historyOffset: 0, seenGroupId: "",
   pendingAction: null, lastFocusedElement: null, lastUpdated: "",
   statusNotice: null, statusNoticeClosed: false, bannerOffset: "",
@@ -32,7 +32,7 @@ function initEls() {
     "createGroupBtn","groupList","groupEditor",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
     "historyOrphanBtn","historyPrevBtn","historyNextBtn","historyPageLabel",
-    "historyOrphanResult","historyContent",
+    "historyOrphanResult","historyContent","historySelectAllBtn","historyBatchBar",
     "mirrorForm","mirrorUsername","mirrorQuery","mirrorListId","mirrorLimit",
     "mirrorInstance","mirrorProbeBtn","instanceList","mirrorResult",
     "confirmDialog","confirmTitle","confirmDesc","cancelConfirmBtn","confirmActionBtn",
@@ -397,7 +397,7 @@ function setBusy(isBusy) {
   state.loading = isBusy;
   const busy = isBusy || state.actionBusy;
   [els.refreshBtn, els.createGroupBtn, els.historyRefreshBtn, els.historyOrphanBtn,
-   els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn].forEach(b => { if (b) b.disabled = busy; });
+   els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn, els.historySelectAllBtn].forEach(b => { if (b) b.disabled = busy; });
   document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
   document.body.classList.toggle("ui-busy", busy);
   syncStatusNotice();
@@ -495,6 +495,7 @@ async function reloadAll(options = {}) {
         limit: state.historyLimit, offset: state.historyOffset,
         status: state.historyStatus || undefined,
       });
+      state.historySelection.clear();
     } catch (err) {
       errors.push(`历史加载失败：${err.message || "请求失败"}`);
       if (!state.history) state.history = { records: [], total_count: 0, total_pages: 1, page: 1 };
@@ -1323,6 +1324,7 @@ function renderHistory() {
   const content = els.historyContent;
   if (!recs.length) {
     content.replaceChildren(h("div", { class: "panel", style: { textAlign: "center", color: "var(--text-muted)", padding: "32px" }, text: "暂无推送历史记录" }));
+    renderHistoryBatchBar();
     return;
   }
 
@@ -1332,6 +1334,18 @@ function renderHistory() {
     const hasMedia = !!r.has_media;
 
     return h("div", { class: "tweet-card" }, [
+      // Multi-select checkbox column
+      h("label", { class: "tweet-select", title: "选择以批量重推" }, [
+        h("input", {
+          type: "checkbox",
+          checked: state.historySelection.has(r.id),
+          onChange: e => {
+            if (e.target.checked) state.historySelection.add(r.id);
+            else state.historySelection.delete(r.id);
+            renderHistoryBatchBar();
+          },
+        }),
+      ]),
       // Avatar placeholder
       h("div", { class: "tweet-avatar", html: svgIcon("user", 20) }),
       h("div", { class: "tweet-body" }, [
@@ -1368,6 +1382,134 @@ function renderHistory() {
       ]),
     ]);
   }));
+
+  renderHistoryBatchBar();
+}
+
+function clearHistorySelection() {
+  state.historySelection.clear();
+  renderHistory();
+}
+
+function toggleHistorySelectAllPage() {
+  const recs = (state.history && state.history.records) || [];
+  if (!recs.length) return;
+  const pageIds = recs.map(r => r.id);
+  const allSelected = pageIds.every(id => state.historySelection.has(id));
+  if (allSelected) pageIds.forEach(id => state.historySelection.delete(id));
+  else pageIds.forEach(id => state.historySelection.add(id));
+  renderHistory();
+}
+
+function renderHistoryBatchBar() {
+  const bar = els.historyBatchBar;
+  if (!bar) return;
+  const recs = (state.history && state.history.records) || [];
+  if (recs.length) {
+    const allSelected = recs.every(r => state.historySelection.has(r.id));
+    if (els.historySelectAllBtn) {
+      els.historySelectAllBtn.textContent = allSelected ? "清除本页" : "全选本页";
+      els.historySelectAllBtn.disabled = false;
+    }
+  } else if (els.historySelectAllBtn) {
+    els.historySelectAllBtn.textContent = "全选本页";
+  }
+  bar.hidden = state.historySelection.size === 0;
+  if (bar.hidden) { bar.replaceChildren(); return; }
+  bar.replaceChildren(
+    h("span", { class: "history-batch-count", text: `已选 ${state.historySelection.size} 条` }),
+    h("span", { class: "history-batch-hint", text: "将按分组合并转发重推" }),
+    h("div", { class: "history-batch-actions" }, [
+      h("button", {
+        class: "btn btn-sm btn-primary",
+        html: iconEl("send", 14).outerHTML,
+        text: "批量重推",
+        onClick: replayHistoryBatch,
+      }),
+      h("button", {
+        class: "btn btn-sm btn-ghost",
+        text: "取消",
+        onClick: clearHistorySelection,
+      }),
+    ]),
+  );
+}
+
+function replayHistoryBatch() {
+  const recs = (state.history && state.history.records) || [];
+  const selected = recs.filter(r => state.historySelection.has(r.id));
+  if (!selected.length) { clearHistorySelection(); return; }
+
+  // Group cards by their original group; each section picks its own targets.
+  const byGroup = new Map();
+  for (const r of selected) {
+    if (!byGroup.has(r.group_id)) byGroup.set(r.group_id, { name: r.group_name || r.group_id, cards: [] });
+    byGroup.get(r.group_id).cards.push(r);
+  }
+  // Union of target options per group (available first, umo deduped).
+  const sections = [...byGroup.entries()].map(([gid, info]) => {
+    const optionsByUmo = new Map();
+    for (const card of info.cards) {
+      for (const opt of (card.replay_target_options || [])) {
+        if (!opt?.umo || optionsByUmo.has(opt.umo)) continue;
+        optionsByUmo.set(opt.umo, { umo: opt.umo, available: !!opt.available });
+      }
+    }
+    const options = [...optionsByUmo.values()].sort((a, b) => (b.available ? 1 : 0) - (a.available ? 1 : 0));
+    return { gid, name: info.name, count: info.cards.length, options };
+  });
+
+  const boxes = new Map(); // gid -> container element
+  const desc = h("div", { class: "replay-groups" }, [
+    h("div", { text: "按分组选择重推目标（已下线目标不可选）；跨分组的记录会各自独立推送：" }),
+    ...sections.map(sec => {
+      const box = h("div", { class: "replay-targets" },
+        sec.options.map(o => {
+          const { label, id: targetId } = replayTargetParts(o.umo);
+          return h("label", { class: `replay-target${o.available ? "" : " offline"}`, title: o.umo || "" }, [
+            h("input", { type: "checkbox", checked: !!o.available, disabled: !o.available, value: o.umo || "" }),
+            h("span", { class: "replay-target-label", text: o.available ? label : `${label}（已下线）` }),
+            targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+          ]);
+        }));
+      boxes.set(sec.gid, box);
+      return h("div", { class: "replay-group" }, [
+        h("div", { class: "replay-group-title", text: `分组：${sec.name}（${sec.count} 条）` }),
+        box,
+      ]);
+    }),
+  ]);
+
+  openConfirm({
+    title: `批量重推（${selected.length} 条）`,
+    desc,
+    confirmText: "批量重推",
+    action: () => {
+      const targetsByGroup = {};
+      for (const sec of sections) {
+        const umos = [...(boxes.get(sec.gid)?.querySelectorAll("input:checked") || [])].map(i => i.value).filter(Boolean);
+        if (!umos.length) {
+          showToast(`分组「${sec.name}」未选择目标，已取消批量重推`);
+          return undefined;
+        }
+        targetsByGroup[sec.gid] = umos;
+      }
+      return withAction(async () => {
+        const res = await apiPost("web/history/replay", {
+          record_ids: [...state.historySelection],
+          targets_by_group: targetsByGroup,
+        });
+        state.historySelection.clear();
+        const skipped = Array.isArray(res?.skipped) ? res.skipped : [];
+        let message = `批量重推已触发（${res?.triggered ?? 0} 条），稍后刷新历史查看结果`;
+        if (skipped.length) {
+          const reasons = [...new Set(skipped.map(item => item.reason || item.group_id || item.record_id || "").filter(Boolean))].join("、");
+          message += `；跳过 ${skipped.length} 项${reasons ? `：${reasons}` : ""}`;
+        }
+        return { ...res, message };
+      }, "", { reload: false, rerender: renderHistory });
+    },
+  });
 }
 
 async function loadHistoryPage(delta) {
@@ -1375,6 +1517,7 @@ async function loadHistoryPage(delta) {
   const offset = delta < 0 ? state.history.prev_offset : state.history.next_offset;
   if (offset === null || offset === undefined) return;
   state.historyOffset = offset;
+  state.historySelection.clear();
   await withAction(async () => {
     state.history = await apiGet("web/history", {
       group_id: state.historyGroupId || undefined,
@@ -1876,6 +2019,7 @@ function bindEvents() {
     state.historyUsername = els.historyUsername.value.trim();
     state.historyLimit = parseInt(els.historyLimit.value, 10) || 10;
     state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
+    state.historySelection.clear();
     state.historyOffset = 0; // 重置页码
     await withAction(async () => {
       state.history = await apiGet("web/history", {
@@ -1890,6 +2034,7 @@ function bindEvents() {
   els.historyPrevBtn?.addEventListener("click", () => loadHistoryPage(-1));
   els.historyNextBtn?.addEventListener("click", () => loadHistoryPage(1));
   els.historyOrphanBtn?.addEventListener("click", detectHistoryOrphans);
+  els.historySelectAllBtn?.addEventListener("click", toggleHistorySelectAllPage);
   els.mirrorForm?.addEventListener("submit", probeMirror);
 
   els.cancelConfirmBtn?.addEventListener("click", closeConfirm);

@@ -127,6 +127,7 @@
               </div>
               <button id="historyRefreshBtn" class="btn btn-sm btn-primary" type="button">筛选</button>
               <button id="historyOrphanBtn" class="btn btn-sm btn-ghost" type="button">检查废弃</button>
+              <button id="historySelectAllBtn" class="btn btn-sm btn-ghost" type="button">全选本页</button>
               <div class="pager">
                 <button id="historyPrevBtn" class="btn btn-sm" type="button">上一页</button>
                 <span id="historyPageLabel" class="mono" style="font-size: 12px;">1 / 1 页</span>
@@ -135,6 +136,7 @@
             </div>
             <div id="historyOrphanResult"></div>
             <div id="historyContent" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            <div id="historyBatchBar" class="history-batch-bar" hidden></div>
           </section>
 
           <section id="mirrorView" class="view">

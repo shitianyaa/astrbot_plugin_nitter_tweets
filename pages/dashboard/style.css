@@ -1002,6 +1002,44 @@ select { cursor: pointer; }
   color: var(--text-muted);
 }
 
+/* History multi-select */
+.tweet-select {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  padding-top: 2px;
+}
+.tweet-select input { width: 16px; height: 16px; cursor: pointer; margin: 0; }
+
+.history-batch-bar {
+  position: sticky;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  margin-top: 10px;
+  background: var(--surface);
+  border: 1px solid var(--blue-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 5;
+}
+.history-batch-count { font-size: 13px; font-weight: 600; color: var(--blue); white-space: nowrap; }
+.history-batch-hint { font-size: 12px; color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-batch-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
+
+.replay-groups { min-width: 0; }
+.replay-group { margin-top: 12px; }
+.replay-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding-bottom: 2px;
+}
+.replay-group .replay-targets { margin-top: 6px; }
+
 .alert {
   display: flex;
   align-items: center;
