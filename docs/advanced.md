@@ -366,7 +366,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 #### 纯 FxTwitter 模式（`fx`）
 - **核心原理**：博主与标签推文完全走 FxTwitter API，失败时不再向自建 Nitter 回退。
 - **优点**：开箱即用，完全不需要在 VPS 上部署 Nitter 镜像与 Redis，资源占用极小。
-- **缺点**：若 FxTwitter 官方服务不可用或单 IP 频控则无法抓取；此外由于 FxTwitter 上游接口不支持 Twitter List，List 分组仍会走自建 Nitter。
+- **缺点**：若 FxTwitter 官方服务不可用或单 IP 频控则无法抓取（匿名频控超限常表现为 HTTP 404 而非 429，社区观察约每小时 150 次/IP，非官方数字；缓解方式见 [常见问题](./faq.md)）；此外由于 FxTwitter 上游接口不支持 Twitter List，List 分组仍会走自建 Nitter。
 
 ### 2. List 订阅严格物理隔离
 
