@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from astrbot.api.all import logger
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 

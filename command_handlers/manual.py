@@ -4,7 +4,8 @@ import asyncio
 import re
 import time
 
-from astrbot.api.all import At, MessageChain, Plain, logger
+from astrbot.api import logger
+from astrbot.api.all import At, MessageChain, Plain
 from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from astrbot.api.all import AstrBotConfig, Context, Star, logger
+from astrbot.api import logger
+from astrbot.api.all import AstrBotConfig, Context, Star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 from astrbot.core.star.filter.command import GreedyStr

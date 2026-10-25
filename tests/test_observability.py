@@ -147,14 +147,22 @@ def test_emit_covers_all_level_names_and_unknown_falls_back_to_info(monkeypatch)
     for level in ("debug", "info", "warning", "error"):
         mock_logger.reset_mock()
         safe_log(level, "level_probe", status="ok")
-        method = getattr(mock_logger, level)
-        assert method.called
-        (message,) = method.call_args.args
+        expected = getattr(mock_logger, level)
+        assert expected.call_count == 1
+        (message,) = expected.call_args.args
         assert message == "[NitterTweets] event=level_probe | status=ok"
+        for other in ("debug", "info", "warning", "error"):
+            if other != level:
+                assert not getattr(mock_logger, other).called
 
     mock_logger.reset_mock()
-    safe_log("critical", "level_probe")
-    assert mock_logger.info.called
+    safe_log("critical", "level_probe", status="ok")
+    assert mock_logger.info.call_count == 1
+    (message,) = mock_logger.info.call_args.args
+    assert message == "[NitterTweets] event=level_probe | status=ok"
+    assert not mock_logger.debug.called
+    assert not mock_logger.warning.called
+    assert not mock_logger.error.called
     assert not mock_logger.critical.called
 
 
