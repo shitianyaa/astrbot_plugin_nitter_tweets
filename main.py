@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from astrbot.api.all import AstrBotConfig, Context, Star, logger
+from astrbot.api import logger
+from astrbot.api.all import AstrBotConfig, Context, Star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 from astrbot.core.star.filter.command import GreedyStr
@@ -60,7 +61,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch recent public tweets from Nitter and send them as chat records.",
-    "1.7.4",
+    "1.7.5",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
