@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -195,3 +196,103 @@ class WebHistorySerializeTest(unittest.TestCase):
             record, {GROUP: "默认分组"}, "blogger"
         )
         assert item["has_media"] is False
+
+
+class _FakeReplayScheduler:
+    def __init__(self):
+        self.batch_calls = []
+        self.single_calls = []
+
+    async def replay_push_history_batch(self, record_ids, targets_by_group):
+        self.batch_calls.append((list(record_ids), targets_by_group))
+        return {
+            "success": True,
+            "error": "",
+            "triggered": len(record_ids),
+            "groups": [],
+            "skipped": [],
+        }
+
+    async def replay_push_history(self, record_id, target_umos):
+        self.single_calls.append((record_id, list(target_umos)))
+        return {
+            "success": True,
+            "error": "",
+            "record_id": record_id,
+            "success_targets": 1,
+            "total_targets": 1,
+        }
+
+
+class WebHistoryReplayRouteTest(unittest.TestCase):
+    """replay_history 的 record_ids 批量分支与 record_id 单条回归。"""
+
+    def _api(self):
+        from plugin_api.api import NitterWebAPI
+
+        plugin = types.SimpleNamespace()
+        api = NitterWebAPI(plugin)
+        plugin.scheduler = _FakeReplayScheduler()
+        return api
+
+    def test_record_ids_route_to_batch_with_sanitized_inputs(self):
+        api = self._api()
+        result = asyncio.run(
+            api.replay_history(
+                {
+                    "record_ids": [5, "7", "bad", 0, 5, True, 12.7],
+                    "targets_by_group": {
+                        "g1": ["tg:GroupMessage:1", "", "tg:GroupMessage:1"],
+                        "": ["skip-me"],
+                        "g2": "not-a-list",
+                    },
+                }
+            )
+        )
+        assert result["success"] is True
+        assert result["triggered"] == 2
+        # True 会被 int() 转成 1、12.7 截断成 12：两者都必须丢弃。
+        assert api.scheduler.batch_calls == [([5, 7], {"g1": ["tg:GroupMessage:1"]})]
+        assert api.scheduler.single_calls == []
+
+    def test_explicit_empty_target_group_is_preserved(self):
+        api = self._api()
+        result = asyncio.run(
+            api.replay_history({"record_ids": [5], "targets_by_group": {"g1": []}})
+        )
+        assert result["success"] is True
+        # 显式空选择保留为空列表（runner 侧按「未选择推送目标」跳过），
+        # 与「未传该组时回退全部目标」区分开。
+        assert api.scheduler.batch_calls == [([5], {"g1": []})]
+
+    def test_record_ids_without_valid_entries_is_rejected(self):
+        api = self._api()
+        result = asyncio.run(api.replay_history({"record_ids": ["bad", 0]}))
+        assert result["success"] is False
+        assert api.scheduler.batch_calls == []
+
+    def test_batch_error_payload_is_passed_through(self):
+        api = self._api()
+        api.scheduler.batch_calls.clear()
+
+        async def failing_batch(record_ids, targets_by_group):
+            return {
+                "success": False,
+                "error": "已有批量重推正在进行，请稍后再试",
+                "skipped": [{"record_id": "1", "reason": "未找到推送记录"}],
+            }
+
+        api.scheduler.replay_push_history_batch = failing_batch
+        result = asyncio.run(api.replay_history({"record_ids": [1]}))
+        assert result["success"] is False
+        assert result["error"] == "已有批量重推正在进行，请稍后再试"
+        assert result["skipped"] == [{"record_id": "1", "reason": "未找到推送记录"}]
+
+    def test_single_record_path_still_routes_to_replay_push_history(self):
+        api = self._api()
+        result = asyncio.run(
+            api.replay_history({"record_id": 3, "target_umos": ["tg:GroupMessage:1"]})
+        )
+        assert result["success"] is True
+        assert api.scheduler.single_calls == [(3, ["tg:GroupMessage:1"])]
+        assert api.scheduler.batch_calls == []

@@ -29,6 +29,7 @@ try:
         configured_merge_tweet_threshold,
         parse_config_bool,
     )
+    from ..delivery import MergedSendOutcome
     from ..rendering import TweetMessageRenderer
     from ..shared import format_subscription_source
     from ..shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
@@ -47,6 +48,7 @@ except ImportError:
         configured_merge_tweet_threshold,
         parse_config_bool,
     )
+    from delivery import MergedSendOutcome
     from rendering import TweetMessageRenderer
     from scheduler.config import ScheduleGroup
     from scheduler.formatting import (
@@ -397,6 +399,97 @@ class SchedulerSendMixin:
         return total_success
 
     _send_ordinary_batches = _send_per_user_updates
+
+    async def _send_replay_to_umo(
+        self,
+        umo: str,
+        batches: list[PendingTweetBatch],
+        group_label: str,
+        omit_status_url: bool,
+        hide_original_when_translated: bool,
+    ) -> MergedSendOutcome:
+        """批量重推单目标发送：满足合并条件走合并转发管线，否则逐条直发。
+
+        重推是恢复动作：逐条直发时每条推文独立成功/失败，
+        避免整包大消息被平台一次性拒收。
+        """
+        merge_applies = self.sender.supports_merged_forward_for_umo(
+            self.context, umo
+        ) and self._should_merge_batches(batches, self._merge_tweet_threshold())
+        if merge_applies:
+            return await self.sender.send_merged_to_umo(
+                self.context,
+                umo,
+                self._tweet_batches(batches),
+                group_label=group_label,
+                omit_status_url=omit_status_url,
+                hide_original_when_translated=hide_original_when_translated,
+            )
+        return await self._send_replay_tweets_individually(
+            umo,
+            batches,
+            group_label,
+            omit_status_url,
+            hide_original_when_translated,
+        )
+
+    async def _send_replay_tweets_individually(
+        self,
+        umo: str,
+        batches: list[PendingTweetBatch],
+        group_label: str,
+        omit_status_url: bool,
+        hide_original_when_translated: bool,
+    ) -> MergedSendOutcome:
+        """逐条直发：每条推文独立发送，聚合成单目标 outcome 供历史录制。"""
+        delivered: list[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
+        delivered_count = 0
+        total = sum(len(batch.tweets) for batch in batches)
+        sent_count = 0
+        for username, instance, tweets in self._tweet_batches(batches):
+            for tweet in tweets:
+                outcome = await self.sender.send_to_umo_with_outcome(
+                    self.context,
+                    umo,
+                    username,
+                    instance,
+                    [tweet],
+                    group_label=group_label if sent_count == 0 else "",
+                    tweet_start_index=sent_count + 1,
+                    omit_status_url=omit_status_url,
+                    hide_original_when_translated=hide_original_when_translated,
+                )
+                sent_count += 1
+                if self._delivery_is_complete(outcome):
+                    delivered_count += 1
+                    status_id = str(getattr(tweet, "status_id", "") or "")
+                    if status_id:
+                        delivered.append(status_id)
+                else:
+                    error = self._delivery_history_error(outcome)
+                    if error:
+                        errors.append(error)
+                    warning = str(getattr(outcome, "warning", "") or "")
+                    if warning:
+                        warnings.append(warning)
+        if delivered_count == 0:
+            success, aggregated_status = False, "failed"
+        elif delivered_count == total:
+            success, aggregated_status = True, "success"
+        else:
+            success, aggregated_status = True, "partial_failed"
+        unique_errors = list(dict.fromkeys(errors))
+        return MergedSendOutcome(
+            success=success,
+            mode="direct_per_tweet",
+            error="; ".join(unique_errors),
+            warning="; ".join(dict.fromkeys(warnings)),
+            delivery_status=aggregated_status,
+            delivery_error="; ".join(unique_errors),
+            delivered_status_ids=tuple(dict.fromkeys(delivered)),
+        )
 
     @staticmethod
     def _scheduled_update_header(

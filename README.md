@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.3-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.4-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -68,7 +68,7 @@
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
 | 发送 | 私人号 OneBot 合并转发；QQ Official 正文使用官方 Markdown API，媒体独立发送；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
-| 运维 | WebUI 面板、失败历史与手动重推、缓存与推送记录清理 |
+| 运维 | WebUI 面板、失败历史与手动/多选批量重推、缓存与推送记录清理 |
 
 ## 5 分钟上手
 
@@ -197,15 +197,17 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 - 作者黑名单属于完整推送目标 UMO，同一目标跨分组共享。
 - 历史重推属于原分组，只能选择该分组当前目标，不自动套用目标黑名单。
+- 推送历史支持多选批量重推（单次最多 50 条、按分组选目标、后台异步执行），详见 [进阶说明](./docs/advanced.md)。
 - seen 按分组和订阅源隔离，但同一分组内的多个推送目标共享 seen。
 - 发送调用失败会停止自动重试并写失败历史；发送前准备失败仍保留重试机会。
+- FxTwitter 线路报 404 多为匿名调用频控（社区观察约每小时 150 次/IP），请增大检查间隔或减少订阅数量，详见 [常见问题](./docs/faq.md)。
 
 ## 文档导航
 
 | 文档 | 内容 |
 | --- | --- |
 | [进阶说明](./docs/advanced.md) | 平台、流程、全配置、行为边界、诊断 |
-| [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败与水位 |
+| [常见问题](./docs/faq.md) | 黑名单、历史重推、seen、发送失败、水位与后端限流 |
 | [List 订阅](./docs/twitter-lists.md) | Public List、导入关注、故障排查 |
 | [实例指南](./docs/instances-guide.md) | 容器地址、统一实例、协议行为与可信来源提醒 |
 | [文档索引](./docs/README.md) | 全部 docs 入口 |

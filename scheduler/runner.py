@@ -21,7 +21,7 @@ try:
         sanitize_sensitive_text,
     )
     from ..shared.group_ids import GLOBAL_GROUP_ID
-    from ..storage import StorageAdapter
+    from ..storage import PushHistoryRecord, StorageAdapter
     from .config import (
         PushTargetParseResult,
         ScheduleGroup,
@@ -77,7 +77,7 @@ except ImportError:
         sanitize_sensitive_text,
     )
     from shared.group_ids import GLOBAL_GROUP_ID
-    from storage import StorageAdapter
+    from storage import PushHistoryRecord, StorageAdapter
 
 
 try:
@@ -87,6 +87,10 @@ except ZoneInfoNotFoundError:
 
 
 POLL_SECONDS = 30
+
+# One batched replay limited to one page of the history view (same cap as
+# build_history's per-page limit).
+REPLAY_BATCH_MAX_RECORDS = 50
 
 
 class NitterTweetScheduler(
@@ -117,6 +121,11 @@ class NitterTweetScheduler(
         self.config_reader = SchedulerConfigReader(config, context)
         self.storage = StorageAdapter(owner, config, context)
         self._task: asyncio.Task | None = None
+        self._replay_batch_task: asyncio.Task | None = None
+        self._replay_batch_stopping = False
+        # 单条与批量重推共享的在途记录集合：登记与检查之间不得有挂起点，
+        # 防止同一记录同时走两条路径重复发送。
+        self._replay_inflight_ids: set[int] = set()
         self._last_interval_slots: dict[str, int] = {}
         self._daily_slots: dict[str, set[str]] = {}
         self._last_daily_check: dict[str, dt.datetime] = {}
@@ -140,6 +149,7 @@ class NitterTweetScheduler(
         try:
             loop = asyncio.get_running_loop()
             self._task = loop.create_task(self._loop())
+            self._replay_batch_stopping = False
             groups = self._schedule_groups(log_invalid_targets=False)
             logger.info(
                 "[NitterTweets] 调度器已启动 "
@@ -170,9 +180,25 @@ class NitterTweetScheduler(
             # migration retry).  Still close storage and let unload finish.
             logger.warning(f"[NitterTweets] 调度器停止时任务异常: {exc}")
         finally:
-            self.storage.close()
             self._task = None
-            logger.info("[NitterTweets] 调度器已停止")
+
+        replay_task = self._replay_batch_task
+        try:
+            self._replay_batch_stopping = True
+            if replay_task is not None:
+                if not replay_task.done():
+                    replay_task.cancel()
+                try:
+                    await replay_task
+                except asyncio.CancelledError:
+                    pass
+        except Exception as exc:
+            logger.warning(f"[NitterTweets] 批量重推任务停止时异常: {exc}")
+        finally:
+            self._replay_batch_task = None
+
+        self.storage.close()
+        logger.info("[NitterTweets] 调度器已停止")
 
     async def _loop(self) -> None:
         logger.info("[NitterTweets] 调度器循环已进入")
@@ -507,6 +533,23 @@ class NitterTweetScheduler(
         target_umos: list[str] | None = None,
     ) -> dict[str, object]:
         """Replay one stored delivery to current targets in its group."""
+        if record_id <= 0:
+            return {"success": False, "error": "未找到推送记录"}
+        # 检查与登记之间无挂起点：与批量重推共享在途集合，避免同一记录
+        # 同时走单条与批量两条路径重复发送。
+        if record_id in self._replay_inflight_ids:
+            return {"success": False, "error": "该记录正在重推中，请稍后再试"}
+        self._replay_inflight_ids.add(record_id)
+        try:
+            return await self._replay_push_history_once(record_id, target_umos)
+        finally:
+            self._replay_inflight_ids.discard(record_id)
+
+    async def _replay_push_history_once(
+        self,
+        record_id: int,
+        target_umos: list[str] | None = None,
+    ) -> dict[str, object]:
         record = await self.storage.get_push_history_record(record_id)
         if record is None:
             return {"success": False, "error": "未找到推送记录"}
@@ -658,6 +701,354 @@ class NitterTweetScheduler(
             "total_targets": len(targets),
             "failed_targets": failed_targets,
         }
+
+    async def replay_push_history_batch(
+        self,
+        record_ids: list[int],
+        targets_by_group: dict[str, list[str]] | None = None,
+    ) -> dict[str, object]:
+        """Queue a background batch replay of stored deliveries per group.
+
+        Records are grouped by their original ``group_id``; each group is
+        aggregated per subscription source and sent through
+        ``send_merged_to_umo`` so QQ targets get merged forward whenever the
+        configured ``merge_tweet_threshold`` is reached.
+        """
+        ids: list[int] = []
+        seen_ids: set[int] = set()
+        for raw in record_ids or []:
+            # 布尔与非整数浮点会被 int() 静默转义（True→1、12.7→12），
+            # 会指向错误的记录，直接丢弃。
+            if isinstance(raw, bool) or (
+                isinstance(raw, float) and not raw.is_integer()
+            ):
+                continue
+            try:
+                record_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if record_id > 0 and record_id not in seen_ids:
+                seen_ids.add(record_id)
+                ids.append(record_id)
+        if not ids:
+            return {"success": False, "error": "请选择要重新推送的记录"}
+        if len(ids) > REPLAY_BATCH_MAX_RECORDS:
+            return {
+                "success": False,
+                "error": f"单次批量重推最多 {REPLAY_BATCH_MAX_RECORDS} 条记录",
+            }
+        # Fast pre-check only; the authoritative re-entry check runs right
+        # before create_task with no await in between (see below).
+        if self._replay_batch_task is not None and not self._replay_batch_task.done():
+            return {"success": False, "error": "已有批量重推正在进行，请稍后再试"}
+
+        records_by_group: dict[str, list[PushHistoryRecord]] = {}
+        skipped: list[dict[str, str]] = []
+        for record_id in ids:
+            if record_id in self._replay_inflight_ids:
+                skipped.append(
+                    {"record_id": str(record_id), "reason": "记录正在重推中"}
+                )
+                continue
+            record = await self.storage.get_push_history_record(record_id)
+            if record is None:
+                skipped.append(
+                    {"record_id": str(record_id), "reason": "未找到推送记录"}
+                )
+                continue
+            group_id = str(record.group_id or "").strip()
+            if not group_id:
+                skipped.append(
+                    {"record_id": str(record_id), "reason": "未找到推送记录"}
+                )
+                continue
+            if not str(record.username or "").strip():
+                skipped.append(
+                    {
+                        "record_id": str(record_id),
+                        "reason": "记录缺少订阅源用户名",
+                    }
+                )
+                continue
+            records_by_group.setdefault(group_id, []).append(record)
+
+        group_plans: list[tuple[ScheduleGroup, list[PushHistoryRecord], list[str]]] = []
+        for group_id, records in records_by_group.items():
+            group = self._schedule_group(group_id, log_invalid_targets=False)
+            if group is None:
+                skipped.append({"group_id": group_id, "reason": "未找到分组"})
+                continue
+            if not group.enabled:
+                skipped.append(
+                    {
+                        "group_id": group_id,
+                        "reason": f"分组已停用：{self._push_group_label(group)}",
+                    }
+                )
+                continue
+            if not group.targets:
+                skipped.append(
+                    {"group_id": group_id, "reason": "当前分组没有有效推送目标"}
+                )
+                continue
+            # 显式空选择（API 传 `{"g": []}`）与未传该组是两回事：
+            # 前者按「未选择推送目标」跳过，后者才回退全部分组目标。
+            requested_raw = (targets_by_group or {}).get(group_id)
+            if requested_raw is None:
+                targets = list(group.targets)
+            else:
+                requested = self._dedupe_targets(
+                    [str(target or "").strip() for target in requested_raw]
+                )
+                if not requested:
+                    skipped.append({"group_id": group_id, "reason": "未选择推送目标"})
+                    continue
+                current_targets = set(group.targets)
+                valid_targets = [
+                    target for target in requested if target in current_targets
+                ]
+                for target in requested:
+                    if target not in current_targets:
+                        skipped.append(
+                            {
+                                "group_id": group_id,
+                                "target": target,
+                                "reason": "推送目标已不在当前分组配置中",
+                            }
+                        )
+                if not valid_targets:
+                    continue
+                targets = valid_targets
+            group_plans.append((group, records, targets))
+
+        if not group_plans:
+            return {"success": False, "error": "没有可重推的记录", "skipped": skipped}
+
+        # Authoritative re-entry check: from here to create_task there is no
+        # await, so two concurrent triggers cannot both claim the slot and a
+        # task handle can never be overwritten (which would orphan it beyond
+        # stop()'s reach).
+        if self._replay_batch_task is not None and not self._replay_batch_task.done():
+            return {"success": False, "error": "已有批量重推正在进行，请稍后再试"}
+        if self._replay_batch_stopping:
+            return {"success": False, "error": "调度器正在停止，批量重推已取消"}
+
+        # 在途冲突过滤同样无挂起点：规划期间被单条重推抢先登记的记录在此
+        # 剔除，随后一次性登记本批记录，两条路径不会并发发送同一记录。
+        if self._replay_inflight_ids:
+            filtered_plans: list[
+                tuple[ScheduleGroup, list[PushHistoryRecord], list[str]]
+            ] = []
+            for group, records, targets in group_plans:
+                kept_records = []
+                for record in records:
+                    if record.id in self._replay_inflight_ids:
+                        skipped.append(
+                            {
+                                "record_id": str(record.id),
+                                "reason": "记录正在重推中",
+                            }
+                        )
+                    else:
+                        kept_records.append(record)
+                if kept_records:
+                    filtered_plans.append((group, kept_records, targets))
+            group_plans = filtered_plans
+        planned_ids = [
+            record.id for _group, records, _targets in group_plans for record in records
+        ]
+        if not planned_ids:
+            return {"success": False, "error": "没有可重推的记录", "skipped": skipped}
+        self._replay_inflight_ids.update(planned_ids)
+
+        triggered = sum(len(records) for _group, records, _targets in group_plans)
+        self._replay_batch_task = asyncio.create_task(
+            self._run_replay_push_history_batch(group_plans, planned_ids)
+        )
+        return {
+            "success": True,
+            "error": "",
+            "triggered": triggered,
+            "groups": [
+                {
+                    "group_id": group.group_id,
+                    "record_count": len(records),
+                    "target_count": len(targets),
+                }
+                for group, records, targets in group_plans
+            ],
+            "skipped": skipped,
+        }
+
+    async def _run_replay_push_history_batch(
+        self,
+        group_plans: list[tuple[ScheduleGroup, list[PushHistoryRecord], list[str]]],
+        inflight_ids: list[int],
+    ) -> None:
+        started = time.perf_counter()
+        total_records = sum(len(records) for _group, records, _targets in group_plans)
+        logger.info(
+            "[NitterTweets] 批量重推开始: "
+            f"groups={len(group_plans)}, records={total_records}"
+        )
+        try:
+            for group, records, targets in group_plans:
+                try:
+                    await self._replay_push_history_group(group, records, targets)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "[NitterTweets] 批量重推分组异常，继续其余分组: "
+                        f"group_id={group.group_id}, error={exc}",
+                        exc_info=True,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"[NitterTweets] 批量重推异常终止: error={exc}", exc_info=True)
+        finally:
+            self._replay_inflight_ids.difference_update(inflight_ids)
+            duration_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "[NitterTweets] 批量重推结束: "
+                f"groups={len(group_plans)}, records={total_records}, "
+                f"duration_ms={duration_ms:.1f}"
+            )
+
+    async def _replay_push_history_group(
+        self,
+        group: ScheduleGroup,
+        records: list[PushHistoryRecord],
+        targets: list[str],
+    ) -> None:
+        started = time.perf_counter()
+        # Oldest first so the merged forward reads as a conversation.
+        ordered = sorted(records, key=lambda record: int(record.pushed_at or 0))
+        # 按（订阅源, 来源实例）分桶：同一订阅源的记录可能来自不同实例，
+        # 混在一个批次里会拿第一条的实例剥离消息中的实例链接，漏掉其余。
+        batches_by_source: dict[tuple[str, str], PendingTweetBatch] = {}
+        source_order: list[tuple[str, str]] = []
+        for record in ordered:
+            username = str(record.username or "").strip()
+            if not username:
+                continue
+            instance = str(record.instance or "").strip()
+            source_key = (username, instance)
+            batch = batches_by_source.get(source_key)
+            if batch is None:
+                batch = PendingTweetBatch(
+                    username=username,
+                    instance=instance,
+                    tweets=[],
+                    fetched_ids=[],
+                    seen_ids=[],
+                )
+                batches_by_source[source_key] = batch
+                source_order.append(source_key)
+            batch.tweets.append(copy.deepcopy(record.tweet))
+        batches = [batches_by_source[source_key] for source_key in source_order]
+        if not batches:
+            return
+
+        # Replay is an explicit recovery action: always send the complete
+        # tweet regardless of the current group mode (same as single replay).
+        translator_enabled = bool(getattr(self.translator, "enabled", False))
+        if not translator_enabled:
+            for batch in batches:
+                for tweet in batch.tweets:
+                    tweet.translation = ""
+                    tweet.ai_warnings = [
+                        warning
+                        for warning in tweet.ai_warnings
+                        if "翻译" not in str(warning)
+                    ]
+        group_label = self._push_group_label(group)
+        omit_status_url = bool(getattr(group, "omit_status_url", True))
+        hide_original_when_translated = resolve_hide_original_when_translated(
+            self.config,
+            group_hide=bool(getattr(group, "hide_original_when_translated", False)),
+        )
+        all_tweets = [tweet for batch in batches for tweet in batch.tweets]
+
+        success_targets = 0
+        failed_targets: dict[str, str] = {}
+        try:
+            try:
+                if translator_enabled:
+                    await self.translator.attach_translations(
+                        all_tweets, targets[0] if targets else None
+                    )
+                await self.media.attach_media(all_tweets)
+            except Exception as exc:
+                logger.warning(
+                    "[NitterTweets] 批量重推媒体准备失败，继续发送文本: "
+                    f"group={group.group_id}, records={len(all_tweets)}, error={exc}"
+                )
+            except BaseException:
+                await self._cleanup_batch_media_many(batches)
+                raise
+
+            for target_index, target in enumerate(targets):
+                try:
+                    outcome = await self._send_replay_to_umo(
+                        target,
+                        batches,
+                        group_label=group_label,
+                        omit_status_url=omit_status_url,
+                        hide_original_when_translated=hide_original_when_translated,
+                    )
+                    history_status_ids = self._delivery_history_status_ids(
+                        outcome, all_tweets
+                    )
+                    delivery_status = self._delivery_history_status(outcome)
+                    delivery_error = self._delivery_history_error(outcome)
+                    for batch in batches:
+                        await self._record_batch_push_history(
+                            group.group_id,
+                            batch,
+                            target,
+                            "replay",
+                            delivery_status=delivery_status,
+                            delivery_error=delivery_error,
+                            status_ids=history_status_ids,
+                        )
+                    if self._delivery_is_complete(outcome):
+                        success_targets += 1
+                    else:
+                        failed_targets[target] = (
+                            str(getattr(outcome, "error", "") or "")
+                            or delivery_error
+                            or "send failed"
+                        )
+                except Exception as exc:
+                    failed_targets[target] = str(exc)
+                    logger.warning(
+                        "[NitterTweets] 批量重推失败: "
+                        f"group={group.group_id}, target={target}, error={exc}"
+                    )
+                    for batch in batches:
+                        await self._record_failed_batch_push_history(
+                            group.group_id,
+                            batch,
+                            target,
+                            "replay",
+                            batch.tweets,
+                            exc,
+                        )
+                if target_index < len(targets) - 1 and group.send_target_interval > 0:
+                    await asyncio.sleep(group.send_target_interval)
+        finally:
+            await self._cleanup_batch_media_many(batches)
+
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "[NitterTweets] 批量重推分组完成: "
+            f"group_id={group.group_id}, group_type={group.group_type}, "
+            f"sources={len(batches)}, records={len(all_tweets)}, "
+            f"targets={len(targets)}, success_targets={success_targets}, "
+            f"failed_targets={len(failed_targets)}, duration_ms={duration_ms:.1f}"
+        )
 
     def _new_check_result(
         self,
