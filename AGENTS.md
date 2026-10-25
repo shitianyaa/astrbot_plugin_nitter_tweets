@@ -41,6 +41,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 双导入：`try: from .x import ... except ImportError: from x import ...`。
 - 不硬编码 provider、token、群号、实例、本机路径；不提交 `data/`、缓存、DB、下载物。
 - 日志只通过现有安全日志辅助函数输出；不得写入 token、Cookie、响应正文、完整私有 URL 或其他会话材料。结构化任务摘要应保留分组、类型、来源、生效实例、轮换轨迹、统计、耗时和 warning/error。
+- logger 只能从 `astrbot.api` 导入；插件运行时代码（`main.py`、`command_handlers/`、`scheduler/`、`media_support/`、`delivery/`、`plugin_api/`、`shared/` 等）**严禁 `import logging`** 或引用内置 logging 的常量/函数（2026-10-25 插件市场上架审查硬约束，违者不予上架）。分级日志直接调用 `logger.debug/info/warning/error`，或向 `safe_task_log` / `safe_log` 传级别名字符串 `"debug"/"info"/"warning"/"error"`（分派实现见 `shared/observability.py` 的 `_emit`）；`scripts/`、`tests/` 等非运行时工具不受限。
 - 不改用户未要求的行为/文案；优先兼容现有测试。
 - 提交只用真实变更描述；无 AI 署名、`Co-Authored-By`、`Generated with ...`。
 - 禁止丢改动的 git 命令（`reset --hard` 等），除非用户明确要求。

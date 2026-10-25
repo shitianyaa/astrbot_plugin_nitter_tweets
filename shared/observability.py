@@ -160,8 +160,27 @@ def sanitize_diagnostic(value: object) -> str:
     return text
 
 
-def safe_task_log(level: int, title: str, **fields: object) -> None:
-    """Emit a clean, indented multi-line Chinese task summary block."""
+_LEVELS = ("debug", "info", "warning", "error")
+
+
+def _emit(level: str, message: str) -> None:
+    """Dispatch to the astrbot logger method for the given level name."""
+    name = level if level in _LEVELS else "info"
+    if name == "debug":
+        logger.debug(message)
+    elif name == "warning":
+        logger.warning(message)
+    elif name == "error":
+        logger.error(message)
+    else:
+        logger.info(message)
+
+
+def safe_task_log(level: str, title: str, **fields: object) -> None:
+    """Emit a clean, indented multi-line Chinese task summary block.
+
+    ``level`` is a logger method name: "debug" / "info" / "warning" / "error".
+    """
     fields = {key: value for key, value in fields.items() if key in TASK_FIELDS}
     lines = [f"{LOG_PREFIX} {title}"]
 
@@ -287,18 +306,21 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     if elapsed_ms is not None:
         lines.append(f"  任务耗时: {format_elapsed(elapsed_ms)}")
 
-    logger.log(level, "\n".join(lines))
+    _emit(level, "\n".join(lines))
 
 
-def safe_log(level: int, event_name: str, **fields: object) -> None:
-    """Emit a structured single-line diagnostic log event."""
+def safe_log(level: str, event_name: str, **fields: object) -> None:
+    """Emit a structured single-line diagnostic log event.
+
+    ``level`` is a logger method name: "debug" / "info" / "warning" / "error".
+    """
     parts = [f"event={event_name}"]
     for key, value in fields.items():
         if key not in ALLOWED_DIAGNOSTIC_FIELDS:
             continue
         sanitized = sanitize_diagnostic(value)
         parts.append(f"{key}={sanitized}")
-    logger.log(level, f"{LOG_PREFIX} " + " | ".join(parts))
+    _emit(level, f"{LOG_PREFIX} " + " | ".join(parts))
 
 
 __all__ = [

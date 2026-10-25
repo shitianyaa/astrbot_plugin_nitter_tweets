@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -49,7 +48,7 @@ def test_safe_task_log_formats_structured_multiline_chinese_block(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.INFO,
+        "info",
         "推文检查任务完成",
         operation="list_check",
         group_name="我的关注",
@@ -66,9 +65,8 @@ def test_safe_task_log_formats_structured_multiline_chinese_block(monkeypatch):
         elapsed_ms=17426,
     )
 
-    assert mock_logger.log.called
-    level, message = mock_logger.log.call_args[0]
-    assert level == logging.INFO
+    assert mock_logger.info.called
+    (message,) = mock_logger.info.call_args.args
     assert message.startswith("[NitterTweets] 推文检查任务完成")
     assert "  分组名称: 我的关注 (group_1)" in message
     assert "  订阅类型: Twitter List" in message
@@ -85,7 +83,7 @@ def test_safe_task_log_omits_empty_or_unlisted_fields(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.INFO,
+        "info",
         "日常检查完成",
         group_name="我的关注",
         group_id="group_1",
@@ -93,7 +91,7 @@ def test_safe_task_log_omits_empty_or_unlisted_fields(monkeypatch):
         instance="",
     )
 
-    _level, message = mock_logger.log.call_args[0]
+    (message,) = mock_logger.info.call_args.args
     assert "unknown_field" not in message
     assert "secret_val" not in message
     assert "生效实例" not in message
@@ -113,9 +111,8 @@ def test_manual_task_log_uses_actual_zero_sent_count(monkeypatch):
         started=time.perf_counter(),
     )
 
-    mock_logger.log.assert_called_once()
-    level, message = mock_logger.log.call_args.args
-    assert level == logging.WARNING
+    mock_logger.warning.assert_called_once()
+    (message,) = mock_logger.warning.call_args.args
     assert "触发原因: 手动命令 (推文)" in message
     assert "！" not in message
     assert "推文统计: 新推文 2 条; 实际发送 0 条" in message
@@ -128,20 +125,37 @@ def test_safe_log_formats_single_line_diagnostic_event(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_log(
-        logging.INFO,
+        "info",
         "host_failover",
         from_host="nitter.top",
         to_host="nitter.tiekoetter.com",
         reason="HTTP_429",
     )
 
-    assert mock_logger.log.called
-    level, message = mock_logger.log.call_args[0]
-    assert level == logging.INFO
+    assert mock_logger.info.called
+    (message,) = mock_logger.info.call_args.args
     assert (
         message
         == "[NitterTweets] event=host_failover | from_host=nitter.top | to_host=nitter.tiekoetter.com | reason=HTTP_429"
     )
+
+
+def test_emit_covers_all_level_names_and_unknown_falls_back_to_info(monkeypatch):
+    mock_logger = MagicMock()
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
+
+    for level in ("debug", "info", "warning", "error"):
+        mock_logger.reset_mock()
+        safe_log(level, "level_probe", status="ok")
+        method = getattr(mock_logger, level)
+        assert method.called
+        (message,) = method.call_args.args
+        assert message == "[NitterTweets] event=level_probe | status=ok"
+
+    mock_logger.reset_mock()
+    safe_log("critical", "level_probe")
+    assert mock_logger.info.called
+    assert not mock_logger.critical.called
 
 
 # --- has_translation suppression tests (f19d28a regression) ---
@@ -240,12 +254,12 @@ def test_manual_task_log_dynamic_operation_labels(monkeypatch):
     for op, expected in ops_and_expected:
         mock_logger.reset_mock()
         safe_task_log(
-            logging.INFO,
+            "info",
             "测试任务",
             operation=op,
             trigger="manual_command",
         )
-        _lvl, msg = mock_logger.log.call_args[0]
+        (msg,) = mock_logger.info.call_args.args
         assert f"触发原因: {expected}" in msg
         assert "！" not in msg
 
@@ -275,7 +289,7 @@ def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeyp
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.WARNING,
+        "warning",
         "任务失败",
         operation="fetch",
         instance="https://my-internal.nitter.corp:8443",
@@ -283,8 +297,8 @@ def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeyp
         error_detail="Timeout connecting to https://secret.backend:8080/api?token=abc",
     )
 
-    assert mock_logger.log.called
-    _lvl, message = mock_logger.log.call_args[0]
+    assert mock_logger.warning.called
+    (message,) = mock_logger.warning.call_args.args
     assert "https://my-internal.nitter.corp:8443" not in message
     assert "https://h1.lan" not in message
     assert "https://h2.lan" not in message
