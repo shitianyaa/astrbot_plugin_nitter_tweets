@@ -568,16 +568,16 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert 'label: "List 分组"' in source
     assert "PRIVATE_QQ_GROUP_WARNING" not in source
     assert ".group-type-options" in style
-    assert ".group-type-radio:checked + .group-type-option-body" in style
+    # 选中态卡片行由 JS 同步 .selected 类（不依赖 :has，兼容较旧内核）
+    assert ".group-type-option.selected" in style
     assert "function addWatchList(groupId)" in source
-    assert "watch_lists: [...(group.watch_lists || [])]" in source
-    assert "filter_reposts_enabled: group.filter_reposts_enabled !== false" in source
+    assert "snap.watch_lists = [...(group.watch_lists || [])];" in source
+    assert "snap.filter_reposts_enabled = group.filter_reposts_enabled !== false;" in source
     assert '"filter_reposts_enabled"' in source
     assert "全局转发过滤总开关" in source
     assert "List ID 必须是 1-20 位正整数" in source
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
-    assert 'rss_user: "用户 RSS"' in source
     # AstrBot Pages iframe 使用 sandbox="allow-scripts allow-forms allow-downloads"
     # （无 allow-same-origin），opaque origin 下 localStorage 访问必抛 SecurityError，
     # 曾拖垮整页启动（529ee81）。因此页面内禁止访问它（注释里提及不算）。
@@ -791,6 +791,61 @@ def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
     assert "function rerenderTargetsSection(gid)" in source
     assert '"data-editor-section": "targets"' in source
     assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
+
+
+def test_dashboard_redesign_architecture_guards():
+    """重构架构护栏：数据通道 + 视图持久化 + 作用域刷新 + 细粒度渲染 + 动效约束。
+    视图容器常驻，切换只冲刷脏视图；动作收尾按当前视图作用域刷新，内容不清空。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    # store 数据通道 + 视图持久化
+    assert "const viewDirty = new Set([" in source
+    assert "const CHANNEL_VIEWS = {" in source
+    assert "function markData(...channels)" in source
+    assert "function markDirtyView(view)" in source
+    assert "function flushView(view)" in source
+    # 整视图重渲入口已移除：数据变更一律走通道
+    assert "renderAll" not in source
+    # 作用域化数据刷新：动作收尾不再全量 reload
+    assert "async function refreshViewData(view)" in source
+    assert "async function reloadOverviewData()" in source
+    assert "async function reloadGroupState()" in source
+    assert "async function reloadConfigState()" in source
+    assert "async function refreshHistoryData()" in source
+    # 布局实测 rAF 合帧（顶栏高度 + 通知栈让位）
+    assert "function scheduleBannerSync()" in source
+    assert "bannerFrame = requestAnimationFrame(() => { bannerFrame = 0; syncBannerOffset(); });" in source
+    assert "frame = requestAnimationFrame(() => {" in source
+    # 历史列表：卡片带 recordId，全选/清除走原位勾选同步，不重建卡片
+    assert "dataset: { recordId: String(r.id) }" in source
+    assert "function syncHistoryCheckboxes()" in source
+    assert "box.checked = state.historySelection.has(id)" in source
+    # 配置页：控件提交走 commitConfigValue 增量更新，不再整树重建
+    assert "const configDirtyKeys = new Set();" in source
+    assert "function commitConfigValue(key, value, fromControl = true)" in source
+    assert "function renderConfigBarState()" in source
+    assert "function updateConfigNavBadges()" in source
+    assert "row.replaceChildren(...configItemChildren(item));" in source
+    assert "state.configDraft[item.key] = v; renderConfig();" not in source
+    # 信息增强：分组健康徽标 / 探测耗时条 / 缓存构成
+    assert "function groupHealthInfo(g)" in source
+    assert "health-dot " in source
+    assert "probe-meter-fill" in source
+    assert "图片 ${cacheInfo.images}" in source
+    # 动效基元约束：rise-in / pop-in 两个设计基元 + 忙态旋转；无 box-shadow 过渡
+    assert "@keyframes rise-in" in style
+    assert "@keyframes pop-in" in style
+    assert "@keyframes status-spin" in style
+    assert "box-shadow var(--transition)" not in style
+    assert "transition: background var(--transition), border-color var(--transition);" in style
+    dialog_panel = style.split(".dialog-panel {", 1)[1].split("}", 1)[0]
+    assert "animation: pop-in" in dialog_panel
+    assert "animation: rise-in" in style
+    assert "@media (prefers-reduced-motion: reduce)" in style
+    # index.html 内联样式收编完毕
+    assert 'style="' not in index
 
 
 def test_status_and_export_render_list_group():

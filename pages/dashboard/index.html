@@ -99,7 +99,7 @@
 
           <section id="groupsView" class="view">
             <div class="groups-layout">
-              <div class="panel" style="padding: 12px;">
+              <div class="panel panel-tight">
                 <div class="panel-head">
                   <h3>订阅分组</h3>
                   <button id="createGroupBtn" class="btn btn-sm btn-primary" type="button">
@@ -114,7 +114,7 @@
           </section>
 
           <section id="historyView" class="view">
-            <div class="toolbar panel" style="padding: 10px 14px;">
+            <div class="toolbar panel panel-snug">
               <div class="field toolbar-field">
                 <span>分组</span>
                 <select id="historyGroupSelect"></select>
@@ -141,12 +141,12 @@
               <button id="historySelectAllBtn" class="btn btn-sm btn-ghost" type="button">全选本页</button>
               <div class="pager">
                 <button id="historyPrevBtn" class="btn btn-sm" type="button">上一页</button>
-                <span id="historyPageLabel" class="mono" style="font-size: 12px;">1 / 1 页</span>
+                <span id="historyPageLabel" class="mono pager-label">1 / 1 页</span>
                 <button id="historyNextBtn" class="btn btn-sm" type="button">下一页</button>
               </div>
             </div>
             <div id="historyOrphanResult"></div>
-            <div id="historyContent" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            <div id="historyContent" class="stack-list"></div>
             <div id="historyBatchBar" class="history-batch-bar" hidden></div>
           </section>
 
@@ -154,7 +154,7 @@
             <form id="mirrorForm" class="panel">
               <div class="panel-head">
                 <h2>Nitter 实例能力检测</h2>
-                <span style="font-size: 12px; color: var(--text-muted)">不写推送记录</span>
+                <span class="hint">不写推送记录</span>
               </div>
               <div class="editor-grid">
                 <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" placeholder="如 nasa，留空跳过" /></label>
@@ -163,15 +163,15 @@
                 <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" /></label>
                 <label class="field editor-grid-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" /></label>
               </div>
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 12px; color: var(--text-muted)">已配置:</span>
+              <div class="form-footer">
+                <div class="row">
+                  <span class="hint">已配置:</span>
                   <div id="instanceList" class="chip-list"></div>
                 </div>
                 <button id="mirrorProbeBtn" class="btn btn-sm btn-primary" type="submit">开始探测</button>
               </div>
             </form>
-            <div id="mirrorResult" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            <div id="mirrorResult" class="stack-list"></div>
           </section>
 
           <section id="configView" class="view"></section>
