@@ -742,6 +742,7 @@ select { cursor: pointer; }
   padding: 14px 16px;
   display: flex;
   gap: 12px;
+  cursor: pointer;
   transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
 .tweet-card:hover {
@@ -972,7 +973,9 @@ select { cursor: pointer; }
   align-items: center;
   flex: 0 0 auto;
   cursor: pointer;
-  padding-top: 2px;
+  /* 与 .tweet-avatar 的 40px 耦合：显式高度覆盖卡片默认拉伸，
+     16px 方框在此高度内居中即与头像中线对齐 */
+  height: 40px;
 }
 .tweet-select input { width: 16px; height: 16px; cursor: pointer; margin: 0; }
 

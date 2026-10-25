@@ -1344,20 +1344,26 @@ function renderHistory() {
     const stBadge = h("span", { class: `badge ${st === "success" ? "badge-ok" : st === "partial_failed" ? "badge-warn" : "badge-danger"}`, text: st === "success" ? "已送达" : st === "partial_failed" ? "部分失败" : "发送失败" });
     const hasMedia = !!r.has_media;
 
-    return h("div", { class: "tweet-card" }, [
-      // Multi-select checkbox column
-      h("label", { class: "tweet-select", title: "选择以批量重推" }, [
-        h("input", {
-          type: "checkbox",
-          "aria-label": `选择 ${r.username || "unknown"} 的记录以批量重推`,
-          checked: state.historySelection.has(r.id),
-          onChange: e => {
-            if (e.target.checked) state.historySelection.add(r.id);
-            else state.historySelection.delete(r.id);
-            renderHistoryBatchBar();
-          },
-        }),
-      ]),
+    // Multi-select checkbox：click 只 stopPropagation（禁止 preventDefault，会回滚
+    // 原生勾选翻转并吞掉 change 事件），切换统一走 onChange。
+    const checkbox = h("input", {
+      type: "checkbox",
+      "aria-label": `选择 ${r.username || "unknown"} 的记录以批量重推`,
+      checked: state.historySelection.has(r.id),
+      onClick: e => e.stopPropagation(),
+      onChange: e => setHistoryRecordSelected(r.id, e.target.checked, e.target),
+    });
+
+    return h("div", {
+      class: "tweet-card",
+      title: "点击切换选中",
+      onClick: e => {
+        if (e.detail > 1) return; // 双击/多击序列只认第一击
+        if (window.getSelection()?.type === "Range") return; // 正在划选正文，不当作点选
+        toggleHistoryRecord(r.id, checkbox);
+      },
+    }, [
+      h("div", { class: "tweet-select" }, [checkbox]),
       // Avatar placeholder
       h("div", { class: "tweet-avatar", html: svgIcon("user", 20) }),
       h("div", { class: "tweet-body" }, [
@@ -1371,7 +1377,7 @@ function renderHistory() {
         ]),
         // Tweet text（两行截断，title 保留全文供悬停查看）
         h("div", { class: "tweet-text", title: r.text_preview || null }, [
-          r.original_link ? h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" } }) : null,
+          r.original_link ? h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" }, onClick: e => e.stopPropagation() }) : null,
           r.text_preview || "(无文字内容)",
         ]),
         // Footer: media badge + actions
@@ -1387,7 +1393,10 @@ function renderHistory() {
               class: "btn btn-ghost btn-sm",
               html: iconEl("refresh", 14).outerHTML,
               text: "重推",
-              onClick: () => replayHistory(r.id, r.replay_target_options),
+              onClick: e => {
+                e.stopPropagation(); // 卡片可点后，按钮点击不切换选中
+                replayHistory(r.id, r.replay_target_options);
+              },
             }),
           ]),
         ]),
@@ -1396,6 +1405,18 @@ function renderHistory() {
   }));
 
   renderHistoryBatchBar();
+}
+
+// 更新一条记录的选中态并同步勾选框视觉；不整卡重渲染，避免键盘焦点丢失。
+function setHistoryRecordSelected(id, selected, checkbox) {
+  if (selected) state.historySelection.add(id);
+  else state.historySelection.delete(id);
+  if (checkbox) checkbox.checked = selected;
+  renderHistoryBatchBar();
+}
+
+function toggleHistoryRecord(id, checkbox) {
+  setHistoryRecordSelected(id, !state.historySelection.has(id), checkbox);
 }
 
 function clearHistorySelection() {
