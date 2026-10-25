@@ -156,45 +156,72 @@ a:hover { text-decoration: underline; }
    Shell Layout
    ========================================================================== */
 
+/* 桌面：左栏（品牌/导航/状态）+ 主列（细顶栏 + 内容）；≤1000px 折叠为上下结构 */
 .shell {
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
   min-height: 100vh;
 }
 
-/* 顶部头部(原左侧栏+顶栏合并):品牌+导航+系统状态+操作 */
+.sidebar {
+  width: 216px;
+  flex: 0 0 216px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 12px 12px;
+  z-index: 50;
+  overflow-y: auto;
+}
+.side-brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 3px; }
+.side-nav .tab { width: 100%; justify-content: flex-start; }
+.side-spacer { flex: 1 1 0; }
+.side-status {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 6px 0;
+  border-top: 1px solid var(--border);
+}
+.side-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 6px 0;
+  border-top: 1px solid var(--border);
+}
+.side-actions .mono { font-size: 11px; color: var(--text-muted); flex: 1 1 auto; text-align: center; }
+.side-refresh { flex: 0 0 auto; }
+
+/* 主列细顶栏：只放视图标题，唯一吸顶锚点（--topheader-height 由此实测） */
 .topheader {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 50;
-}
-.th-main {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 18px;
-  padding: 10px clamp(20px, 4vw, 48px);
-  border-bottom: 1px solid var(--border);
-}
-.th-spacer { flex: 1 1 0; }
-.th-sub {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px clamp(20px, 4vw, 48px);
-}
-.th-sub .health-card { margin-left: auto; }
-.th-sub .topbar-title { font-size: 13px; font-weight: 600; }
-
-/* Brand */
-.brand {
-  display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
-  padding: 0;
+  padding: 11px clamp(16px, 3vw, 32px);
 }
+.topbar-title { font-size: 14px; font-weight: 700; }
+.topbar-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Brand（侧栏顶部） */
 .brand-logo {
   display: grid;
   place-items: center;
@@ -217,13 +244,7 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
-/* Nav(横向 pill) */
-.nav {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 4px;
-}
+/* Nav（侧栏纵向页签） */
 .tab {
   background: transparent;
   border: none;
@@ -249,13 +270,7 @@ a:hover { text-decoration: underline; }
 }
 .tab.active svg { color: var(--blue); }
 
-/* 系统状态(横向内联) */
-.health-card {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-}
+/* 系统状态（侧栏底部常驻） */
 .health-row {
   display: flex;
   align-items: center;
@@ -283,11 +298,7 @@ a:hover { text-decoration: underline; }
 .pill-muted .dot { background: var(--text-subtle); }
 
 /* Main */
-.main { display: flex; flex-direction: column; min-width: 0; }
-
-.topbar-sub { font-size: 13px; color: var(--text-muted); margin-left: 8px; }
-.topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.topbar-actions .mono { font-size: 12px; color: var(--text-muted); }
+.main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 
 /* Theme toggle */
 .theme-toggle {
@@ -306,7 +317,7 @@ a:hover { text-decoration: underline; }
 .theme-toggle svg { width: 17px; height: 17px; }
 
 /* View container：五个视图容器常驻，切换只显隐（保留 DOM 与状态） */
-.view-container { padding: 24px clamp(20px, 4vw, 48px) 40px; flex: 1; width: 100%; max-width: 1240px; margin: 0 auto; }
+.view-container { padding: 20px clamp(16px, 3vw, 32px) 40px; flex: 1; width: 100%; max-width: 1160px; margin: 0 auto; }
 .view { display: none; }
 .view.active { display: flex; flex-direction: column; gap: 14px; animation: rise-in 0.18s ease-out; }
 @keyframes rise-in {
@@ -1173,16 +1184,32 @@ select { cursor: pointer; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-subtle); }
 
-@media (max-width: 900px) {
-  .th-main { padding: 8px 14px; gap: 8px 12px; }
-  .tab { padding: 7px 12px; }
+/* ≤1000px：侧栏折叠为顶部块（仍吸顶，导航常驻），主列细顶栏转为静态标题行 */
+@media (max-width: 1000px) {
+  .shell { flex-direction: column; }
+  .sidebar {
+    position: sticky;
+    width: auto;
+    flex: none;
+    height: auto;
+    max-height: 100vh;
+    flex-direction: column;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .side-nav { flex-direction: row; flex-wrap: wrap; }
+  .side-nav .tab { width: auto; }
+  .side-spacer { display: none; }
+  .side-status { flex-direction: row; flex-wrap: wrap; gap: 4px 14px; border-top: none; padding: 0 6px; }
+  .side-actions { border-top: none; padding: 0 6px; }
+  /* 侧栏成为吸顶整体，标题栏不再单独吸顶（吸附让位高度由 JS 实测两者之和） */
+  .topheader { position: static; }
   .view-container { max-width: none; }
 }
 
 @media (max-width: 680px) {
-  .th-main { padding: 8px 12px; }
-  .th-sub { padding: 4px 12px; }
-  .topbar-actions { gap: 6px; }
   .view-container { padding: 16px 14px 28px; }
   .groups-layout, .editor-grid, .danger-grid { grid-template-columns: 1fr; }
   .editor-grid-full { grid-column: auto; }

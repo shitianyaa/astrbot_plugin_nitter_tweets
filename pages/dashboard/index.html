@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="./style.css" />
     <script>
       // 首帧即落主题类：深色用户不闪亮色首帧，boot 失败（无 bridge）时页面也保持主题。
-      // 只能跟随系统偏好：AstrBot Pages iframe 无 allow-same-origin，localStorage 不可用；
+      // 只能跟随系统偏好：AstrBot Pages iframe 无 allow-same-origin，浏览器存储不可用；
       // 宿主主题由 app.js 的 initTheme 在 bridge 就绪后接管。
       (function () {
         var dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -19,175 +19,175 @@
   </head>
   <body>
     <div class="shell">
-      <!-- 顶部头部:品牌 + 导航 + 系统状态 + 操作(原侧栏与顶栏合并) -->
-      <header class="topheader">
-        <div class="th-main">
-          <div class="brand">
-            <div class="brand-logo">
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-            </div>
-            <div>
-              <div class="brand-name">Nitter Tweets</div>
-              <div class="brand-sub">推文监控调度台</div>
-            </div>
+      <!-- 左侧栏：品牌 + 纵向导航 + 常驻系统状态 + 主题/刷新 -->
+      <aside class="sidebar">
+        <div class="side-brand">
+          <div class="brand-logo">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
           </div>
-
-          <nav class="nav" aria-label="导航">
-            <button class="tab active" type="button" data-view="overview">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 21v-6h6v6"/></svg>
-              控制台总览
-            </button>
-            <button class="tab" type="button" data-view="groups">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/></svg>
-              分组订阅管理
-            </button>
-            <button class="tab" type="button" data-view="history">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12.5 7H11v5l4 2.5.8-1.3L12.5 11z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              推送历史
-            </button>
-            <button class="tab" type="button" data-view="mirror">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
-              实例能力诊断
-            </button>
-            <button class="tab" type="button" data-view="config">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg>
-              插件配置
-            </button>
-          </nav>
-
-          <div class="th-spacer"></div>
-
-          <div class="topbar-actions">
-            <button id="themeToggleBtn" class="theme-toggle" type="button" title="切换主题">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8"/></svg>
-            </button>
-            <span id="lastUpdated" class="mono">-</span>
-            <button id="refreshBtn" class="btn btn-sm" type="button">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5"/></svg>
-              刷新
-            </button>
+          <div>
+            <div class="brand-name">Nitter Tweets</div>
+            <div class="brand-sub">推文监控调度台</div>
           </div>
         </div>
 
-        <div class="th-sub">
+        <nav class="side-nav" aria-label="导航">
+          <button class="tab active" type="button" data-view="overview">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 21v-6h6v6"/></svg>
+            控制台总览
+          </button>
+          <button class="tab" type="button" data-view="groups">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/></svg>
+            分组订阅管理
+          </button>
+          <button class="tab" type="button" data-view="history">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12.5 7H11v5l4 2.5.8-1.3L12.5 11z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            推送历史
+          </button>
+          <button class="tab" type="button" data-view="mirror">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5" stroke-linecap="round"/></svg>
+            实例能力诊断
+          </button>
+          <button class="tab" type="button" data-view="config">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg>
+            插件配置
+          </button>
+        </nav>
+
+        <div class="side-spacer"></div>
+
+        <div class="side-status">
+          <div class="health-row">
+            <span class="label">调度器</span>
+            <span id="railSchedulerStatus" class="pill-status pill-muted"><span class="dot"></span></span>
+          </div>
+          <div class="health-row">
+            <span class="label">后台检查</span>
+            <span id="railScheduleStatus" class="pill-status pill-muted"><span class="dot"></span></span>
+          </div>
+          <div class="health-row">
+            <span class="label">推送目标</span>
+            <span id="railTargetStatus" class="pill-status pill-muted"><span class="dot"></span></span>
+          </div>
+        </div>
+
+        <div class="side-actions">
+          <button id="themeToggleBtn" class="theme-toggle" type="button" title="切换主题">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8"/></svg>
+          </button>
+          <span id="lastUpdated" class="mono">-</span>
+          <button id="refreshBtn" class="btn btn-sm side-refresh" type="button">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5"/></svg>
+            刷新
+          </button>
+        </div>
+      </aside>
+
+      <!-- 主列：细顶栏（视图标题）+ 内容 -->
+      <div class="main-col">
+        <header class="topheader">
           <span id="currentTabTitle" class="topbar-title">控制台总览</span>
           <span id="currentTabDesc" class="topbar-sub"></span>
-          <div class="health-card">
-            <div class="health-row">
-              <span class="label">调度器</span>
-              <span id="railSchedulerStatus" class="pill-status pill-muted"><span class="dot"></span></span>
-            </div>
-            <div class="health-row">
-              <span class="label">后台检查</span>
-              <span id="railScheduleStatus" class="pill-status pill-muted"><span class="dot"></span></span>
-            </div>
-            <div class="health-row">
-              <span class="label">推送目标</span>
-              <span id="railTargetStatus" class="pill-status pill-muted"><span class="dot"></span></span>
-            </div>
-          </div>
-        </div>
-      </header>
+        </header>
 
-      <!-- Main -->
-      <main class="main">
+        <main class="main">
+          <div id="noticeStack" class="notice-stack" aria-live="polite"></div>
 
-        <div id="noticeStack" class="notice-stack" aria-live="polite"></div>
+          <div class="view-container">
+            <section id="overviewView" class="view active"></section>
 
-        <div class="view-container">
-          <section id="overviewView" class="view active"></section>
+            <section id="groupsView" class="view">
+              <div class="groups-layout">
+                <div class="panel panel-tight">
+                  <div class="panel-head">
+                    <h3>订阅分组</h3>
+                    <button id="createGroupBtn" class="btn btn-sm btn-primary" type="button">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                      新建
+                    </button>
+                  </div>
+                  <div id="groupList" class="group-list"></div>
+                </div>
+                <div id="groupEditor"></div>
+              </div>
+            </section>
 
-          <section id="groupsView" class="view">
-            <div class="groups-layout">
-              <div class="panel panel-tight">
+            <section id="historyView" class="view">
+              <div class="toolbar panel panel-snug">
+                <div class="field toolbar-field">
+                  <span>分组</span>
+                  <select id="historyGroupSelect"></select>
+                </div>
+                <div class="field toolbar-field">
+                  <span>订阅源</span>
+                  <input id="historyUsername" type="text" placeholder="用户名" />
+                </div>
+                <div class="field toolbar-field">
+                  <span>状态</span>
+                  <select id="historyStatusSelect">
+                    <option value="">全部</option>
+                    <option value="success">已送达</option>
+                    <option value="partial_failed">部分失败</option>
+                    <option value="failed">发送失败</option>
+                  </select>
+                </div>
+                <div class="field toolbar-field">
+                  <span>条数</span>
+                  <input id="historyLimit" type="number" min="1" max="50" value="10" />
+                </div>
+                <button id="historyRefreshBtn" class="btn btn-sm btn-primary" type="button">筛选</button>
+                <button id="historyOrphanBtn" class="btn btn-sm btn-ghost" type="button">检查废弃</button>
+                <button id="historySelectAllBtn" class="btn btn-sm btn-ghost" type="button">全选本页</button>
+                <div class="pager">
+                  <button id="historyPrevBtn" class="btn btn-sm" type="button">上一页</button>
+                  <span id="historyPageLabel" class="mono pager-label">1 / 1 页</span>
+                  <button id="historyNextBtn" class="btn btn-sm" type="button">下一页</button>
+                </div>
+              </div>
+              <div id="historyOrphanResult"></div>
+              <div id="historyContent" class="stack-list"></div>
+              <div id="historyBatchBar" class="history-batch-bar" hidden></div>
+            </section>
+
+            <section id="mirrorView" class="view">
+              <form id="mirrorForm" class="panel">
                 <div class="panel-head">
-                  <h3>订阅分组</h3>
-                  <button id="createGroupBtn" class="btn btn-sm btn-primary" type="button">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                    新建
-                  </button>
+                  <h2>Nitter 实例能力检测</h2>
+                  <span class="hint">不写推送记录</span>
                 </div>
-                <div id="groupList" class="group-list"></div>
-              </div>
-              <div id="groupEditor"></div>
-            </div>
-          </section>
-
-          <section id="historyView" class="view">
-            <div class="toolbar panel panel-snug">
-              <div class="field toolbar-field">
-                <span>分组</span>
-                <select id="historyGroupSelect"></select>
-              </div>
-              <div class="field toolbar-field">
-                <span>订阅源</span>
-                <input id="historyUsername" type="text" placeholder="用户名" />
-              </div>
-              <div class="field toolbar-field">
-                <span>状态</span>
-                <select id="historyStatusSelect">
-                  <option value="">全部</option>
-                  <option value="success">已送达</option>
-                  <option value="partial_failed">部分失败</option>
-                  <option value="failed">发送失败</option>
-                </select>
-              </div>
-              <div class="field toolbar-field">
-                <span>条数</span>
-                <input id="historyLimit" type="number" min="1" max="50" value="10" />
-              </div>
-              <button id="historyRefreshBtn" class="btn btn-sm btn-primary" type="button">筛选</button>
-              <button id="historyOrphanBtn" class="btn btn-sm btn-ghost" type="button">检查废弃</button>
-              <button id="historySelectAllBtn" class="btn btn-sm btn-ghost" type="button">全选本页</button>
-              <div class="pager">
-                <button id="historyPrevBtn" class="btn btn-sm" type="button">上一页</button>
-                <span id="historyPageLabel" class="mono pager-label">1 / 1 页</span>
-                <button id="historyNextBtn" class="btn btn-sm" type="button">下一页</button>
-              </div>
-            </div>
-            <div id="historyOrphanResult"></div>
-            <div id="historyContent" class="stack-list"></div>
-            <div id="historyBatchBar" class="history-batch-bar" hidden></div>
-          </section>
-
-          <section id="mirrorView" class="view">
-            <form id="mirrorForm" class="panel">
-              <div class="panel-head">
-                <h2>Nitter 实例能力检测</h2>
-                <span class="hint">不写推送记录</span>
-              </div>
-              <div class="editor-grid">
-                <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" placeholder="如 nasa，留空跳过" /></label>
-                <label class="field"><span>搜索标签或关键词</span><input id="mirrorQuery" type="text" placeholder="如 #AI 或关键词，留空跳过" /></label>
-                <label class="field"><span>List ID（可选）</span><input id="mirrorListId" type="text" placeholder="仅限数字，留空跳过" /></label>
-                <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" /></label>
-                <label class="field editor-grid-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" /></label>
-              </div>
-              <div class="form-footer">
-                <div class="row">
-                  <span class="hint">已配置:</span>
-                  <div id="instanceList" class="chip-list"></div>
+                <div class="editor-grid">
+                  <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" placeholder="如 nasa，留空跳过" /></label>
+                  <label class="field"><span>搜索标签或关键词</span><input id="mirrorQuery" type="text" placeholder="如 #AI 或关键词，留空跳过" /></label>
+                  <label class="field"><span>List ID（可选）</span><input id="mirrorListId" type="text" placeholder="仅限数字，留空跳过" /></label>
+                  <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" /></label>
+                  <label class="field editor-grid-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" /></label>
                 </div>
-                <button id="mirrorProbeBtn" class="btn btn-sm btn-primary" type="submit">开始探测</button>
-              </div>
-            </form>
-            <div id="mirrorResult" class="stack-list"></div>
-          </section>
+                <div class="form-footer">
+                  <div class="row">
+                    <span class="hint">已配置:</span>
+                    <div id="instanceList" class="chip-list"></div>
+                  </div>
+                  <button id="mirrorProbeBtn" class="btn btn-sm btn-primary" type="submit">开始探测</button>
+                </div>
+              </form>
+              <div id="mirrorResult" class="stack-list"></div>
+            </section>
 
-          <section id="configView" class="view"></section>
-        </div>
-      </main>
-
-      <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
-
-      <div id="confirmDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDesc" hidden>
-        <div class="dialog-panel">
-          <h3 id="confirmTitle" class="dialog-title">确认操作？</h3>
-          <div id="confirmDesc" class="dialog-desc"></div>
-          <div class="dialog-actions">
-            <button id="cancelConfirmBtn" class="btn btn-sm" type="button">取消</button>
-            <button id="confirmActionBtn" class="btn btn-sm btn-primary" type="button">确认</button>
+            <section id="configView" class="view"></section>
           </div>
+        </main>
+      </div>
+    </div>
+
+    <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="confirmDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDesc" hidden>
+      <div class="dialog-panel">
+        <h3 id="confirmTitle" class="dialog-title">确认操作？</h3>
+        <div id="confirmDesc" class="dialog-desc"></div>
+        <div class="dialog-actions">
+          <button id="cancelConfirmBtn" class="btn btn-sm" type="button">取消</button>
+          <button id="confirmActionBtn" class="btn btn-sm btn-primary" type="button">确认</button>
         </div>
       </div>
     </div>

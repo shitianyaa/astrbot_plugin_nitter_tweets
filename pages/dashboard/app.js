@@ -69,23 +69,28 @@ function initEls() {
   els.views = document.querySelectorAll(".view");
 }
 
-/* 吸顶坐标实测合帧：ResizeObserver/resize 触发的一帧内只读一次布局 */
+/* 吸顶坐标实测合帧：ResizeObserver/resize 触发的一帧内只读一次布局。
+   ≤1000px 时侧栏折叠为吸顶整体叠在标题栏上方，吸附让位高度 = 两者之和 */
 function initStickyOffsets() {
   const header = document.querySelector(".topheader");
+  const sidebar = document.querySelector(".sidebar");
   if (!header) return;
+  const stackedLayout = () => window.matchMedia?.("(max-width: 1000px)").matches;
   let frame = 0;
   const sync = () => {
     if (frame) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      const height = Math.ceil(header.getBoundingClientRect().height);
-      document.documentElement.style.setProperty("--topheader-height", `${height}px`);
+      const headerH = Math.ceil(header.getBoundingClientRect().height);
+      const stackH = stackedLayout() && sidebar ? Math.ceil(sidebar.getBoundingClientRect().height) : 0;
+      document.documentElement.style.setProperty("--topheader-height", `${headerH + stackH}px`);
     });
   };
   sync();
   window.addEventListener("resize", scheduleBannerSync);
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(sync).observe(header);
+    if (sidebar) new ResizeObserver(sync).observe(sidebar);
   } else {
     window.addEventListener("resize", sync);
   }
@@ -1405,7 +1410,8 @@ function renderOverview() {
     ]),
   ]);
 
-  root.replaceChildren(metrics, ...(attPanel ? [attPanel] : []), configPanel, dz);
+  // 诊断优先（Monitor surface）：有问题先看问题，指标其次
+  root.replaceChildren(...(attPanel ? [attPanel] : []), metrics, configPanel, dz);
 }
 
 function goGroupEditor(gid) {
