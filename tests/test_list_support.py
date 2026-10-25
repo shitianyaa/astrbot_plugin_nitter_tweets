@@ -582,9 +582,9 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     # （无 allow-same-origin），opaque origin 下 localStorage 访问必抛 SecurityError，
     # 曾拖垮整页启动（529ee81）。因此页面内禁止访问它（注释里提及不算）。
     for name, text in (("app.js", source), ("index.html", index)):
-        assert not re.search(r"localStorage\s*[.\[]", text), (
-            f"{name} 不得访问 localStorage：opaque origin 下必抛 SecurityError"
-        )
+        assert not re.search(
+            r"localStorage\s*[.\[]|window\s*\[\s*[\"']localStorage[\"']\s*\]", text
+        ), f"{name} 不得访问 localStorage：opaque origin 下必抛 SecurityError"
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
 
 

@@ -240,7 +240,7 @@ class WebHistoryReplayRouteTest(unittest.TestCase):
         result = asyncio.run(
             api.replay_history(
                 {
-                    "record_ids": [5, "7", "bad", 0, 5],
+                    "record_ids": [5, "7", "bad", 0, 5, True, 12.7],
                     "targets_by_group": {
                         "g1": ["tg:GroupMessage:1", "", "tg:GroupMessage:1"],
                         "": ["skip-me"],
@@ -251,8 +251,19 @@ class WebHistoryReplayRouteTest(unittest.TestCase):
         )
         assert result["success"] is True
         assert result["triggered"] == 2
+        # True 会被 int() 转成 1、12.7 截断成 12：两者都必须丢弃。
         assert api.scheduler.batch_calls == [([5, 7], {"g1": ["tg:GroupMessage:1"]})]
         assert api.scheduler.single_calls == []
+
+    def test_explicit_empty_target_group_is_preserved(self):
+        api = self._api()
+        result = asyncio.run(
+            api.replay_history({"record_ids": [5], "targets_by_group": {"g1": []}})
+        )
+        assert result["success"] is True
+        # 显式空选择保留为空列表（runner 侧按「未选择推送目标」跳过），
+        # 与「未传该组时回退全部目标」区分开。
+        assert api.scheduler.batch_calls == [([5], {"g1": []})]
 
     def test_record_ids_without_valid_entries_is_rejected(self):
         api = self._api()

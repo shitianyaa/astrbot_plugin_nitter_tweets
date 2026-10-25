@@ -148,6 +148,12 @@ class WebAPIHistoryMixin:
         record_ids: list[int] = []
         seen_ids: set[int] = set()
         for item in raw:
+            # 布尔与非整数浮点会被 int() 静默转义（True→1、12.7→12），
+            # 会指向错误的记录，直接丢弃。
+            if isinstance(item, bool) or (
+                isinstance(item, float) and not item.is_integer()
+            ):
+                continue
             try:
                 record_id = int(item)
             except (TypeError, ValueError):
@@ -173,8 +179,9 @@ class WebAPIHistoryMixin:
                 if umo and umo not in seen_umos:
                     seen_umos.add(umo)
                     umos.append(umo)
-            if umos:
-                targets_by_group[group_id] = umos
+            # 显式空选择要保留为空列表，与「未传该组」区分：
+            # 调用方传 `{"g": []}` 意为不推送该组，而非回退全部目标。
+            targets_by_group[group_id] = umos
         return targets_by_group
 
     @staticmethod

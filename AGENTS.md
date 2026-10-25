@@ -111,7 +111,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 ### CHANGELOG 与版本
 
 - **分支未合并到 `main` 前，所有改动都算未发布**：直接写进下一个版本号段（如 `## [1.7.4]`），**不写日期**；合并到 `main` 时才补上发布日期。
-- **禁止使用 `## [未发布]` / `## [Unreleased]` 标题**。`tests/test_release_version.py` 要求 CHANGELOG 首个版本段与 `metadata.yaml`、`main.py` 的 `register(...)` 第 4 个参数、README badge 完全一致，空标题会直接打断这个校验。
+- **禁止使用 `## [未发布]` / `## [Unreleased]` 标题**：未发布条目直接写进下一个版本号段，避免无日期段落被遗忘。注意 `tests/test_release_version.py` 的正则只识别 `## [数字版本号]` 形式的首个版本段并与 `metadata.yaml`、`main.py` 的 `register(...)` 第 4 个参数、README badge 比对——非数字标题会被静默跳过而不会报错，所以校验本身拦不住这种标题，靠约定保证。
 - 版本号按语义化版本自行判断（修 bug → patch，新增功能 → minor，破坏性变更 → major）；bump 时三处同步：`metadata.yaml`、`main.py`、README badge。
 - 条目只写相对 `main` 的用户可见变化（修复 / 新增 / 变更），内部重构、分支内自我迭代不单独成条；用用户能看懂的行为描述，不堆 CSS 选择器、ARIA 属性名等实现细节。
 

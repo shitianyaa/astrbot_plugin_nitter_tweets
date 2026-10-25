@@ -32,3 +32,6 @@ Progress/
 
 # Playwright MCP session artifacts (console logs, page snapshots; regenerated per run)
 .playwright-mcp/
+
+# Project-local agent skills (installed per machine, e.g. impeccable)
+.agents/
