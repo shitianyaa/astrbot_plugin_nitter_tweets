@@ -131,6 +131,9 @@ class NitterTweetScheduler(
         self._last_daily_check: dict[str, dt.datetime] = {}
         self._startup_schedule_seeded: set[str] = set()
         self._last_enabled_state: bool | None = None
+        # 最近一次检查完成的 Unix 时间戳（含手动与定时）；未执行过为 None。
+        # 仅供 WebUI 总览展示，进程重启后重置。
+        self._last_check_at: float | None = None
         self._check_lock = asyncio.Lock()
         self._storage_init_lock = asyncio.Lock()
         self._target_blacklist_lock = asyncio.Lock()
@@ -520,7 +523,13 @@ class NitterTweetScheduler(
                 )
             raise
 
+        self._last_check_at = time.time()
         return result
+
+    @property
+    def last_check_at(self) -> float | None:
+        """最近一次检查完成时间（Unix 时间戳）；从未执行过返回 None。"""
+        return self._last_check_at
 
     @staticmethod
     def _is_observable_check_reason(reason: str) -> bool:

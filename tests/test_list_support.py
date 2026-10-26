@@ -572,7 +572,10 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     assert ".group-type-option.selected" in style
     assert "function addWatchList(groupId)" in source
     assert "snap.watch_lists = [...(group.watch_lists || [])];" in source
-    assert "snap.filter_reposts_enabled = group.filter_reposts_enabled !== false;" in source
+    assert (
+        "snap.filter_reposts_enabled = group.filter_reposts_enabled !== false;"
+        in source
+    )
     assert '"filter_reposts_enabled"' in source
     assert "全局转发过滤总开关" in source
     assert "List ID 必须是 1-20 位正整数" in source
@@ -654,10 +657,15 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     )
     assert "rerender: () => renderHistoryOrphans().catch" in source
     assert "transition: all" not in style
-    assert ".tweet-card:hover" in style
+    # 历史行已由 tweet-card 迁移到 deploy-row：悬停反馈与选中态仍走同一套 token
+    assert ".deploy-row:hover" in style
+    assert ".deploy-row {" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
-    assert ".groups-layout > * { min-width: 0; }" in style
+    # 分组视图由左右分栏改为卡片网格：列宽塌陷保护移到网格容器
+    assert ".groups-grid {" in style
+    assert "minmax(340px, 1fr)" in style
+    assert ".group-card {" in style
     assert 'id="noticeStack"' in index
     assert "actionStatusDismissed" not in source
     assert ".feedback-close" in style
@@ -816,7 +824,10 @@ def test_dashboard_redesign_architecture_guards():
     assert "async function refreshHistoryData()" in source
     # 布局实测 rAF 合帧（顶栏高度 + 通知栈让位）
     assert "function scheduleBannerSync()" in source
-    assert "bannerFrame = requestAnimationFrame(() => { bannerFrame = 0; syncBannerOffset(); });" in source
+    assert (
+        "bannerFrame = requestAnimationFrame(() => { bannerFrame = 0; syncBannerOffset(); });"
+        in source
+    )
     assert "frame = requestAnimationFrame(() => {" in source
     # 历史列表：卡片带 recordId，全选/清除走原位勾选同步，不重建卡片
     assert "dataset: { recordId: String(r.id) }" in source
@@ -829,17 +840,73 @@ def test_dashboard_redesign_architecture_guards():
     assert "function updateConfigNavBadges()" in source
     assert "row.replaceChildren(...configItemChildren(item));" in source
     assert "state.configDraft[item.key] = v; renderConfig();" not in source
-    # 信息增强：分组健康徽标 / 探测耗时条 / 缓存构成
+    # 信息增强：分组健康徽标 / 探测耗时条 / 缓存构成（构成条已迁到存储运维页）
     assert "function groupHealthInfo(g)" in source
     assert "health-dot " in source
     assert "probe-meter-fill" in source
-    assert "图片 ${cacheInfo.images}" in source
+    assert "图片（${cache?.images || 0} 个文件）" in source
+    # 设计系统移植（Vercel 风格工作台）：Hero 卡 + 指标走廊 + 抽屉 + ⌘K + 终端
+    assert "function renderOverview()" in source
+    assert '"定时推送服务管道"' in source
+    assert 'class: "hero-card"' in source
+    assert 'class: "hero-meta-grid"' in source
+    assert "function metricBox(" in source
+    assert 'class: "metrics-row"' in source
+    assert "function deployRow(" in source
+    assert "function openSheet(" in source
+    assert "function closeSheet(" in source
+    assert "function openCmdk(" in source
+    assert "function renderTerminal(" in source
+    assert 'class: "mac-terminal-bar"' in source
+    assert 'class: "mac-dots"' in source
+    # 抽屉/面板/弹窗的焦点圈与焦点恢复：打开时记录锚点，关闭时归还
+    assert "state.sheetReturnFocus = document.activeElement;" in source
+    assert "state.cmdkReturnFocus = document.activeElement;" in source
+    assert "state.createGroupReturnFocus = document.activeElement;" in source
+    assert "function trapFocus(container, e)" in source
+    # 诊断终端接真实日志接口，不是 setTimeout 假输出
+    assert 'apiGet("web/logs"' in source
+    assert (
+        "setTimeout"
+        not in source.split("function renderTerminal")[1].split("function ")[0]
+    )
+    # 实例地址在界面侧脱敏：只保留协议 + host[:port]
+    assert "function redactInstanceLabel(raw)" in source
+    assert "redactInstanceLabel(r.instance)" in source
+    # 样式侧新增组件必须存在
+    assert ".hero-card {" in style
+    assert ".metrics-row {" in style
+    assert ".deploy-row {" in style
+    assert ".sheet {" in style
+    assert ".modal-veil {" in style
+    assert ".palette-veil {" in style
+    assert ".mac-terminal {" in style
+    assert ".meter-bar {" in style
+    # 顶部导航壳（原型 6 页签）：侧栏已废弃，页面不再有 .sidebar / .topheader
+    assert 'class="nav-shell"' in index
+    assert 'class="nav-primary"' in index
+    assert 'class="nav-tabs"' in index
+    assert ".nav-shell {" in style
+    assert ".nav-primary {" in style
+    assert ".nav-tabs {" in style
+    assert ".sidebar" not in style
+    assert 'class="sidebar"' not in index
+    assert 'class="topheader"' not in index
+    # 六个视图容器齐备，含原型的「存储运维」
+    for view in ("overview", "groups", "history", "mirror", "storage", "config"):
+        assert f'id="{view}View"' in index
+        assert f'data-view="{view}"' in index
+    assert "function renderStorage()" in source
+    assert "storage: renderStorage" in source
     # 动效基元约束：rise-in / pop-in 两个设计基元 + 忙态旋转；无 box-shadow 过渡
     assert "@keyframes rise-in" in style
     assert "@keyframes pop-in" in style
     assert "@keyframes status-spin" in style
     assert "box-shadow var(--transition)" not in style
-    assert "transition: background var(--transition), border-color var(--transition);" in style
+    assert (
+        "transition: background var(--transition), border-color var(--transition);"
+        in style
+    )
     dialog_panel = style.split(".dialog-panel {", 1)[1].split("}", 1)[0]
     assert "animation: pop-in" in dialog_panel
     assert "animation: rise-in" in style

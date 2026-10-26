@@ -12,6 +12,7 @@ try:
     from ..config import (
         config_get,
         configured_merge_tweet_threshold,
+        parse_config_bool,
     )
     from ..config.subscriptions import (
         save_subscription_config,
@@ -19,6 +20,7 @@ try:
     from ..scheduler import ScheduleGroup
     from .api_config import WebAPIConfigMixin
     from .api_history import WebAPIHistoryMixin
+    from .api_logs import WebAPILogsMixin
     from .api_overview import WebAPIOverviewMixin
     from .api_probe import WebAPIProbeMixin
     from .api_serializers import WebAPISerializersMixin
@@ -29,12 +31,14 @@ except ImportError:
     from config import (
         config_get,
         configured_merge_tweet_threshold,
+        parse_config_bool,
     )
     from config.subscriptions import (
         save_subscription_config,
     )
     from plugin_api.api_config import WebAPIConfigMixin
     from plugin_api.api_history import WebAPIHistoryMixin
+    from plugin_api.api_logs import WebAPILogsMixin
     from plugin_api.api_overview import WebAPIOverviewMixin
     from plugin_api.api_probe import WebAPIProbeMixin
     from plugin_api.api_serializers import WebAPISerializersMixin
@@ -50,6 +54,7 @@ PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
 class NitterWebAPI(
     WebAPIOverviewMixin,
     WebAPIHistoryMixin,
+    WebAPILogsMixin,
     WebAPIProbeMixin,
     WebAPISubscriptionsMixin,
     WebAPITargetBlacklistMixin,
@@ -88,6 +93,7 @@ class NitterWebAPI(
             ("web/config/update", "handle_config_update", ["POST"]),
             ("web/config/save", "handle_config_save", ["POST"]),
             ("web/config/providers", "handle_config_providers", ["GET"]),
+            ("web/logs", "handle_logs", ["GET"]),
         ]
         for route, handler_name, methods in routes:
             context.register_web_api(
@@ -120,6 +126,15 @@ class NitterWebAPI(
 
     async def handle_history_orphans(self):
         return await self._json_response(self.build_history_orphans)
+
+    async def handle_logs(self):
+        async def action():
+            after_seq = self._parse_int(
+                request.args.get("after_seq"), 0, minimum=0, maximum=10_000_000
+            )
+            return await self.build_logs(after_seq)
+
+        return await self._json_response(action)
 
     async def handle_history_orphan_delete(self):
         async def action():
@@ -402,7 +417,17 @@ class NitterWebAPI(
             "concurrent_prepare_enabled": bool(
                 self._group_value(effective_group, "concurrent_prepare_enabled", False)
             ),
+            "filter_reposts_enabled": self._global_filter_reposts_enabled(),
         }
+
+    def _global_filter_reposts_enabled(self) -> bool:
+        """全局转推过滤总开关；读取失败按开启处理（与调度侧默认一致）。"""
+        try:
+            return parse_config_bool(
+                config_get(self.config, "filter_reposts_enabled", True), True
+            )
+        except Exception:
+            return True
 
     def _effective_config_group(
         self, groups: list[ScheduleGroup]

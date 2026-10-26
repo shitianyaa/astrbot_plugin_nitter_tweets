@@ -23,19 +23,24 @@ const state = {
   historyOffset: 0,
   pendingAction: null, lastFocusedElement: null, lastUpdated: "",
   statusNotice: null, statusNoticeClosed: false, bannerOffset: "",
+  // 诊断终端：插件日志环缓冲（web/logs），只在 mirror 视图可见时轮询
+  logs: [], logsAfterSeq: 0, logsMax: 0, logsTimer: 0,
+  // 右侧抽屉 / ⌘K 面板 / 新建弹窗的焦点恢复锚点
+  sheetReturnFocus: null, cmdkReturnFocus: null, createGroupReturnFocus: null,
 };
 
 const els = {};
 
-/* 五个视图容器常驻 DOM；初始全脏，boot 后只冲刷激活视图，其余首次切换时渲染 */
-const viewDirty = new Set(["overview", "groups", "history", "mirror", "config"]);
+/* 六个视图容器常驻 DOM；初始全脏，boot 后只冲刷激活视图，其余首次切换时渲染 */
+const viewDirty = new Set(["overview", "groups", "history", "mirror", "storage", "config"]);
 
 /* 数据通道 → 受影响视图 */
 const CHANNEL_VIEWS = {
-  overview: ["overview", "mirror"],
+  overview: ["overview", "mirror", "storage"],
   groups: ["groups", "overview"],
   history: ["history"],
   config: ["config"],
+  logs: ["mirror"],
 };
 
 function markDirtyView(view) {
@@ -46,23 +51,41 @@ function markDirtyView(view) {
 function markData(...channels) {
   for (const ch of channels) {
     for (const v of CHANNEL_VIEWS[ch] || []) markDirtyView(v);
-    if (ch === "overview") renderRailStatus();
+    if (ch === "overview") { renderRailStatus(); renderTabCounts(); }
     if (ch === "groups") syncHistoryGroupOptions();
   }
 }
 
+/* 页签右侧计数徽标：分组数 / 历史总数 / 实例数 / 缓存体积 / 配置分组数 */
+function renderTabCounts() {
+  const p = state.overview || {};
+  const c = p.counts || {};
+  const mt = p.maintenance || {};
+  if (els.tabCountGroups) els.tabCountGroups.textContent = String(c.groups ?? state.groups.length ?? 0);
+  if (els.tabCountHistory) els.tabCountHistory.textContent = String(p.push_stats?.total ?? state.history?.total_count ?? 0);
+  if (els.tabCountInstances) els.tabCountInstances.textContent = String((p.instances || []).length);
+  if (els.tabCountStorage) els.tabCountStorage.textContent = mt.cache ? formatBytes(mt.cache.bytes) : "0 MB";
+  if (els.tabCountConfig) els.tabCountConfig.textContent = String((state.config?.groups || []).length);
+}
+
 function initEls() {
   const ids = [
-    "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn",
+    "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn","themeLabel",
     "railSchedulerStatus","railScheduleStatus","railTargetStatus","noticeStack","toastContainer",
-    "overviewView","groupsView","historyView","mirrorView","configView",
-    "createGroupBtn","groupList","groupEditor",
+    "overviewView","groupsView","historyView","mirrorView","storageView","configView",
+    "tabCountGroups","tabCountHistory","tabCountInstances","tabCountStorage","tabCountConfig",
+    "cmdkBtn","groupsTitle","historyTitle","storageContent","cleanCacheBtn",
+    "createGroupBtn","groupsGrid",
     "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
     "historyOrphanBtn","historyPrevBtn","historyNextBtn","historyPageLabel",
     "historyOrphanResult","historyContent","historySelectAllBtn","historyBatchBar",
     "mirrorForm","mirrorUsername","mirrorQuery","mirrorListId","mirrorLimit",
     "mirrorInstance","mirrorProbeBtn","instanceList","mirrorResult",
     "confirmDialog","confirmTitle","confirmDesc","cancelConfirmBtn","confirmActionBtn",
+    "sheetScrim","detailSheet","sheetTitle","sheetCloseBtn","sheetBody","sheetFooter",
+    "cmdkOverlay","cmdkInput","cmdkList",
+    "createGroupModal","createGroupTitle","createGroupName","createGroupType",
+    "createGroupSubmitBtn","createGroupCancelBtn","createGroupCloseBtn",
   ];
   ids.forEach(id => { els[id] = document.getElementById(id); });
   els.tabs = document.querySelectorAll(".tab");
@@ -70,27 +93,23 @@ function initEls() {
 }
 
 /* 吸顶坐标实测合帧：ResizeObserver/resize 触发的一帧内只读一次布局。
-   ≤1000px 时侧栏折叠为吸顶整体叠在标题栏上方，吸附让位高度 = 两者之和 */
+   顶部导航壳（品牌栏 + 页签）是唯一的吸顶元素，其高度即吸附让位高度。 */
 function initStickyOffsets() {
-  const header = document.querySelector(".topheader");
-  const sidebar = document.querySelector(".sidebar");
-  if (!header) return;
-  const stackedLayout = () => window.matchMedia?.("(max-width: 1000px)").matches;
+  const shell = document.querySelector(".nav-shell");
+  if (!shell) return;
   let frame = 0;
   const sync = () => {
     if (frame) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      const headerH = Math.ceil(header.getBoundingClientRect().height);
-      const stackH = stackedLayout() && sidebar ? Math.ceil(sidebar.getBoundingClientRect().height) : 0;
-      document.documentElement.style.setProperty("--topheader-height", `${headerH + stackH}px`);
+      const h = Math.ceil(shell.getBoundingClientRect().height);
+      document.documentElement.style.setProperty("--topheader-height", `${h}px`);
     });
   };
   sync();
   window.addEventListener("resize", scheduleBannerSync);
   if (typeof ResizeObserver === "function") {
-    new ResizeObserver(sync).observe(header);
-    if (sidebar) new ResizeObserver(sync).observe(sidebar);
+    new ResizeObserver(sync).observe(shell);
   } else {
     window.addEventListener("resize", sync);
   }
@@ -123,6 +142,7 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   external: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   chevron: '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
 };
 
 function svgIcon(name, size = 20) {
@@ -316,7 +336,8 @@ function showToast(msg) {
 function parsePushedAt(raw) {
   const s = String(raw ?? "").trim();
   if (!s) return NaN;
-  const t = /^\d{9,}$/.test(s) ? Number(s) : new Date(s.replace(" ", "T")).getTime();
+  // 后端时间戳含小数（time.time() 浮点秒），正则要允许小数点
+  const t = /^\d{9,}(\.\d+)?$/.test(s) ? Number(s) : new Date(s.replace(" ", "T")).getTime();
   if (!Number.isFinite(t) || t <= 0) return NaN;
   // Backend stores Unix seconds; values below 1e12 (year ~2001 in ms) are seconds.
   return t < 1e12 ? t * 1000 : t;
@@ -372,7 +393,7 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
       role: "option",
       "aria-selected": o.value === current ? "true" : "false",
       text: o.text,
-      onClick: () => { pick(o.value); close(); },
+      onClick: () => { pick(o.value); close(true); },
     })));
   }
   function pick(v) {
@@ -393,23 +414,30 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
     openDropdown = api;
     (list.querySelector(".dd-option.selected") || list.firstElementChild)?.focus();
   }
-  function close() {
+  function close(restoreFocus = false) {
+    if (list.hidden) return;
     list.hidden = true;
     root.classList.remove("open");
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("click", onDocClick, true);
     if (openDropdown === api) openDropdown = null;
+    if (restoreFocus) trigger.focus();
   }
-  trigger.addEventListener("click", () => (list.hidden ? open() : close()));
+  trigger.addEventListener("click", e => {
+    e.preventDefault();
+    if (list.hidden) open();
+    else close();
+  });
   trigger.addEventListener("keydown", e => {
-    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) { e.preventDefault(); open(); }
+    if (["ArrowDown", "ArrowUp"].includes(e.key)) { e.preventDefault(); open(); }
+    else if (["Enter", " "].includes(e.key)) { e.preventDefault(); if (list.hidden) open(); else close(); }
   });
   list.addEventListener("keydown", e => {
     const items = [...list.querySelectorAll(".dd-option")];
     const idx = items.indexOf(document.activeElement);
     if (e.key === "ArrowDown") { e.preventDefault(); items[Math.min(idx + 1, items.length - 1)]?.focus(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); items[Math.max(idx - 1, 0)]?.focus(); }
-    else if (e.key === "Escape") { e.preventDefault(); close(); trigger.focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); close(true); }
     else if (e.key === "Tab") close();
   });
 
@@ -468,6 +496,203 @@ function closeConfirm() {
 }
 
 /* ==========================================================================
+   7b. Sheet（右侧详情抽屉）
+   分组编辑与推文详情共用同一抽屉：内容由调用方构造后传入，抽屉本身只负责
+   开合、遮罩、Escape 关闭与焦点圈/焦点恢复。
+   ========================================================================== */
+let sheetOpen = false;
+
+function openSheet({ title, body, footer = [], onClose = null }) {
+  if (!els.detailSheet) return;
+  if (!sheetOpen) state.sheetReturnFocus = document.activeElement;
+  sheetOpen = true;
+  els.sheetTitle.textContent = title || "详情";
+  els.sheetBody.replaceChildren(...(Array.isArray(body) ? body : [body]));
+  els.sheetFooter.replaceChildren(...(Array.isArray(footer) ? footer.filter(Boolean) : [footer].filter(Boolean)));
+  els.detailSheet._onClose = onClose;
+  els.detailSheet.hidden = false;
+  // 先解除 hidden 再加 open，否则首帧拿不到过渡起点
+  requestAnimationFrame(() => {
+    els.detailSheet.classList.add("open");
+    els.sheetScrim?.classList.add("open");
+  });
+  const focusTarget = els.sheetBody.querySelector("input, select, textarea, button") || els.sheetCloseBtn;
+  focusTarget?.focus?.();
+}
+
+function closeSheet({ restoreFocus = true } = {}) {
+  if (!els.detailSheet || !sheetOpen) return;
+  sheetOpen = false;
+  const onClose = els.detailSheet._onClose;
+  els.detailSheet._onClose = null;
+  els.detailSheet.classList.remove("open");
+  els.sheetScrim?.classList.remove("open");
+  const finish = () => { if (!sheetOpen) els.detailSheet.hidden = true; };
+  els.detailSheet.addEventListener("transitionend", finish, { once: true });
+  // 无过渡（prefers-reduced-motion / 隐藏窗口）时兜底
+  setTimeout(finish, 320);
+  if (typeof onClose === "function") onClose();
+  if (restoreFocus && state.sheetReturnFocus?.focus) state.sheetReturnFocus.focus();
+  state.sheetReturnFocus = null;
+}
+
+/* 抽屉内焦点圈：Tab 到首尾时回绕，避免焦点跑到被遮住的页面上 */
+function trapFocus(container, e) {
+  const focusable = [...container.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+/* ==========================================================================
+   7c. ⌘K 命令面板
+   命令表由视图元信息 + 当前分组 + 全局动作动态生成；↑↓ 选择、Enter 执行、
+   Escape 关闭。只做前端可达动作，不新增后端能力。
+   ========================================================================== */
+let cmdkItems = [];
+let cmdkIndex = 0;
+let cmdkOpen = false;
+
+function buildCmdkItems() {
+  const items = Object.entries(VIEW_META).map(([view, meta]) => ({
+    title: `切换到${meta.title}`,
+    sub: "视图",
+    run: () => switchView(view),
+  }));
+  for (const g of state.groups) {
+    const count = g.group_type === "tag"
+      ? (g.watch_queries || []).length
+      : g.group_type === "list" ? (g.watch_lists || []).length : (g.watch_users || []).length;
+    const unit = g.group_type === "tag" ? "关键词" : g.group_type === "list" ? "列表" : "博主";
+    items.push({
+      title: `编辑分组：${g.name}`,
+      sub: `${count} ${unit}`,
+      run: () => { switchView("groups"); selectGroup(g.group_id); },
+    });
+  }
+  items.push({ title: "刷新全部数据", sub: "动作", run: () => reloadAll({ preserveDrafts: false }) });
+  items.push({ title: "清理媒体缓存", sub: "动作", run: () => { switchView("overview"); confirmClearCache(); } });
+  return items;
+}
+
+function renderCmdk(query = "") {
+  const q = query.trim().toLowerCase();
+  const filtered = cmdkItems.filter(it => !q || it.title.toLowerCase().includes(q) || it.sub.toLowerCase().includes(q));
+  if (cmdkIndex >= filtered.length) cmdkIndex = 0;
+  if (!filtered.length) {
+    els.cmdkList.replaceChildren(h("div", { class: "pal-empty", text: "没有匹配的命令" }));
+    return;
+  }
+  els.cmdkList.replaceChildren(...filtered.map((it, i) => h("div", {
+    class: `pal-item ${i === cmdkIndex ? "selected" : ""}`,
+    role: "button",
+    tabindex: "-1",
+    onClick: () => { closeCmdk(); it.run(); },
+  }, [
+    h("span", { text: it.title }),
+    h("span", { class: "pal-sub", text: it.sub }),
+  ])));
+  // 只滚动当前项，不动整页
+  els.cmdkList.children[cmdkIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+function openCmdk() {
+  if (!els.cmdkOverlay || cmdkOpen) return;
+  cmdkOpen = true;
+  state.cmdkReturnFocus = document.activeElement;
+  cmdkItems = buildCmdkItems();
+  cmdkIndex = 0;
+  els.cmdkInput.value = "";
+  renderCmdk("");
+  els.cmdkOverlay.classList.add("open");
+  els.cmdkInput.focus();
+}
+
+function closeCmdk() {
+  if (!els.cmdkOverlay || !cmdkOpen) return;
+  cmdkOpen = false;
+  els.cmdkOverlay.classList.remove("open");
+  if (state.cmdkReturnFocus?.focus) state.cmdkReturnFocus.focus();
+  state.cmdkReturnFocus = null;
+}
+
+/* ==========================================================================
+   7d. 诊断终端（真实插件日志）
+   数据来自 web/logs 的内存环缓冲，只含插件自身经安全辅助函数发出的事件。
+   轮询只在实例诊断视图可见时运行，切走即停。
+   ========================================================================== */
+const LOG_POLL_MS = 3000;
+
+function logTime(ts) {
+  const d = new Date((ts || 0) * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function renderTerminal(container, entries, { title = "probe.sh", empty = "暂无日志事件" } = {}) {
+  if (!container) return;
+  container.classList.add("mac-terminal");
+  const lines = [];
+  for (const entry of entries) {
+    const level = entry.level || "info";
+    for (const text of entry.lines || []) {
+      lines.push(h("div", { class: "term-line" }, [
+        h("span", { class: "term-time", text: logTime(entry.ts) }),
+        h("span", { class: `term-tag ${level}`, text: level.toUpperCase() }),
+        h("span", { class: "term-msg", text }),
+      ]));
+    }
+  }
+  container.replaceChildren(
+    h("div", { class: "mac-terminal-bar" }, [
+      h("div", { class: "mac-dots" }, [
+        h("span", { class: "mac-dot red" }),
+        h("span", { class: "mac-dot yellow" }),
+        h("span", { class: "mac-dot green" }),
+      ]),
+      h("span", { class: "mac-terminal-title", text: title }),
+      h("span", { class: "mac-terminal-status" }, [
+        h("span", { class: "mac-status-indicator" }),
+        h("span", { text: "实时" }),
+      ]),
+    ]),
+    h("div", { class: "mac-terminal-body" }, lines.length ? lines : [h("div", { class: "term-empty", text: empty })]),
+  );
+  // 新日志追加后滚到底，便于追踪最新事件
+  const body = container.querySelector(".mac-terminal-body");
+  if (body) body.scrollTop = body.scrollHeight;
+}
+
+async function reloadLogs({ reset = false } = {}) {
+  if (reset) { state.logs = []; state.logsAfterSeq = 0; }
+  const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
+  const incoming = res.entries || [];
+  state.logsMax = res.max_entries || state.logsMax;
+  if (incoming.length) {
+    state.logs = state.logs.concat(incoming);
+    state.logsAfterSeq = incoming[incoming.length - 1].seq;
+    // 前端与后端同上限，避免长时间停留后无限增长
+    if (state.logsMax && state.logs.length > state.logsMax) {
+      state.logs = state.logs.slice(-state.logsMax);
+    }
+  }
+  markData("logs");
+}
+
+function startLogPolling() {
+  stopLogPolling();
+  state.logsTimer = setInterval(() => {
+    reloadLogs().catch(() => stopLogPolling());
+  }, LOG_POLL_MS);
+}
+
+function stopLogPolling() {
+  if (state.logsTimer) { clearInterval(state.logsTimer); state.logsTimer = 0; }
+}
+
+/* ==========================================================================
    8. Theme
    ========================================================================== */
 /* 主题切换只在本次会话内生效，不做持久化：AstrBot Plugin Pages 的 iframe 使用
@@ -490,6 +715,8 @@ function applyTheme(isDark) {
   // 主题类挂在 <html> 上：深色变量的唯一出处是 :root.dark-theme
   document.documentElement.classList.toggle("dark-theme", !!isDark);
   document.documentElement.classList.toggle("light-theme", !isDark);
+  // 顶栏按钮文案与原型一致：当前深色时提示切到亮色，反之亦然
+  if (els.themeLabel) els.themeLabel.textContent = isDark ? "亮色模式" : "暗色模式";
 }
 function toggleTheme() {
   const next = !document.documentElement.classList.contains("dark-theme");
@@ -706,7 +933,7 @@ function scheduleGroupListRender() {
   groupListRenderPending = true;
   requestAnimationFrame(() => {
     groupListRenderPending = false;
-    renderGroupList();
+    renderGroupCards();
   });
 }
 
@@ -733,42 +960,121 @@ function groupHealthInfo(g) {
   };
 }
 
-function renderGroupList() {
-  if (!els.groupList) return;
+function renderGroupCards() {
+  if (!els.groupsGrid) return;
   if (!state.groups.length) {
-    els.groupList.replaceChildren(h("div", { class: "panel empty-note", text: "暂无分组" }));
+    els.groupsGrid.replaceChildren(h("div", { class: "panel empty-note", text: "暂无分组，点击右上角新建。" }));
     return;
   }
-  els.groupList.replaceChildren(...state.groups.map(g => {
-    const active = g.group_id === state.selectedGroupId;
-    const dirty = isGroupDirty(g.group_id);
-    const icon = g.group_type === "tag" ? "hash" : g.group_type === "list" ? "rss" : "user";
-    const label = g.group_type === "tag" ? "搜索" : g.group_type === "list" ? "List" : "博主";
-    const health = groupHealthInfo(g);
-    return h("div", {
-      class: `group-item ${active ? "active" : ""}`,
-      onClick: () => selectGroup(g.group_id),
-    }, [
-      h("div", { class: "group-item-row" }, [
-        h("span", { class: "group-item-name" }, [
-          iconEl(icon, 16),
-          (state.groupDrafts[g.group_id]?.name) || g.name,
-        ]),
+  els.groupsGrid.replaceChildren(...state.groups.map(g => groupCard(g)));
+}
+
+function groupCard(g) {
+  const d = state.groupDrafts[g.group_id] || snapshotGroup(g);
+  const dirty = isGroupDirty(g.group_id);
+  const isTag = g.group_type === "tag";
+  const isList = g.group_type === "list";
+  const typeLabel = isTag ? "关键词搜索" : isList ? "List 列表" : "博主订阅";
+  // 后端 watch_queries 是 {query,type} 对象数组，chips 需要纯文本
+  const sources = (isTag ? (d.watch_queries || []) : isList ? (d.watch_lists || []) : (d.watch_users || []))
+    .map(v => (v && typeof v === "object" ? (v.query ?? v.value ?? "") : v))
+    .filter(v => v !== "" && v != null);
+  const targets = d.push_targets || [];
+  const invalidTargets = d.invalid_push_targets || [];
+  const intervalOn = d.interval_check_enabled !== false;
+  const daily = (d.daily_check_times || []).join(", ");
+  const repostFilter = d.filter_reposts_enabled ? "已开启" : "已关闭";
+  const plainFilter = d.filter_plain_text_enabled ? "仅媒体" : "全部";
+  const health = groupHealthInfo(g);
+  const preview = sources.slice(0, 8);
+  // 无效条目隔离区：tag/list 分组的无效项由后端放在 invalid_watch_queries/lists，
+  // 旧代码只处理了 invalid_watch_users，这里按分组类型补齐。
+  const invalidSources = isTag
+    ? (d.invalid_watch_queries || [])
+    : isList
+      ? (d.invalid_watch_lists || [])
+      : (d.invalid_watch_users || []);
+
+  return h("div", { class: `group-card${dirty ? " dirty" : ""}` }, [
+    h("div", { class: "gc-header" }, [
+      h("div", { class: "gc-title" }, [
+        h("span", { class: "gc-title-text", text: d.name || g.name }),
+        h("span", { class: "gc-type-tag", text: typeLabel }),
         dirty ? h("span", { class: "badge badge-warn", text: "未保存" }) : null,
       ]),
-      h("div", { class: "group-item-meta" }, [
-        h("span", { class: "badge badge-blue", text: label }),
-        h("span", { class: "mono", text: g.group_id }),
-        !g.enabled ? h("span", { class: "badge", text: "停用" }) : null,
-        h("span", { class: `health-dot ${health.count ? "warn" : "ok"}`, title: health.title }),
+      h("span", {
+        class: `gc-badge ${d.enabled ? "active" : "disabled"}`,
+        text: d.enabled ? "● 运行中" : "○ 已停用",
+      }),
+    ]),
+    h("div", { class: "gc-meta-grid" }, [
+      h("div", {}, [h("span", { text: "检查间隔: " }), h("span", { class: "mono", text: intervalOn ? `${g.check_interval_minutes ?? "—"} 分钟` : "已关闭" })]),
+      h("div", {}, [h("span", { text: "转推过滤: " }), h("span", { class: "mono", text: repostFilter })]),
+      h("div", {}, [h("span", { text: "每日定时: " }), h("span", { class: "mono", text: daily || "无" })]),
+      h("div", {}, [h("span", { text: "纯文本过滤: " }), h("span", { class: "mono", text: plainFilter })]),
+    ]),
+    h("div", {}, [
+      h("div", { class: "gc-chips-header" }, [
+        h("span", { class: "row" }, [
+          h("span", { class: `health-dot ${health.count ? "warn" : "ok"}`, title: health.title }),
+          h("span", {
+            text: isTag
+              ? `搜索词（${sources.length} 个）`
+              : isList ? `List（${sources.length} 个）` : `关注博主（${sources.length} 位）`,
+          }),
+        ]),
+        h("button", {
+          class: "nav-btn gc-manage-btn",
+          type: "button",
+          text: "+ 管理",
+          onClick: () => openGroupSheet(g.group_id),
+        }),
       ]),
-    ]);
-  }));
+      h("div", { class: "gc-chips", style: { marginTop: "6px" } },
+        preview.length
+          ? [
+              ...preview.map(v => h("span", { class: "chip-entity", title: v }, [
+                h("span", { text: isTag ? v : (isList ? `List:${v}` : `@${v}`) }),
+              ])),
+              sources.length > preview.length
+                ? h("span", { class: "chip-entity more", text: `+${sources.length - preview.length} 更多` })
+                : null,
+              ...invalidSources.slice(0, 3).map(v => h("span", { class: "chip-entity invalid", title: "无效条目", text: v })),
+            ].filter(Boolean)
+          : [h("span", { class: "hint", text: "暂无订阅源" })],
+      ),
+    ]),
+    h("div", { class: "gc-targets-box" }, [
+      h("div", { class: "gc-targets-title", text: "接收目标群聊:" }),
+      ...(targets.length || invalidTargets.length
+        ? [
+            ...targets.map(t => {
+              const umo = typeof t === "string" ? t : (t?.umo || "");
+              return h("div", { class: "target-row" }, [
+                h("span", { text: replayTargetShortLabel(umo) }),
+                h("span", { class: "mono target-umo", text: umo }),
+              ]);
+            }),
+            ...invalidTargets.map(t => {
+              const umo = typeof t === "string" ? t : (t?.umo || "");
+              return h("div", { class: "target-row gone" }, [
+                h("span", { text: replayTargetShortLabel(umo) }),
+                h("span", { class: "mono target-umo", text: umo }),
+              ]);
+            }),
+          ]
+        : [h("div", { class: "hint", text: "未配置推送目标" })]),
+    ]),
+    h("div", { class: "gc-card-actions" }, [
+      h("button", { class: "nav-btn", type: "button", text: "测试目标连通", onClick: () => probeTargets(g.group_id) }),
+      h("button", { class: "nav-btn btn-primary", type: "button", text: "编辑详细配置", onClick: () => openGroupSheet(g.group_id) }),
+    ]),
+  ]);
 }
 
 function selectGroup(gid, { force = false } = {}) {
   const prev = state.groups.find(g => g.group_id === state.selectedGroupId);
-  if (!force && prev && isGroupDirty(state.selectedGroupId)) {
+  if (!force && prev && isGroupDirty(state.selectedGroupId) && sheetOpen) {
     openConfirm({
       title: "丢弃未保存的更改？",
       desc: "当前分组的修改尚未保存，切换后将丢失。",
@@ -780,80 +1086,89 @@ function selectGroup(gid, { force = false } = {}) {
     });
     return;
   }
-  state.selectedGroupId = gid; renderGroupList(); renderGroupEditor();
+  state.selectedGroupId = gid;
+  renderGroupCards();
 }
 
 /* --------------------------------------------------------------------------
-   Group Editor
+   Group Sheet（抽屉编辑器）
+   内容分区与旧左右分栏一致：基础开关 / 订阅源 / 推送目标 / 黑名单，
+   差异只在容器形态（抽屉）与打开时机（点卡片进入）。
    -------------------------------------------------------------------------- */
-function renderGroupEditor() {
-  if (!els.groupEditor) return;
-  const g = state.groups.find(x => x.group_id === state.selectedGroupId);
-  if (!g) { els.groupEditor.replaceChildren(h("div", { class: "panel empty-note", text: "请选择一个分组" })); return; }
-  const d = state.groupDrafts[g.group_id] || snapshotGroup(g);
+function openGroupSheet(gid) {
+  const g = state.groups.find(x => x.group_id === gid);
+  if (!g) return;
+  state.selectedGroupId = gid;
+  const d = state.groupDrafts[gid] || snapshotGroup(g);
 
-  // Head
-  const head = h("div", { class: "panel-head" }, [
-    h("div", { class: "row" }, [
-      h("h2", { text: d.name || g.name }),
-      h("span", { class: `badge ${d.enabled ? "badge-ok" : "badge-warn"}`, text: d.enabled ? "启用" : "停用" }),
-      h("span", { class: "mono hint", text: g.group_id }),
-    ]),
-    h("div", { class: "row" }, [
-      g.group_id !== "default" ? h("button", { class: "btn btn-sm btn-danger", html: svgIcon("trash", 14), text: "删除", onClick: () => confirmDeleteGroup(g.group_id) }) : null,
-    ]),
-  ]);
-
-  // Base config: 名称通栏 + 开关 2×2 + 每日定时通栏,同一个 grid 保证对齐
-  const base = h("div", { class: "editor-grid" }, [
-    h("label", { class: "field editor-grid-full" }, [
+  const body = h("div", { class: "vstack" }, [
+    // 名称 + 启停
+    h("label", { class: "field" }, [
       h("span", { text: "分组名称" }),
-      h("input", { type: "text", value: d.name,
-        onInput: e => updateDraft(g.group_id, "name", e.target.value.trim()),
-        onChange: () => saveGroup(g.group_id, "分组名称已保存"),
+      h("input", {
+        type: "text",
+        value: d.name,
+        onInput: e => updateDraft(gid, "name", e.target.value.trim()),
+        onChange: () => saveGroup(gid, "分组名称已保存"),
       }),
     ]),
-    toggleRow(d.enabled, "启用此分组", v => commitGroupField(g.group_id, "enabled", v)),
-    toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => commitGroupField(g.group_id, "filter_reposts_enabled", v)),
-    toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => commitGroupField(g.group_id, "filter_plain_text_enabled", v)),
-    toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => commitGroupField(g.group_id, "interval_check_enabled", v)),
-    h("span", { class: "hint-line editor-grid-full", text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
-    h("label", { class: "field editor-grid-full" }, [
+    h("div", { class: "editor-grid" }, [
+      toggleRow(d.enabled, "启用此分组", v => commitGroupField(gid, "enabled", v)),
+      toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => commitGroupField(gid, "interval_check_enabled", v)),
+      toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => commitGroupField(gid, "filter_reposts_enabled", v)),
+      toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => commitGroupField(gid, "filter_plain_text_enabled", v)),
+      toggleRow(d.media_only_enabled, "仅保留含媒体推文（图片/视频）", v => commitGroupField(gid, "media_only_enabled", v)),
+      toggleRow(d.omit_status_url, "省略原推链接", v => commitGroupField(gid, "omit_status_url", v)),
+      toggleRow(d.hide_original_when_translated, "翻译后隐藏原文", v => commitGroupField(gid, "hide_original_when_translated", v)),
+    ]),
+    h("span", { class: "hint-line", text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
+    h("label", { class: "field" }, [
       h("span", { text: "每日定时触发时间（逗号或换行分隔，如 08:00, 20:00）" }),
-      h("input", { type: "text", value: (d.daily_check_times || []).join(", "), onInput: e => {
-        const tokens = e.target.value.split(/[,，\s]+/).filter(Boolean);
-        const valid = tokens
-          .filter(t => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
-          .map(t => (t.length === 4 ? "0" + t : t));
-        const hint = document.getElementById("dailyTimesHint");
-        if (hint) {
-          const dropped = tokens.length !== valid.length;
-          hint.textContent = dropped ? "存在无效时间（格式 HH:MM），已忽略" : "";
-          hint.style.display = dropped ? "" : "none";
-        }
-        updateDraft(g.group_id, "daily_check_times", valid);
-      }, onChange: () => saveGroup(g.group_id, "定时设置已保存") }),
+      h("input", {
+        type: "text",
+        value: (d.daily_check_times || []).join(", "),
+        onInput: e => {
+          const tokens = e.target.value.split(/[,，\s]+/).filter(Boolean);
+          const valid = tokens
+            .filter(t => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
+            .map(t => (t.length === 4 ? "0" + t : t));
+          const hint = document.getElementById("dailyTimesHint");
+          if (hint) {
+            const dropped = tokens.length !== valid.length;
+            hint.textContent = dropped ? "存在无效时间（格式 HH:MM），已忽略" : "";
+            hint.style.display = dropped ? "" : "none";
+          }
+          updateDraft(gid, "daily_check_times", valid);
+        },
+        onChange: () => saveGroup(gid, "定时设置已保存"),
+      }),
       h("span", { id: "dailyTimesHint", class: "field-error", style: { display: "none" } }),
     ]),
+    // 订阅源：完整能力（chips / 无效隔离 / 批量导入 / 添加）
+    renderEntities(g, d),
+    // 推送目标：data-editor-section 供 rerenderTargetsSection 局部重建
+    h("div", { "data-editor-section": "targets" }, renderTargets(g, d)),
   ]);
 
-  // Subscription entities section
-  const entities = renderEntities(g, d);
-  // Push targets section（data-editor-section 供 rerenderTargetsSection 局部重建）
-  const targets = h("div", { "data-editor-section": "targets" }, renderTargets(g, d));
+  const footer = [
+    h("span", { class: "mono hint", text: g.group_id }),
+    g.group_id !== "default"
+      ? h("button", { class: "btn btn-sm btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet(); confirmDeleteGroup(gid); } })
+      : null,
+    h("button", { class: "btn btn-sm", type: "button", text: "关闭", onClick: () => closeSheet() }),
+  ];
 
-  els.groupEditor.replaceChildren(h("div", { class: "panel" }, [
-    head, base, entities, targets,
-  ]));
+  openSheet({ title: `编辑分组 · ${d.name || g.name}`, body, footer });
 }
 
-/* targets 区块局部重建：probe/黑名单等只影响该区块的操作不必整棵重建编辑器 */
+
+/* targets 区块局部重建：probe/黑名单等只影响该区块的操作不必整棵重建抽屉 */
 function rerenderTargetsSection(gid) {
   if (gid !== state.selectedGroupId) return;   // 请求在途时用户已切换分组，跳过过期重渲
   const g = state.groups.find(x => x.group_id === gid);
   const d = g ? (state.groupDrafts[g.group_id] || snapshotGroup(g)) : null;
-  const section = els.groupEditor?.querySelector('[data-editor-section="targets"]');
-  if (!g || !d || !section) { renderGroupEditor(); return; }
+  const section = els.sheetBody?.querySelector('[data-editor-section="targets"]');
+  if (!g || !d || !section) { if (sheetOpen) openGroupSheet(gid); return; }
   section.replaceChildren(renderTargets(g, d));
 }
 
@@ -1202,7 +1517,10 @@ function commitGroupField(gid, field, value) {
 }
 
 function createGroup() {
-  const nameInput = h("input", { type: "text", value: "新订阅分组", class: "confirm-input" });
+  if (!els.createGroupModal) return;
+  state.createGroupReturnFocus = document.activeElement;
+  els.createGroupName.value = "新订阅分组";
+  // 类型选项每次重建：弹窗关闭后旧节点已不可见，重建可确保默认选中项正确
   const options = [
     { value: "blogger", label: "博主分组" },
     { value: "tag", label: "搜索订阅分组" },
@@ -1220,18 +1538,28 @@ function createGroup() {
   });
   radioBox.addEventListener("change", syncTypeSelection);
   syncTypeSelection();
-  openConfirm({
-    title: "新建订阅分组",
-    desc: h("div", { class: "vstack-sm" }, [h("div", { class: "hint", text: "分组名称：" }), nameInput, h("div", { class: "hint", text: "选择类型：" }), radioBox]),
-    confirmText: "创建",
-    action: () => withAction(async () => {
-      const sel = radioBox.querySelector('input[name="createGroupType"]:checked');
-      const gType = sel?.value || "blogger";
-      const name = nameInput.value.trim() || "新订阅分组";
-      const res = await apiPost("web/groups/create", { name, group_type: gType });
-      if (res?.group) state.selectedGroupId = res.group.group_id;
-    }, "分组创建成功"),
-  });
+  els.createGroupType.replaceChildren(radioBox);
+  els.createGroupModal.classList.add("open");
+  els.createGroupName.focus();
+  els.createGroupName.select();
+}
+
+function closeCreateGroupModal() {
+  if (!els.createGroupModal) return;
+  els.createGroupModal.classList.remove("open");
+  if (state.createGroupReturnFocus?.focus) state.createGroupReturnFocus.focus();
+  state.createGroupReturnFocus = null;
+}
+
+async function submitCreateGroup() {
+  const sel = els.createGroupType?.querySelector('input[name="createGroupType"]:checked');
+  const gType = sel?.value || "blogger";
+  const name = (els.createGroupName?.value || "").trim() || "新订阅分组";
+  closeCreateGroupModal();
+  await withAction(async () => {
+    const res = await apiPost("web/groups/create", { name, group_type: gType });
+    if (res?.group) state.selectedGroupId = res.group.group_id;
+  }, "分组创建成功");
 }
 
 async function saveGroup(gid, successText = "分组已保存") {
@@ -1278,23 +1606,57 @@ async function probeTargets(gid) {
 /* ==========================================================================
    11. Rail Health Status
    ========================================================================== */
+/* 顶部环境徽标：调度器状态 + 失效目标提示（原侧栏三行 pill 的合并表达） */
 function renderRailStatus() {
   const p = state.overview; if (!p) return;
   const s = p.scheduler || {}; const c = p.counts || {};
-  setRailPill("railSchedulerStatus", s.running ? "ok" : "warn", s.running ? "运行中" : "未启动");
-  setRailPill("railScheduleStatus", s.schedule_enabled ? "ok" : "warn", s.schedule_enabled ? "已开启" : "已关闭");
   const inv = c.invalid_push_targets || 0;
-  setRailPill("railTargetStatus", inv > 0 ? "danger" : "ok", inv > 0 ? `${inv} 异常` : "正常");
-}
-function setRailPill(id, cls, text) {
-  const el = els[id]; if (!el) return;
-  el.className = `pill-status pill-${cls}`;
-  el.replaceChildren(h("span", { class: "dot" }), h("span", { text }));
+  const running = !!s.running && !!s.schedule_enabled;
+  const el = els.railSchedulerStatus;
+  if (!el) return;
+  const cls = inv > 0 ? "danger" : running ? "ok" : "warn";
+  const text = inv > 0
+    ? `${inv} 个失效目标`
+    : running ? "运行中" : (s.running ? "调度已停用" : "调度器未启动");
+  el.className = `badge-env ${cls}`;
+  el.replaceChildren(h("span", { class: "dot-live" }), h("span", { text }));
+  // 三个旧 pill 的语义合并进徽标 title，悬停即可看到细分状态
+  el.title = [
+    `调度器：${s.running ? "运行中" : "未启动"}`,
+    `后台检查：${s.schedule_enabled ? "已开启" : "已关闭"}`,
+    `推送目标：${inv > 0 ? `${inv} 个异常` : "正常"}`,
+  ].join("\n");
 }
 
 /* ==========================================================================
-   12. Overview
+   12. Overview（Hero 卡 + 指标走廊 + 推送表格 + 副列运维）
    ========================================================================== */
+
+/* 实例地址脱敏：只保留协议 + host[:port]，不带 path。
+   总览与诊断页展示一律走这里，避免私有实例的路径片段出现在界面上。 */
+function redactInstanceLabel(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)?([^/?#]+)(.*)$/i.exec(text);
+  if (!m) return text;
+  return `${m[1] || ""}${m[2]}`;
+}
+
+/* 全部分组的推送目标去重（按 UMO 字符串） */
+function collectPushTargets() {
+  const seen = new Set();
+  const out = [];
+  for (const g of state.groups) {
+    for (const target of g.push_targets || []) {
+      const umo = typeof target === "string" ? target : (target?.umo || "");
+      if (!umo || seen.has(umo)) continue;
+      seen.add(umo);
+      out.push(umo);
+    }
+  }
+  return out;
+}
+
 function renderOverview() {
   const root = els.overviewView; if (!root) return;
   const p = state.overview;
@@ -1302,147 +1664,214 @@ function renderOverview() {
   const c = p.counts || {}; const s = p.scheduler || {};
   const cfg = p.config_summary || {}; const inst = p.instances || [];
   const att = p.attention_items || [];
-
-  // Metric cards with icons(除调度器外点击跳转分组管理)
-  const goGroups = () => document.querySelector('[data-view="groups"]')?.click();
-  const metrics = h("div", { class: "metrics-grid" }, [
-    metric("home", "调度器", s.running ? "运行中" : "已停用"),
-    metric("list", "启用分组", `${c.enabled_groups || 0} / ${c.groups || 0}`, goGroups),
-    metric("user", "博主订阅", c.watch_users || 0, goGroups),
-    metric("hash", "搜索订阅", c.watch_queries || 0, goGroups),
-    metric("rss", "List 订阅", c.watch_lists || 0, goGroups),
-    metric("send", "推送目标", c.push_targets || 0, goGroups),
-  ]);
-
-  // Attention items
-  const attPanel = att.length ? h("div", { class: "panel" }, [
-    h("div", { class: "panel-head" }, [
-      h("h3", { text: "需要关注" }),
-      h("span", { class: "badge badge-warn", text: `${att.length} 项` }),
-    ]),
-    ...att.map(item => h("div", {
-      class: `alert-item ${item.level === "error" ? "danger" : item.level === "warning" || item.level === "warn" ? "warn" : "info"}`,
-    }, [
-      h("span", {}, [
-        h("strong", { text: `${item.title || ""}: ` }),
-        item.detail || "",
-      ]),
-      item.group_id ? h("button", {
-        class: "btn btn-ghost btn-sm",
-        html: svgIcon("external", 14),
-        title: "前往该分组",
-        onClick: () => goGroupEditor(item.group_id),
-      }) : null,
-    ])),
-  ]) : null;
-
-  // Instance & config summary
-  const configPanel = h("div", { class: "panel" }, [
-    h("div", { class: "panel-head" }, [h("h3", { text: "实例与配置" })]),
-    h("div", { class: "row row-wrap" }, [
-      h("div", { class: "field field-flex" }, [
-        h("span", { text: "已配置 Nitter 实例" }),
-        inst.length
-          ? h("div", { class: "chip-list" }, inst.map(u => h("span", { class: "chip mono chip-action", text: u, onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; document.querySelector('[data-view="mirror"]')?.click(); } })))
-          : h("span", { class: "badge badge-warn", text: "未配置任何实例" }),
-      ]),
-      h("div", { class: "field field-flex" }, [
-        h("span", { text: "调度参数" }),
-        h("div", { class: "chip-list" }, [
-          badge(`检查间隔 ${cfg.check_interval_minutes || 0}m`),
-          badge(`合并阈值 ${cfg.merge_tweet_threshold || 0}`),
-          badge(`目标间隔 ${cfg.send_target_interval || 0}s`),
-          badge(`并发 ${cfg.concurrent_fetch_enabled ? "开" : "关"}`),
-        ]),
-      ]),
-    ]),
-  ]);
-
-  // Danger zone（收敛视觉权重：细红边面板 + 常规卡面；展示缓存构成辅助决策）
-  const mt = (state.overview && state.overview.maintenance) || {};
+  const stats = p.push_stats || null;
+  const mt = p.maintenance || {};
   const cacheInfo = mt.cache;
-  const parts = [];
-  if (cacheInfo) {
-    if (cacheInfo.images) parts.push(`图片 ${cacheInfo.images}`);
-    if (cacheInfo.videos) parts.push(`视频 ${cacheInfo.videos}`);
-    if (cacheInfo.other) parts.push(`其他 ${cacheInfo.other}`);
-  }
-  const breakdown = parts.join(" · ");
-  const cacheText = cacheInfo
-    ? (cacheInfo.files
-        ? `当前缓存：${cacheInfo.files} 个文件 · ${formatBytes(cacheInfo.bytes)}${breakdown ? `（${breakdown}）` : ""}`
-        : "当前缓存：空")
-    : "当前缓存：未知";
   const seenInfo = mt.seen || null;
-  const seenByGroup = (seenInfo && seenInfo.by_group) || {};
-  const dz = h("div", { class: "panel danger-zone" }, [
-    h("div", { class: "panel-head" }, [
-      h("h3", { text: "维护与缓存清理" }),
-      h("span", { class: "badge badge-danger", text: "不可逆" }),
+
+  // ---- 1. 顶部告警条：attention_items 逐条横幅（原型 attention-row） ----
+  const attention = att.length
+    ? h("div", { class: "attention-box" }, att.map(item => {
+        const level = item.level === "error" ? "error" : (item.level === "warning" || item.level === "warn") ? "warning" : "info";
+        return h("div", { class: `attention-row ${level}` }, [
+          h("span", { class: "attention-title", text: item.title || "" }),
+          h("span", { class: "attention-detail", text: `· ${item.detail || ""}` }),
+          item.group_id
+            ? h("button", {
+                class: "attention-btn",
+                type: "button",
+                text: "前往处理",
+                onClick: () => goGroupEditor(item.group_id),
+              })
+            : null,
+        ]);
+      }))
+    : null;
+
+  // ---- 2. Hero 卡：定时推送服务管道 ----
+  const running = !!s.running && !!s.schedule_enabled;
+  const lastCheck = s.last_check_at ? relativeTime(s.last_check_at) : "暂无记录";
+  const targets = collectPushTargets();
+  const targetText = targets.length
+    ? targets.slice(0, 2).map(t => replayTargetShortLabel(t)).join(" · ") + (targets.length > 2 ? ` 等 ${targets.length} 个` : "")
+    : "未配置";
+  const primaryInstance = inst.length ? redactInstanceLabel(inst[0]) : "未配置";
+  const filterOn = cfg.filter_reposts_enabled !== false;
+  const hero = h("section", { class: "hero-card" }, [
+    h("div", { class: "hero-main" }, [
+      h("div", { class: "hero-title-row" }, [
+        h("h2", { text: "定时推送服务管道" }),
+        h("span", {
+          class: `badge-status ${running ? "ready" : "warn"}`,
+          text: running ? "正常运行中" : (s.running ? "调度已停用" : "调度器未启动"),
+        }),
+        h("span", { class: "branch-tag", text: `${cfg.check_interval_minutes || 0} 分钟轮询检查` }),
+      ]),
+      h("div", {
+        class: "hero-desc",
+        text: running
+          ? `定时调度引擎运行正常。活跃分组已挂载 ${c.watch_users || 0} 位博主、${c.watch_queries || 0} 个搜索源与 ${c.watch_lists || 0} 个 List，通过 Nitter 实例抓取并分发。`
+          : "调度引擎当前未在运行定时检查，请检查插件配置中的调度开关与分组启用状态。",
+      }),
+      h("div", { class: "hero-meta-grid" }, [
+        h("div", { class: "meta-item" }, [
+          h("span", { class: "meta-label", text: "上次检查时间" }),
+          h("span", { class: "meta-value mono", text: lastCheck }),
+        ]),
+        h("div", { class: "meta-item" }, [
+          h("span", { class: "meta-label", text: "已生效推送目标" }),
+          h("span", { class: "meta-value", text: targetText, title: targets.join("\n") }),
+        ]),
+        h("div", { class: "meta-item" }, [
+          h("span", { class: "meta-label", text: "主力解析节点" }),
+          h("span", { class: "meta-value mono", text: primaryInstance, title: "路径片段已在界面脱敏" }),
+        ]),
+        h("div", { class: "meta-item" }, [
+          h("span", { class: "meta-label", text: "全局转推过滤" }),
+          h("span", { class: "meta-value", text: filterOn ? "已开启（跳过纯转推）" : "已关闭" }),
+        ]),
+      ]),
     ]),
-    h("div", { class: "danger-grid" }, [
-      h("div", { class: "danger-item" }, [
-        h("h4", { text: "清理媒体缓存" }),
-        h("p", { text: "删除临时下载的图片与视频附件" }),
-        h("p", { text: cacheText }),
-        h("div", { class: "actions" }, [
-          h("button", { class: "btn btn-danger btn-sm", text: "清理", onClick: confirmClearCache }),
-        ]),
-      ]),
-      h("div", { class: "danger-item" }, [
-        h("h4", { text: "重置推送记录 (Seen)" }),
-        h("p", { text: "可能导致历史推文再次推送" }),
-        h("p", { text: seenInfo ? `当前共 ${seenInfo.total} 条记录` : "当前记录数：未知" }),
-        h("div", { class: "actions" }, [
-          createSelect({
-            id: "seenSelect",
-            options: [
-              { value: "", text: "全部分组" },
-              ...state.groups.map(g => ({
-                value: g.group_id,
-                text: `${g.name}（${seenByGroup[g.group_id] ?? 0} 条）`,
-              })),
-            ],
-          }),
-          h("button", { class: "btn btn-danger btn-sm", text: "重置", onClick: confirmClearSeen }),
-        ]),
-      ]),
+    h("div", { class: "hero-actions" }, [
+      h("button", { class: "btn btn-primary", type: "button", text: "查看最新推文", onClick: () => switchView("history") }),
+      h("button", { class: "btn", type: "button", text: "探测节点延迟", onClick: () => switchView("mirror") }),
     ]),
   ]);
 
-  // 诊断优先（Monitor surface）：有问题先看问题，指标其次
-  root.replaceChildren(...(attPanel ? [attPanel] : []), metrics, configPanel, dz);
+  // ---- 3. 四列指标卡 ----
+  const goGroups = () => switchView("groups");
+  const successRate = stats && stats.success_rate != null
+    ? `${(stats.success_rate * 100).toFixed(1)}% 投递成功率`
+    : "暂无投递记录";
+  const metrics = h("section", { class: "metrics-row" }, [
+    metricBox("历史推送总数", "SQLite 库", String(stats?.total ?? state.history?.total_count ?? 0),
+      successRate, stats?.success_rate != null, () => switchView("history")),
+    metricBox("活跃订阅分组", "分组规模", `${c.enabled_groups || 0} / ${c.groups || 0}`,
+      `${c.watch_users || 0} 位博主 · ${c.watch_queries || 0} 个关键词 · ${c.watch_lists || 0} 个列表`, false, goGroups),
+    metricBox("本地媒体缓存", "本地磁盘", cacheInfo ? formatBytes(cacheInfo.bytes) : "0 KB",
+      cacheInfo && cacheInfo.files
+        ? `${cacheInfo.files} 个文件（${cacheInfo.images || 0} 图 / ${cacheInfo.videos || 0} 视频）`
+        : "当前无缓存文件", false, null),
+    metricBox("已读去重记录", "Watermark", String(seenInfo?.total ?? 0),
+      "防重复推送机制运行中", false, null),
+  ]);
+
+  // ---- 4. 最新推送记录（前 5 条）：原型单列布局，紧跟指标卡 ----
+  const records = (state.history?.records || []).slice(0, 5);
+  const recentSection = h("section", {}, [
+    h("div", { class: "section-header", style: { marginTop: "28px" } }, [
+      h("div", {}, [
+        h("h3", { text: `最新推送记录（前 ${records.length || 5} 条）` }),
+        h("div", { class: "section-sub", text: "点击任意记录可在右侧抽屉查看详情" }),
+      ]),
+      h("button", {
+        class: "nav-btn",
+        type: "button",
+        text: `查看完整 ${state.history?.total_count ?? stats?.total ?? 0} 条记录 →`,
+        onClick: () => switchView("history"),
+      }),
+    ]),
+    records.length
+      ? h("div", { class: "deploy-table" }, records.map(r => deployRow(r, { onSelect: () => openHistoryDetail(r.id) })))
+      : h("div", { class: "deploy-table empty-note", text: "暂无推送记录" }),
+  ]);
+
+  root.replaceChildren(...[attention, hero, metrics, recentSection].filter(Boolean));
+  renderTabCounts();
 }
+
+/* 指标卡：主值 + 一行 delta 说明；onClick 存在时整卡可点（键盘 Enter/Space 同样触发） */
+function metricBox(label, sub, value, delta, deltaUp = false, onClick = null) {
+  return h("div", {
+    class: `metric-box${onClick ? " clickable" : ""}`,
+    ...(onClick ? {
+      role: "button",
+      tabindex: "0",
+      onClick,
+      onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } },
+    } : {}),
+  }, [
+    h("div", { class: "metric-top" }, [
+      h("span", { class: "metric-label", text: label }),
+      h("span", { class: "metric-sub", text: sub }),
+    ]),
+    h("div", { class: "metric-val mono", text: value }),
+    h("div", { class: `metric-delta${deltaUp ? " up" : ""}`, text: delta }),
+  ]);
+}
+
+/* 推送记录行：总览与历史共用，列与原型 deploy-row 一致
+   （状态 / 正文+作者 / 目标 / 时间 / 来源实例 / 操作菜单）。 */
+function deployRow(r, { compact = false, onSelect = null } = {}) {
+  const status = r.delivery_status || "success";
+  const glyphClass = status === "success" ? "ready" : status === "partial_failed" ? "warn" : "error";
+  const title = (r.text_preview || "").trim() || (r.has_media ? "（该推文为纯图片/视频附件）" : "（无正文）");
+  const author = r.username ? `@${r.username}` : (r.subscription_source || "");
+  return h("div", {
+    class: "deploy-row",
+    role: onSelect ? "button" : null,
+    tabindex: onSelect ? "0" : null,
+    onClick: onSelect || undefined,
+    onkeydown: onSelect
+      ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }
+      : undefined,
+  }, [
+    h("span", { class: `status-glyph ${glyphClass}`, html: svgIcon(status === "success" ? "check" : "alert", 13) }),
+    h("div", { class: "deploy-info" }, [
+      h("div", { class: "deploy-title", text: title, title }),
+      h("div", { class: "deploy-sub" }, [
+        h("span", { class: "branch-tag", text: r.group_name || r.group_id || "—" }),
+        h("span", { class: "mono", text: author }),
+        r.has_media ? h("span", { text: "· 附件媒体" }) : null,
+      ]),
+    ]),
+    h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
+    h("span", { class: "deploy-time mono", text: compact ? relativeTime(r.pushed_at) : formatDateTime(r.pushed_at) }),
+    h("span", { class: "deploy-duration mono", text: r.instance ? redactInstanceLabel(r.instance) : (r.source || "") }),
+    h("button", {
+      class: "menu-btn",
+      type: "button",
+      "aria-label": "操作",
+      html: svgIcon("more", 14),
+      onClick: e => { e.stopPropagation(); if (onSelect) onSelect(); },
+    }),
+  ]);
+}
+
+/* 推送目标的短标签：平台 + 类型 + 目标号，避免整串 UMO 撑破表格列 */
+function replayTargetShortLabel(umo) {
+  const { label, id } = replayTargetParts(umo);
+  return id ? `${label} ${id}` : label;
+}
+
 
 function goGroupEditor(gid) {
   state.selectedGroupId = gid;
-  document.querySelector('[data-view="groups"]')?.click();
+  switchView("groups");
+  // 分组视图冲刷后列表才存在，选中态与抽屉都在这里收口
+  renderGroupCards();
+  openGroupSheet(gid);
 }
 
-function metric(icon, label, value, onClick) {
-  return h("div", {
-    class: `metric${onClick ? " clickable" : ""}`,
-    ...(onClick ? { role: "button", tabindex: "0", onClick, onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } } : {}),
-  }, [
-    h("div", { class: "metric-icon", html: svgIcon(icon, 16) }),
-    h("div", { class: "metric-text" }, [
-      h("span", { class: "metric-label", text: label }),
-      h("span", { class: "metric-value", text: String(value) }),
-    ]),
-  ]);
-}
 function badge(text) { return h("span", { class: "badge", text }); }
 
 /* ==========================================================================
    13. History — Tweet-style Feed
    ========================================================================== */
 function syncHistoryGroupOptions() {
-  if (els.historyGroupSelect?.setOptions) {
-    els.historyGroupSelect.setOptions([
-      { value: "", text: "所有分组" },
-      ...state.groups.map(g => ({ value: g.group_id, text: g.name })),
-    ]);
+  const sel = els.historyGroupSelect;
+  if (!sel) return;
+  const current = sel.value;
+  const options = [
+    { value: "", text: "全部分组" },
+    ...state.groups.map(g => ({ value: g.group_id, text: g.name })),
+  ];
+  if (sel.setOptions) {
+    sel.setOptions(options);
+    return;
   }
+  sel.replaceChildren(...options.map(o => h("option", { value: o.value, text: o.text })));
+  sel.value = options.some(o => o.value === current) ? current : "";
 }
 
 function renderHistory() {
@@ -1455,83 +1884,123 @@ function renderHistory() {
   if (els.historyPageLabel && data) {
     els.historyPageLabel.textContent = `${data.page || 1} / ${data.total_pages || 1} 页 · 共 ${data.total_count || 0} 条`;
   }
+  if (els.historyTitle && data) {
+    els.historyTitle.textContent = `推送历史记录（共 ${data.total_count || 0} 条）`;
+  }
   if (els.historyPrevBtn && data) els.historyPrevBtn.disabled = !data.has_prev;
   if (els.historyNextBtn && data) els.historyNextBtn.disabled = !data.has_next;
 
   const content = els.historyContent;
   if (!recs.length) {
-    content.replaceChildren(h("div", { class: "panel empty-note", text: "暂无推送历史记录" }));
+    content.replaceChildren(h("div", { class: "deploy-table empty-note", text: "暂无推送历史记录" }));
     renderHistoryBatchBar();
     return;
   }
 
-  content.replaceChildren(...recs.map(r => {
-    const st = r.delivery_status;
-    const stBadge = h("span", { class: `badge ${st === "success" ? "badge-ok" : st === "partial_failed" ? "badge-warn" : "badge-danger"}`, text: st === "success" ? "已送达" : st === "partial_failed" ? "部分失败" : "发送失败" });
-    const hasMedia = !!r.has_media;
-
-    // Multi-select checkbox：click 只 stopPropagation（禁止 preventDefault，会回滚
-    // 原生勾选翻转并吞掉 change 事件），切换统一走 onChange。
-    const checkbox = h("input", {
-      type: "checkbox",
-      "aria-label": `选择 ${r.username || "unknown"} 的记录以批量重推`,
-      checked: state.historySelection.has(r.id),
-      onClick: e => e.stopPropagation(),
-      onChange: e => setHistoryRecordSelected(r.id, e.target.checked, e.target),
-    });
-
-    return h("div", {
-      class: "tweet-card",
-      title: "点击切换选中",
-      dataset: { recordId: String(r.id) },
-      onClick: e => {
-        if (e.detail > 1) return; // 双击/多击序列只认第一击
-        if (window.getSelection()?.type === "Range") return; // 正在划选正文，不当作点选
-        toggleHistoryRecord(r.id, checkbox);
-      },
-    }, [
-      h("div", { class: "tweet-select" }, [checkbox]),
-      // Avatar placeholder
-      h("div", { class: "tweet-avatar", html: svgIcon("user", 20) }),
-      h("div", { class: "tweet-body" }, [
-        // Meta line: @handle · time · status
-        h("div", { class: "tweet-meta" }, [
-          h("span", { class: "tweet-author", text: r.username || "unknown" }),
-          h("span", { class: "tweet-handle mono", text: `@${r.username || "unknown"}` }),
-          h("span", { text: "·" }),
-          h("span", { class: "tweet-time mono", text: relativeTime(r.pushed_at), title: formatDateTime(r.pushed_at) || (r.pushed_at || "-") }),
-          stBadge,
-        ]),
-        // Tweet text（两行截断，title 保留全文供悬停查看）
-        h("div", { class: "tweet-text", title: r.text_preview || null }, [
-          r.original_link ? h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono", text: r.status_id, style: { marginRight: "6px", fontWeight: "600" }, onClick: e => e.stopPropagation() }) : null,
-          r.text_preview || "(无文字内容)",
-        ]),
-        // Footer: media badge + actions
-        h("div", { class: "tweet-footer" }, [
-          h("span", { class: "tweet-meta-badge" }, [
-            iconEl("list", 14), `${r.group_name || r.group_id}`,
-          ]),
-          hasMedia ? h("span", { class: "tweet-meta-badge" }, [
-            iconEl("image", 14), "含媒体",
-          ]) : null,
-          h("div", { class: "tweet-actions" }, [
-            h("button", {
-              class: "btn btn-ghost btn-sm",
-              html: iconEl("refresh", 14).outerHTML,
-              text: "重推",
-              onClick: e => {
-                e.stopPropagation(); // 卡片可点后，按钮点击不切换选中
-                replayHistory(r.id, r.replay_target_options);
-              },
-            }),
-          ]),
-        ]),
-      ]),
-    ]);
-  }));
-
+  content.replaceChildren(h("div", { class: "deploy-table" }, recs.map(r => historyRow(r))));
   renderHistoryBatchBar();
+}
+
+/* 历史行：勾选框 + 整行点选（双击/划选保护），点开走详情抽屉。
+   dataset.recordId 供 syncHistoryCheckboxes 原位同步，不重建行。 */
+function historyRow(r) {
+  const st = r.delivery_status;
+  const stLabel = st === "success" ? "已送达" : st === "partial_failed" ? "部分失败" : "发送失败";
+  const glyphClass = st === "success" ? "ready" : st === "partial_failed" ? "warn" : "error";
+  const hasMedia = !!r.has_media;
+  const title = (r.text_preview || "").trim() || (hasMedia ? "（该推文为纯图片/视频附件）" : "（无文字内容）");
+
+  // Multi-select checkbox：click 只 stopPropagation（禁止 preventDefault，会回滚
+  // 原生勾选翻转并吞掉 change 事件），切换统一走 onChange。
+  const checkbox = h("input", {
+    type: "checkbox",
+    "aria-label": `选择 ${r.username || "unknown"} 的记录以批量重推`,
+    checked: state.historySelection.has(r.id),
+    onClick: e => e.stopPropagation(),
+    onChange: e => setHistoryRecordSelected(r.id, e.target.checked, e.target),
+  });
+
+  return h("div", {
+    class: "deploy-row",
+    title: "点击查看详情",
+    dataset: { recordId: String(r.id) },
+    onClick: e => {
+      if (e.detail > 1) return; // 双击/多击序列只认第一击
+      if (window.getSelection()?.type === "Range") return; // 正在划选正文，不当作点选
+      if (e.target.closest("input, button, a")) return;   // 勾选框与操作按钮各自处理
+      openHistoryDetail(r.id);
+    },
+  }, [
+    h("span", { class: "deploy-check" }, [checkbox]),
+    h("div", { class: "deploy-info" }, [
+      h("div", { class: "deploy-title", text: title, title }),
+      h("div", { class: "deploy-sub" }, [
+        h("span", { class: "mono", text: r.username ? `@${r.username}` : "unknown" }),
+        h("span", { text: relativeTime(r.pushed_at) }),
+        h("span", { class: `branch-tag ${glyphClass}`, text: stLabel }),
+        r.group_name ? h("span", { class: "branch-tag", text: r.group_name }) : null,
+        hasMedia ? h("span", { class: "branch-tag", text: "附件媒体" }) : null,
+      ]),
+    ]),
+    h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
+    h("span", { class: "deploy-time", text: formatDateTime(r.pushed_at) }),
+    h("span", { class: "deploy-duration", text: r.source || "" }),
+    h("span", { class: "deploy-row-actions" }, [
+      h("button", {
+        class: "btn btn-ghost btn-sm",
+        type: "button",
+        title: "重推这条记录",
+        html: svgIcon("refresh", 14),
+        onClick: e => { e.stopPropagation(); replayHistory(r.id, r.replay_target_options); },
+      }),
+    ]),
+  ]);
+}
+
+/* 推文详情抽屉：正文 / 原推链接 / 投递信息 / 重推目标选择 */
+function openHistoryDetail(recordId) {
+  const recs = (state.history && state.history.records) || [];
+  const r = recs.find(x => x.id === recordId);
+  if (!r) return;
+  const hasMedia = !!r.has_media;
+  const body = h("div", { class: "vstack" }, [
+    h("div", { class: "vstack-sm" }, [
+      h("div", { class: "row row-wrap" }, [
+        h("span", { class: "badge mono", text: `#${r.id}` }),
+        h("span", { class: "badge", text: r.group_name || r.group_id || "-" }),
+        h("span", {
+          class: `badge ${r.delivery_status === "success" ? "badge-ok" : r.delivery_status === "partial_failed" ? "badge-warn" : "badge-danger"}`,
+          text: r.delivery_status === "success" ? "已送达" : r.delivery_status === "partial_failed" ? "部分失败" : "发送失败",
+        }),
+        hasMedia ? h("span", { class: "badge", text: "含媒体" }) : null,
+      ]),
+      h("div", { class: "hint", text: `${r.username ? "@" + r.username : "unknown"} · ${formatDateTime(r.pushed_at) || "-"}` }),
+    ]),
+    h("div", { class: "vstack-sm" }, [
+      h("span", { class: "meta-label", text: "推文正文" }),
+      h("div", { class: "hint", text: r.text_preview || (hasMedia ? "（该推文为纯图片/视频附件，无文字内容）" : "（无文字内容）") }),
+    ]),
+    r.original_link ? h("div", { class: "vstack-sm" }, [
+      h("span", { class: "meta-label", text: "原推地址" }),
+      h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono hint", text: r.original_link }),
+    ]) : null,
+    h("div", { class: "vstack-sm" }, [
+      h("span", { class: "meta-label", text: "投递信息" }),
+      h("div", { class: "hint", text: `目标：${replayTargetShortLabel(r.target_umo) || "-"}` }),
+      h("div", { class: "hint", text: `来源：${r.source || "-"} · 实例：${redactInstanceLabel(r.instance) || "-"}` }),
+      r.delivery_error ? h("div", { class: "alert error", text: r.delivery_error }) : null,
+    ]),
+  ]);
+  const footer = [
+    h("button", {
+      class: "btn btn-sm btn-primary",
+      type: "button",
+      text: "重推此条",
+      onClick: () => { closeSheet(); replayHistory(r.id, r.replay_target_options); },
+    }),
+    h("button", { class: "btn btn-sm", type: "button", text: "关闭", onClick: () => closeSheet() }),
+  ];
+  openSheet({ title: "推文详情", body, footer });
 }
 
 // 更新一条记录的选中态并同步勾选框视觉；不整卡重渲染，避免键盘焦点丢失。
@@ -1546,13 +2015,13 @@ function toggleHistoryRecord(id, checkbox) {
   setHistoryRecordSelected(id, !state.historySelection.has(id), checkbox);
 }
 
-/* 把 DOM 里每张卡片的勾选框同步回集合状态；全选/清除走原位同步，不重建卡片 */
+/* 把 DOM 里每行的勾选框同步回集合状态；全选/清除走原位同步，不重建行 */
 function syncHistoryCheckboxes() {
-  const cards = els.historyContent?.querySelectorAll(".tweet-card") || [];
+  const cards = els.historyContent?.querySelectorAll("[data-record-id]") || [];
   for (const card of cards) {
     const raw = card.dataset.recordId ?? "";
     const id = /^\d+$/.test(raw) ? Number(raw) : raw;
-    const box = card.querySelector(".tweet-select input");
+    const box = card.querySelector(".deploy-check input");
     if (box) box.checked = state.historySelection.has(id);
   }
 }
@@ -1772,20 +2241,48 @@ function replayHistory(id, options) {
 }
 
 /* ==========================================================================
-   14. Mirror Probe（能力矩阵 + 相对耗时条）
+   14. Mirror Probe（能力矩阵 + 相对耗时条 + 真实日志终端）
    ========================================================================== */
+function renderMirror() {
+  renderMirrorBase();
+  renderMirrorTerminal();
+}
+
 function renderMirrorBase() {
   if (!els.instanceList) return;
   const inst = (state.overview && state.overview.instances) || [];
   if (!inst.length) {
     els.instanceList.replaceChildren(h("span", { class: "badge badge-warn", text: "无已配置实例" }));
-    return;
+  } else {
+    els.instanceList.replaceChildren(...inst.map(u => h("button", {
+      type: "button",
+      class: "chip chip-action mono",
+      text: redactInstanceLabel(u),
+      title: u,
+      onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; },
+    })));
   }
-  els.instanceList.replaceChildren(...inst.map(u => h("button", {
-    type: "button",
-    class: "chip chip-action mono", text: u,
-    onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; },
-  })));
+  renderMirrorTerminal();
+}
+
+/* 终端跟随探测结果：有结果时挂在第一张实例卡内（原型位置），
+   无结果时在结果区底部单独放一个空态终端，方便直接看最近日志。 */
+function renderMirrorTerminal() {
+  const host = els.mirrorResult;
+  if (!host) return;
+  host.querySelectorAll(".mirror-terminal").forEach(el => el.remove());
+  const card = host.querySelector(".inst-card-large:not(.empty-note)");
+  const term = h("div", { class: "mac-terminal mirror-terminal" });
+  if (card) card.appendChild(term);
+  else host.appendChild(term);
+
+  const label = state.logsMax
+    ? `节点健康并发探针 — probe.sh（最近 ${state.logs.length}/${state.logsMax} 条）`
+    : "节点健康并发探针 — probe.sh";
+  renderTerminal(term, state.logs, {
+    title: label,
+    empty: "暂无插件日志事件。触发一次检查或探测后这里会出现分级输出。",
+  });
 }
 
 async function probeMirror(e) {
@@ -1806,37 +2303,77 @@ async function probeMirror(e) {
     instance: els.mirrorInstance.value.trim() || undefined,
   };
   state.actionBusy = true; setBusy(true); hideAlert();
-  els.mirrorResult.replaceChildren(h("div", { class: "panel empty-note", text: "探测中..." }));
+  els.mirrorResult.replaceChildren(h("div", { class: "inst-card-large empty-note", text: "探测中..." }));
   try {
     const res = await apiPost("web/mirror/probe", payload);
     const results = res.results || [];
     if (!results.length) {
-      els.mirrorResult.replaceChildren(h("div", { class: "panel empty-note", text: "未返回结果" }));
-      return;
+      els.mirrorResult.replaceChildren(h("div", { class: "inst-card-large empty-note", text: "未返回结果" }));
+    } else {
+      els.mirrorResult.replaceChildren(...results.map(r => {
+        const checks = r.checks || {};
+        const durations = Object.values(checks).filter(c => c && c.success).map(c => c.duration_ms || 0);
+        const maxMs = Math.max(1, ...durations);
+        const avg = durations.length
+          ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+          : 0;
+        const rows = [
+          checks.rss_user ? instCheckRow("RSS 博主多账号合并数据流 (Multi-User Stream)", checks.rss_user, maxMs) : null,
+          checks.html_user ? instCheckRow("HTML 后备解析爬虫 (Fallback Search Scraper)", checks.html_user, maxMs) : null,
+          checks.search ? instCheckRow("标签 / 关键词搜索端点 (Tag Query Endpoint)", checks.search, maxMs) : null,
+          checks.list ? instCheckRow("List 时间线端点 (List Timeline)", checks.list, maxMs) : null,
+        ].filter(Boolean);
+
+        return h("div", { class: "inst-card-large" }, [
+          h("div", { class: "inst-head" }, [
+            h("div", {}, [
+              h("div", { class: "inst-title-row" }, [
+                h("span", { class: "mono", text: redactInstanceLabel(r.instance), title: r.instance }),
+                h("span", {
+                  class: `badge-status ${r.success ? "ready" : "warn"}`,
+                  text: r.success ? "● 生效中" : "● 有异常",
+                }),
+              ]),
+              h("div", { class: "inst-desc", text: r.success
+                ? "自建节点 · 承载博主多账号流、列表流与标签搜索"
+                : "部分能力不可用，详见下方检查项" }),
+            ]),
+            durations.length ? h("div", { class: "inst-latency" }, [
+              h("div", { class: "value", text: String(avg) }),
+              h("span", { class: "unit", text: " ms" }),
+              h("div", { class: "label", text: "平均请求延迟" }),
+            ]) : null,
+          ]),
+          h("div", { class: "probe-checks" }, rows.length ? rows : [
+            h("div", { class: "inst-row" }, [
+              h("span", { text: "未指定测试目标（用户名 / 搜索词 / List ID）" }),
+              h("span", { class: "mono", text: "skipped" }),
+            ]),
+          ]),
+        ]);
+      }));
     }
-    els.mirrorResult.replaceChildren(...results.map(r => {
-      const checks = r.checks || {};
-      // 耗时条按本实例内各成功能力的相对占比构建，静态写入（无过渡、无循环动画）
-      const durations = Object.values(checks).filter(c => c && c.success).map(c => c.duration_ms || 0);
-      const maxMs = Math.max(1, ...durations);
-      return h("div", { class: "probe-result" }, [
-        h("div", { class: "probe-instance-head" }, [
-          h("span", { class: "mono mono-strong", text: r.instance }),
-          h("span", { class: `badge ${r.success ? "badge-ok" : "badge-danger"}`, text: r.success ? "全部可用" : "有异常" }),
-        ]),
-        h("div", { class: "probe-checks" }, [
-          checks.rss_user ? probeCheck("RSS", checks.rss_user, maxMs) : null,
-          checks.html_user ? probeCheck("HTML", checks.html_user, maxMs) : null,
-          checks.search ? probeCheck("搜索", checks.search, maxMs) : null,
-          checks.list ? probeCheck("List", checks.list, maxMs) : null,
-        ]),
-      ]);
-    }));
+    // 探测完成后立刻拉一次日志，让终端反映这次动作产生的事件
+    await reloadLogs().catch(() => {});
+    renderMirrorTerminal();
   } catch (err) {
     els.mirrorResult.replaceChildren(h("div", { class: "alert error", text: `探测失败: ${err.message}` }));
+    renderMirrorTerminal();
   } finally {
     state.actionBusy = false; setBusy(false);
   }
+}
+
+/* 单项能力检查行：原型 inst-row（左标签 + 右状态/耗时） */
+function instCheckRow(label, item, maxMs = 1) {
+  const ok = item.success;
+  const ms = Math.round(item.duration_ms || 0);
+  return h("div", { class: "inst-row" }, [
+    h("span", { text: label }),
+    ok
+      ? h("span", { class: "mono ok", text: `200 OK · ${item.tweet_count || 0} 条 · ${ms}ms` })
+      : h("span", { class: "mono bad", title: item.error || "", text: `FAILED · ${item.error || "失败"}` }),
+  ]);
 }
 
 function probeCheck(label, item, maxMs = 1) {
@@ -1852,6 +2389,68 @@ function probeCheck(label, item, maxMs = 1) {
     ]) : null,
   ]);
 }
+
+/* ==========================================================================
+   14b. Storage — 媒体缓存构成 + 已读去重水位线（原型「存储运维」页）
+   ========================================================================== */
+function renderStorage() {
+  const root = els.storageContent;
+  if (!root) return;
+  const p = state.overview || {};
+  const mt = p.maintenance || {};
+  const cache = mt.cache;
+  const seen = mt.seen || null;
+  const seenByGroup = (seen && seen.by_group) || {};
+
+  if (els.cleanCacheBtn) {
+    els.cleanCacheBtn.textContent = cache && cache.bytes
+      ? `清空全部媒体缓存 (${formatBytes(cache.bytes)})`
+      : "清空全部媒体缓存";
+  }
+
+  const files = cache?.files || 0;
+  const pct = n => (files ? Math.round((n / files) * 100) : 0);
+
+  const cacheBox = h("div", { class: "storage-box" }, [
+    h("h4", { text: "媒体缓存占用分布" }),
+    h("div", { class: "storage-sub", text: cache && files
+      ? `总计 ${formatBytes(cache.bytes)} 磁盘占用（共 ${files} 个附件文件）`
+      : "当前没有缓存文件" }),
+    h("div", { class: "meter-bar" }, [
+      h("div", { class: "meter-seg img", style: { width: `${pct(cache?.images || 0)}%` } }),
+      h("div", { class: "meter-seg vid", style: { width: `${pct(cache?.videos || 0)}%` } }),
+      h("div", { class: "meter-seg oth", style: { width: `${pct(cache?.other || 0)}%` } }),
+    ]),
+    h("div", { class: "meter-legend" }, [
+      h("span", {}, [h("i", { class: "meter-seg img" }), `图片（${cache?.images || 0} 个文件）`]),
+      h("span", {}, [h("i", { class: "meter-seg vid" }), `视频（${cache?.videos || 0} 个文件）`]),
+      h("span", {}, [h("i", { class: "meter-seg oth" }), `其他（${cache?.other || 0} 个文件）`]),
+    ]),
+  ]);
+
+  const seenRows = state.groups.length
+    ? state.groups.map(g => h("div", { class: "inst-row" }, [
+        h("span", { text: g.name }),
+        h("span", { class: "mono", text: `${seenByGroup[g.group_id] ?? 0} 条已记录` }),
+      ]))
+    : [h("div", { class: "inst-row" }, [
+        h("span", { text: "尚无分组" }),
+        h("span", { class: "mono", text: "—" }),
+      ])];
+
+  const seenBox = h("div", { class: "storage-box" }, [
+    h("h4", { text: "推文去重与已读数据库 (Seen DB)" }),
+    h("div", { class: "storage-sub", text: "记录已推送推文状态 ID，防止重复触发" }),
+    h("div", { class: "vstack-sm", style: { marginTop: "14px" } }, seenRows),
+    h("div", { class: "row", style: { marginTop: "14px", flexWrap: "wrap" } }, [
+      h("span", { class: "hint", text: seen ? `合计 ${seen.total} 条记录` : "记录数：未知" }),
+      h("button", { class: "nav-btn", type: "button", text: "重置推送记录", onClick: confirmClearSeen }),
+    ]),
+  ]);
+
+  root.replaceChildren(cacheBox, seenBox);
+}
+
 
 /* ==========================================================================
    15. Plugin Config V2 — 双栏导航 + 字段卡片 + 草稿保存
@@ -2256,18 +2855,20 @@ function confirmClearSeen() {
    17. Entry — 视图持久化路由 / boot / 事件绑定
    ========================================================================== */
 const VIEW_META = {
-  overview: { title: "控制台总览", desc: "运行状态、订阅摘要与系统维护" },
-  groups: { title: "分组订阅管理", desc: "维护博主、搜索与 List 规则" },
+  overview: { title: "总览", desc: "运行状态、订阅摘要与系统维护" },
+  groups: { title: "分组订阅", desc: "维护博主、搜索与 List 规则" },
   history: { title: "推送历史", desc: "查看送达状态并重推" },
-  mirror: { title: "实例能力诊断", desc: "测试 Nitter 实例连通性" },
+  mirror: { title: "实例节点", desc: "测试 Nitter 实例连通性" },
+  storage: { title: "存储运维", desc: "媒体缓存、已读去重与数据库整理" },
   config: { title: "插件配置", desc: "查看与修改插件设置（与 AstrBot 设置页同源，最后保存生效）" },
 };
 
 const RENDERERS = {
   overview: renderOverview,
-  groups: () => { renderGroupList(); renderGroupEditor(); },
+  groups: renderGroupCards,
   history: renderHistory,
-  mirror: renderMirrorBase,
+  mirror: renderMirror,
+  storage: renderStorage,
   config: renderConfig,
 };
 
@@ -2279,10 +2880,11 @@ function flushView(view) {
   render();
 }
 
+/* 顶部导航壳没有独立标题栏，页签本身就是当前视图标识；
+   document.title 跟随视图，便于宿主 iframe 与浏览器标签识别。 */
 function updateHeader() {
   const m = VIEW_META[state.view] || VIEW_META.overview;
-  if (els.currentTabTitle) els.currentTabTitle.textContent = m.title;
-  if (els.currentTabDesc) els.currentTabDesc.textContent = m.desc;
+  document.title = `${m.title} · Nitter 推文控制台`;
 }
 
 function switchView(v) {
@@ -2293,6 +2895,13 @@ function switchView(v) {
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
   updateHeader();
   flushView(v);
+  // 诊断终端只在实例诊断视图可见时轮询，切走即停
+  if (v === "mirror") {
+    reloadLogs({ reset: true }).catch(() => {});
+    startLogPolling();
+  } else {
+    stopLogPolling();
+  }
 }
 
 function bindEvents() {
@@ -2314,6 +2923,10 @@ function bindEvents() {
   });
   els.themeToggleBtn?.addEventListener("click", toggleTheme);
   els.createGroupBtn?.addEventListener("click", createGroup);
+  els.cmdkBtn?.addEventListener("click", () => openCmdk());
+  els.cleanCacheBtn?.addEventListener("click", confirmClearCache);
+  // 实例诊断页的探测按钮在 section-header 上，表单 submit 仍保留给回车提交
+  els.mirrorProbeBtn?.addEventListener("click", () => probeMirror());
 
   els.historyRefreshBtn?.addEventListener("click", async () => {
     state.historyGroupId = els.historyGroupSelect.value;
@@ -2336,15 +2949,53 @@ function bindEvents() {
     if (typeof act === "function") await act();
   });
   els.confirmDialog?.addEventListener("click", e => { if (e.target === els.confirmDialog) closeConfirm(); });
+
+  // 抽屉：关闭按钮 / 遮罩点击
+  els.sheetCloseBtn?.addEventListener("click", () => closeSheet());
+  els.sheetScrim?.addEventListener("click", () => closeSheet());
+
+  // ⌘K 面板：输入过滤 + 键盘上下选择
+  els.cmdkOverlay?.addEventListener("click", e => { if (e.target === els.cmdkOverlay) closeCmdk(); });
+  els.cmdkInput?.addEventListener("input", e => { cmdkIndex = 0; renderCmdk(e.target.value); });
+  els.cmdkInput?.addEventListener("keydown", e => {
+    const count = els.cmdkList.children.length;
+    if (e.key === "ArrowDown") { e.preventDefault(); cmdkIndex = (cmdkIndex + 1) % Math.max(1, count); renderCmdk(els.cmdkInput.value); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); cmdkIndex = (cmdkIndex - 1 + count) % Math.max(1, count); renderCmdk(els.cmdkInput.value); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const items = cmdkItems.filter(it => {
+        const q = els.cmdkInput.value.trim().toLowerCase();
+        return !q || it.title.toLowerCase().includes(q) || it.sub.toLowerCase().includes(q);
+      });
+      const picked = items[cmdkIndex];
+      if (picked) { closeCmdk(); picked.run(); }
+    }
+  });
+
+  // 新建分组弹窗
+  els.createGroupCancelBtn?.addEventListener("click", closeCreateGroupModal);
+  els.createGroupCloseBtn?.addEventListener("click", closeCreateGroupModal);
+  els.createGroupSubmitBtn?.addEventListener("click", submitCreateGroup);
+  els.createGroupModal?.addEventListener("click", e => { if (e.target === els.createGroupModal) closeCreateGroupModal(); });
+
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") closeConfirm();
-    if (e.key !== "Tab" || els.confirmDialog?.hidden) return;
-    const focusable = [...els.confirmDialog.querySelectorAll('button, input, select, textarea, a[href]')]
-      .filter(el => !el.disabled && el.offsetParent !== null);
-    if (!focusable.length) return;
-    const first = focusable[0], last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    // ⌘K / Ctrl+K：任意视图都可唤起快捷面板
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      cmdkOpen ? closeCmdk() : openCmdk();
+      return;
+    }
+    if (e.key === "Escape") {
+      if (cmdkOpen) { closeCmdk(); return; }
+      if (els.createGroupModal?.classList.contains("open")) { closeCreateGroupModal(); return; }
+      if (sheetOpen) { closeSheet(); return; }
+      closeConfirm();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    if (els.confirmDialog && !els.confirmDialog.hidden) { trapFocus(els.confirmDialog, e); return; }
+    if (els.createGroupModal?.classList.contains("open")) { trapFocus(els.createGroupModal, e); return; }
+    if (sheetOpen) trapFocus(els.detailSheet, e);
   });
 }
 
@@ -2354,8 +3005,7 @@ function boot() {
     if (!bridge) throw new Error("AstrBot 页面桥接不可用");
     initEls();
     initStickyOffsets();
-    els.historyGroupSelect = upgradeSelect(els.historyGroupSelect);
-    els.historyStatusSelect = upgradeSelect(els.historyStatusSelect);
+    // 原型用原生 select（配自绘 SVG 箭头），不再替换成 .dd 自绘下拉
     initTheme();
     updateHeader();
     bindEvents();
@@ -2365,7 +3015,7 @@ function boot() {
     const message = document.createElement("div");
     message.className = "boot-error";
     message.textContent = `面板启动失败：${err.message || "未知错误"}`;
-    document.querySelector(".view-container")?.replaceChildren(message);
+    document.querySelector(".main")?.replaceChildren(message);
   }
 }
 if (document.readyState === "loading") {

@@ -11,6 +11,11 @@ import re
 
 from astrbot.api import logger
 
+try:
+    from . import log_buffer
+except ImportError:
+    import log_buffer
+
 LOG_PREFIX = "[NitterTweets]"
 
 ALLOWED_DIAGNOSTIC_FIELDS = {
@@ -288,6 +293,8 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
         lines.append(f"  任务耗时: {format_elapsed(elapsed_ms)}")
 
     logger.log(level, "\n".join(lines))
+    # 环缓冲只存已脱敏的最终文本，供 WebUI 诊断终端读取；上限由 log_buffer 控制
+    log_buffer.append(level, lines)
 
 
 def safe_log(level: int, event_name: str, **fields: object) -> None:
@@ -298,7 +305,9 @@ def safe_log(level: int, event_name: str, **fields: object) -> None:
             continue
         sanitized = sanitize_diagnostic(value)
         parts.append(f"{key}={sanitized}")
-    logger.log(level, f"{LOG_PREFIX} " + " | ".join(parts))
+    message = f"{LOG_PREFIX} " + " | ".join(parts)
+    logger.log(level, message)
+    log_buffer.append(level, [message])
 
 
 __all__ = [
