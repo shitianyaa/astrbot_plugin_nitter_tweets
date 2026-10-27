@@ -207,13 +207,17 @@ def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
         ],
     )
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner.logger", mock_logger)
+    # 日志出口统一在 shared.observability._emit，补丁要打在这里
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     scheduler._log_check_result(result, duration_ms=20)
 
+    # _emit 按级别名派发到对应的具名方法
     mock_logger.warning.assert_called_once()
-    assert "成功推送 0/1 个目标" in mock_logger.warning.call_args.args[0]
+    (message,) = mock_logger.warning.call_args.args
+    assert "成功推送 0/1 个目标" in message
     mock_logger.info.assert_not_called()
+    mock_logger.error.assert_not_called()
 
 
 def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkeypatch):
@@ -241,13 +245,16 @@ def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkey
     assert result.needs_attention is False
 
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner.logger", mock_logger)
+    # 日志出口统一在 shared.observability._emit，补丁要打在这里
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     scheduler._log_check_result(result, duration_ms=100)
 
     mock_logger.info.assert_called_once()
+    (message,) = mock_logger.info.call_args.args
+    assert "成功推送 1/1 个目标" in message
     mock_logger.warning.assert_not_called()
-    assert "成功推送 1/1 个目标" in mock_logger.info.call_args.args[0]
+    mock_logger.error.assert_not_called()
 
 
 def test_plain_list_fetch_failure_keeps_the_list_id_as_the_source():

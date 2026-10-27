@@ -486,6 +486,66 @@ async def test_merged_direct_media_only_no_video_uncertain_stays_failed():
 
 
 @pytest.mark.asyncio
+async def test_merged_direct_full_failure_reports_delivery_fields():
+    """直发与纯文本兜底都失败时，必须回填 delivery_status/delivery_error。
+
+    此前这条分支只填了 error，历史记录会落到默认的 "success"/""，
+    最终被 _delivery_history_error 兜底成无信息量的 "send failed"。
+    """
+    sender = TweetSender.__new__(TweetSender)
+    sender.renderer = MagicMock()
+    sender.renderer.build_merged_direct_components = MagicMock(return_value=[])
+    sender.renderer.format_merged_plain = MagicMock(return_value="")
+    sender._count_attached_videos = MagicMock(return_value=0)
+    sender._send_context_message = AsyncMock(
+        side_effect=[
+            SendAttempt(success=False, retryable=True, error="forward rejected"),
+            SendAttempt(success=False, retryable=False, error="plain rejected"),
+        ]
+    )
+
+    outcome = await TweetSender._send_merged_direct_to_umo(
+        sender,
+        MagicMock(),
+        "aiocqhttp:GroupMessage:1",
+        [("u", "https://nitter.example", _tweets(1))],
+    )
+
+    assert outcome.success is False
+    assert outcome.mode == "failed"
+    assert outcome.delivery_status == "failed"
+    assert outcome.delivery_error == "plain rejected"
+    assert outcome.error == "plain rejected"
+
+
+@pytest.mark.asyncio
+async def test_merged_direct_full_failure_never_emits_bare_send_failed():
+    """两条 attempt 都没带错误文本时，也要给出可定位的兜底文案。"""
+    sender = TweetSender.__new__(TweetSender)
+    sender.renderer = MagicMock()
+    sender.renderer.build_merged_direct_components = MagicMock(return_value=[])
+    sender.renderer.format_merged_plain = MagicMock(return_value="")
+    sender._count_attached_videos = MagicMock(return_value=0)
+    sender._send_context_message = AsyncMock(
+        side_effect=[
+            SendAttempt(success=False, retryable=True, error=""),
+            SendAttempt(success=False, retryable=False, error=""),
+        ]
+    )
+
+    outcome = await TweetSender._send_merged_direct_to_umo(
+        sender,
+        MagicMock(),
+        "aiocqhttp:GroupMessage:1",
+        [("u", "https://nitter.example", _tweets(1))],
+    )
+
+    assert outcome.delivery_status == "failed"
+    assert outcome.delivery_error
+    assert outcome.delivery_error != "send failed"
+
+
+@pytest.mark.asyncio
 async def test_send_merged_to_umo_splits_and_falls_back_only_undelivered_suffix():
     sender = TweetSender.__new__(TweetSender)
     sender.forward_reject_plain_fallback_enabled = True

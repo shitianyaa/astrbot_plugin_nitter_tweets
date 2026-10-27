@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import time
 
-from astrbot.api.all import At, MessageChain, Plain, logger
+from astrbot.api import logger
+from astrbot.api.all import At, MessageChain, Plain
 from astrbot.api.event import AstrMessageEvent
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -116,7 +116,7 @@ class ManualCommandMixin:
         fully_sent = total > 0 and sent == total
         status = "成功" if fully_sent else "部分完成" if sent else "发送失败"
         safe_task_log(
-            logging.INFO if fully_sent else logging.WARNING,
+            "info" if fully_sent else "warning",
             title,
             operation=operation,
             source=source,
@@ -142,7 +142,7 @@ class ManualCommandMixin:
         warning: bool = False,
     ) -> None:
         safe_task_log(
-            logging.WARNING if warning else logging.INFO,
+            "warning" if warning else "info",
             title,
             operation=operation,
             source=source,

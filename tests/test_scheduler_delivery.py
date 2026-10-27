@@ -2709,6 +2709,45 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(NitterTweetScheduler._delivery_history_error(outcome), "")
 
+    def test_failed_without_details_keeps_mode_in_fallback_message(self):
+        """上游漏填 delivery_error 时，兜底文案要带上 mode 而不是只有 "send failed"。"""
+        outcome = types.SimpleNamespace(
+            success=False,
+            error="",
+            delivery_status="failed",
+            delivery_error="",
+            mode="failed",
+            delivered_status_ids=(),
+        )
+
+        message = NitterTweetScheduler._delivery_history_error(outcome)
+        self.assertIn("mode=failed", message)
+        self.assertNotEqual(message, "send failed")
+
+    def test_failed_without_details_or_mode_uses_localized_fallback(self):
+        outcome = types.SimpleNamespace(
+            success=False,
+            error="",
+            delivery_status="failed",
+            delivery_error="",
+            delivered_status_ids=(),
+        )
+
+        message = NitterTweetScheduler._delivery_history_error(outcome)
+        self.assertEqual(message, "发送失败")
+
+    def test_failed_prefers_real_error_over_fallback(self):
+        outcome = types.SimpleNamespace(
+            success=False,
+            error="boom",
+            delivery_status="failed",
+            delivery_error="",
+            mode="failed",
+            delivered_status_ids=(),
+        )
+
+        self.assertEqual(NitterTweetScheduler._delivery_history_error(outcome), "boom")
+
     async def test_merged_partial_history_only_records_delivered_status_ids(self):
         target = "aiocqhttp:GroupMessage:1"
         sender = _PartialMergedDeliverySender(

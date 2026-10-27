@@ -21,6 +21,7 @@ try:
         sanitize_sensitive_text,
     )
     from ..shared.group_ids import GLOBAL_GROUP_ID
+    from ..shared.observability import log_lines, sanitize_diagnostic
     from ..storage import PushHistoryRecord, StorageAdapter
     from .config import (
         PushTargetParseResult,
@@ -77,6 +78,7 @@ except ImportError:
         sanitize_sensitive_text,
     )
     from shared.group_ids import GLOBAL_GROUP_ID
+    from shared.observability import log_lines, sanitize_diagnostic
     from storage import PushHistoryRecord, StorageAdapter
 
 
@@ -294,18 +296,15 @@ class NitterTweetScheduler(
     def _log_check_result(
         self, result: ScheduledCheckResult, duration_ms: float | None = None
     ) -> None:
+        # 日志出口统一走 log_lines：既写宿主日志，也写 WebUI 环缓冲。此前只调
+        # logger.*，环缓冲收不到任何定时检查，面板终端在真实使用中基本是空的。
+        level = "warning" if result.needs_attention else "info"
         if self.brief_log_enabled:
             structured_log = result.format_structured_task_log(duration_ms=duration_ms)
-            if result.needs_attention:
-                logger.warning(structured_log)
-            else:
-                logger.info(structured_log)
+            log_lines(level, structured_log.splitlines())
             return
 
-        if result.needs_attention:
-            logger.warning(result.format_log_summary())
-        else:
-            logger.info(result.format_log_summary())
+        log_lines(level, [result.format_log_summary()])
 
         warning_prefixes = (
             "[NitterTweets] 失败详情:",
@@ -315,10 +314,8 @@ class NitterTweetScheduler(
             "[NitterTweets] 发送状态提示:",
         )
         for detail in result.format_brief_log_lines()[1:]:
-            if detail.startswith(warning_prefixes):
-                logger.warning(detail)
-            else:
-                logger.info(detail)
+            detail_level = "warning" if detail.startswith(warning_prefixes) else "info"
+            log_lines(detail_level, [detail])
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -483,19 +480,32 @@ class NitterTweetScheduler(
                 "list": "List",
             }
             type_cn = type_map.get(group.group_type, group.group_type)
-            logger.info(
-                f"[NitterTweets] 开始检查: {group.name}({group.group_id}) · "
-                f"{len(group.account_keys)} 个{type_cn}"
+            # 开始行也进环缓冲：面板里能看到一次检查的起止配对。group.name 是
+            # 用户可控文本，必须先脱敏——环缓冲会渲染到浏览器，不能按“只有
+            # 运维看得到宿主日志”来假定。
+            log_lines(
+                "info",
+                [
+                    f"[NitterTweets] 开始检查: "
+                    f"{sanitize_diagnostic(group.name)}"
+                    f"({sanitize_diagnostic(group.group_id)}) · "
+                    f"{len(group.account_keys)} 个{type_cn}"
+                ],
             )
 
         try:
             if not await self._ensure_storage_ready():
                 result = self._new_check_result(reason, group, target_override)
                 result.skipped_reason = "storage_not_ready"
-                logger.warning(
-                    "[NitterTweets] 检查因存储未就绪跳过: "
-                    f"group_id={group.group_id}, group_type={group.group_type}, "
-                    f"reason={reason}, error={self._storage_init_error or 'unknown'}"
+                log_lines(
+                    "warning",
+                    [
+                        "[NitterTweets] 检查因存储未就绪跳过: "
+                        f"group_id={sanitize_diagnostic(group.group_id)}, "
+                        f"group_type={sanitize_diagnostic(group.group_type)}, "
+                        f"reason={sanitize_diagnostic(reason)}, "
+                        f"error={redact_instance_urls(sanitize_diagnostic(self._storage_init_error or 'unknown'))}"
+                    ],
                 )
             elif not observable and self._check_lock.locked():
                 result = self._new_check_result(reason, group, target_override)
@@ -514,6 +524,20 @@ class NitterTweetScheduler(
         except Exception as exc:
             if observable:
                 duration_ms = (time.perf_counter() - started) * 1000
+                # 环缓冲只留一行可读摘要；完整堆栈仍由下面的 logger.error 记录
+                log_lines(
+                    "error",
+                    [
+                        "[NitterTweets] 检查异常: "
+                        f"group_id={sanitize_diagnostic(group.group_id)}, "
+                        f"group_type={sanitize_diagnostic(group.group_type)}, "
+                        f"sources={len(group.account_keys)}, "
+                        f"targets={len(group.targets)}, "
+                        f"reason={sanitize_diagnostic(reason)}, "
+                        f"duration_ms={duration_ms:.1f}, "
+                        f"error={redact_instance_urls(sanitize_sensitive_text(str(exc)))}"
+                    ],
+                )
                 logger.error(
                     "[NitterTweets] 检查异常: "
                     f"group_id={group.group_id}, group_type={group.group_type}, "

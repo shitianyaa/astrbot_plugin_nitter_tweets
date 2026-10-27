@@ -917,10 +917,14 @@ class SchedulerSendMixin:
                 or getattr(outcome, "error", "")
                 or ""
             )
+        # 兜底文案带上 mode，避免上游漏填 delivery_error 时历史里只剩一句
+        # "send failed"（无任何可定位信息）。真实错误仍优先。
+        mode = str(getattr(outcome, "mode", "") or "").strip()
+        fallback = f"发送失败（mode={mode}）" if mode else "发送失败"
         return str(
             getattr(outcome, "delivery_error", "")
             or getattr(outcome, "error", "")
-            or "send failed"
+            or fallback
         )
 
     @staticmethod

@@ -32,6 +32,23 @@ def test_level_name_falls_back_to_info_for_unknown_input():
     assert log_buffer.level_name("not-a-level") == "info"
 
 
+def test_level_name_accepts_level_name_strings():
+    """运行时模块禁止 import logging，允许直接传级别名。"""
+    assert log_buffer.level_name("info") == "info"
+    assert log_buffer.level_name("WARNING") == "warning"
+    assert log_buffer.level_name(" warn ") == "warning"
+    assert log_buffer.level_name("error") == "error"
+    assert log_buffer.level_name("critical") == "critical"
+
+
+def test_append_accepts_level_name_strings():
+    log_buffer.append("warning", ["warn line"])
+    log_buffer.append("error", ["err line"])
+
+    entries = log_buffer.snapshot()
+    assert [e["level"] for e in entries] == ["warning", "error"]
+
+
 def test_append_records_sanitized_lines_with_monotonic_seq():
     log_buffer.append(20, ["first line", "second line"])
     log_buffer.append(40, ["boom"])

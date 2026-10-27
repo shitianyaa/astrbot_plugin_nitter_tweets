@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 
 try:
@@ -83,7 +82,7 @@ def _log_transport(
 ) -> None:
     # 只记类型、编码档、体积档位和结果；媒体 URL 绝不入日志。
     safe_log(
-        logging.DEBUG,
+        "debug",
         "media_transport",
         media_kind=kind,
         encoding=encoding,

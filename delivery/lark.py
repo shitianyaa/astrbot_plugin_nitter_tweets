@@ -316,7 +316,16 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
             receive_id_type=receive_id_type,
         )
         if not (text_attempt.success or text_attempt.uncertain):
-            return SendOutcome(success=False, error=text_attempt.error)
+            # 文本发送失败时媒体还没开始发，整条投递作废。补齐 delivery_status/
+            # delivery_error，否则历史记录会落到默认 "success"/""，被兜底成
+            # 无信息量的 "send failed"。
+            error = text_attempt.error or "Lark 文本发送失败"
+            return SendOutcome(
+                success=False,
+                error=error,
+                delivery_status="failed",
+                delivery_error=error,
+            )
 
         media_attempt = await send_lark_umo_media_with_retry(
             context,

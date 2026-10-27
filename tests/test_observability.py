@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
 import time
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from command_handlers.manual import ManualCommandMixin
 from scheduler.runner_send import SchedulerSendMixin
@@ -49,7 +48,7 @@ def test_safe_task_log_formats_structured_multiline_chinese_block(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.INFO,
+        "info",
         "推文检查任务完成",
         operation="list_check",
         group_name="我的关注",
@@ -66,9 +65,8 @@ def test_safe_task_log_formats_structured_multiline_chinese_block(monkeypatch):
         elapsed_ms=17426,
     )
 
-    assert mock_logger.log.called
-    level, message = mock_logger.log.call_args[0]
-    assert level == logging.INFO
+    assert mock_logger.info.called
+    (message,) = mock_logger.info.call_args.args
     assert message.startswith("[NitterTweets] 推文检查任务完成")
     assert "  分组名称: 我的关注 (group_1)" in message
     assert "  订阅类型: Twitter List" in message
@@ -85,7 +83,7 @@ def test_safe_task_log_omits_empty_or_unlisted_fields(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.INFO,
+        "info",
         "日常检查完成",
         group_name="我的关注",
         group_id="group_1",
@@ -93,7 +91,7 @@ def test_safe_task_log_omits_empty_or_unlisted_fields(monkeypatch):
         instance="",
     )
 
-    _level, message = mock_logger.log.call_args[0]
+    (message,) = mock_logger.info.call_args.args
     assert "unknown_field" not in message
     assert "secret_val" not in message
     assert "生效实例" not in message
@@ -113,9 +111,8 @@ def test_manual_task_log_uses_actual_zero_sent_count(monkeypatch):
         started=time.perf_counter(),
     )
 
-    mock_logger.log.assert_called_once()
-    level, message = mock_logger.log.call_args.args
-    assert level == logging.WARNING
+    mock_logger.warning.assert_called_once()
+    (message,) = mock_logger.warning.call_args.args
     assert "触发原因: 手动命令 (推文)" in message
     assert "！" not in message
     assert "推文统计: 新推文 2 条; 实际发送 0 条" in message
@@ -128,20 +125,45 @@ def test_safe_log_formats_single_line_diagnostic_event(monkeypatch):
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_log(
-        logging.INFO,
+        "info",
         "host_failover",
         from_host="nitter.top",
         to_host="nitter.tiekoetter.com",
         reason="HTTP_429",
     )
 
-    assert mock_logger.log.called
-    level, message = mock_logger.log.call_args[0]
-    assert level == logging.INFO
+    assert mock_logger.info.called
+    (message,) = mock_logger.info.call_args.args
     assert (
         message
         == "[NitterTweets] event=host_failover | from_host=nitter.top | to_host=nitter.tiekoetter.com | reason=HTTP_429"
     )
+
+
+def test_emit_covers_all_level_names_and_unknown_falls_back_to_info(monkeypatch):
+    mock_logger = MagicMock()
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
+
+    for level in ("debug", "info", "warning", "error"):
+        mock_logger.reset_mock()
+        safe_log(level, "level_probe", status="ok")
+        expected = getattr(mock_logger, level)
+        assert expected.call_count == 1
+        (message,) = expected.call_args.args
+        assert message == "[NitterTweets] event=level_probe | status=ok"
+        for other in ("debug", "info", "warning", "error"):
+            if other != level:
+                assert not getattr(mock_logger, other).called
+
+    mock_logger.reset_mock()
+    safe_log("critical", "level_probe", status="ok")
+    assert mock_logger.info.call_count == 1
+    (message,) = mock_logger.info.call_args.args
+    assert message == "[NitterTweets] event=level_probe | status=ok"
+    assert not mock_logger.debug.called
+    assert not mock_logger.warning.called
+    assert not mock_logger.error.called
+    assert not mock_logger.critical.called
 
 
 # --- has_translation suppression tests (f19d28a regression) ---
@@ -240,12 +262,12 @@ def test_manual_task_log_dynamic_operation_labels(monkeypatch):
     for op, expected in ops_and_expected:
         mock_logger.reset_mock()
         safe_task_log(
-            logging.INFO,
+            "info",
             "测试任务",
             operation=op,
             trigger="manual_command",
         )
-        _lvl, msg = mock_logger.log.call_args[0]
+        (msg,) = mock_logger.info.call_args.args
         assert f"触发原因: {expected}" in msg
         assert "！" not in msg
 
@@ -275,7 +297,7 @@ def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeyp
     monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     safe_task_log(
-        logging.WARNING,
+        "warning",
         "任务失败",
         operation="fetch",
         instance="https://my-internal.nitter.corp:8443",
@@ -283,8 +305,8 @@ def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeyp
         error_detail="Timeout connecting to https://secret.backend:8080/api?token=abc",
     )
 
-    assert mock_logger.log.called
-    _lvl, message = mock_logger.log.call_args[0]
+    assert mock_logger.warning.called
+    (message,) = mock_logger.warning.call_args.args
     assert "https://my-internal.nitter.corp:8443" not in message
     assert "https://h1.lan" not in message
     assert "https://h2.lan" not in message
@@ -293,3 +315,202 @@ def test_safe_task_log_redacts_instance_urls_in_instance_trace_and_error(monkeyp
     assert "生效实例: 实例地址" in message
     assert "轮换轨迹: 实例地址 ➔ 实例地址" in message
     assert "失败详情: Timeout connecting to 实例地址" in message
+
+
+# --- 环缓冲与运行时约束 ---
+
+
+def test_log_lines_writes_host_logger_and_ring_buffer():
+    from shared import log_buffer
+    from shared.observability import log_lines
+
+    log_buffer.clear()
+    try:
+        with patch("shared.observability.logger") as mock_logger:
+            log_lines("warning", ["第一行", "第二行"])
+
+        (message,) = mock_logger.warning.call_args.args
+        assert message == "第一行\n第二行"
+
+        entries = log_buffer.snapshot()
+        assert len(entries) == 1
+        assert entries[0]["level"] == "warning"
+        assert entries[0]["lines"] == ["第一行", "第二行"]
+    finally:
+        log_buffer.clear()
+
+
+def test_log_lines_accepts_level_name_strings():
+    from shared import log_buffer
+    from shared.observability import log_lines
+
+    log_buffer.clear()
+    try:
+        with patch("shared.observability.logger"):
+            log_lines("error", ["boom"])
+        assert log_buffer.snapshot()[0]["level"] == "error"
+    finally:
+        log_buffer.clear()
+
+
+def test_log_lines_ignores_empty_input():
+    from shared import log_buffer
+    from shared.observability import log_lines
+
+    log_buffer.clear()
+    try:
+        with patch("shared.observability.logger") as mock_logger:
+            log_lines("info", [])
+        assert not mock_logger.info.called
+        assert log_buffer.snapshot() == []
+    finally:
+        log_buffer.clear()
+
+
+def test_safe_log_accepts_level_name_strings():
+    from shared import log_buffer
+
+    log_buffer.clear()
+    try:
+        with patch("shared.observability.logger"):
+            safe_log("warning", "probe", status="ok")
+        assert log_buffer.snapshot()[0]["level"] == "warning"
+    finally:
+        log_buffer.clear()
+
+
+def test_safe_task_log_accepts_level_name_strings():
+    from shared import log_buffer
+
+    log_buffer.clear()
+    try:
+        with patch("shared.observability.logger"):
+            safe_task_log("info", "任务", operation="fetch")
+        entry = log_buffer.snapshot()[0]
+        assert entry["level"] == "info"
+        assert entry["lines"][0] == "[NitterTweets] 任务"
+    finally:
+        log_buffer.clear()
+
+
+def test_runtime_modules_do_not_import_logging():
+    """运行时模块严禁 import logging（插件市场上架硬约束）。"""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    guarded = (
+        "command_handlers",
+        "scheduler",
+        "media_support",
+        "delivery",
+        "plugin_api",
+        "shared",
+        "storage",
+        "rendering",
+        "ai",
+        "config",
+    )
+    offenders: list[str] = []
+    for name in guarded:
+        for path in (root / name).rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "logging" or alias.name.startswith("logging."):
+                            offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module == "logging" or module.startswith("logging."):
+                        offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert offenders == []
+
+
+def _scheduler_stub(**kwargs):
+    """构造一个只够 _log_check_result 用的调度器替身。"""
+    from scheduler.runner import NitterTweetScheduler
+
+    stub = SimpleNamespace(**kwargs)
+    stub._log_check_result = NitterTweetScheduler._log_check_result.__get__(stub)
+    return stub
+
+
+def test_scheduler_check_result_reaches_ring_buffer():
+    from shared import log_buffer
+
+    result = SimpleNamespace(
+        needs_attention=False,
+        format_structured_task_log=lambda duration_ms=None: (
+            "[NitterTweets] 推文检查任务完成\n  分组名称: 测试组 (g1)"
+        ),
+    )
+    scheduler = _scheduler_stub(brief_log_enabled=True)
+
+    log_buffer.clear()
+    try:
+        scheduler._log_check_result(result, duration_ms=120.0)
+        entries = log_buffer.snapshot()
+        assert len(entries) == 1
+        assert entries[0]["level"] == "info"
+        assert entries[0]["lines"][0] == "[NitterTweets] 推文检查任务完成"
+    finally:
+        log_buffer.clear()
+
+
+def test_scheduler_check_result_marks_warning_level():
+    from shared import log_buffer
+
+    result = SimpleNamespace(
+        needs_attention=True,
+        format_structured_task_log=lambda duration_ms=None: "[NitterTweets] 失败",
+    )
+    scheduler = _scheduler_stub(brief_log_enabled=True)
+
+    log_buffer.clear()
+    try:
+        scheduler._log_check_result(result)
+        assert log_buffer.snapshot()[0]["level"] == "warning"
+    finally:
+        log_buffer.clear()
+
+
+def test_runner_start_line_sanitizes_user_controlled_group_name():
+    """开始检查行的每个插值都必须先脱敏——环缓冲会渲染到浏览器。"""
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parent.parent / "scheduler" / "runner.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    def is_sanitized(node: ast.AST) -> bool:
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name in {"sanitize_diagnostic", "redact_instance_urls"}:
+                return True
+        return False
+
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if getattr(func, "id", None) != "log_lines":
+            continue
+        for arg in node.args:
+            for inner in ast.walk(arg):
+                if not isinstance(inner, ast.FormattedValue):
+                    continue
+                expr = inner.value
+                text = ast.unparse(expr)
+                # 只关心用户可控 / 可能含本机路径的表达式
+                if "group.name" not in text and "_storage_init_error" not in text:
+                    continue
+                checked += 1
+                assert is_sanitized(expr), (
+                    f"log_lines 的插值未脱敏: {text}（环缓冲会渲染到浏览器）"
+                )
+    assert checked >= 2, f"未找到预期的插值点，实际 {checked}"

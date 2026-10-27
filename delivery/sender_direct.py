@@ -297,9 +297,16 @@ class SenderDirectMixin:
                 delivery_status="partial_failed" if attempt.error else "success",
                 delivery_error=attempt.error,
             )
+        # 直发与纯文本兜底都失败：两条 attempt 的错误都要带出去。此前这里只填了
+        # error、漏了 delivery_status/delivery_error，历史记录会落到默认的
+        # "success"/""，最终被 _delivery_history_error 兜底成无信息量的
+        # "send failed"，用户无从判断失败原因。
+        error = fallback.error or attempt.error or "直发与纯文本兜底均发送失败"
         return MergedSendOutcome(
             success=False,
             mode="failed",
             omitted_videos=omitted_videos,
-            error=fallback.error or attempt.error,
+            error=error,
+            delivery_status="failed",
+            delivery_error=error,
         )

@@ -30,8 +30,16 @@ _entries: deque[dict[str, Any]] = deque(maxlen=MAX_ENTRIES)
 _next_seq = 1
 
 
-def level_name(level: int) -> str:
-    """把 logging 级别整数映射成前端可用的级别名。"""
+def level_name(level: int | str) -> str:
+    """把 logging 级别整数或级别名字符串归一成前端可用的级别名。"""
+    if isinstance(level, str):
+        # 运行时模块禁止 import logging，允许直接传 "info"/"warning" 这类名字
+        name = level.strip().lower()
+        if name in {"debug", "info", "warning", "error", "critical"}:
+            return name
+        if name == "warn":
+            return "warning"
+        return "info"
     try:
         value = int(level)
     except (TypeError, ValueError):
@@ -39,7 +47,7 @@ def level_name(level: int) -> str:
     return _LEVEL_NAMES.get(value, "info")
 
 
-def append(level: int, lines: list[str]) -> None:
+def append(level: int | str, lines: list[str]) -> None:
     """追加一条日志事件；``lines`` 必须是已脱敏的文本行。"""
     global _next_seq
     text_lines = [str(line) for line in lines if str(line).strip()]
