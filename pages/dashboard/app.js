@@ -21,7 +21,7 @@ const state = {
   historyGroupId: "", historyUsername: "", historyLimit: 10,
   historyStatus: "", historySelection: new Set(),
   historyOffset: 0,
-  pendingAction: null, lastFocusedElement: null, lastUpdated: "",
+  pendingAction: null, lastFocusedElement: null,
   statusNotice: null, statusNoticeClosed: false, bannerOffset: "",
   // 诊断终端：插件日志环缓冲（web/logs），只在 mirror 视图可见时轮询
   logs: [], logsAfterSeq: 0, logsMax: 0, logsTimer: 0,
@@ -70,8 +70,8 @@ function renderTabCounts() {
 
 function initEls() {
   const ids = [
-    "refreshBtn","lastUpdated","currentTabTitle","currentTabDesc","themeToggleBtn","themeLabel",
-    "railSchedulerStatus","railScheduleStatus","railTargetStatus","noticeStack","toastContainer",
+    "refreshBtn","themeToggleBtn","themeLabel",
+    "railSchedulerStatus","noticeStack","toastContainer",
     "overviewView","groupsView","historyView","mirrorView","storageView","configView",
     "tabCountGroups","tabCountHistory","tabCountInstances","tabCountStorage","tabCountConfig",
     "cmdkBtn","groupsTitle","historyTitle","storageContent","cleanCacheBtn",
@@ -143,6 +143,7 @@ const ICONS = {
   external: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   chevron: '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
   more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 function svgIcon(name, size = 20) {
@@ -457,15 +458,6 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
   return root;
 }
 
-function upgradeSelect(el) {
-  if (!el || el.tagName !== "SELECT") return el;
-  const value = el.value;
-  const options = [...el.options].map(o => ({ value: o.value, text: o.textContent }));
-  const custom = createSelect({ id: el.id, value, options });
-  el.replaceWith(custom);
-  return custom;
-}
-
 function setBusy(isBusy) {
   state.loading = isBusy;
   const busy = isBusy || state.actionBusy;
@@ -665,6 +657,98 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
   if (body) body.scrollTop = body.scrollHeight;
 }
 
+/* ==========================================================================
+   7e. 错误追踪终端（macOS 仿苹果黑曜石终端）
+   专用于推文发送失败时的 ActionFailed 等错误追踪，支持状态提取、高亮与一键复制。
+   ========================================================================== */
+function renderErrorTerminal(rawError, { title = "delivery_error.log", status = "FAILED" } = {}) {
+  const str = String(rawError || "");
+  let retcode = "";
+  const m = str.match(/retcode[=:]\s*(\d+)/i);
+  if (m) retcode = m[1];
+  const exitStatus = retcode ? `EXIT ${retcode}` : status;
+
+  const copyBtn = h("button", {
+    class: "mac-copy-btn",
+    type: "button",
+    title: "复制完整错误信息",
+    html: `${svgIcon("copy", 11)}<span>复制</span>`,
+    onClick: async (e) => {
+      e.stopPropagation();
+      let copied = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(str);
+          copied = true;
+        }
+      } catch (_) {}
+      if (!copied) {
+        const ta = document.createElement("textarea");
+        ta.value = str;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); copied = true; } catch (_) {}
+        document.body.removeChild(ta);
+      }
+      if (copied) {
+        copyBtn.innerHTML = `${svgIcon("check", 11)}<span>已复制</span>`;
+        copyBtn.classList.add("copied");
+        setTimeout(() => {
+          copyBtn.innerHTML = `${svgIcon("copy", 11)}<span>复制</span>`;
+          copyBtn.classList.remove("copied");
+        }, 1800);
+      }
+    },
+  });
+
+  const bar = h("div", { class: "mac-terminal-bar" }, [
+    h("div", { class: "mac-dots" }, [
+      h("span", { class: "mac-dot red" }),
+      h("span", { class: "mac-dot yellow" }),
+      h("span", { class: "mac-dot green" }),
+    ]),
+    h("span", { class: "mac-terminal-title mono", text: title }),
+    h("div", { class: "mac-terminal-actions" }, [
+      copyBtn,
+      h("span", { class: "mac-terminal-status-badge bad" }, [
+        h("span", { class: "status-dot red" }),
+        h("span", { text: exitStatus }),
+      ]),
+    ]),
+  ]);
+
+  const body = h("div", { class: "mac-terminal-body mac-error-body" });
+  let msgMatch = str.match(/message=['"]([^'"]+)['"]/);
+  let mainMsg = msgMatch ? msgMatch[1] : "";
+
+  const lines = [
+    h("div", { class: "term-line prompt-line" }, [
+      h("span", { class: "term-prompt", text: "$" }),
+      h("span", { class: "term-cmd", text: "bot.send_forward_msg --verbose" }),
+    ]),
+  ];
+
+  if (retcode || mainMsg) {
+    lines.push(
+      h("div", { class: "term-line error-highlight-line" }, [
+        h("span", { class: "term-tag critical", text: exitStatus }),
+        h("span", { class: "term-msg term-error-msg", text: mainMsg || str }),
+      ])
+    );
+  }
+
+  lines.push(
+    h("div", { class: "term-line raw-log-line" }, [
+      h("span", { class: "term-msg mono", text: str }),
+    ])
+  );
+
+  body.replaceChildren(...lines);
+  return h("div", { class: "mac-terminal mac-error-terminal" }, [bar, body]);
+}
+
 async function reloadLogs({ reset = false } = {}) {
   if (reset) { state.logs = []; state.logsAfterSeq = 0; }
   const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
@@ -809,7 +893,9 @@ async function withAction(action, successText, { reload = true, rerender = null 
       const ok = await refreshViewData(state.view);
       if (!ok) return res;
     } else if (rerender) await rerender();
-    showAlert(successText || res?.message || "操作完成");
+    if (successText !== false && (successText || res?.message)) {
+      showAlert(successText || res?.message);
+    }
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
   finally { state.actionBusy = false; state.busyLabel = ""; setBusy(false); }
@@ -836,8 +922,6 @@ async function reloadAll(options = {}) {
         errors.push(`${labels[i]}：${r.reason?.message || "请求失败"}`);
       }
     });
-    state.lastUpdated = new Date().toLocaleTimeString();
-    if (els.lastUpdated) els.lastUpdated.textContent = state.lastUpdated;
     renderRailStatus();
     if (errors.length) showAlert(`部分数据未加载：${errors.join("；")}`, "warn");
     return errors.length === 0;
@@ -1246,7 +1330,7 @@ function renderEntities(group, draft) {
   return h("div", { class: "vstack" }, [
     h("div", { class: "section-head" }, [iconEl(icon, 16), `订阅源 — ${label}`]),
     chipList,
-    h("div", { class: "input-action-row entity-input-row" }, [
+    h("div", { class: "input-action-row" }, [
       h("input", { id: isList ? "newWatchListInput" : "newEntityInput", type: "text", placeholder: isTag ? "#tag 或关键词" : isList ? "纯数字 List ID" : "推特用户名", onInput: () => {
         const err = document.getElementById("entityError");
         if (err) err.style.display = "none";
@@ -1307,7 +1391,7 @@ function renderBulkSubscriptions(group) {
   return h("div", { class: "subsection" }, [
     h("span", { class: "section-head", text: "批量导入 / 移除" }),
     area,
-    h("div", { class: "input-action-row bulk-actions" }, [
+    h("div", { class: "input-action-row" }, [
       h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "导入", onClick: () => run("web/subscriptions/import") }),
       h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "移除", onClick: () => run("web/subscriptions/delete") }),
     ]),
@@ -1358,7 +1442,7 @@ function renderTargets(group, draft) {
       })
     ),
     renderInvalidTargets(group, draft, probe),
-    h("div", { class: "input-action-row target-input-row" }, [
+    h("div", { class: "input-action-row" }, [
       h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456" }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
@@ -1433,7 +1517,7 @@ function renderTargetBlacklist(group, draft) {
   select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(group.group_id); });
   const input = h("input", { type: "text", placeholder: "用户名或 @用户名" });
   box.append(
-    h("div", { class: "input-action-row blacklist-input-row" }, [
+    h("div", { class: "input-action-row" }, [
       select, input,
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
         const v = input.value.trim();
@@ -1957,14 +2041,15 @@ function historyRow(r) {
   ]);
 }
 
-/* 推文详情抽屉：正文 / 原推链接 / 投递信息 / 重推目标选择 */
+/* 推文详情抽屉：正文 / 原推链接 / 投递信息 / 错误追踪终端 / 重推目标选择 */
 function openHistoryDetail(recordId) {
   const recs = (state.history && state.history.records) || [];
   const r = recs.find(x => x.id === recordId);
   if (!r) return;
   const hasMedia = !!r.has_media;
-  const body = h("div", { class: "vstack" }, [
-    h("div", { class: "vstack-sm" }, [
+  const body = h("div", { class: "sheet-detail-flow" }, [
+    // 1. 顶部标签与作者时间
+    h("div", { class: "detail-header-card" }, [
       h("div", { class: "row row-wrap" }, [
         h("span", { class: "badge mono", text: `#${r.id}` }),
         h("span", { class: "badge", text: r.group_name || r.group_id || "-" }),
@@ -1974,22 +2059,73 @@ function openHistoryDetail(recordId) {
         }),
         hasMedia ? h("span", { class: "badge", text: "含媒体" }) : null,
       ]),
-      h("div", { class: "hint", text: `${r.username ? "@" + r.username : "unknown"} · ${formatDateTime(r.pushed_at) || "-"}` }),
+      h("div", { class: "detail-author-row" }, [
+        h("span", { class: "detail-author-name", text: r.username ? `@${r.username}` : "未知作者" }),
+        h("span", { class: "detail-sep", text: "·" }),
+        h("span", { class: "detail-time mono", text: formatDateTime(r.pushed_at) || "-" }),
+      ]),
     ]),
-    h("div", { class: "vstack-sm" }, [
-      h("span", { class: "meta-label", text: "推文正文" }),
-      h("div", { class: "hint", text: r.text_preview || (hasMedia ? "（该推文为纯图片/视频附件，无文字内容）" : "（无文字内容）") }),
+
+    // 2. 推文正文区：排版舒适的文本展示
+    h("div", { class: "detail-section" }, [
+      h("div", { class: "detail-section-title" }, [
+        h("span", { text: "推文正文" }),
+      ]),
+      h("div", { class: "tweet-content-card" }, [
+        h("div", {
+          class: "tweet-content-text",
+          text: r.text_preview || (hasMedia ? "（该推文为纯图片/视频附件，无文字内容）" : "（无文字内容）"),
+        }),
+      ]),
     ]),
-    r.original_link ? h("div", { class: "vstack-sm" }, [
-      h("span", { class: "meta-label", text: "原推地址" }),
-      h("a", { href: r.original_link, target: "_blank", rel: "noopener noreferrer", class: "mono hint", text: r.original_link }),
+
+    // 3. 原推地址
+    r.original_link ? h("div", { class: "detail-section" }, [
+      h("div", { class: "detail-section-title" }, [
+        h("span", { text: "原推地址" }),
+      ]),
+      h("a", {
+        href: r.original_link,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        class: "original-tweet-link",
+      }, [
+        h("span", { class: "mono link-text", text: r.original_link }),
+        h("span", { class: "link-icon", html: svgIcon("external", 13) }),
+      ]),
     ]) : null,
-    h("div", { class: "vstack-sm" }, [
-      h("span", { class: "meta-label", text: "投递信息" }),
-      h("div", { class: "hint", text: `目标：${replayTargetShortLabel(r.target_umo) || "-"}` }),
-      h("div", { class: "hint", text: `来源：${r.source || "-"} · 实例：${redactInstanceLabel(r.instance) || "-"}` }),
-      r.delivery_error ? h("div", { class: "alert error", text: r.delivery_error }) : null,
+
+    // 4. 投递链路元信息网格
+    h("div", { class: "detail-section" }, [
+      h("div", { class: "detail-section-title" }, [
+        h("span", { text: "投递链路与来源" }),
+      ]),
+      h("div", { class: "detail-meta-grid" }, [
+        h("div", { class: "detail-meta-item" }, [
+          h("span", { class: "detail-meta-k", text: "投递目标" }),
+          h("span", { class: "detail-meta-v mono", text: replayTargetShortLabel(r.target_umo) || "-" }),
+        ]),
+        h("div", { class: "detail-meta-item" }, [
+          h("span", { class: "detail-meta-k", text: "触发来源" }),
+          h("span", { class: "detail-meta-v", text: r.source === "scheduled" ? "定时轮询 (scheduled)" : (r.source || "-") }),
+        ]),
+        h("div", { class: "detail-meta-item detail-meta-full" }, [
+          h("span", { class: "detail-meta-k", text: "解析节点" }),
+          h("span", { class: "detail-meta-v mono", text: redactInstanceLabel(r.instance) || "-" }),
+        ]),
+      ]),
     ]),
+
+    // 5. 错误终端（macOS 仿苹果黑曜石终端展示）
+    r.delivery_error ? h("div", { class: "detail-section" }, [
+      h("div", { class: "detail-section-title error" }, [
+        h("span", { text: "投递追踪日志" }),
+      ]),
+      renderErrorTerminal(r.delivery_error, {
+        title: `delivery_trace_#${r.id}.log`,
+        status: r.delivery_status === "partial_failed" ? "PARTIAL" : "FAILED",
+      }),
+    ]) : null,
   ]);
   const footer = [
     h("button", {
@@ -2009,10 +2145,6 @@ function setHistoryRecordSelected(id, selected, checkbox) {
   else state.historySelection.delete(id);
   if (checkbox) checkbox.checked = selected;
   renderHistoryBatchBar();
-}
-
-function toggleHistoryRecord(id, checkbox) {
-  setHistoryRecordSelected(id, !state.historySelection.has(id), checkbox);
 }
 
 /* 把 DOM 里每行的勾选框同步回集合状态；全选/清除走原位同步，不重建行 */
@@ -2159,7 +2291,7 @@ async function loadHistoryPage(delta) {
   const offset = delta < 0 ? state.history.prev_offset : state.history.next_offset;
   if (offset === null || offset === undefined) return;
   state.historyOffset = offset;
-  await withAction(() => refreshHistoryData(), "翻页完成", { reload: false });
+  await withAction(() => refreshHistoryData(), false, { reload: false });
 }
 
 /* 孤儿列表的纯查询渲染：检测按钮经 detectHistoryOrphans 走 busy 仪式，
@@ -2168,11 +2300,35 @@ async function renderHistoryOrphans() {
   const res = await apiGet("web/history/orphans");
   const ops = res.orphans || [];
   if (!ops.length) {
-    els.historyOrphanResult.replaceChildren(h("div", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }));
+    const note = h("div", { class: "orphan-notice row row-between" }, [
+      h("span", { class: "badge badge-ok", text: "未检测到废弃分组的残留历史" }),
+      h("button", {
+        class: "feedback-close",
+        type: "button",
+        title: "关闭",
+        "aria-label": "关闭提示",
+        text: "×",
+        onClick: () => { note.remove(); },
+      }),
+    ]);
+    els.historyOrphanResult.replaceChildren(note);
+    clearTimeout(els.historyOrphanResult._timer);
+    els.historyOrphanResult._timer = setTimeout(() => {
+      note.classList.add("fade-out");
+      setTimeout(() => { if (els.historyOrphanResult.contains(note)) note.remove(); }, 240);
+    }, 3500);
     return;
   }
   els.historyOrphanResult.replaceChildren(h("div", { class: "panel" }, [
-    h("div", { class: "panel-head" }, [h("h3", { text: `废弃分组残留 (${ops.length})` })]),
+    h("div", { class: "panel-head" }, [
+      h("h3", { text: `废弃分组残留 (${ops.length})` }),
+      h("button", {
+        class: "btn btn-ghost btn-sm",
+        type: "button",
+        text: "收起",
+        onClick: () => els.historyOrphanResult.replaceChildren(),
+      }),
+    ]),
     h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
       `${o.group_id} (${o.record_count}条)`,
       h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
@@ -2364,29 +2520,22 @@ async function probeMirror(e) {
   }
 }
 
-/* 单项能力检查行：原型 inst-row（左标签 + 右状态/耗时） */
+/* 单项能力检查行：原型 inst-row（左标签 + 右状态/耗时 + 相对耗时条） */
 function instCheckRow(label, item, maxMs = 1) {
   const ok = item.success;
   const ms = Math.round(item.duration_ms || 0);
+  // 相对条以本次探测最慢的一项为满格，便于横向比较各端点延迟
+  const pct = ok ? Math.max(8, Math.round((ms / Math.max(1, maxMs)) * 100)) : 0;
   return h("div", { class: "inst-row" }, [
     h("span", { text: label }),
     ok
       ? h("span", { class: "mono ok", text: `200 OK · ${item.tweet_count || 0} 条 · ${ms}ms` })
       : h("span", { class: "mono bad", title: item.error || "", text: `FAILED · ${item.error || "失败"}` }),
-  ]);
-}
-
-function probeCheck(label, item, maxMs = 1) {
-  if (!item) return null;
-  const ok = item.success;
-  const pct = ok ? Math.max(8, Math.round(((item.duration_ms || 0) / maxMs) * 100)) : 0;
-  return h("div", { class: `probe-check ${ok ? "ok" : "fail"}` }, [
-    iconEl(ok ? "check" : "alert", 14),
-    h("span", { text: label }),
-    ok ? h("span", { text: `${item.tweet_count || 0}条 ${Math.round(item.duration_ms || 0)}ms` }) : h("span", { class: "probe-error", text: item.error || "失败" }),
-    ok ? h("span", { class: "probe-meter", "aria-hidden": "true" }, [
-      h("span", { class: "probe-meter-fill", style: { width: `${pct}%` } }),
-    ]) : null,
+    ok
+      ? h("span", { class: "probe-meter", "aria-hidden": "true" }, [
+          h("span", { class: "probe-meter-fill", style: { width: `${pct}%` } }),
+        ])
+      : null,
   ]);
 }
 
@@ -2553,18 +2702,22 @@ function renderConfigBarState() {
   const slot = root.querySelector(".config-bar-state");
   const total = configDirtyKeys.size;
   if (slot) {
-    slot.replaceChildren(
-      total > 0
-        ? h("span", { class: "badge badge-warn", text: `存在未保存的修改（${total} 项）` })
-        : h("span", { class: "config-hint", text: "配置已同步" })
-    );
+    if (state.configJustSaved) {
+      slot.replaceChildren(h("span", { class: "badge badge-ok", text: "✓ 配置已保存并热重载" }));
+    } else {
+      slot.replaceChildren(
+        total > 0
+          ? h("span", { class: "badge badge-warn", text: `存在未保存的修改（${total} 项）` })
+          : h("span", { class: "config-hint", text: "配置已同步" })
+      );
+    }
   }
   const discard = root.querySelector("[data-config-discard]");
   const save = root.querySelector("[data-config-save]");
   if (discard) discard.disabled = !total || state.configSaving;
   if (save) {
     save.disabled = !total || state.configSaving;
-    save.textContent = state.configSaving ? "保存并重载中…" : "保存并重载";
+    save.textContent = state.configSaving ? "保存并重载中…" : state.configJustSaved ? "已保存 ✓" : "保存并重载";
   }
 }
 
@@ -2664,8 +2817,11 @@ async function saveConfigDraft() {
       touched.push(key);
     }
     refreshConfigRows(touched);
-    if (result.reloaded) showToast("配置已保存，插件已热重载");
-    else showAlert(result.warning || "配置已保存，但插件热重载失败", "error");
+    if (result.reloaded) {
+      state.configJustSaved = true;
+      setTimeout(() => { state.configJustSaved = false; renderConfigBarState(); }, 2400);
+      showToast("配置已保存，插件已热重载");
+    } else showAlert(result.warning || "配置已保存，但插件热重载失败", "error");
   } catch (err) {
     showAlert(err.message || "保存配置失败", "error");
   } finally {
@@ -2935,7 +3091,7 @@ function bindEvents() {
     state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
     state.historySelection.clear();
     state.historyOffset = 0; // 重置页码
-    await withAction(() => refreshHistoryData(), "筛选完成", { reload: false });
+    await withAction(() => refreshHistoryData(), false, { reload: false });
   });
   els.historyPrevBtn?.addEventListener("click", () => loadHistoryPage(-1));
   els.historyNextBtn?.addEventListener("click", () => loadHistoryPage(1));

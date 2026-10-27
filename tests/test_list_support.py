@@ -637,7 +637,8 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
         "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
         in style
     )
-    assert "#historyView > .toolbar {" in style
+    # 历史页工具条现由 .section-header 承载吸顶（旧 .toolbar 容器已随表格改版移除）
+    assert "#historyView > .section-header {" in style
     # 次级吸顶统一引用吸附线 + 通知让位；配置操作栏曾与通知栈同位吸顶互相遮挡
     assert "--sticky-top: calc(var(--topheader-height) + 8px);" in style
     assert "top: calc(var(--sticky-top) + var(--banner-offset));" in style
@@ -686,6 +687,14 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "display: flex;" in stack
     assert "flex-direction: column;" in stack
     assert "gap:" in stack
+    # 栈锚在导航壳下方（top: 12px 会被 100px 高的顶栏压住），
+    # 且栈本身穿透点击、栈内节点恢复可点，否则关闭按钮点不动
+    assert "top: calc(var(--topheader-height) + 12px);" in stack
+    assert ".notice-stack > * { pointer-events: auto; }" in style
+    # 进行中提示（NOTICE_CLASS.status = action-status）必须有实体样式，
+    # 移植期整块丢失会让长动作的顶部指示退化成裸文本
+    assert ".action-status {" in style
+    assert ".action-status::before {" in style
     # 所有提示共用一个入栈出口，各自计时自动消失
     assert "const NOTICE_TTL = 4000;" in source
     assert "function pushNotice(kind, text, ttl = NOTICE_TTL)" in source
@@ -709,8 +718,16 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
         'document.documentElement.style.setProperty("--banner-offset", offset)'
         in source
     )
-    assert "padding-top: calc(24px + var(--banner-offset));" in style
-    assert "padding-top: calc(16px + var(--banner-offset));" in style
+    # 顶距让位挂在真实容器 .main 上（.view-container 在页面里并不存在）
+    assert (
+        ".main { padding: 18px 16px 64px; padding-top: calc(18px + var(--banner-offset)); }"
+        in style
+    )
+    assert (
+        ".main { padding: 16px 14px 56px; padding-top: calc(16px + var(--banner-offset)); }"
+        in style
+    )
+    assert ".view-container" not in style
     # 关闭按钮与“关闭后本动作内不再重建”机制（PR #83 承重点）在 JS 侧的存在
     assert "onclick: () => dismissNotice(node)" in source
     assert "state.statusNoticeClosed = false" in source

@@ -89,8 +89,8 @@
               <option value="partial_failed">部分失败</option>
               <option value="failed">发送失败</option>
             </select>
-            <input id="historyUsername" class="custom-input" type="text" placeholder="搜索作者账号…" aria-label="作者筛选" />
-            <input id="historyLimit" class="custom-input" type="number" min="1" max="50" value="20" aria-label="每页条数" />
+            <input id="historyUsername" type="text" placeholder="搜索作者账号…" aria-label="作者筛选" />
+            <input id="historyLimit" type="number" min="1" max="50" value="20" aria-label="每页条数" />
             <button id="historyRefreshBtn" class="nav-btn btn-primary" type="button">筛选</button>
             <button id="historyOrphanBtn" class="nav-btn" type="button">检查废弃</button>
             <button id="historySelectAllBtn" class="nav-btn" type="button">全选本页</button>
@@ -119,11 +119,11 @@
 
         <form id="mirrorForm" class="inst-card-large" autocomplete="off">
           <div class="inst-form-grid">
-            <label class="field"><span>测试用户名</span><input id="mirrorUsername" class="custom-input" type="text" placeholder="如 nasa，留空跳过" autocomplete="off" /></label>
-            <label class="field"><span>搜索标签或关键词</span><input id="mirrorQuery" class="custom-input" type="text" placeholder="如 #AI 或关键词，留空跳过" autocomplete="off" /></label>
-            <label class="field"><span>List ID（可选）</span><input id="mirrorListId" class="custom-input" type="text" placeholder="仅限数字，留空跳过" autocomplete="off" /></label>
-            <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" class="custom-input" type="number" min="1" max="50" value="5" autocomplete="off" /></label>
-            <label class="field inst-form-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" class="custom-input" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" autocomplete="off" /></label>
+            <label class="field"><span>测试用户名</span><input id="mirrorUsername" type="text" placeholder="如 nasa，留空跳过" autocomplete="off" /></label>
+            <label class="field"><span>搜索标签或关键词</span><input id="mirrorQuery" type="text" placeholder="如 #AI 或关键词，留空跳过" autocomplete="off" /></label>
+            <label class="field"><span>List ID（可选）</span><input id="mirrorListId" type="text" placeholder="仅限数字，留空跳过" autocomplete="off" /></label>
+            <label class="field"><span>测试拉取条数</span><input id="mirrorLimit" type="number" min="1" max="50" value="5" autocomplete="off" /></label>
+            <label class="field inst-form-full"><span>实例 URL（留空测试全部）</span><input id="mirrorInstance" type="url" placeholder="如 http://nitter:8080，留空测试全部已配置实例" autocomplete="off" /></label>
           </div>
           <div class="form-footer">
             <div class="row">
@@ -157,7 +157,7 @@
 
     <div id="confirmDialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmDesc" hidden>
       <div class="dialog-panel">
-        <h3 id="confirmTitle" class="dialog-title">确认操作？</h3>
+        <h3 id="confirmTitle">确认操作？</h3>
         <div id="confirmDesc" class="dialog-desc"></div>
         <div class="dialog-actions">
           <button id="cancelConfirmBtn" class="btn btn-sm" type="button">取消</button>
@@ -171,7 +171,9 @@
     <aside id="detailSheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
       <div class="sheet-header">
         <h4 id="sheetTitle">详情</h4>
-        <button id="sheetCloseBtn" class="sheet-close" type="button" aria-label="关闭">×</button>
+        <button id="sheetCloseBtn" class="sheet-close" type="button" aria-label="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <div id="sheetBody" class="sheet-body"></div>
       <div id="sheetFooter" class="sheet-footer"></div>
@@ -190,7 +192,9 @@
       <div class="modal">
         <div class="modal-head">
           <span id="createGroupTitle">新建订阅分组</span>
-          <button id="createGroupCancelBtn" class="sheet-close" type="button" aria-label="关闭">×</button>
+          <button id="createGroupCancelBtn" class="sheet-close" type="button" aria-label="关闭">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
         <div class="modal-body">
           <label class="field">
