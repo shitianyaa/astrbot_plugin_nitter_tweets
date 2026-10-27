@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 
-from astrbot.api.all import logger
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 
 try:
@@ -190,7 +189,7 @@ class LinkPreviewMixin:
                         exc,
                     )
                     safe_task_log(
-                        logging.WARNING,
+                        "warning",
                         "推文链接解析失败",
                         operation="link_preview",
                         source=f"@{link.username or 'unknown'} / {link.status_id}",
@@ -222,7 +221,7 @@ class LinkPreviewMixin:
                         exc_info=True,
                     )
                     safe_task_log(
-                        logging.WARNING,
+                        "warning",
                         "推文链接解析失败",
                         operation="link_preview",
                         source=f"@{link.username or 'unknown'} / {link.status_id}",
@@ -303,7 +302,7 @@ class LinkPreviewMixin:
                             else "纯文本"
                         )
                         safe_task_log(
-                            logging.WARNING if task_warnings else logging.INFO,
+                            "warning" if task_warnings else "info",
                             "推文链接解析完成",
                             operation="link_preview",
                             source=f"@{username} / {link.status_id}",
@@ -318,7 +317,7 @@ class LinkPreviewMixin:
                         )
                     else:
                         safe_task_log(
-                            logging.WARNING,
+                            "warning",
                             "推文链接解析完成",
                             operation="link_preview",
                             source=f"@{username} / {link.status_id}",

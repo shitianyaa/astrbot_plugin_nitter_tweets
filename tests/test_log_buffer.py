@@ -32,6 +32,29 @@ def test_level_name_falls_back_to_info_for_unknown_input():
     assert log_buffer.level_name("not-a-level") == "info"
 
 
+def test_level_name_accepts_level_name_strings():
+    """运行时模块禁止 import logging，调用方传的是级别名字符串。
+
+    回归：level_name 曾只做 int() 转换，字符串 "warning" 转换失败被降级成
+    info，导致面板终端里所有 warning/error 事件都显示成 INFO。
+    """
+    assert log_buffer.level_name("debug") == "debug"
+    assert log_buffer.level_name("info") == "info"
+    assert log_buffer.level_name("warning") == "warning"
+    assert log_buffer.level_name("error") == "error"
+    assert log_buffer.level_name("critical") == "critical"
+    assert log_buffer.level_name("warn") == "warning"
+    assert log_buffer.level_name("WARNING") == "warning"
+
+
+def test_append_accepts_level_name_strings():
+    log_buffer.append("warning", ["实例超时"])
+    log_buffer.append("error", ["boom"])
+
+    entries = log_buffer.snapshot()
+    assert [e["level"] for e in entries] == ["warning", "error"]
+
+
 def test_append_records_sanitized_lines_with_monotonic_seq():
     log_buffer.append(20, ["first line", "second line"])
     log_buffer.append(40, ["boom"])

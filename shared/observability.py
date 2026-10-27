@@ -165,8 +165,63 @@ def sanitize_diagnostic(value: object) -> str:
     return text
 
 
-def safe_task_log(level: int, title: str, **fields: object) -> None:
-    """Emit a clean, indented multi-line Chinese task summary block."""
+_LEVELS = ("debug", "info", "warning", "error")
+
+
+def _normalize_level(level: int | str) -> str:
+    """把整数级别或级别名归一成 ``_LEVELS`` 里的名字。
+
+    运行时模块严禁 ``import logging``，调用方统一传名字字符串；整数形式保留
+    兼容，供历史调用点与测试使用。未知值降级为 info。
+    """
+    if isinstance(level, str):
+        name = level.strip().lower()
+        return "warning" if name == "warn" else name
+    try:
+        value = int(level)
+    except (TypeError, ValueError):
+        return "info"
+    return {
+        10: "debug",
+        20: "info",
+        30: "warning",
+        40: "error",
+        50: "critical",
+    }.get(value, "info")
+
+
+def _emit(level: int | str, message: str, *, lines: list[str] | None = None) -> None:
+    """统一出口：写宿主 logger，并把同一份文本放进 WebUI 环缓冲。"""
+    name = _normalize_level(level)
+    # 按名派发而非 logger.log：astrbot 的插件 logger 是上下文代理，
+    # 走具名方法才能稳定命中调用方插件自己的 logger。
+    if name == "debug":
+        logger.debug(message)
+    elif name == "warning":
+        logger.warning(message)
+    elif name == "error":
+        logger.error(message)
+    else:
+        logger.info(message)
+    log_buffer.append(name, lines if lines is not None else [message])
+
+
+def log_lines(level: int | str, lines: list[str]) -> None:
+    """输出一段已格式化的多行日志块（同时进宿主日志与 WebUI 环缓冲）。
+
+    供 scheduler 等无法 ``import logging`` 的模块直接写摘要块使用；
+    调用方负责保证 ``lines`` 已脱敏。
+    """
+    if not lines:
+        return
+    _emit(level, "\n".join(lines), lines=list(lines))
+
+
+def safe_task_log(level: int | str, title: str, **fields: object) -> None:
+    """Emit a clean, indented multi-line Chinese task summary block.
+
+    ``level`` is a logger method name: "debug" / "info" / "warning" / "error".
+    """
     fields = {key: value for key, value in fields.items() if key in TASK_FIELDS}
     lines = [f"{LOG_PREFIX} {title}"]
 
@@ -292,27 +347,27 @@ def safe_task_log(level: int, title: str, **fields: object) -> None:
     if elapsed_ms is not None:
         lines.append(f"  任务耗时: {format_elapsed(elapsed_ms)}")
 
-    logger.log(level, "\n".join(lines))
-    # 环缓冲只存已脱敏的最终文本，供 WebUI 诊断终端读取；上限由 log_buffer 控制
-    log_buffer.append(level, lines)
+    _emit(level, "\n".join(lines), lines=lines)
 
 
-def safe_log(level: int, event_name: str, **fields: object) -> None:
-    """Emit a structured single-line diagnostic log event."""
+def safe_log(level: int | str, event_name: str, **fields: object) -> None:
+    """Emit a structured single-line diagnostic log event.
+
+    ``level`` is a logger method name: "debug" / "info" / "warning" / "error".
+    """
     parts = [f"event={event_name}"]
     for key, value in fields.items():
         if key not in ALLOWED_DIAGNOSTIC_FIELDS:
             continue
         sanitized = sanitize_diagnostic(value)
         parts.append(f"{key}={sanitized}")
-    message = f"{LOG_PREFIX} " + " | ".join(parts)
-    logger.log(level, message)
-    log_buffer.append(level, [message])
+    _emit(level, f"{LOG_PREFIX} " + " | ".join(parts))
 
 
 __all__ = [
     "LOG_PREFIX",
     "format_elapsed",
+    "log_lines",
     "sanitize_sensitive_text",
     "sanitize_diagnostic",
     "safe_task_log",

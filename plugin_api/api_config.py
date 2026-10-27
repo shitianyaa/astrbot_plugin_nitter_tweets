@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import math
 from pathlib import Path
 from typing import Any
@@ -157,7 +156,7 @@ class WebAPIConfigMixin:
             await self._reload_current_plugin()
         except Exception as exc:
             safe_log(
-                logging.WARNING,
+                "warning",
                 "config_reload_failed",
                 status="saved",
                 error=f"{type(exc).__name__}: {exc}",

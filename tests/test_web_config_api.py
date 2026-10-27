@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from types import SimpleNamespace
 
 import pytest
@@ -245,7 +244,7 @@ def test_save_config_reports_saved_when_reload_fails(monkeypatch):
     assert config.saved == 1
     assert log_events == [
         (
-            logging.WARNING,
+            "warning",
             "config_reload_failed",
             {"status": "saved", "error": "RuntimeError: reload failed"},
         )
