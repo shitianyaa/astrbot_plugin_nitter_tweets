@@ -82,13 +82,10 @@
             <div class="section-sub">点击任意记录可在右侧抽屉查看推文正文、原推地址、投递群聊及终端执行追踪</div>
           </div>
           <div class="section-tools">
-            <select id="historyGroupSelect" class="custom-select" aria-label="分组筛选"></select>
-            <select id="historyStatusSelect" class="custom-select" aria-label="状态筛选">
-              <option value="">全部状态</option>
-              <option value="success">发送成功</option>
-              <option value="partial_failed">部分失败</option>
-              <option value="failed">发送失败</option>
-            </select>
+            <!-- 分组 / 状态筛选：原生 select 的展开层由系统绘制（圆角、选中色不可控），
+                 改由 app.js 的 createSelect 注入同款自绘下拉 -->
+            <span id="historyGroupSelect" class="select-slot" data-label="分组筛选"></span>
+            <span id="historyStatusSelect" class="select-slot" data-label="状态筛选"></span>
             <input id="historyUsername" type="text" placeholder="搜索作者账号…" aria-label="作者筛选" />
             <input id="historyLimit" type="number" min="1" max="50" value="20" aria-label="每页条数" />
             <button id="historyRefreshBtn" class="nav-btn btn-primary" type="button">筛选</button>

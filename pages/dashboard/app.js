@@ -626,6 +626,13 @@ function logTime(ts) {
 function renderTerminal(container, entries, { title = "probe.sh", empty = "暂无日志事件" } = {}) {
   if (!container) return;
   container.classList.add("mac-terminal");
+  // 复用同一个 body 节点：轮询每 3 秒重渲染一次，整块替换会让用户翻看历史时
+  // 被强制弹回底部。保留节点 + 只在“本来就贴着底部”时跟随新日志。
+  let body = container.querySelector(".mac-terminal-body");
+  const wasAtBottom = body
+    ? body.scrollHeight - body.scrollTop - body.clientHeight < 24
+    : true;
+
   const lines = [];
   for (const entry of entries) {
     const level = entry.level || "info";
@@ -637,24 +644,28 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
       ]));
     }
   }
-  container.replaceChildren(
-    h("div", { class: "mac-terminal-bar" }, [
-      h("div", { class: "mac-dots" }, [
-        h("span", { class: "mac-dot red" }),
-        h("span", { class: "mac-dot yellow" }),
-        h("span", { class: "mac-dot green" }),
-      ]),
-      h("span", { class: "mac-terminal-title", text: title }),
-      h("span", { class: "mac-terminal-status" }, [
-        h("span", { class: "mac-status-indicator" }),
-        h("span", { text: "实时" }),
-      ]),
+  const bar = h("div", { class: "mac-terminal-bar" }, [
+    h("div", { class: "mac-dots" }, [
+      h("span", { class: "mac-dot red" }),
+      h("span", { class: "mac-dot yellow" }),
+      h("span", { class: "mac-dot green" }),
     ]),
-    h("div", { class: "mac-terminal-body" }, lines.length ? lines : [h("div", { class: "term-empty", text: empty })]),
-  );
-  // 新日志追加后滚到底，便于追踪最新事件
-  const body = container.querySelector(".mac-terminal-body");
-  if (body) body.scrollTop = body.scrollHeight;
+    h("span", { class: "mac-terminal-title", text: title }),
+    h("span", { class: "mac-terminal-status" }, [
+      h("span", { class: "mac-status-indicator" }),
+      h("span", { text: "实时" }),
+    ]),
+  ]);
+
+  if (body) {
+    // 只换行内容，body 节点本身留着：滚动位置与用户的选择都不会被重置
+    body.replaceChildren(...(lines.length ? lines : [h("div", { class: "term-empty", text: empty })]));
+  } else {
+    body = h("div", { class: "mac-terminal-body" }, lines.length ? lines : [h("div", { class: "term-empty", text: empty })]);
+  }
+  container.replaceChildren(bar, body);
+  // 只有本来就在底部才跟随新日志；用户往上翻看时保持原位
+  if (wasAtBottom) body.scrollTop = body.scrollHeight;
 }
 
 /* ==========================================================================
@@ -749,20 +760,49 @@ function renderErrorTerminal(rawError, { title = "delivery_error.log", status = 
   return h("div", { class: "mac-terminal mac-error-terminal" }, [bar, body]);
 }
 
+/* 在途守卫：轮询与「进入视图时的 reset 拉取」可能重叠，两次请求会拿到同一批
+   seq 各自 concat，同一批日志在终端里出现两遍（接口慢于 3s 轮询间隔即可复现）。
+   reset 请求优先：它清空后重拉，普通增量请求直接让位。 */
+let logsInFlight = null;
+let logsResetPending = false;
+
 async function reloadLogs({ reset = false } = {}) {
-  if (reset) { state.logs = []; state.logsAfterSeq = 0; }
-  const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
-  const incoming = res.entries || [];
-  state.logsMax = res.max_entries || state.logsMax;
-  if (incoming.length) {
-    state.logs = state.logs.concat(incoming);
-    state.logsAfterSeq = incoming[incoming.length - 1].seq;
-    // 前端与后端同上限，避免长时间停留后无限增长
-    if (state.logsMax && state.logs.length > state.logsMax) {
-      state.logs = state.logs.slice(-state.logsMax);
-    }
+  if (reset) {
+    logsResetPending = true;
+    // 让在途的增量请求失效，避免它把旧数据写回刚清空的 state
+    state.logs = [];
+    state.logsAfterSeq = 0;
+  } else if (logsInFlight || logsResetPending) {
+    return;   // 已有请求在途，本轮跳过；下一次轮询自然会补上
   }
-  markData("logs");
+
+  const request = (async () => {
+    const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
+    const incoming = res.entries || [];
+    state.logsMax = res.max_entries || state.logsMax;
+    if (incoming.length) {
+      // 按 seq 去重：即便守卫失效（例如 reset 与增量交错），也不会重复追加
+      const seen = new Set(state.logs.map(e => e.seq));
+      const fresh = incoming.filter(e => !seen.has(e.seq));
+      if (fresh.length) {
+        state.logs = state.logs.concat(fresh);
+        state.logsAfterSeq = fresh[fresh.length - 1].seq;
+      }
+      // 前端与后端同上限，避免长时间停留后无限增长
+      if (state.logsMax && state.logs.length > state.logsMax) {
+        state.logs = state.logs.slice(-state.logsMax);
+      }
+    }
+    markData("logs");
+  })();
+
+  logsInFlight = request;
+  try {
+    await request;
+  } finally {
+    if (logsInFlight === request) logsInFlight = null;
+    if (reset) logsResetPending = false;
+  }
 }
 
 function startLogPolling() {
@@ -1942,6 +1982,33 @@ function badge(text) { return h("span", { class: "badge", text }); }
 /* ==========================================================================
    13. History — Tweet-style Feed
    ========================================================================== */
+/* 历史页筛选下拉：把 index.html 里的占位 span 换成自绘下拉。
+   原生 select 的展开层由系统绘制（圆角、选中色、字体全不可控），与抽屉里的
+   自绘 .dd 并存时观感割裂；这里统一走 createSelect，els 引用改指新节点。 */
+const HISTORY_STATUS_OPTIONS = [
+  { value: "", text: "全部状态" },
+  { value: "success", text: "发送成功" },
+  { value: "partial_failed", text: "部分失败" },
+  { value: "failed", text: "发送失败" },
+];
+
+function upgradeHistorySelects() {
+  const mount = (slotId, opts) => {
+    const slot = els[slotId];
+    if (!slot || slot.classList?.contains("dd")) return;
+    // id 必须带到新节点上：CSS/测试与宿主排查都按 #historyGroupSelect 定位
+    const dd = createSelect({ id: slotId, options: opts });
+    dd.classList.add("dd-filter");
+    // 原生 select 的 aria-label 随节点一起没了，从占位上的 data-label 还原
+    const label = slot.dataset?.label;
+    if (label) dd.querySelector(".dd-trigger")?.setAttribute("aria-label", label);
+    slot.replaceWith(dd);
+    els[slotId] = dd;
+  };
+  mount("historyGroupSelect", [{ value: "", text: "全部分组" }]);
+  mount("historyStatusSelect", HISTORY_STATUS_OPTIONS);
+}
+
 function syncHistoryGroupOptions() {
   const sel = els.historyGroupSelect;
   if (!sel) return;
@@ -2426,11 +2493,19 @@ function renderMirrorBase() {
 function renderMirrorTerminal() {
   const host = els.mirrorResult;
   if (!host) return;
-  host.querySelectorAll(".mirror-terminal").forEach(el => el.remove());
   const card = host.querySelector(".inst-card-large:not(.empty-note)");
-  const term = h("div", { class: "mac-terminal mirror-terminal" });
-  if (card) card.appendChild(term);
-  else host.appendChild(term);
+  const parent = card || host;
+  // 复用已有终端节点：轮询每 3 秒走一次这里，整块 remove + 重建会把用户的
+  // 滚动位置和选中文本一起丢掉（renderTerminal 内部的滚动保持也就失效了）。
+  let term = parent.querySelector(":scope > .mirror-terminal");
+  if (!term) {
+    term = h("div", { class: "mac-terminal mirror-terminal" });
+    parent.appendChild(term);
+  }
+  // 终端跟着结果卡走：探测结果重建后旧卡已从 DOM 移除，把终端迁到新卡上
+  host.querySelectorAll(".mirror-terminal").forEach(el => {
+    if (el !== term && !parent.contains(el)) el.remove();
+  });
 
   const label = state.logsMax
     ? `节点健康并发探针 — probe.sh（最近 ${state.logs.length}/${state.logsMax} 条）`
@@ -3161,7 +3236,9 @@ function boot() {
     if (!bridge) throw new Error("AstrBot 页面桥接不可用");
     initEls();
     initStickyOffsets();
-    // 原型用原生 select（配自绘 SVG 箭头），不再替换成 .dd 自绘下拉
+    // 历史页两个筛选框用自绘下拉（与分组抽屉里的 .dd 保持同一观感）；
+    // 其余位置仍用原生 select + 自绘 SVG 箭头。
+    upgradeHistorySelects();
     initTheme();
     updateHeader();
     bindEvents();

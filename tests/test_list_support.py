@@ -818,6 +818,72 @@ def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
     assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
 
 
+def test_dashboard_log_polling_guards_against_duplicate_appends():
+    """日志轮询必须防重复：接口慢于轮询间隔时，两次请求拿到同一批 seq 各自
+    concat，同一批日志会在终端里出现两遍（实测 8 条里有 4 条重复）。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    # 在途守卫 + reset 让位
+    assert "let logsInFlight = null;" in source
+    assert "let logsResetPending = false;" in source
+    assert "} else if (logsInFlight || logsResetPending) {" in source
+    # 按 seq 去重，即便守卫失效也不会重复追加
+    assert "const seen = new Set(state.logs.map(e => e.seq));" in source
+    assert "const fresh = incoming.filter(e => !seen.has(e.seq));" in source
+    assert "state.logsAfterSeq = fresh[fresh.length - 1].seq;" in source
+
+
+def test_dashboard_terminal_preserves_scroll_and_node():
+    """轮询每 3 秒重渲染终端：必须复用 body 节点，且只在贴底时跟随新日志，
+    否则用户往上翻看历史会被强制弹回底部。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    # renderTerminal：记录是否贴底，复用节点，条件跟随
+    assert "const wasAtBottom = body" in source
+    assert "body.scrollHeight - body.scrollTop - body.clientHeight < 24" in source
+    assert "if (wasAtBottom) body.scrollTop = body.scrollHeight;" in source
+    # renderMirrorTerminal：不再无条件 remove 整个终端
+    assert 'let term = parent.querySelector(":scope > .mirror-terminal");' in source
+    assert (
+        'host.querySelectorAll(".mirror-terminal").forEach(el => el.remove());'
+        not in source
+    )
+
+
+def test_dashboard_history_filters_use_shared_custom_select():
+    """历史页筛选下拉必须走 createSelect（自绘 .dd），不能退回原生 select。
+
+    原生 select 的展开层由操作系统绘制，圆角、选中色、字体都不可控；与分组
+    抽屉里的自绘下拉并存时观感割裂。index.html 只留占位 span，由 app.js 注入。
+    """
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+
+    # HTML 侧不得再有原生 select（分组/状态两个筛选都换成占位 span）
+    assert "<select" not in index
+    assert 'id="historyGroupSelect" class="select-slot"' in index
+    assert 'id="historyStatusSelect" class="select-slot"' in index
+
+    # JS 侧统一由 createSelect 注入，且 id 带到新节点上
+    assert "function upgradeHistorySelects()" in source
+    assert "upgradeHistorySelects();" in source
+    assert "const dd = createSelect({ id: slotId, options: opts });" in source
+    assert "slot.replaceWith(dd);" in source
+    assert "els[slotId] = dd;" in source
+    # 状态选项仍保持四项（全部 / 成功 / 部分失败 / 失败）
+    for value, text in (
+        ('""', "全部状态"),
+        ('"success"', "发送成功"),
+        ('"partial_failed"', "部分失败"),
+        ('"failed"', "发送失败"),
+    ):
+        assert f'{{ value: {value}, text: "{text}" }}' in source
+
+    # 样式侧：工具条内的 .dd 与相邻控件同高
+    assert ".section-tools .dd-filter .dd-trigger" in style
+
+
 def test_dashboard_redesign_architecture_guards():
     """重构架构护栏：数据通道 + 视图持久化 + 作用域刷新 + 细粒度渲染 + 动效约束。
     视图容器常驻，切换只冲刷脏视图；动作收尾按当前视图作用域刷新，内容不清空。"""
