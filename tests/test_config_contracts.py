@@ -14,6 +14,7 @@ from config.compat import (
 )
 from main import NitterTweetsPlugin
 from media_support.client import NitterClient
+from media_support.html_backend.logging_util import QuietHtmlLog
 from media_support.html_backend.service import HtmlBackendConfig
 from media_support.nitter import NitterService
 from scheduler.config import (
@@ -164,12 +165,36 @@ def test_removed_user_agent_config_is_persisted_by_startup_migration():
     assert config.save_calls == 1
 
 
+def test_removed_brief_log_config_is_cleared_by_startup_migration():
+    """日志简略开关移除后，老配置的分组与顶层键都应在迁移时清除。"""
+
+    class SavingConfig(dict):
+        save_calls = 0
+
+        def save_config(self):
+            self.save_calls += 1
+
+    config = SavingConfig(
+        {
+            "basic": {"default_limit": 7},
+            "logging": {"brief_log_enabled": False},
+            "brief_log_enabled": True,
+            LEGACY_CONFIG_MIGRATION_KEY: True,
+        }
+    )
+
+    assert migrate_legacy_grouped_config(config) is True
+    assert config["basic"] == {"default_limit": 7}
+    assert "logging" not in config
+    assert "brief_log_enabled" not in config
+    assert config.save_calls == 1
+
+
 def test_unified_service_uses_instances_for_rss_and_html():
     service = NitterService(
         {
             "instances": ["http://nitter:8080"],
             "filter_reposts_enabled": "off",
-            "brief_log_enabled": "no",
             "html_max_pages": "4",
         }
     )
@@ -178,7 +203,8 @@ def test_unified_service_uses_instances_for_rss_and_html():
     assert service.html.config.instances == service.instances
     assert service.html.config.filter_reposts is False
     assert service.html.config.max_pages == 4
-    assert service.html.log.brief is False
+    # 过程日志过滤恒定生效（brief_log_enabled 开关已移除）
+    assert isinstance(service.html.log, QuietHtmlLog)
 
 
 def test_legacy_instances_are_diagnostic_only():

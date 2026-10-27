@@ -208,27 +208,13 @@ def test_scheduler_log_ai_skipped_when_translation_disabled(monkeypatch):
 
     runner = SchedulerSendMixin()
     runner.translator = SimpleNamespace(enabled=False)
-    runner.brief_log_enabled = False
 
     runner._log_ai_process_results("test", [MagicMock(), MagicMock()], None)
-    mock_logger.info.assert_not_called()
+    mock_logger.debug.assert_not_called()
 
 
-def test_scheduler_log_ai_skipped_when_brief_log_enabled(monkeypatch):
-    """Scheduler path: brief_log_enabled also suppresses per-tweet AI logs."""
-    mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner_send.logger", mock_logger)
-
-    runner = SchedulerSendMixin()
-    runner.translator = SimpleNamespace(enabled=True)
-    runner.brief_log_enabled = True
-
-    runner._log_ai_process_results("test", [MagicMock()], None)
-    mock_logger.info.assert_not_called()
-
-
-def test_scheduler_log_ai_emits_when_enabled_and_not_brief(monkeypatch):
-    """Scheduler path: both translator.enabled and not brief → logs emitted."""
+def test_scheduler_log_ai_emits_at_debug_when_translation_enabled(monkeypatch):
+    """Scheduler path: 逐推文 AI 摘要属过程日志，走 DEBUG 而非 INFO。"""
     mock_logger = MagicMock()
     monkeypatch.setattr("scheduler.runner_send.logger", mock_logger)
     monkeypatch.setattr(
@@ -238,10 +224,10 @@ def test_scheduler_log_ai_emits_when_enabled_and_not_brief(monkeypatch):
 
     runner = SchedulerSendMixin()
     runner.translator = SimpleNamespace(enabled=True)
-    runner.brief_log_enabled = False
 
     runner._log_ai_process_results("test", [MagicMock(), MagicMock()], None)
-    assert mock_logger.info.call_count == 2
+    assert mock_logger.debug.call_count == 2
+    mock_logger.info.assert_not_called()
 
 
 def test_manual_task_log_dynamic_operation_labels(monkeypatch):
@@ -445,7 +431,7 @@ def test_scheduler_check_result_reaches_ring_buffer():
             "[NitterTweets] 推文检查任务完成\n  分组名称: 测试组 (g1)"
         ),
     )
-    scheduler = _scheduler_stub(brief_log_enabled=True)
+    scheduler = _scheduler_stub()
 
     log_buffer.clear()
     try:
@@ -465,7 +451,7 @@ def test_scheduler_check_result_marks_warning_level():
         needs_attention=True,
         format_structured_task_log=lambda duration_ms=None: "[NitterTweets] 失败",
     )
-    scheduler = _scheduler_stub(brief_log_enabled=True)
+    scheduler = _scheduler_stub()
 
     log_buffer.clear()
     try:

@@ -248,15 +248,13 @@ class NitterTweetScheduler(
             group.enabled for group in self._schedule_groups(log_invalid_targets=False)
         )
 
-    @property
-    def brief_log_enabled(self) -> bool:
-        return parse_config_bool(
-            config_get(self.config, "brief_log_enabled", True), True
-        )
-
     def _log_verbose_info(self, message: str) -> None:
-        if not self.brief_log_enabled:
-            logger.info(message)
+        """过程日志：一律 DEBUG，由宿主按插件调级控制是否可见。
+
+        此前受 brief_log_enabled 控制；该开关已移除，日志详细程度交给
+        AstrBot 的插件级日志级别（面板 PUT /plugins/{id}/log-level）。
+        """
+        logger.debug(message)
 
     async def _ensure_storage_ready(self) -> bool:
         """Serialize storage migration for the scheduler and manual checks."""
@@ -298,24 +296,12 @@ class NitterTweetScheduler(
     ) -> None:
         # 日志出口统一走 log_lines：既写宿主日志，也写 WebUI 环缓冲。此前只调
         # logger.*，环缓冲收不到任何定时检查，面板终端在真实使用中基本是空的。
+        # 格式只有结构化摘要一种：此前的简略/详细双模式里，名为“简略”的分支
+        # 反而是行数更多的人类可读块，详细分支是紧凑的 key=value 行，命名与
+        # 实际相反，且两套格式各需一套测试与文档。
         level = "warning" if result.needs_attention else "info"
-        if self.brief_log_enabled:
-            structured_log = result.format_structured_task_log(duration_ms=duration_ms)
-            log_lines(level, structured_log.splitlines())
-            return
-
-        log_lines(level, [result.format_log_summary()])
-
-        warning_prefixes = (
-            "[NitterTweets] 失败详情:",
-            "[NitterTweets] 扫描未完整，自动重建基准:",
-            "[NitterTweets] 扫描未完整，自动重建基准未完成:",
-            "[NitterTweets] 无效推送目标:",
-            "[NitterTweets] 发送状态提示:",
-        )
-        for detail in result.format_brief_log_lines()[1:]:
-            detail_level = "warning" if detail.startswith(warning_prefixes) else "info"
-            log_lines(detail_level, [detail])
+        structured_log = result.format_structured_task_log(duration_ms=duration_ms)
+        log_lines(level, structured_log.splitlines())
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:

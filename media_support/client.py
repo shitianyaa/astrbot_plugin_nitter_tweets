@@ -263,9 +263,6 @@ class NitterClient:
         self.filter_reposts_enabled = parse_config_bool(
             config_get(config, "filter_reposts_enabled", True), True
         )
-        self.brief_log_enabled = parse_config_bool(
-            config_get(config, "brief_log_enabled", True), True
-        )
         # In-memory instance scores; NitterService shares this book with HTML.
         self.host_scores = HostScoreBook()
         self.fxtwitter = FxTwitterClient(timeout=self.timeout)
@@ -1144,12 +1141,12 @@ class NitterClient:
                 last_error = exc
                 if attempt >= attempts:
                     break
-                if not self.brief_log_enabled:
-                    logger.warning(
-                        "[NitterTweets] RSS 抓取失败，准备重试: "
-                        f"username={username}, "
-                        f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
-                    )
+                # 重试过程属于过程日志：DEBUG 级别，失败终态由上层汇总
+                logger.debug(
+                    "[NitterTweets] RSS 抓取失败，准备重试: "
+                    f"username={username}, "
+                    f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
+                )
                 if delay > 0:
                     time.sleep(delay)
 

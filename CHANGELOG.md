@@ -2,6 +2,14 @@
 
 所有重要变更都会记录在这里。
 
+## [Unreleased]
+
+### Changed
+
+- **日志统一为单一格式**：移除 `brief_log_enabled`（后台日志简略模式）配置项。此前「简略」分支实际输出 16 行人类可读块、「详细」分支输出 6 行紧凑 key=value，命名与实际相反，两套格式各需一套测试与文档。现在每轮检查恒定输出结构化任务摘要。
+- **过程日志改由 DEBUG 级别承载**：逐批次抓取、每次实例尝试、逐推文 AI 摘要、RSS 重试等过程日志不再受插件内开关控制，统一走 DEBUG。需要排查时在 AstrBot 面板把本插件日志级别调到 `DEBUG`。
+- **HTML 过程日志恒定过滤**：`QuietHtmlLog` 的 `brief` 参数移除，过滤规则固定（抑制 `session load`、每次 `try`、空页轮换、冷却 skip/defer；保留 fail、ok after rotate、punish）。老配置中的 `brief_log_enabled` 与 `logging` 配置组会在启动迁移时自动清除。
+
 ## [1.8.0]
 
 ### Added

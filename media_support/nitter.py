@@ -57,7 +57,6 @@ class NitterService(NitterClient):
                     f"[NitterTweets][html] {sanitize_sensitive_text(message)}"
                 )
             ),
-            brief_log=self.brief_log_enabled,
             score_book=self.host_scores,
         )
 

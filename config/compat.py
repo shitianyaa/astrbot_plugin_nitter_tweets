@@ -52,7 +52,9 @@ TWEET_GROUP_TEMPLATE_KEYS = frozenset(
 )
 IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
 
-REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
+REMOVED_FEATURE_CONFIG_GROUPS = frozenset(
+    {"ai_comment", "ai_vision", "deferred", "logging"}
+)
 REMOVED_FEATURE_CONFIG_KEYS = frozenset(
     {
         "comment_enabled",
@@ -76,6 +78,7 @@ REMOVED_FEATURE_CONFIG_KEYS = frozenset(
         "user_agent",
         "media_user_agent",
         "xdown_api_url",
+        "brief_log_enabled",
     }
 )
 REMOVED_FEATURE_CONFIG_NAMES = (
@@ -125,7 +128,6 @@ CONFIG_GROUP_BY_KEY = {
     "check_interval_minutes": "schedule",
     "daily_check_enabled": "schedule",
     "daily_check_times": "schedule",
-    "brief_log_enabled": "logging",
     "concurrent_fetch_enabled": "performance",
     "fetch_concurrency": "performance",
     "concurrent_prepare_enabled": "performance",

@@ -57,17 +57,12 @@ class HtmlNitterService:
         config: HtmlBackendConfig | None = None,
         *,
         log: Callable[[str], None] | None = None,
-        brief_log: bool = True,
         score_book: HostScoreBook | None = None,
     ):
         self.config = config or HtmlBackendConfig()
         raw_log = log or (lambda _m: None)
         # Always wrap repetitive per-host request logs even for a raw logger sink.
-        self.log = (
-            log
-            if isinstance(log, QuietHtmlLog)
-            else QuietHtmlLog(raw_log, brief=bool(brief_log))
-        )
+        self.log = log if isinstance(log, QuietHtmlLog) else QuietHtmlLog(raw_log)
         session_dir = self.config.session_dir
         rate = RateLimitConfig(global_min_interval=self.config.min_interval)
         self.limiter = RateLimiter(rate)

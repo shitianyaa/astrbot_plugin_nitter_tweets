@@ -519,10 +519,11 @@ class SchedulerSendMixin:
     ) -> None:
         total = progress_total or len(tweets)
         start = progress_index or 1
-        if self.brief_log_enabled or not getattr(self.translator, "enabled", True):
+        # 逐推文 AI 摘要属于过程日志：只在宿主把本插件调到 DEBUG 时可见
+        if not getattr(self.translator, "enabled", True):
             return
         for offset, tweet in enumerate(tweets):
-            logger.info(
+            logger.debug(
                 format_ai_tweet_summary(
                     username,
                     tweet,

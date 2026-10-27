@@ -194,7 +194,7 @@ def test_structured_log_keeps_all_operational_warnings_and_accurate_labels():
 
 def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
     scheduler = object.__new__(NitterTweetScheduler)
-    scheduler.config = {"brief_log_enabled": True}
+    scheduler.config = {}
     result = ScheduledCheckResult(
         reason="interval:20m",
         pushes=[
@@ -222,7 +222,7 @@ def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
 
 def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkeypatch):
     scheduler = object.__new__(NitterTweetScheduler)
-    scheduler.config = {"brief_log_enabled": True}
+    scheduler.config = {}
     source = "list:2081623084780671084"
     result = ScheduledCheckResult(
         reason="interval:20m",

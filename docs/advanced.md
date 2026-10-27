@@ -244,18 +244,17 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 ### 日志设置
 
-| 配置 | 说明 |
-| --- | --- |
-| `brief_log_enabled` | 后台日志简略模式；默认开启。开启后正常流程只保留每轮检查的结果摘要、失败详情、推送成功率和关键 warning/error；**同时收敛 HTML 过程日志**（见下）。关闭后输出详细处理过程日志。 |
+插件不再提供「简略 / 详细」开关。日志分两层：
 
-`brief_log_enabled` 只影响 AstrBot 后台 logger 输出，不影响聊天消息、推送内容、命令返回或发送行为。
+- **INFO 及以上**：只输出每轮检查的结构化任务摘要，以及失败、无效目标、基准重建、媒体待重试等关键 warning/error。摘要包含分组、分组类型、订阅源、触发原因、生效实例、实例轮换轨迹、抓取状态、水位状态、纯文本/黑名单/媒体过滤统计、实际发送比、无效目标、基准重建、warning/error 明细和耗时。
+- **DEBUG**：逐批次抓取过程、每次实例尝试、逐推文 AI 摘要等过程日志。
 
-后台检查完成时会输出一条结构化任务摘要，包含分组、分组类型、订阅源、触发原因、生效实例、实例轮换轨迹、抓取状态、水位状态、纯文本/黑名单/媒体过滤统计、实际发送比、无效目标、基准重建、warning/error 明细和耗时。发送未完成、目标无效、基准重建或媒体待重试时使用 warning 级别；失败时优先看摘要，再按需关闭简略模式查看过程日志。
+想看过程日志时，在 AstrBot 面板把本插件的日志级别调到 `DEBUG`（插件详情页的日志级别设置，对应 `PUT /api/plugins/{id}/log-level`）；不需要时调回 `INFO`。日志详细程度统一由宿主管理，插件内不再维护独立开关。
 
-HTML 简略规则（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）：
+HTML 过程日志（`[NitterTweets][html]`，由 `QuietHtmlLog` 实现）恒定过滤：
 
-- 始终抑制：`session load`（cookie 重载刷屏）
-- 简略开启时再抑制：每次 `search/user/list try`、空页轮换过程行、冷却 skip/defer
+- 抑制：`session load`（cookie 重载刷屏）、每次 `search/user/list try`、空页轮换过程行、冷却 skip/defer
+- 保留：`fail`、`ok after rotate`、`empty after rotate`、`punish`
 - 简略仍保留：`punish`/冷却处罚、实例 fail、ok after rotate、empty after rotate 和页面错误
 
 ### 并发与限流
@@ -461,7 +460,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 ```
 
 因此 Tag/List「拉到 20（List RSS 约 100）但只推几条」通常是正常的：多数已 seen，或被 RT/纯文本滤掉。已有水位时一轮内可能扫描并发现超过首屏数量的新推文，但首次基准和每轮持久化水位仍最多保存 20 个 ID；`max_tweets_per_check` 可限制实际发送量。若页数用尽仍找不到旧基准，日志会明确提示扫描未完整和自动重建基准，旧积压可能被跳过。
-HTTP 层会识别错误页、限流和异常 HTML 响应。自建实例的访问控制应在 Nitter 或反向代理层配置。**默认 `brief_log_enabled=true` 时**不会刷 `session load` / 每次 `try`；主要看 fail、ok after rotate 与结构化检查摘要。关闭简略后才有完整过程日志（`session load` 仍始终抑制）。
+HTTP 层会识别错误页、限流和异常 HTML 响应。自建实例的访问控制应在 Nitter 或反向代理层配置。`session load` / 每次 `try` 恒定抑制，主要看 fail、ok after rotate 与结构化检查摘要；需要逐次尝试细节时把插件日志级别调到 `DEBUG`。
 
 **空结果与全量过滤：** Tag/List 都走 `instances`；多站时会轮换。实例 HTTP 成功但本页没有可用推文时返回空列表，**不当作抓取失败**。调度器会区分两种首轮结果：真正没有原始结果时不写 seen 或扫描水位，下一次非空结果仍只用于初始化，不推历史；有原始结果但全部被纯转推、纯文本或“仅媒体”策略过滤时写入空扫描水位，下一轮符合条件的新帖会作为新内容推送。只有全部实例请求异常时才记抓取失败。
 
