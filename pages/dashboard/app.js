@@ -18,6 +18,8 @@ const state = {
   configDraft: {}, configSearch: "", configActive: "", configSaving: false, providers: [],
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, selectedGroupId: "",
+  // 总览「最新推送记录」独立取数：不受历史页筛选与分页影响
+  recentPushes: [],
   historyGroupId: "", historyUsername: "", historyLimit: 10,
   historyStatus: "", historySelection: new Set(),
   historyOffset: 0,
@@ -39,6 +41,8 @@ const CHANNEL_VIEWS = {
   overview: ["overview", "mirror", "storage"],
   groups: ["groups", "overview"],
   history: ["history"],
+  // 总览「最新推送记录」独立取数：历史页翻页/筛选不波及总览，反之亦然
+  recent: ["overview"],
   config: ["config"],
   logs: ["mirror"],
 };
@@ -903,18 +907,32 @@ async function refreshHistoryData() {
   return data;
 }
 
+/* 总览「最新推送记录」：固定取全局最新的 5 条（无筛选、offset=0）。
+   此前直接切历史页快照的前 5 条，历史页一翻页或加筛选，总览显示的行就与
+   state.history 脱钩，点开时 openHistoryDetail 的 find 落空而静默无反应。 */
+const RECENT_PUSH_LIMIT = 5;
+
+async function refreshRecentPushes() {
+  const data = await apiGet("web/history", { limit: RECENT_PUSH_LIMIT, offset: 0 });
+  state.recentPushes = data.records || [];
+  markData("recent");
+  return state.recentPushes;
+}
+
 async function refreshViewData(view) {
   try {
     if (view === "groups") {
-      // 分组增删会联动清理历史，概览计数也随之变化：两路并行刷新
-      const results = await Promise.allSettled([reloadGroupState(), refreshHistoryData()]);
+      // 分组增删会联动清理历史，概览计数也随之变化：三路并行刷新
+      const results = await Promise.allSettled([
+        reloadGroupState(), refreshHistoryData(), refreshRecentPushes(),
+      ]);
       const failed = results.find(r => r.status === "rejected");
       if (failed) throw failed.reason;
       return true;
     }
     if (view === "config") { await reloadConfigState(); return true; }
     if (view === "history") { await refreshHistoryData(); return true; }
-    await reloadOverviewData();
+    await Promise.all([reloadOverviewData(), refreshRecentPushes()]);
     return true;
   } catch (err) {
     showAlert(`数据刷新失败：${err.message || "请求失败"}`, "warn");
@@ -952,9 +970,9 @@ async function reloadAll(options = {}) {
       configDirtyKeys.clear();
     }
     const results = await Promise.allSettled([
-      reloadGroupState(), reloadConfigState(), refreshHistoryData(),
+      reloadGroupState(), reloadConfigState(), refreshHistoryData(), refreshRecentPushes(),
     ]);
-    const labels = ["分组加载失败", "配置加载失败", "历史加载失败"];
+    const labels = ["分组加载失败", "配置加载失败", "历史加载失败", "最近推送加载失败"];
     const errors = [];
     results.forEach((r, i) => {
       if (r.status === "rejected") {
@@ -1881,17 +1899,18 @@ function renderOverview() {
   ]);
 
   // ---- 4. 最新推送记录（前 5 条）：原型单列布局，紧跟指标卡 ----
-  const records = (state.history?.records || []).slice(0, 5);
+  // 数据来自 refreshRecentPushes（全局最新 5 条），不是历史页快照
+  const records = state.recentPushes;
   const recentSection = h("section", {}, [
     h("div", { class: "section-header", style: { marginTop: "28px" } }, [
       h("div", {}, [
-        h("h3", { text: `最新推送记录（前 ${records.length || 5} 条）` }),
+        h("h3", { text: `最新推送记录（前 ${records.length || RECENT_PUSH_LIMIT} 条）` }),
         h("div", { class: "section-sub", text: "点击任意记录可在右侧抽屉查看详情" }),
       ]),
       h("button", {
         class: "nav-btn",
         type: "button",
-        text: `查看完整 ${state.history?.total_count ?? stats?.total ?? 0} 条记录 →`,
+        text: `查看完整 ${stats?.total ?? state.history?.total_count ?? 0} 条记录 →`,
         onClick: () => switchView("history"),
       }),
     ]),
@@ -2110,8 +2129,10 @@ function historyRow(r) {
 
 /* 推文详情抽屉：正文 / 原推链接 / 投递信息 / 错误追踪终端 / 重推目标选择 */
 function openHistoryDetail(recordId) {
-  const recs = (state.history && state.history.records) || [];
-  const r = recs.find(x => x.id === recordId);
+  // 总览与历史页各有自己的快照：总览读 recentPushes，历史页读 history.records，
+  // 两处都可能点开同一条。只查 history 会让总览的行因历史页翻页/筛选而静默失效。
+  const r = ((state.history && state.history.records) || []).find(x => x.id === recordId)
+    || state.recentPushes.find(x => x.id === recordId);
   if (!r) return;
   const hasMedia = !!r.has_media;
   const body = h("div", { class: "sheet-detail-flow" }, [

@@ -850,6 +850,47 @@ def test_dashboard_terminal_preserves_scroll_and_node():
     )
 
 
+def test_dashboard_overview_recent_pushes_use_own_snapshot():
+    """总览「最新推送记录」必须独立取数，不得切历史页快照。
+
+    历史页快照带分组/状态/作者筛选与分页 offset；总览若复用它，用户翻页或加
+    筛选后总览仍显示旧行，点开时 openHistoryDetail 在 history.records 里查不到
+    该 id 便静默 return——表现为「点击没反应，刷新一下才好」。
+    """
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    # 独立数据通道与独立取数函数
+    assert 'recent: ["overview"]' in source
+    assert "recentPushes: []" in source
+    assert "const RECENT_PUSH_LIMIT = 5;" in source
+    assert "async function refreshRecentPushes()" in source
+    # 取数不带任何筛选，固定 offset=0（全局最新）
+    recent_fn = source.split("async function refreshRecentPushes()", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "limit: RECENT_PUSH_LIMIT" in recent_fn
+    assert "offset: 0" in recent_fn
+    assert "historyGroupId" not in recent_fn
+    assert "historyStatus" not in recent_fn
+    assert "historyOffset" not in recent_fn
+    # 总览渲染不再切历史页快照
+    assert "const records = state.recentPushes;" in source
+    assert "state.history?.records || []).slice(0, 5)" not in source
+    # 详情抽屉两个快照都查：总览点开的行不在 history.records 里
+    detail_fn = source.split("function openHistoryDetail(recordId)", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "state.history.records" in detail_fn
+    assert "state.recentPushes.find" in detail_fn
+    # 三处刷新入口都要带上最近推送
+    assert "reloadGroupState(), refreshHistoryData(), refreshRecentPushes()" in source
+    assert "Promise.all([reloadOverviewData(), refreshRecentPushes()])" in source
+    assert (
+        "reloadGroupState(), reloadConfigState(), refreshHistoryData(), refreshRecentPushes()"
+        in source
+    )
+
+
 def test_dashboard_history_filters_use_shared_custom_select():
     """历史页筛选下拉必须走 createSelect（自绘 .dd），不能退回原生 select。
 
