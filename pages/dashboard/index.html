@@ -8,7 +8,7 @@
     <script>
       // 首帧即落主题类：深色用户不闪亮色首帧，boot 失败（无 bridge）时页面也保持主题。
       // 只能跟随系统偏好：AstrBot Pages iframe 无 allow-same-origin，浏览器存储不可用；
-      // 宿主主题由 app.js 的 initTheme 在 bridge 就绪后接管。
+      // 宿主主题由 core.js 的 initTheme 在 bridge 就绪后接管。
       (function () {
         var dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
         var root = document.documentElement;
@@ -83,7 +83,7 @@
           </div>
           <div class="section-tools">
             <!-- 分组 / 状态筛选：原生 select 的展开层由系统绘制（圆角、选中色不可控），
-                 改由 app.js 的 createSelect 注入同款自绘下拉 -->
+                 改由 ui.js 的 createSelect 注入同款自绘下拉 -->
             <span id="historyGroupSelect" class="select-slot" data-label="分组筛选"></span>
             <span id="historyStatusSelect" class="select-slot" data-label="状态筛选"></span>
             <input id="historyUsername" type="text" placeholder="搜索作者账号…" aria-label="作者筛选" />
@@ -161,7 +161,7 @@
       </div>
     </div>
 
-    <!-- 右侧详情抽屉：分组编辑 / 推文详情共用，内容由 app.js 的 openSheet 填充 -->
+    <!-- 右侧详情抽屉：分组编辑 / 推文详情共用，内容由 ui.js 的 openSheet 填充 -->
     <div id="sheetScrim" class="sheet-scrim"></div>
     <aside id="detailSheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
       <div class="sheet-header">
@@ -209,6 +209,13 @@
     </div>
 
     <script src="/api/plugin/page/bridge-sdk.js"></script>
-    <script src="./app.js"></script>
+    <!-- 经典 script 按依赖顺序加载（分片说明见 core.js 头注），boot 必须最后 -->
+    <script src="./core.js"></script>
+    <script src="./ui.js"></script>
+    <script src="./data.js"></script>
+    <script src="./groups.js"></script>
+    <script src="./views.js"></script>
+    <script src="./config.js"></script>
+    <script src="./boot.js"></script>
   </body>
 </html>

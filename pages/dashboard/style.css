@@ -57,7 +57,7 @@
   --toggle-knob: #ffffff;
   --transition: 0.16s ease;
 
-  /* 顶部吸附体系：--topheader-height 由 app.js 实测导航壳高度后以内联样式覆盖。
+  /* 顶部吸附体系：--topheader-height 由 core.js 实测导航壳高度后以内联样式覆盖。
      通知栈是浮层，不占文档流，因此吸顶元素只需让开顶栏这一条线。 */
   --topheader-height: 52px;
   /* 顶栏下第一吸附线：通知栈的锚点，也是所有次级吸顶元素的 top，禁止手写魔法数 */

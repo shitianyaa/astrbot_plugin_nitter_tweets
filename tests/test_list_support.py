@@ -25,6 +25,25 @@ from shared.utils import TweetItem
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Dashboard JS 已按分节拆为多文件（classic script 按序加载，见 index.html）；
+# 源码字符串断言统一读「按加载顺序拼接」的全文，行为与拆分前的单文件等价。
+DASHBOARD_JS_FILES = (
+    "core.js",
+    "ui.js",
+    "data.js",
+    "groups.js",
+    "views.js",
+    "config.js",
+    "boot.js",
+)
+
+
+def _dashboard_js_source() -> str:
+    return "\n".join(
+        (ROOT / "pages" / "dashboard" / name).read_text(encoding="utf-8")
+        for name in DASHBOARD_JS_FILES
+    )
+
 
 def _tweet(status_id: str, *, retweet: bool = False) -> TweetItem:
     return TweetItem(
@@ -557,7 +576,7 @@ def test_webui_list_update_rejects_invalid_and_duplicate_ids():
 
 
 def test_dashboard_source_contains_list_editor_and_probe_all_payload():
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
@@ -584,7 +603,7 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
     # AstrBot Pages iframe 使用 sandbox="allow-scripts allow-forms allow-downloads"
     # （无 allow-same-origin），opaque origin 下 localStorage 访问必抛 SecurityError，
     # 曾拖垮整页启动（529ee81）。因此页面内禁止访问它（注释里提及不算）。
-    for name, text in (("app.js", source), ("index.html", index)):
+    for name, text in (("dashboard js", source), ("index.html", index)):
         assert not re.search(
             r"localStorage\s*[.\[]|window\s*\[\s*[\"']localStorage[\"']\s*\]", text
         ), f"{name} 不得访问 localStorage：opaque origin 下必抛 SecurityError"
@@ -592,7 +611,7 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
 
 
 def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
@@ -613,7 +632,7 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
 
 
 def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
@@ -685,7 +704,7 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
 def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     """顶部通知栈：多条通知垂直排列不重叠；结果提示停留 NOTICE_TTL 后自动移除，
     进行中提示不挂计时、跟随动作生命周期。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
@@ -758,7 +777,7 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
 def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
     """隔离区的无效推送目标/订阅源必须在编辑器可见、可显式移除，
     且随保存按原文回写（否则保存任意字段都会静默清除它们）。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
 
     # 服务器隔离条目进 draft 并随 payload 回写（有效 + 无效合并）
@@ -801,7 +820,7 @@ def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
 def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
     """击键与保存流水线的性能护栏：rAF 合帧、脏检查缓存、响应原位替换、
     targets 区块局部重建、添加目标免确认。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     # 击键路径：updateDraft 不再每键全量重建列表；rAF 合帧 + WeakMap 缓存
     assert "function scheduleGroupListRender()" in source
     assert "draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);" in source
@@ -839,7 +858,7 @@ def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
 def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
     """切页签必须重新取数（否则别处产生的新数据要等手动刷新），历史筛选
     改变后立即查询，配置搜索跨分组定位并说明命中原因。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
 
     # 进入视图按 TTL 取数；分组的脏编辑不被外部数据打断
     assert "function refreshOnEnter(view)" in source
@@ -872,7 +891,7 @@ def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
 def test_dashboard_log_polling_guards_against_duplicate_appends():
     """日志轮询必须防重复：接口慢于轮询间隔时，两次请求拿到同一批 seq 各自
     concat，同一批日志会在终端里出现两遍（实测 8 条里有 4 条重复）。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
 
     # 在途守卫 + reset 让位
     assert "let logsInFlight = null;" in source
@@ -887,7 +906,7 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
 def test_dashboard_terminal_preserves_scroll_and_node():
     """轮询每 3 秒重渲染终端：必须复用 body 节点，且只在贴底时跟随新日志，
     否则用户往上翻看历史会被强制弹回底部。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
 
     # renderTerminal：记录是否贴底，复用节点，条件跟随
     assert "const wasAtBottom = body" in source
@@ -908,7 +927,7 @@ def test_dashboard_overview_recent_pushes_use_own_snapshot():
     筛选后总览仍显示旧行，点开时 openHistoryDetail 在 history.records 里查不到
     该 id 便静默 return——表现为「点击没反应，刷新一下才好」。
     """
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
 
     # 独立数据通道与独立取数函数
     assert 'recent: ["overview"]' in source
@@ -946,9 +965,9 @@ def test_dashboard_history_filters_use_shared_custom_select():
     """历史页筛选下拉必须走 createSelect（自绘 .dd），不能退回原生 select。
 
     原生 select 的展开层由操作系统绘制，圆角、选中色、字体都不可控；与分组
-    抽屉里的自绘下拉并存时观感割裂。index.html 只留占位 span，由 app.js 注入。
+    抽屉里的自绘下拉并存时观感割裂。index.html 只留占位 span，由 ui.js 注入。
     """
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
@@ -979,7 +998,7 @@ def test_dashboard_history_filters_use_shared_custom_select():
 def test_dashboard_redesign_architecture_guards():
     """重构架构护栏：数据通道 + 视图持久化 + 作用域刷新 + 细粒度渲染 + 动效约束。
     视图容器常驻，切换只冲刷脏视图；动作收尾按当前视图作用域刷新，内容不清空。"""
-    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+    source = _dashboard_js_source()
     style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
     index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
 
