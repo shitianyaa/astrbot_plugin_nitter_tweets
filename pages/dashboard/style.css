@@ -741,26 +741,17 @@ a:hover { text-decoration: underline; }
    History View (流式日志审计台)
    ========================================================================== */
 
-/* 历史页工具条吸顶：通知栈出现时整体让位，不与顶部提示互相遮挡；
-   ::before 补齐吸顶线与导航壳边框之间的缝隙遮罩（同 config-actionbar），
-   否则滚动时内容从 8px 缝隙中穿过，观感是"抖动" */
+/* 历史页（桌面端）：与配置页同款「框架固定 + 仅内容滚动」——标题工具条、
+   批量栏、分页条全部固定，页级不滚动；吸顶元素不存在，抖动无从产生。
+   移动端维持整页滚动。 */
 @media (min-width: 681px) {
-  #historyView > .section-header {
-    position: sticky;
-    top: var(--sticky-top);
-    z-index: 40;
-    background: var(--bg);
-    padding: 8px 0;
-    margin: -8px 0 6px;
+  #historyView.active {
+    display: flex; flex-direction: column;
+    height: calc(100vh - var(--topheader-height) - 112px);
+    height: calc(100dvh - var(--topheader-height) - 112px);
   }
-  #historyView > .section-header::before {
-    content: "";
-    position: absolute;
-    top: -12px; left: 0; right: 0;
-    height: 12px;
-    background: var(--bg);
-    pointer-events: none;
-  }
+  #historyView > .section-header { flex: none; margin-bottom: 10px; }
+  .history-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 }
 
 /* 底部分页条：页码在左，翻页按钮在右 */
@@ -881,6 +872,8 @@ a:hover { text-decoration: underline; }
   padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
 }
 .config-fields { display: flex; flex-direction: column; gap: 10px; }
+/* 字段项实际挂在新滚动容器里，卡片间隔跟容器走（所有断点） */
+.config-fields-scroll { display: flex; flex-direction: column; gap: 10px; }
 
 /* 桌面端：配置页改「框架固定 + 仅字段列表滚动」——操作条/侧栏/分组标题
    全部不动，页级不再滚动，消除滚动时的整体抖动。高度 = 视口 - 顶栏

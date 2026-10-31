@@ -93,9 +93,12 @@
             <button id="historySelectAllBtn" class="nav-btn" type="button">全选本页</button>
           </div>
         </div>
-        <div id="historyOrphanResult"></div>
-        <div id="historyContent"></div>
-        <div id="historyBatchBar" class="history-batch-bar" hidden></div>
+        <!-- 桌面端定高框架：仅此容器滚动，标题工具条/批量栏/分页条全部固定 -->
+        <div class="history-scroll">
+          <div id="historyOrphanResult"></div>
+          <div id="historyContent"></div>
+          <div id="historyBatchBar" class="history-batch-bar" hidden></div>
+        </div>
         <div class="pager-bar">
           <span id="historyPageLabel" class="mono">1 / 1 页 · 共 0 条</span>
           <div class="row">
