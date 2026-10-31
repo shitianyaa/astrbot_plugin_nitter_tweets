@@ -248,7 +248,7 @@ function pushNotice(kind, text, ttl = NOTICE_TTL) {
     h("span", { class: "feedback-message", text }),
     h("button", {
       class: "feedback-close", type: "button", title: "关闭", "aria-label": "关闭提示",
-      onclick: () => dismissNotice(node), text: "×",
+      onclick: () => dismissNotice(node), html: svgIcon("close", 11),
     }),
   ]);
   els.noticeStack.appendChild(node);

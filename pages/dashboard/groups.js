@@ -36,6 +36,20 @@ function snapshotGroup(group) {
   return snap;
 }
 
+/* 输入校验就地反馈：输入框轻微抖动红边，就地错误提示淡入，不向全局通知栈发射打扰弹窗 */
+function flashInputError(input, errNode, message) {
+  if (input) {
+    input.classList.remove("input-error");
+    void input.offsetWidth;
+    input.classList.add("input-error");
+    input.addEventListener("input", () => input.classList.remove("input-error"), { once: true });
+  }
+  if (errNode) {
+    if (message) errNode.textContent = message;
+    errNode.style.display = "";
+  }
+}
+
 /* 保存 payload：无效条目按原文随有效列表一起回写（update_group 不做 UMO 校验、
    原样落盘），落实"完整重建、保留畸形条目"的写回语义；显式删除 = 从列表移除 */
 function buildGroupPayload(d) {
@@ -485,7 +499,10 @@ function renderEntities(group, draft) {
           const v = inp?.value.trim(); if (!v) return;
           const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v)
             || (draft.invalid_watch_users || []).includes(v);
-          if (existing) { showAlert("订阅源已存在", "warn"); return; }
+          if (existing) {
+            flashInputError(inp, document.getElementById("entityError"), "订阅源已存在");
+            return;
+          }
           // 添加是纯增量操作：只写草稿，用户点「保存」时统一提交
           const current = state.groupDrafts[group.group_id]?.[field] || [];
           updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
@@ -494,7 +511,7 @@ function renderEntities(group, draft) {
         }
       }}),
     ]),
-    isList ? h("span", { id: "entityError", class: "field-error", style: { display: "none" } }) : null,
+    h("span", { id: "entityError", class: "field-error", style: { display: "none" } }),
     (!isTag && !isList) ? renderBulkSubscriptions(group) : null,
   ]);
 }
@@ -504,7 +521,11 @@ function renderBulkSubscriptions(group) {
   const run = mode => {
     if (state.actionBusy) return;
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
-    if (!entries.length) { showAlert("请先填写用户名", "warn"); return; }
+    if (!entries.length) {
+      flashInputError(area, null, "");
+      showAlert("请先填写用户名", "warn");
+      return;
+    }
     // 草稿语义：批量增删与单个添加同权，页脚「保存」才落库（保存后由后端
     // 分组解析隔离无效条目），这里不发通知、不直接调接口
     const apply = () => {
@@ -591,7 +612,10 @@ function renderTargets(group, draft) {
     renderTargetChips(group, draft, probe),
     renderInvalidTargets(group, draft, probe),
     h("div", { class: "input-action-row" }, [
-      h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456" }),
+      h("input", {
+        id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456",
+        onInput: () => { const err = document.getElementById("targetError"); if (err) err.style.display = "none"; },
+      }),
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "添加", onClick: () => {
         const inp = document.getElementById("newTargetInput");
         const v = inp?.value.trim(); if (!v) return;
@@ -599,13 +623,17 @@ function renderTargets(group, draft) {
         // 免确认路径用实时 draft 查重，避免保存失败重试时重复追加
         const live = state.groupDrafts[group.group_id] || draft;
         const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);
-        if (known.has(v)) { showAlert("推送目标已存在", "warn"); return; }
+        if (known.has(v)) {
+          flashInputError(inp, document.getElementById("targetError"), "推送目标已存在");
+          return;
+        }
         // 纯增量可逆操作：只写草稿，点页脚「保存」时统一提交
         updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
         if (inp) inp.value = "";
         rerenderTargetChips(group.group_id);
       }}),
     ]),
+    h("span", { id: "targetError", class: "field-error", style: { display: "none" } }),
     renderTargetBlacklist(group, draft),
   ]);
 }
@@ -734,7 +762,11 @@ function renderTargetBlacklist(group, draft) {
     }),
   });
   select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(gid); });
-  const input = h("input", { type: "text", placeholder: "用户名或 @用户名" });
+  const errSpan = h("span", { class: "field-error", style: { display: "none" } });
+  const input = h("input", {
+    type: "text", placeholder: "用户名或 @用户名",
+    onInput: () => { if (errSpan) errSpan.style.display = "none"; },
+  });
   box.append(
     h("div", { class: "input-action-row" }, [
       select, input,
@@ -744,13 +776,17 @@ function renderTargetBlacklist(group, draft) {
         const uname = v.replace(/^@+/, "");
         const removes = new Set(pendingBlacklistFor(gid, selected)?.removes || []);
         const known = new Set([...serverUsers, ...(pendingBlacklistFor(gid, selected)?.adds || [])]);
-        if (known.has(uname) && !removes.has(uname)) { showAlert("用户名已在黑名单", "warn"); return; }
+        if (known.has(uname) && !removes.has(uname)) {
+          flashInputError(input, errSpan, "用户名已在黑名单");
+          return;
+        }
         ensurePendingBlacklist(gid, selected).adds.push(uname);
         input.value = "";
         rerenderBlacklistChips(gid, selected, serverUsers);
         refreshSheetSaveState();
       }}),
     ]),
+    errSpan,
     renderBlacklistChips(group, selected, serverUsers),
   );
   return box;
@@ -780,6 +816,7 @@ function addWatchList(groupId) {
   const showError = msg => {
     if (err) { err.textContent = msg; err.style.display = ""; }
     else showAlert(msg, "warn");
+    if (inp) flashInputError(inp);
   };
   const val = inp?.value.trim(); if (!val) return;
   if (!/^\d{1,20}$/.test(val)) { showError("List ID 必须是 1-20 位正整数"); return; }

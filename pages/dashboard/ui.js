@@ -114,11 +114,13 @@ function openConfirm({ title, desc, confirmText = "确认", danger = false, acti
   els.confirmDesc.replaceChildren(typeof desc === "string" ? document.createTextNode(desc) : desc);
   els.confirmActionBtn.textContent = confirmText;
   els.confirmActionBtn.className = `btn btn-sm ${danger ? "btn-danger" : "btn-primary"}`;
+  els.confirmDialog.classList.toggle("is-danger", !!danger);
   els.confirmDialog.hidden = false;
   els.confirmActionBtn.focus();
 }
 function closeConfirm() {
   els.confirmDialog.hidden = true;
+  els.confirmDialog.classList.remove("is-danger");
   state.pendingAction = null;
   if (state.lastFocusedElement?.focus) state.lastFocusedElement.focus();
 }
