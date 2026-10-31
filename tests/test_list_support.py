@@ -625,9 +625,18 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "renderEntityChips(container, group, draft)" in source
     assert 'id: "saveGroupBtn"' not in source
     assert "function confirmGroupMutation(gid" in source
-    assert 'confirmText: "添加并保存"' in source
-    assert 'confirmText: "移除并保存"' in source
-    assert "function commitGroupField(gid, field, value)" in source
+    # 分组抽屉改为「本地草稿 + 页脚保存」：添加类只写草稿不再弹窗，
+    # 移除类保留确认框但只改草稿，落盘统一走页脚「保存」
+    assert 'confirmText: "移除"' in source
+    assert 'confirmText: "添加并保存"' not in source
+    assert 'confirmText: "移除并保存"' not in source
+    assert (
+        'h("button", {\n      class: "btn btn-sm btn-primary", type: "button", text: "保存",'
+        in source
+    )
+    assert "function refreshSheetSaveState()" in source
+    assert "function closeSheet({ restoreFocus = true, force = false } = {})" in source
+    assert "sheetHasDraftChanges()" in source
     assert "请先添加推送目标。" in source
     assert "hideAlert();\n  state.view = v;" in source
     assert "body.ui-busy .view" in style
@@ -639,11 +648,11 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     )
     # 历史页工具条现由 .section-header 承载吸顶（旧 .toolbar 容器已随表格改版移除）
     assert "#historyView > .section-header {" in style
-    # 次级吸顶统一引用吸附线 + 通知让位；配置操作栏曾与通知栈同位吸顶互相遮挡
+    # 次级吸顶统一引用吸附线；通知栈是浮层，不再参与避让（--banner-offset 已移除）
     assert "--sticky-top: calc(var(--topheader-height) + 8px);" in style
-    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in style
+    assert "top: var(--sticky-top);" in style
     config_bar = style.split(".config-actionbar {", 1)[1].split("}", 1)[0]
-    assert "top: calc(var(--sticky-top) + var(--banner-offset));" in config_bar
+    assert "top: var(--sticky-top);" in config_bar
     # 吸附线兜底值只允许出现在 :root 定义里，禁止各规则再手写 topheader 魔法数
     assert "var(--topheader-height," not in style
     # rerender 分支不再提前解除 busy，结果提示仍原地改写进行中节点
@@ -713,20 +722,15 @@ def test_dashboard_notice_stack_stacks_and_auto_dismisses():
     assert "renderBanner" not in source
     assert "els.alert.hidden" not in source
     assert "els.actionStatus.hidden" not in source
-    # 通知栈高度实测写入 CSS 变量，内容与历史工具栏据此避让
-    assert (
-        'document.documentElement.style.setProperty("--banner-offset", offset)'
-        in source
-    )
-    # 顶距让位挂在真实容器 .main 上（.view-container 在页面里并不存在）
-    assert (
-        ".main { padding: 18px 16px 64px; padding-top: calc(18px + var(--banner-offset)); }"
-        in style
-    )
-    assert (
-        ".main { padding: 16px 14px 56px; padding-top: calc(16px + var(--banner-offset)); }"
-        in style
-    )
+    # 通知栈是浮层：不再把实测高度写成 CSS 变量驱动内容避让。
+    # 旧实现会把 .main 的 padding-top 顶开 40~50px、提示消失后再弹回，
+    # 表现为"页面被通知横幅挤压跳动"，这里锁死回归。
+    assert "--banner-offset" not in style
+    assert "syncBannerOffset" not in source
+    assert "scheduleBannerSync" not in source
+    # 顶距不再挂任何让位变量（.view-container 在页面里并不存在）
+    assert ".main { padding: 18px 16px 64px; }" in style
+    assert ".main { padding: 16px 14px 56px; }" in style
     assert ".view-container" not in style
     # 关闭按钮与“关闭后本动作内不再重建”机制（PR #83 承重点）在 JS 侧的存在
     assert "onclick: () => dismissNotice(node)" in source
@@ -808,14 +812,61 @@ def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
         "state.groups = state.groups.map(g => "
         "(g.group_id === res.group.group_id ? res.group : g));" in source
     )
-    # 添加推送目标免确认（纯增量可逆）；旧确认文案已移除（订阅源添加的保留）
-    assert 'saveGroup(group.group_id, "推送目标已添加")' in source
+    # 添加推送目标只写草稿（不再立即保存，也不弹确认）；落盘走抽屉页脚「保存」
     assert '"添加推送目标？"' not in source
-    assert 'confirmText: "添加并保存"' in source
+    assert 'saveGroup(group.group_id, "推送目标已添加")' not in source
+    assert (
+        'updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);'
+        in source
+    )
     # probe/黑名单只重建 targets 区块，不整棵重建编辑器
     assert "function rerenderTargetsSection(gid)" in source
     assert '"data-editor-section": "targets"' in source
     assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
+    # 保存后抽屉原位重建：不重建会让 chips 停留在旧列表，用户必须关掉重开，
+    # 且移除按钮闭包里捕获的旧下标会指向另一条订阅源，静默删错
+    assert "function refreshGroupSheet(gid)" in source
+    assert (
+        'h("div", { "data-editor-section": "entities" }, renderEntities(g, d))'
+        in source
+    )
+    assert "refreshGroupSheet(gid);" in source
+    assert "next.splice(idx, 1);" not in source
+    assert "current.filter(x => entityValue(x) !== val)" in source
+    assert "current.filter(x => x !== t)" in source
+
+
+def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
+    """切页签必须重新取数（否则别处产生的新数据要等手动刷新），历史筛选
+    改变后立即查询，配置搜索跨分组定位并说明命中原因。"""
+    source = (ROOT / "pages" / "dashboard" / "app.js").read_text(encoding="utf-8")
+
+    # 进入视图按 TTL 取数；分组的脏编辑不被外部数据打断
+    assert "function refreshOnEnter(view)" in source
+    assert "refreshOnEnter(v);" in source
+    assert "const VIEW_ENTER_TTL = 15_000;" in source
+    assert (
+        'if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;'
+        in source
+    )
+    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」
+    assert "const applyHistoryFilters = async () => {" in source
+    assert (
+        'els.historyLimit?.addEventListener("change", applyHistoryFilters);' in source
+    )
+    assert (
+        "els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });"
+        in source
+    )
+    # 条数默认值与页面输入框一致（此前 state=10 / 输入框=20，首屏按 10 条渲染）
+    assert 'historyGroupId: "", historyUsername: "", historyLimit: 20,' in source
+    # 配置搜索：跨分组按命中数定位、手动选组后不被弹走、命中位置有标注
+    assert "function pickConfigGroupForSearch(groups, currentKey, q)" in source
+    assert "state.configSearchPinned" in source
+    assert "function configItemWithMatch(item, q)" in source
+    assert "命中：" in source
+    # 存储运维只用概览数据，不必再拉最近推送
+    assert 'if (view === "storage") {' in source
 
 
 def test_dashboard_log_polling_guards_against_duplicate_appends():
@@ -946,12 +997,9 @@ def test_dashboard_redesign_architecture_guards():
     assert "async function reloadGroupState()" in source
     assert "async function reloadConfigState()" in source
     assert "async function refreshHistoryData()" in source
-    # 布局实测 rAF 合帧（顶栏高度 + 通知栈让位）
-    assert "function scheduleBannerSync()" in source
-    assert (
-        "bannerFrame = requestAnimationFrame(() => { bannerFrame = 0; syncBannerOffset(); });"
-        in source
-    )
+    # 布局实测 rAF 合帧（只剩顶栏高度；通知栈改为浮层后不再写让位变量）
+    assert "scheduleBannerSync" not in source
+    assert "syncBannerOffset" not in source
     assert "frame = requestAnimationFrame(() => {" in source
     # 历史列表：卡片带 recordId，全选/清除走原位勾选同步，不重建卡片
     assert "dataset: { recordId: String(r.id) }" in source

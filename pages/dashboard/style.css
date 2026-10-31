@@ -57,11 +57,10 @@
   --toggle-knob: #ffffff;
   --transition: 0.16s ease;
 
-  /* 顶部吸附体系：默认值兜底，app.js 实测顶栏/横幅高度后以内联样式覆盖 */
+  /* 顶部吸附体系：--topheader-height 由 app.js 实测导航壳高度后以内联样式覆盖。
+     通知栈是浮层，不占文档流，因此吸顶元素只需让开顶栏这一条线。 */
   --topheader-height: 52px;
-  --banner-offset: 0px;
-  /* 顶栏下第一吸附线：通知栈的锚点。凡要给通知让路的次级吸顶元素一律
-     top: calc(var(--sticky-top) + var(--banner-offset))，禁止再手写 topheader 魔法数 */
+  /* 顶栏下第一吸附线：通知栈的锚点，也是所有次级吸顶元素的 top，禁止手写魔法数 */
   --sticky-top: calc(var(--topheader-height) + 8px);
 
   color-scheme: light;
@@ -323,7 +322,6 @@ a:hover { text-decoration: underline; }
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px 24px 80px;
-  padding-top: calc(24px + var(--banner-offset));
 }
 
 .view { display: none; }
@@ -718,7 +716,7 @@ a:hover { text-decoration: underline; }
 @media (min-width: 681px) {
   #historyView > .section-header {
     position: sticky;
-    top: calc(var(--sticky-top) + var(--banner-offset));
+    top: var(--sticky-top);
     z-index: 40;
     background: var(--bg);
     padding: 8px 0;
@@ -796,12 +794,29 @@ a:hover { text-decoration: underline; }
 
 .config-layout { display: grid; grid-template-columns: minmax(210px, 0.28fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .config-actionbar {
-  position: sticky; top: calc(var(--sticky-top) + var(--banner-offset)); z-index: 40;
+  position: sticky; top: var(--sticky-top); z-index: 40;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-sm); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
   margin-bottom: 16px;
+  transition: border-color var(--transition), background-color var(--transition);
+}
+/* 有未保存改动：操作条整体切成强调色（蓝边 + 淡蓝底 + 左侧色条），
+   任意控件一改顶部立刻可见，不必等失焦或滚动到别处 */
+.config-actionbar.is-dirty {
+  border-color: var(--blue-border);
+  background-image: linear-gradient(var(--blue-soft), var(--blue-soft));
+  outline: 1px solid var(--blue-border);
+  outline-offset: -1px;
+}
+.config-actionbar.is-dirty::after {
+  content: "";
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--blue);
 }
 .config-actionbar::before {
   content: "";
@@ -820,7 +835,7 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   gap: 10px;
   position: sticky;
-  top: calc(var(--sticky-top) + var(--banner-offset) + 60px);
+  top: calc(var(--sticky-top) + 60px);
 }
 .config-nav > input { width: 100%; }
 .config-nav-list { display: flex; flex-direction: column; gap: 3px; }
@@ -831,6 +846,9 @@ a:hover { text-decoration: underline; }
 }
 .config-nav-item:hover { background: var(--surface-hover); }
 .config-nav-item.active { background: var(--blue-soft); color: var(--blue); font-weight: 600; }
+/* 搜索期间只按分组名命中、字段 0 命中：保留可见但降权，说明"点进去也没有" */
+.config-nav-item.no-hit { opacity: 0.55; }
+.config-nav-item.no-hit .config-nav-count { font-style: italic; }
 .config-nav-count { font-size: 11px; color: var(--text-muted); }
 .config-nav-item.active .config-nav-count { color: var(--blue); opacity: 0.75; }
 .config-group-head {
@@ -845,6 +863,9 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow-sm);
 }
 .config-item-head { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+/* 搜索态：命中的字段卡加一道左侧强调线，并标注命中位置 */
+.config-item-hit { border-left: 2px solid var(--blue); }
+.config-hit-why { font-size: 11px; color: var(--text-muted); }
 .config-label { font-size: 13px; font-weight: 600; }
 .config-key { font-size: 11px; color: var(--text-muted); }
 .config-reset { padding: 0 6px; font-size: 11px; height: auto; }
@@ -1000,12 +1021,15 @@ a:hover { text-decoration: underline; }
   pointer-events: auto;
 }
 
-/* 通知栈体系：锚在导航壳下方，栈本身穿透点击，栈内节点各自接收事件 */
+/* 通知栈体系：锚在导航壳下方，栈本身穿透点击，栈内节点各自接收事件。
+   纯浮层覆盖：高度不参与文档流，也不再让 .main / 吸顶元素避让——早先按栈
+   实测高度顶开内容，会把整页往下推 40~50px 再弹回，观感是"页面被挤压跳动"。
+   z-index 高于抽屉（950）与遮罩（940）：分组保存的结果提示在抽屉打开时也要可见。 */
 .notice-stack {
   position: fixed;
   top: calc(var(--topheader-height) + 12px);
   right: 18px;
-  z-index: 900;
+  z-index: 1010;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -2180,7 +2204,7 @@ input[type="number"] { -moz-appearance: textfield; }
 @media (max-width: 1000px) {
   .nav-primary { padding: 10px 16px; height: 52px; }
   .nav-tabs { padding: 0 16px; gap: 16px; }
-  .main { padding: 18px 16px 64px; padding-top: calc(18px + var(--banner-offset)); }
+  .main { padding: 18px 16px 64px; }
   .config-layout { grid-template-columns: 1fr; }
   .config-nav { position: static; }
   .hero-card { grid-template-columns: 1fr; }
@@ -2196,7 +2220,7 @@ input[type="number"] { -moz-appearance: textfield; }
   .editor-grid { grid-template-columns: 1fr; }
   .metrics-row { grid-template-columns: 1fr; }
   .groups-grid { grid-template-columns: 1fr; }
-  .main { padding: 16px 14px 56px; padding-top: calc(16px + var(--banner-offset)); }
+  .main { padding: 16px 14px 56px; }
   /* 窄屏去掉固定时间列，正文独占一行，时间落到副标题行里换行显示 */
   .deploy-row { grid-template-columns: 26px minmax(0, 1fr) 32px; row-gap: 6px; }
   .deploy-time { grid-column: 2 / 3; text-align: left; }

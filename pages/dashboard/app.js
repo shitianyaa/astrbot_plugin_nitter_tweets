@@ -15,16 +15,17 @@ const state = {
   busyLabel: "",
   overview: null, groups: [], groupDrafts: {}, targetProbeResults: {},
   config: null, configError: false,
-  configDraft: {}, configSearch: "", configActive: "", configSaving: false, providers: [],
+  configDraft: {}, configSearch: "", configSearchPinned: false, configActive: "",
+  configSaving: false, providers: [],
   targetBlacklists: [], targetBlacklistTarget: "",
   history: null, selectedGroupId: "",
   // 总览「最新推送记录」独立取数：不受历史页筛选与分页影响
   recentPushes: [],
-  historyGroupId: "", historyUsername: "", historyLimit: 10,
+  historyGroupId: "", historyUsername: "", historyLimit: 20,
   historyStatus: "", historySelection: new Set(),
   historyOffset: 0,
   pendingAction: null, lastFocusedElement: null,
-  statusNotice: null, statusNoticeClosed: false, bannerOffset: "",
+  statusNotice: null, statusNoticeClosed: false,
   // 诊断终端：插件日志环缓冲（web/logs），只在 mirror 视图可见时轮询
   logs: [], logsAfterSeq: 0, logsMax: 0, logsTimer: 0,
   // 右侧抽屉 / ⌘K 面板 / 新建弹窗的焦点恢复锚点
@@ -111,7 +112,7 @@ function initStickyOffsets() {
     });
   };
   sync();
-  window.addEventListener("resize", scheduleBannerSync);
+  window.addEventListener("resize", sync);
   if (typeof ResizeObserver === "function") {
     new ResizeObserver(sync).observe(shell);
   } else {
@@ -248,7 +249,6 @@ function pushNotice(kind, text, ttl = NOTICE_TTL) {
     dismissNotice(els.noticeStack.firstElementChild);
   }
   armNoticeTimer(node, ttl);
-  scheduleBannerSync();
   return node;
 }
 
@@ -261,7 +261,6 @@ function dismissNotice(node) {
     state.statusNotice = null;
     state.statusNoticeClosed = true;
   }
-  scheduleBannerSync();
 }
 
 function clearNotices(kinds) {
@@ -285,28 +284,15 @@ function syncStatusNotice() {
     const message = state.statusNotice.querySelector(".feedback-message");
     if (message && message.textContent !== text) message.textContent = text;
     state.statusNotice.dataset.key = noticeKey("status", text);
-    scheduleBannerSync();
     return;
   }
   if (state.statusNoticeClosed) return;
   state.statusNotice = pushNotice("status", text, 0);
 }
 
-/* 通知栈高度随条数与换行变化，用实测高度驱动内容预留与历史工具栏吸顶偏移；
-   连续出入栈经 rAF 合帧，一帧只做一次“读布局 → 写变量” */
-let bannerFrame = 0;
-function scheduleBannerSync() {
-  if (bannerFrame) return;
-  bannerFrame = requestAnimationFrame(() => { bannerFrame = 0; syncBannerOffset(); });
-}
-function syncBannerOffset() {
-  const height = els.noticeStack ? Math.ceil(els.noticeStack.getBoundingClientRect().height) : 0;
-  const offset = height ? `${height + 8}px` : "0px";
-  if (state.bannerOffset === offset) return;
-  state.bannerOffset = offset;
-  document.documentElement.style.setProperty("--banner-offset", offset);
-}
-/* 结果提示出现时，直接把进行中提示原地改写成结果，避免“移除 + 新增”两次跳动 */
+/* 通知栈是纯浮层：高度不参与文档流，不再做任何布局同步（历史方案曾按栈实测
+   高度写 --banner-offset 避让吸顶栏，结果是每弹一条提示整页下移再弹回）。
+   结果提示出现时，直接把进行中提示原地改写成结果，避免“移除 + 新增”两次跳动 */
 function promoteStatusNotice(kind, text, ttl = NOTICE_TTL) {
   const node = state.statusNotice;
   const message = node && node.querySelector(".feedback-message");
@@ -320,7 +306,6 @@ function promoteStatusNotice(kind, text, ttl = NOTICE_TTL) {
   armNoticeTimer(node, ttl);
   state.statusNotice = null;
   state.statusNoticeClosed = true;   // 本次动作内不再重建进行中提示
-  scheduleBannerSync();
   return node;
 }
 
@@ -497,11 +482,14 @@ function closeConfirm() {
    开合、遮罩、Escape 关闭与焦点圈/焦点恢复。
    ========================================================================== */
 let sheetOpen = false;
+/* 抽屉用途：分组编辑器要拦截「有未保存修改时关闭」，推文详情不需要 */
+let sheetKind = "";
 
-function openSheet({ title, body, footer = [], onClose = null }) {
+function openSheet({ title, body, footer = [], onClose = null, kind = "" }) {
   if (!els.detailSheet) return;
   if (!sheetOpen) state.sheetReturnFocus = document.activeElement;
   sheetOpen = true;
+  sheetKind = kind;
   els.sheetTitle.textContent = title || "详情";
   els.sheetBody.replaceChildren(...(Array.isArray(body) ? body : [body]));
   els.sheetFooter.replaceChildren(...(Array.isArray(footer) ? footer.filter(Boolean) : [footer].filter(Boolean)));
@@ -516,9 +504,21 @@ function openSheet({ title, body, footer = [], onClose = null }) {
   focusTarget?.focus?.();
 }
 
-function closeSheet({ restoreFocus = true } = {}) {
+/* 关闭抽屉。分组编辑器有未保存修改时先确认：点空白处/关闭按钮/Escape 都走这里，
+   确认后丢弃草稿，取消则留在原地继续编辑。 */
+function closeSheet({ restoreFocus = true, force = false } = {}) {
   if (!els.detailSheet || !sheetOpen) return;
+  if (!force && sheetKind === "group" && sheetHasDraftChanges()) {
+    openConfirm({
+      title: "放弃未保存的修改？",
+      desc: "当前分组有未保存的改动，关闭后这些修改将丢失。",
+      confirmText: "放弃并关闭", danger: true,
+      action: () => { discardGroupDraft(); closeSheet({ restoreFocus, force: true }); },
+    });
+    return;
+  }
   sheetOpen = false;
+  sheetKind = "";
   const onClose = els.detailSheet._onClose;
   els.detailSheet._onClose = null;
   els.detailSheet.classList.remove("open");
@@ -932,6 +932,11 @@ async function refreshViewData(view) {
     }
     if (view === "config") { await reloadConfigState(); return true; }
     if (view === "history") { await refreshHistoryData(); return true; }
+    if (view === "storage") {
+      // 存储运维只用概览里的 maintenance，不需要再拉最近推送
+      await reloadOverviewData();
+      return true;
+    }
     await Promise.all([reloadOverviewData(), refreshRecentPushes()]);
     return true;
   } catch (err) {
@@ -1084,6 +1089,8 @@ function updateDraft(groupId, field, val) {
   d[field] = val;
   draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);
   scheduleGroupListRender();
+  // 抽屉里的控件只改草稿：页脚保存按钮要立刻从「已保存」变成可点的「保存」
+  if (groupId === state.selectedGroupId) refreshSheetSaveState();
 }
 
 /* --------------------------------------------------------------------------
@@ -1237,6 +1244,9 @@ function selectGroup(gid, { force = false } = {}) {
    内容分区与旧左右分栏一致：基础开关 / 订阅源 / 推送目标 / 黑名单，
    差异只在容器形态（抽屉）与打开时机（点卡片进入）。
    -------------------------------------------------------------------------- */
+/* 分组编辑器是"本地草稿 + 显式保存"：所有控件只改 draft 并就地刷新，
+   页脚「保存」一次性提交。删除类操作仍然弹确认框询问（移除订阅源/推送目标/
+   黑名单），保存类不再逐次弹窗打断。 */
 function openGroupSheet(gid) {
   const g = state.groups.find(x => x.group_id === gid);
   if (!g) return;
@@ -1251,17 +1261,16 @@ function openGroupSheet(gid) {
         type: "text",
         value: d.name,
         onInput: e => updateDraft(gid, "name", e.target.value.trim()),
-        onChange: () => saveGroup(gid, "分组名称已保存"),
       }),
     ]),
     h("div", { class: "editor-grid" }, [
-      toggleRow(d.enabled, "启用此分组", v => commitGroupField(gid, "enabled", v)),
-      toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => commitGroupField(gid, "interval_check_enabled", v)),
-      toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => commitGroupField(gid, "filter_reposts_enabled", v)),
-      toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => commitGroupField(gid, "filter_plain_text_enabled", v)),
-      toggleRow(d.media_only_enabled, "仅保留含媒体推文（图片/视频）", v => commitGroupField(gid, "media_only_enabled", v)),
-      toggleRow(d.omit_status_url, "省略原推链接", v => commitGroupField(gid, "omit_status_url", v)),
-      toggleRow(d.hide_original_when_translated, "翻译后隐藏原文", v => commitGroupField(gid, "hide_original_when_translated", v)),
+      toggleRow(d.enabled, "启用此分组", v => updateDraft(gid, "enabled", v)),
+      toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
+      toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(gid, "filter_reposts_enabled", v)),
+      toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(gid, "filter_plain_text_enabled", v)),
+      toggleRow(d.media_only_enabled, "仅保留含媒体推文（图片/视频）", v => updateDraft(gid, "media_only_enabled", v)),
+      toggleRow(d.omit_status_url, "省略原推链接", v => updateDraft(gid, "omit_status_url", v)),
+      toggleRow(d.hide_original_when_translated, "翻译后隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
     ]),
     h("span", { class: "hint-line", text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
     h("label", { class: "field" }, [
@@ -1282,12 +1291,12 @@ function openGroupSheet(gid) {
           }
           updateDraft(gid, "daily_check_times", valid);
         },
-        onChange: () => saveGroup(gid, "定时设置已保存"),
       }),
       h("span", { id: "dailyTimesHint", class: "field-error", style: { display: "none" } }),
     ]),
     // 订阅源：完整能力（chips / 无效隔离 / 批量导入 / 添加）
-    renderEntities(g, d),
+    // data-editor-section 供 refreshGroupSheet 在保存后原位重建
+    h("div", { "data-editor-section": "entities" }, renderEntities(g, d)),
     // 推送目标：data-editor-section 供 rerenderTargetsSection 局部重建
     h("div", { "data-editor-section": "targets" }, renderTargets(g, d)),
   ]);
@@ -1295,12 +1304,51 @@ function openGroupSheet(gid) {
   const footer = [
     h("span", { class: "mono hint", text: g.group_id }),
     g.group_id !== "default"
-      ? h("button", { class: "btn btn-sm btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet(); confirmDeleteGroup(gid); } })
+      ? h("button", { class: "btn btn-sm btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet({ force: true }); confirmDeleteGroup(gid); } })
       : null,
     h("button", { class: "btn btn-sm", type: "button", text: "关闭", onClick: () => closeSheet() }),
+    h("button", {
+      class: "btn btn-sm btn-primary", type: "button", text: "保存",
+      "data-sheet-save": "true",
+      onClick: () => saveGroup(gid, "分组已保存"),
+    }),
   ];
 
-  openSheet({ title: `编辑分组 · ${d.name || g.name}`, body, footer });
+  openSheet({ title: `编辑分组 · ${d.name || g.name}`, body, footer, kind: "group" });
+  refreshSheetSaveState();
+}
+
+/* 抽屉是否有未保存改动：与卡片上的「未保存」徽标同一口径（isGroupDirty） */
+function sheetHasDraftChanges() {
+  const gid = state.selectedGroupId;
+  return !!gid && isGroupDirty(gid);
+}
+
+/* 丢弃当前分组草稿，回到服务器快照 */
+function discardGroupDraft() {
+  const gid = state.selectedGroupId;
+  const g = state.groups.find(x => x.group_id === gid);
+  if (!g) return;
+  state.groupDrafts[gid] = snapshotGroup(g);
+  delete state.targetProbeResults[gid];
+  markData("groups");
+  refreshGroupSheet(gid);
+}
+
+/* 页脚保存按钮与抽屉标题跟随草稿状态：有改动时按钮高亮并显示「保存」，
+   无改动时置灰为「已保存」，避免用户反复点保存却看不出结果。 */
+function refreshSheetSaveState() {
+  const btn = els.sheetFooter?.querySelector("[data-sheet-save]");
+  if (!btn) return;
+  const dirty = sheetHasDraftChanges();
+  btn.disabled = !dirty || state.actionBusy;
+  btn.textContent = dirty ? "保存" : "已保存";
+  const gid = state.selectedGroupId;
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = state.groupDrafts[gid];
+  if (els.sheetTitle && g) {
+    els.sheetTitle.textContent = `编辑分组 · ${(d && d.name) || g.name}`;
+  }
 }
 
 
@@ -1312,6 +1360,21 @@ function rerenderTargetsSection(gid) {
   const section = els.sheetBody?.querySelector('[data-editor-section="targets"]');
   if (!g || !d || !section) { if (sheetOpen) openGroupSheet(gid); return; }
   section.replaceChildren(renderTargets(g, d));
+}
+
+/* 抽屉原位刷新：chips 的移除按钮闭包捕获的是渲染时的下标，抽屉不跟着 draft
+   重建就会按旧下标删错条目，用户也必须关掉抽屉重开才能看到结果。
+   只重建 entities/targets 两个数据分区，标题与开关保持原节点（不打断焦点与输入法）。 */
+function refreshGroupSheet(gid) {
+  if (!sheetOpen || gid !== state.selectedGroupId) return;
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = g ? (state.groupDrafts[g.group_id] || snapshotGroup(g)) : null;
+  if (!g || !d) return;
+  const entities = els.sheetBody?.querySelector('[data-editor-section="entities"]');
+  if (entities) entities.replaceChildren(renderEntities(g, d));
+  rerenderTargetsSection(gid);
+  if (els.sheetTitle) els.sheetTitle.textContent = `编辑分组 · ${d.name || g.name}`;
+  refreshSheetSaveState();
 }
 
 function toggleRow(checked, label, onChange) {
@@ -1327,22 +1390,24 @@ function renderEntityChips(container, group, draft) {
   const isList = group.group_type === "list";
   const icon = isTag ? "hash" : isList ? "rss" : "user";
   const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
-  const nodes = (draft[field] || []).map((item, idx) => {
-    const val = typeof item === "object" ? item.query : item;
+  // 按值删除而不是按渲染时下标：确认弹窗挂着时 draft 可能已被别的动作改过，
+  // 下标会指向另一条订阅源，静默删错。
+  const entityValue = item => (item && typeof item === "object" ? item.query : item);
+  const nodes = (draft[field] || []).map(item => {
+    const val = entityValue(item);
     return h("span", { class: "chip mono" }, [
       iconEl(icon, 12), val,
       h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${val}`, html: svgIcon("close", 12), onClick: () => {
         if (state.actionBusy) return;
         confirmGroupMutation(group.group_id, {
           title: "移除订阅源？",
-          desc: `将移除 ${val}，确认后立即保存并刷新。`,
-          confirmText: "移除并保存",
+          desc: `将从草稿中移除 ${val}，点击抽屉底部的「保存」后生效。`,
+          confirmText: "移除",
           danger: true,
-          successText: "订阅源已移除",
+          successText: false,
           mutate: () => {
-            const next = [...(state.groupDrafts[group.group_id]?.[field] || [])];
-            next.splice(idx, 1);
-            updateDraft(group.group_id, field, next);
+            const current = state.groupDrafts[group.group_id]?.[field] || [];
+            updateDraft(group.group_id, field, current.filter(x => entityValue(x) !== val));
           },
         });
       }}),
@@ -1350,7 +1415,7 @@ function renderEntityChips(container, group, draft) {
   });
   // 无效订阅源（仅博主分组的 watch_users 有隔离区）：可见、可显式移除
   if (!isTag && !isList) {
-    (draft.invalid_watch_users || []).forEach((val, idx) => {
+    (draft.invalid_watch_users || []).forEach(val => {
       nodes.push(h("span", { class: "chip chip-invalid mono", title: val }, [
         iconEl(icon, 12), val,
         h("span", { class: "badge badge-danger", text: "无效" }),
@@ -1358,14 +1423,13 @@ function renderEntityChips(container, group, draft) {
           if (state.actionBusy) return;
           confirmGroupMutation(group.group_id, {
             title: "移除无效订阅源？",
-            desc: `将从配置中移除 ${val}，确认后立即保存并刷新。`,
-            confirmText: "移除并保存",
+            desc: `将从草稿中移除 ${val}，点击抽屉底部的「保存」后生效。`,
+            confirmText: "移除",
             danger: true,
-            successText: "无效订阅源已移除",
+            successText: false,
             mutate: () => {
-              const next = [...(state.groupDrafts[group.group_id]?.invalid_watch_users || [])];
-              next.splice(idx, 1);
-              updateDraft(group.group_id, "invalid_watch_users", next);
+              const current = state.groupDrafts[group.group_id]?.invalid_watch_users || [];
+              updateDraft(group.group_id, "invalid_watch_users", current.filter(x => x !== val));
             },
           });
         }}),
@@ -1402,16 +1466,10 @@ function renderEntities(group, draft) {
           const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v)
             || (draft.invalid_watch_users || []).includes(v);
           if (existing) { showToast("订阅源已存在"); return; }
-          confirmGroupMutation(group.group_id, {
-            title: "添加订阅源？",
-            desc: `将添加 ${v}，确认后立即保存并刷新。`,
-            confirmText: "添加并保存",
-            successText: "订阅源已添加",
-            mutate: () => {
-              const current = state.groupDrafts[group.group_id]?.[field] || [];
-              updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
-            },
-          });
+          // 添加是纯增量操作：只写草稿，用户点「保存」时统一提交
+          const current = state.groupDrafts[group.group_id]?.[field] || [];
+          updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
+          if (inp) inp.value = "";
         }
       }}),
     ]),
@@ -1427,23 +1485,30 @@ function renderBulkSubscriptions(group) {
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
     if (!entries.length) { showToast("请先填写用户名"); return; }
     const importing = endpoint.endsWith("/import");
+    // 批量接口直接落库（不经抽屉草稿），所以移除仍要确认，导入免确认
+    const commit = () => withAction(async () => {
+      const res = await apiPost(endpoint, { group_id: group.group_id, entries });
+      delete state.groupDrafts[group.group_id];
+      await reloadGroupState();
+      const s = res?.summary || {};
+      const notes = [
+        s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
+        s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
+        s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
+      ].filter(Boolean);
+      return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
+    }, undefined, { reload: false }).then(() => refreshGroupSheet(group.group_id));
+    if (importing) {
+      commit();
+      area.value = "";
+      return;
+    }
     openConfirm({
-      title: importing ? "确认导入订阅？" : "确认移除订阅？",
-      desc: `共 ${entries.length} 个用户名，确认后立即保存并刷新。`,
-      confirmText: importing ? "导入并保存" : "移除并保存",
-      danger: !importing,
-      action: () => withAction(async () => {
-        const res = await apiPost(endpoint, { group_id: group.group_id, entries });
-        delete state.groupDrafts[group.group_id];
-        await reloadGroupState();
-        const s = res?.summary || {};
-        const notes = [
-          s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
-          s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
-          s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
-        ].filter(Boolean);
-        return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
-      }, undefined, { reload: false }),
+      title: "确认批量移除订阅？",
+      desc: `共 ${entries.length} 个用户名，确认后立即从配置中移除。`,
+      confirmText: "移除",
+      danger: true,
+      action: commit,
     });
   };
   return h("div", { class: "subsection" }, [
@@ -1474,7 +1539,7 @@ function renderTargets(group, draft) {
       ]),
     ]),
     h("div", { class: "chip-list" },
-      targets.map((t, idx) => {
+      targets.map(t => {
         const info = probe?.targets?.find(x => x.umo === t);
         const { label, id: targetId } = replayTargetParts(t);
         return h("span", { class: "chip", title: t }, [
@@ -1485,14 +1550,13 @@ function renderTargets(group, draft) {
             if (state.actionBusy) return;
             confirmGroupMutation(group.group_id, {
               title: "移除推送目标？",
-              desc: `将移除 ${t}，确认后立即保存并刷新。`,
-              confirmText: "移除并保存",
+              desc: `将从草稿中移除 ${t}，点击抽屉底部的「保存」后生效。`,
+              confirmText: "移除",
               danger: true,
-              successText: "推送目标已移除",
+              successText: false,
               mutate: () => {
-                const next = [...(state.groupDrafts[group.group_id]?.push_targets || [])];
-                next.splice(idx, 1);
-                updateDraft(group.group_id, "push_targets", next);
+                const current = state.groupDrafts[group.group_id]?.push_targets || [];
+                updateDraft(group.group_id, "push_targets", current.filter(x => x !== t));
               },
             });
           }}),
@@ -1510,9 +1574,9 @@ function renderTargets(group, draft) {
         const live = state.groupDrafts[group.group_id] || draft;
         const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);
         if (known.has(v)) { showToast("推送目标已存在"); return; }
-        // 纯增量可逆操作，不走确认弹窗（移除/删除类仍保留确认）
+        // 纯增量可逆操作：只写草稿，点页脚「保存」时统一提交
         updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
-        saveGroup(group.group_id, "推送目标已添加");
+        if (inp) inp.value = "";
       }}),
     ]),
     renderTargetBlacklist(group, draft),
@@ -1526,21 +1590,20 @@ function renderInvalidTargets(group, draft, probe) {
   return h("div", { class: "vstack-sm" }, [
     h("span", { class: "hint", text: "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" }),
     h("div", { class: "chip-list" },
-      invalid.map((t, idx) => h("span", { class: "chip chip-invalid", title: t }, [
+      invalid.map(t => h("span", { class: "chip chip-invalid", title: t }, [
         h("span", { text: t }),
         probe?.targets?.find(x => x.umo === t.trim()) ? h("span", { class: "badge badge-danger", text: "无效" }) : null,
         h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${t}`, html: svgIcon("close", 12), onClick: () => {
           if (state.actionBusy) return;
           confirmGroupMutation(group.group_id, {
             title: "移除无效推送目标？",
-            desc: `将从配置中移除 ${t}，确认后立即保存并刷新。`,
-            confirmText: "移除并保存",
+            desc: `将从草稿中移除 ${t}，点击抽屉底部的「保存」后生效。`,
+            confirmText: "移除",
             danger: true,
-            successText: "无效推送目标已移除",
+            successText: false,
             mutate: () => {
-              const next = [...(state.groupDrafts[group.group_id]?.invalid_push_targets || [])];
-              next.splice(idx, 1);
-              updateDraft(group.group_id, "invalid_push_targets", next);
+              const current = state.groupDrafts[group.group_id]?.invalid_push_targets || [];
+              updateDraft(group.group_id, "invalid_push_targets", current.filter(x => x !== t));
             },
           });
         }}),
@@ -1581,13 +1644,14 @@ function renderTargetBlacklist(group, draft) {
         const v = input.value.trim();
         if (!v) return;
         if (users.includes(v.replace(/^@+/, ""))) { showToast("用户名已在黑名单"); return; }
-        confirmTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")], "加入黑名单？", "加入并保存", false);
+        // 纯增量操作：直接提交，不再弹窗打断（移除类仍确认）
+        saveTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")]);
       }}),
     ]),
     h("div", { class: "chip-list" }, users.length
       ? users.map(u => h("span", { class: "chip mono" }, [
           `@${u}`,
-          h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${u}`, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(group.group_id, selected, users.filter(x => x !== u), "移除黑名单用户？", "移除并保存", true) }),
+          h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${u}`, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(group.group_id, selected, users.filter(x => x !== u), "移除黑名单用户？", "移除", true) }),
         ]))
       : [h("span", { class: "hint-subtle", text: "黑名单为空" })]),
   );
@@ -1625,22 +1689,17 @@ function addWatchList(groupId) {
   const d = state.groupDrafts[groupId]; if (!d) return;
   if ((d.watch_lists || []).includes(val)) { showError("List ID 已存在"); return; }
   if (err) err.style.display = "none";
-  confirmGroupMutation(groupId, {
-    title: "添加 List 订阅？",
-    desc: `将添加 List ${val}，确认后立即保存并刷新。`,
-    confirmText: "添加并保存",
-    successText: "List 订阅已添加",
-    mutate: () => {
-      const current = state.groupDrafts[groupId]?.watch_lists || [];
-      updateDraft(groupId, "watch_lists", [...current, val]);
-    },
-  });
+  // 纯增量操作：只写草稿，点页脚「保存」时统一提交
+  updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]);
+  if (inp) inp.value = "";
 }
 
 /* --------------------------------------------------------------------------
    Group Actions
    -------------------------------------------------------------------------- */
-function confirmGroupMutation(gid, { title, desc, confirmText, danger = false, successText, mutate }) {
+/* 删除类操作（移除订阅源/推送目标/黑名单用户）走确认框，确认后只改草稿并就地
+   刷新抽屉，真正落盘由页脚「保存」统一完成。 */
+function confirmGroupMutation(gid, { title, desc, confirmText, danger = false, successText = false, mutate }) {
   openConfirm({
     title,
     desc,
@@ -1648,14 +1707,10 @@ function confirmGroupMutation(gid, { title, desc, confirmText, danger = false, s
     danger,
     action: async () => {
       mutate();
-      await saveGroup(gid, successText || "分组已保存");
+      refreshGroupSheet(gid);
+      if (successText) showAlert(successText);
     },
   });
-}
-
-function commitGroupField(gid, field, value) {
-  updateDraft(gid, field, value);
-  return saveGroup(gid, "分组设置已保存");
 }
 
 function createGroup() {
@@ -1722,7 +1777,19 @@ async function saveGroup(gid, successText = "分组已保存") {
       await reloadGroupState();
     }
     syncGroupDrafts();
-  }, successText, { reload: false, rerender: () => { markData("groups"); markData("overview"); } });
+  }, successText, {
+    reload: false,
+    rerender: () => {
+      markData("groups");
+      markData("overview");
+      // 抽屉仍开着就原位重建分区并复位保存按钮（草稿已清空 →「已保存」置灰）。
+      // 用局部刷新而不是 openGroupSheet：整棵重建会把抽屉滚回顶部、丢掉焦点。
+      if (sheetOpen && gid === state.selectedGroupId) {
+        refreshGroupSheet(gid);
+        refreshSheetSaveState();
+      }
+    },
+  });
 }
 
 function confirmDeleteGroup(gid) {
@@ -2720,13 +2787,50 @@ function buildConfigIndex() {
   }
 }
 
+/* 搜索命中判定：描述 / 键名 / 说明文字都参与匹配。分组名也参与，用户搜
+   "翻译"时 AI 翻译组即使没有单个字段命中，也要能在导航里定位到。 */
+function configItemMatches(item, q) {
+  if (!q) return true;
+  return (item.description || "").toLowerCase().includes(q)
+    || item.key.toLowerCase().includes(q)
+    || (item.hint || "").toLowerCase().includes(q);
+}
+
+function configGroupMatches(group, q) {
+  if (!q) return true;
+  if ((group.name || "").toLowerCase().includes(q)) return true;
+  return (group.items || []).some(i => configItemMatches(i, q));
+}
+
 function configItemsOf(group) {
   const q = state.configSearch.trim().toLowerCase();
   if (!q) return group.items;
-  return group.items.filter(
-    i => (i.description || "").toLowerCase().includes(q)
-      || i.key.toLowerCase().includes(q)
-  );
+  return group.items.filter(i => configItemMatches(i, q));
+}
+
+/* 搜索时该停在哪个分组：默认落在命中字段最多的分组（搜"翻译"应去 AI 翻译，
+   而不是碰巧有一条说明命中的基础设置）。用户手动点过导航后不再自动跳，
+   否则想看 0 命中分组时会被弹回去。字段全 0 命中时退回按分组名命中的分组。 */
+function pickConfigGroupForSearch(groups, currentKey, q) {
+  const current = groups.find(g => g.key === currentKey);
+  if (state.configSearchPinned && current) return current;
+  let best = null;
+  let bestHits = 0;
+  for (const g of groups) {
+    const hits = configItemsOf(g).length;
+    if (hits > bestHits) { best = g; bestHits = hits; }
+  }
+  return best || groups.find(g => configGroupMatches(g, q)) || current || groups[0];
+}
+
+/* 搜索态下导航顺序：命中的分组按命中数降序排在前面，0 命中的保持原相对顺序垫后 */
+function configGroupsForNav(groups, q) {
+  if (!q) return groups;
+  const hit = groups.filter(g => configItemsOf(g).length > 0)
+    .sort((a, b) => configItemsOf(b).length - configItemsOf(a).length);
+  const named = groups.filter(g => !hit.includes(g) && configGroupMatches(g, q));
+  const rest = groups.filter(g => !hit.includes(g) && !named.includes(g));
+  return [...hit, ...named, ...rest];
 }
 
 function configDirtyCount(group) {
@@ -2756,6 +2860,11 @@ function renderConfig() {
   if (!state.configActive || !groups.some(g => g.key === state.configActive)) {
     state.configActive = groups[0].key;
   }
+  // 搜索结果散落在多个分组时，落在命中最多的那一组：搜"翻译"时基础设置可能
+  // 只有 1 条说明里带这个词，AI 翻译有 7 条，停在基础设置会被当成搜错了。
+  const searchQuery = state.configSearch.trim().toLowerCase();
+  if (!searchQuery) state.configSearchPinned = false;
+  else state.configActive = pickConfigGroupForSearch(groups, state.configActive, searchQuery).key;
   const active = groups.find(g => g.key === state.configActive);
 
   // 左:分组导航
@@ -2765,7 +2874,7 @@ function renderConfig() {
       type: "text", placeholder: "搜索配置…", value: state.configSearch,
       onInput: onConfigSearchInput,
     }),
-    h("div", { class: "config-nav-list" }, groups.map(configNavItem)),
+    h("div", { class: "config-nav-list" }, configGroupsForNav(groups, searchQuery).map(configNavItem)),
   ]);
 
   // 右:当前组
@@ -2797,6 +2906,9 @@ function renderConfigBarState() {
   const root = els.configView; if (!root) return;
   const slot = root.querySelector(".config-bar-state");
   const total = configDirtyKeys.size;
+  // 有未保存改动时整条操作条切到强调色：任何一处控件一改，顶部立刻可见
+  const bar = root.querySelector(".config-actionbar");
+  if (bar) bar.classList.toggle("is-dirty", total > 0 && !state.configJustSaved);
   if (slot) {
     if (state.configJustSaved) {
       slot.replaceChildren(h("span", { class: "badge badge-ok", text: "✓ 配置已保存并热重载" }));
@@ -2842,44 +2954,72 @@ function updateConfigChrome() {
 
 function configNavItem(g) {
   const count = configDirtyCount(g);
+  const q = state.configSearch.trim().toLowerCase();
+  const hit = configItemsOf(g).length;
+  // 搜索期间导航只列出有命中的分组（含仅分组名命中的），点进去后搜索词保留，
+  // 右栏仍按同一关键词过滤，用户能看到自己搜的是什么。
+  const badge = count > 0
+    ? h("span", { class: "badge badge-warn", text: `${count} 改` })
+    : h("span", { class: "config-nav-count", text: q ? `${hit} 项` : `${g.items.length} 项` });
   return h("div", {
-    class: `config-nav-item${g.key === state.configActive ? " active" : ""}`,
+    class: `config-nav-item${g.key === state.configActive ? " active" : ""}${q && !hit ? " no-hit" : ""}`,
     dataset: { configGroup: g.key },
-    // 草稿跨组平铺、切组不丢弃任何东西,无需拦截确认
-    onClick: () => { if (state.configActive !== g.key) { state.configActive = g.key; state.configSearch = ""; renderConfig(); } },
+    // 草稿跨组平铺、切组不丢弃任何东西,无需拦截确认；搜索词也保留，
+    // 但只做局部刷新，避免整树重建把导航滚动位置和输入焦点一起丢掉
+    onClick: () => {
+      if (state.configActive === g.key) return;
+      state.configActive = g.key;
+      state.configSearchPinned = true;   // 手动选组后不再被搜索自动跳走
+      renderConfigFields();
+    },
   }, [
     h("span", { text: g.name }),
-    h("span", { class: "config-nav-badge" }, count > 0
-      ? [h("span", { class: "badge badge-warn", text: `${count} 改` })]
-      : [h("span", { class: "config-nav-count", text: `${configItemsOf(g).length} 项` })]),
+    h("span", { class: "config-nav-badge" }, [badge]),
   ]);
 }
 
 function configFieldsChildren(active) {
   const items = configItemsOf(active);
+  const q = state.configSearch.trim().toLowerCase();
   const children = [
     h("div", { class: "config-group-head" }, [
       h("h3", { text: active.name }),
-      h("span", { class: "config-hint", text: `${items.length} 项` }),
+      h("span", { class: "config-hint", text: q ? `匹配 ${items.length} 项` : `${items.length} 项` }),
     ]),
-    ...items.map(configItem),
+    // 搜索态下把命中片段摘出来：描述/键名/说明哪一处命中的，用户一眼能确认
+    ...items.map(item => (q ? configItemWithMatch(item, q) : configItem(item))),
   ];
   // 不用 `length ? null : panel`:replaceChildren 不接受 null(仅 h() 会跳过)
-  if (!items.length) children.push(h("div", { class: "panel", text: "无匹配配置项" }));
+  if (!items.length) {
+    children.push(h("div", { class: "panel empty-note", text: q
+      ? `「${state.configSearch.trim()}」在本分组没有匹配项，左侧导航已标出命中的分组`
+      : "无匹配配置项" }));
+  }
   return children;
 }
 
-// 搜索输入不整树重建(会丢失焦点/打断输入法):只刷新导航列表与右栏字段区。
-function onConfigSearchInput(e) {
-  state.configSearch = e.target.value;
+/* 导航高亮与右栏字段区的局部刷新：搜索输入、切组都走这里。
+   不整树重建(会丢失焦点/打断输入法)，导航输入框与滚动位置原地保留。 */
+function renderConfigFields() {
   const root = els.configView;
   const navList = root?.querySelector(".config-nav-list");
   const fields = root?.querySelector(".config-fields");
   if (!navList || !fields) { renderConfig(); return; }
   const groups = Array.isArray(state.config?.groups) ? state.config.groups : [];
   const active = groups.find(g => g.key === state.configActive);
-  navList.replaceChildren(...groups.map(configNavItem));
+  navList.replaceChildren(...configGroupsForNav(groups, state.configSearch.trim().toLowerCase()).map(configNavItem));
   if (active) fields.replaceChildren(...configFieldsChildren(active));
+}
+
+// 搜索输入不整树重建(会丢失焦点/打断输入法):只刷新导航列表与右栏字段区。
+function onConfigSearchInput(e) {
+  state.configSearch = e.target.value;
+  state.configSearchPinned = false;   // 换关键词重新按命中数定位
+  const groups = Array.isArray(state.config?.groups) ? state.config.groups : [];
+  const q = state.configSearch.trim().toLowerCase();
+  // 输入过程中右栏始终停在有结果的分组上（清空搜索时留在当前组）
+  if (q) state.configActive = pickConfigGroupForSearch(groups, state.configActive, q).key;
+  renderConfigFields();
 }
 
 function maybeLeaveConfigGroup(action) {
@@ -2986,6 +3126,19 @@ function configItem(item) {
   return h("div", { class: "config-item", dataset: { configKey: item.key } }, configItemChildren(item));
 }
 
+/* 搜索态字段卡：在正常卡片下方追加一行「命中位置」，说明这个字段为什么出现在
+   结果里（描述 / 键名 / 说明），避免用户搜完只看到一堆无关卡片。 */
+function configItemWithMatch(item, q) {
+  const where = [];
+  if ((item.description || "").toLowerCase().includes(q)) where.push("名称");
+  if (item.key.toLowerCase().includes(q)) where.push("键名");
+  if ((item.hint || "").toLowerCase().includes(q)) where.push("说明");
+  const node = configItem(item);
+  node.classList.add("config-item-hit");
+  node.appendChild(h("div", { class: "config-hit-why", text: `命中：${where.join(" / ")}` }));
+  return node;
+}
+
 function configItemChildren(item) {
   const value = state.configDraft[item.key] !== undefined
     ? state.configDraft[item.key] : item.value;
@@ -3023,11 +3176,16 @@ function configControl(item, value) {
   if (item.type === "int" || item.type === "float") {
     const input = h("input", { type: "number", step: item.type === "float" ? "any" : "1" });
     if (value !== null && value !== undefined) input.value = String(value);
-    input.addEventListener("change", () => {
+    // input 实时提交草稿（顶部操作条立刻出现强调色），change 只做一次校验提示
+    input.addEventListener("input", () => {
       if (input.value.trim() === "") return;
       const num = Number(input.value);
-      if (Number.isNaN(num)) { showToast("该配置项需要数字"); return; }
+      if (Number.isNaN(num)) return;
       commit(num);
+    });
+    input.addEventListener("change", () => {
+      if (input.value.trim() === "") return;
+      if (Number.isNaN(Number(input.value))) showToast("该配置项需要数字");
     });
     wrap.append(input);
     return wrap;
@@ -3046,11 +3204,11 @@ function configControl(item, value) {
     area.value = item.type === "list"
       ? (Array.isArray(value) ? value.join("\n") : "")
       : String(value ?? "");
-    area.addEventListener("change", () => {
-      commit(item.type === "list"
-        ? area.value.split("\n").map(s => s.trim()).filter(Boolean)
-        : area.value);
-    });
+    // input 实时提交草稿：改动一发生，顶部操作条就出现强调色，不必等失焦
+    const pushArea = () => commit(item.type === "list"
+      ? area.value.split("\n").map(s => s.trim()).filter(Boolean)
+      : area.value);
+    area.addEventListener("input", pushArea);
     if (item.type === "list") {
       area.placeholder = "每行一项";
     }
@@ -3072,7 +3230,8 @@ function configControl(item, value) {
   }
   const input = h("input", { type: "text" });
   input.value = String(value ?? "");
-  input.addEventListener("change", () => commit(input.value));
+  // 单行文本同样实时提交草稿，顶部强调色跟随击键出现
+  input.addEventListener("input", () => commit(input.value));
   wrap.append(input);
   return wrap;
 }
@@ -3091,15 +3250,18 @@ function confirmClearCache() {
   });
 }
 
+/* 存储运维页只有「重置推送记录」一个入口，作用域就是全部分组。
+   早先还去读一个页面里已不存在的 #seenSelect，gid 恒为空串，等价于全量重置
+   却按「分组重置」的文案走——这里把语义写死，避免再出现这种静默扩大范围。 */
 function confirmClearSeen() {
-  const sel = document.getElementById("seenSelect");
-  const gid = sel ? sel.value : "";
-  const isAll = !gid;
   openConfirm({
-    title: isAll ? "重置全部推送记录？" : `重置分组 [${gid}] 推送记录？`,
+    title: "重置全部推送记录？",
     desc: "重置后下次检查可能将当前推文视为未推送，可能导致重复发送。",
     danger: true, confirmText: "确认重置",
-    action: () => withAction(() => apiPost("web/seen/clear", isAll ? { confirm: "CLEAR_ALL" } : { group_id: gid }), "推送记录已重置"),
+    action: () => withAction(
+      () => apiPost("web/seen/clear", { confirm: "CLEAR_ALL" }),
+      "推送记录已重置",
+    ),
   });
 }
 
@@ -3147,6 +3309,10 @@ function switchView(v) {
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
   updateHeader();
   flushView(v);
+  // 切页时按视图重新取数：此前只有视图被标脏才刷新，别处（调度器、另一个
+  // 浏览器标签）产生的新数据要等手动点「刷新数据」才出现。只取当前视图
+  // 需要的数据，保留已有内容渲染（stale-while-revalidate），不闪空屏。
+  refreshOnEnter(v);
   // 诊断终端只在实例诊断视图可见时轮询，切走即停
   if (v === "mirror") {
     reloadLogs({ reset: true }).catch(() => {});
@@ -3154,6 +3320,20 @@ function switchView(v) {
   } else {
     stopLogPolling();
   }
+}
+
+/* 视图进入时的取数策略：草稿跨刷新保留（配置控件优先读 draft，分组抽屉由
+   refreshGroupSheet 原位重建），所以重取不会冲掉未保存的编辑。分组的脏检查
+   只用来避免编辑期间抽屉内容被外部数据打断。 */
+const VIEW_ENTER_TTL = 15_000;
+const viewEnteredAt = new Map();
+
+function refreshOnEnter(view) {
+  if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;
+  const now = Date.now();
+  if (now - (viewEnteredAt.get(view) || 0) < VIEW_ENTER_TTL) return;
+  viewEnteredAt.set(view, now);
+  refreshViewData(view).catch(() => {});
 }
 
 function bindEvents() {
@@ -3180,14 +3360,22 @@ function bindEvents() {
   // 实例诊断页的探测按钮在 section-header 上，表单 submit 仍保留给回车提交
   els.mirrorProbeBtn?.addEventListener("click", () => probeMirror());
 
-  els.historyRefreshBtn?.addEventListener("click", async () => {
+  const applyHistoryFilters = async () => {
     state.historyGroupId = els.historyGroupSelect.value;
     state.historyUsername = els.historyUsername.value.trim();
-    state.historyLimit = parseInt(els.historyLimit.value, 10) || 10;
+    state.historyLimit = parseInt(els.historyLimit.value, 10) || 20;
     state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
     state.historySelection.clear();
     state.historyOffset = 0; // 重置页码
     await withAction(() => refreshHistoryData(), false, { reload: false });
+  };
+  els.historyRefreshBtn?.addEventListener("click", applyHistoryFilters);
+  // 下拉与条数改变即刻查询：此前只有点「筛选」才生效，看起来像切换后没刷新
+  els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });
+  els.historyStatusSelect?.onChange?.(() => { applyHistoryFilters(); });
+  els.historyLimit?.addEventListener("change", applyHistoryFilters);
+  els.historyUsername?.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); applyHistoryFilters(); }
   });
   els.historyPrevBtn?.addEventListener("click", () => loadHistoryPage(-1));
   els.historyNextBtn?.addEventListener("click", () => loadHistoryPage(1));
