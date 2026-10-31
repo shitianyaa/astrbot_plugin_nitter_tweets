@@ -115,8 +115,11 @@ function renderConfig() {
     h("div", { class: "config-nav-list" }, configGroupsForNav(groups, searchQuery).map(configNavItem)),
   ]);
 
-  // 右:当前组
-  const fields = h("div", { class: "config-fields" }, configFieldsChildren(active));
+  // 右:当前组——标题固定，字段列表在 .config-fields-scroll 内独立滚动（桌面端）
+  const fields = h("div", { class: "config-fields" }, [
+    h("div", { class: "config-group-head" }, configGroupHeadChildren(active)),
+    h("div", { class: "config-fields-scroll" }, configFieldsChildren(active)),
+  ]);
 
   const bar = h("div", { class: "config-actionbar" }, [
     h("div", { class: "config-bar-state" }),
@@ -214,17 +217,21 @@ function configNavItem(g) {
   ]);
 }
 
+/* 分组标题固定在字段区顶部，仅其下的 .config-fields-scroll 滚动（桌面端） */
+function configGroupHeadChildren(active) {
+  const items = configItemsOf(active);
+  const q = state.configSearch.trim().toLowerCase();
+  return [
+    h("h3", { text: active.name }),
+    h("span", { class: "config-hint", text: q ? `匹配 ${items.length} 项` : `${items.length} 项` }),
+  ];
+}
+
 function configFieldsChildren(active) {
   const items = configItemsOf(active);
   const q = state.configSearch.trim().toLowerCase();
-  const children = [
-    h("div", { class: "config-group-head" }, [
-      h("h3", { text: active.name }),
-      h("span", { class: "config-hint", text: q ? `匹配 ${items.length} 项` : `${items.length} 项` }),
-    ]),
-    // 搜索态下把命中片段摘出来：描述/键名/说明哪一处命中的，用户一眼能确认
-    ...items.map(item => (q ? configItemWithMatch(item, q) : configItem(item))),
-  ];
+  // 搜索态下把命中片段摘出来：描述/键名/说明哪一处命中的，用户一眼能确认
+  const children = items.map(item => (q ? configItemWithMatch(item, q) : configItem(item)));
   // 不用 `length ? null : panel`:replaceChildren 不接受 null(仅 h() 会跳过)
   if (!items.length) {
     children.push(h("div", { class: "panel empty-note", text: q
@@ -239,12 +246,17 @@ function configFieldsChildren(active) {
 function renderConfigFields() {
   const root = els.configView;
   const navList = root?.querySelector(".config-nav-list");
-  const fields = root?.querySelector(".config-fields");
-  if (!navList || !fields) { renderConfig(); return; }
+  const head = root?.querySelector(".config-group-head");
+  const scroll = root?.querySelector(".config-fields-scroll");
+  if (!navList || !head || !scroll) { renderConfig(); return; }
   const groups = Array.isArray(state.config?.groups) ? state.config.groups : [];
   const active = groups.find(g => g.key === state.configActive);
   navList.replaceChildren(...configGroupsForNav(groups, state.configSearch.trim().toLowerCase()).map(configNavItem));
-  if (active) fields.replaceChildren(...configFieldsChildren(active));
+  if (!active) return;
+  head.replaceChildren(...configGroupHeadChildren(active));
+  scroll.replaceChildren(...configFieldsChildren(active));
+  // 切组/换搜索词后内容整体更换，滚动位置归零，避免停留在上个分组的深处
+  scroll.scrollTop = 0;
 }
 
 // 搜索输入不整树重建(会丢失焦点/打断输入法):只刷新导航列表与右栏字段区。

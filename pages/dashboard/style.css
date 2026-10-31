@@ -741,7 +741,9 @@ a:hover { text-decoration: underline; }
    History View (流式日志审计台)
    ========================================================================== */
 
-/* 历史页工具条吸顶：通知栈出现时整体让位，不与顶部提示互相遮挡 */
+/* 历史页工具条吸顶：通知栈出现时整体让位，不与顶部提示互相遮挡；
+   ::before 补齐吸顶线与导航壳边框之间的缝隙遮罩（同 config-actionbar），
+   否则滚动时内容从 8px 缝隙中穿过，观感是"抖动" */
 @media (min-width: 681px) {
   #historyView > .section-header {
     position: sticky;
@@ -750,6 +752,14 @@ a:hover { text-decoration: underline; }
     background: var(--bg);
     padding: 8px 0;
     margin: -8px 0 6px;
+  }
+  #historyView > .section-header::before {
+    content: "";
+    position: absolute;
+    top: -12px; left: 0; right: 0;
+    height: 12px;
+    background: var(--bg);
+    pointer-events: none;
   }
 }
 
@@ -871,6 +881,22 @@ a:hover { text-decoration: underline; }
   padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
 }
 .config-fields { display: flex; flex-direction: column; gap: 10px; }
+
+/* 桌面端：配置页改「框架固定 + 仅字段列表滚动」——操作条/侧栏/分组标题
+   全部不动，页级不再滚动，消除滚动时的整体抖动。高度 = 视口 - 顶栏
+   - main 上下 padding（24+80）再留 8px 余量，保证 body 无滚动条。
+   移动端维持整页滚动。 */
+@media (min-width: 681px) {
+  #configView.active {
+    display: flex; flex-direction: column;
+    height: calc(100vh - var(--topheader-height) - 112px);
+    height: calc(100dvh - var(--topheader-height) - 112px);
+  }
+  #configView .config-layout { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+  #configView .config-nav { position: static; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
+  #configView .config-fields { flex: 1 1 auto; min-height: 0; }
+  .config-fields-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+}
 .config-item {
   display: flex; flex-direction: column; gap: 6px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
