@@ -736,7 +736,7 @@ a:hover { text-decoration: underline; }
 .pager-bar .mono { font-size: 12px; color: var(--text-muted); }
 .pager-bar .row { margin-left: auto; }
 
-/* 历史多选：deploy-row 首列勾选框（tweet-card 时代的 .tweet-select 已随行结构迁移废弃） */
+/* 历史多选：deploy-row 首列勾选框 */
 .deploy-check {
   display: flex;
   align-items: center;
@@ -1099,7 +1099,7 @@ body.ui-busy .view { pointer-events: none; opacity: 0.75; }
 * { scrollbar-width: thin; scrollbar-color: rgba(140, 140, 140, 0.35) transparent; }
 
 /* 统一高级定制表单控件（输入框、选择框、文本域） */
-input:not([type="checkbox"]):not([type="radio"]), select, .custom-select, textarea {
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   font: inherit;
   color: var(--text);
   background: var(--surface);
@@ -1111,36 +1111,33 @@ input:not([type="checkbox"]):not([type="radio"]), select, .custom-select, textar
 }
 .dark-theme input:not([type="checkbox"]):not([type="radio"]),
 .dark-theme select,
-.dark-theme .custom-select,
 .dark-theme textarea {
   background-color: #121214;
   border-color: #26262a;
 }
 .light-theme input:not([type="checkbox"]):not([type="radio"]),
 .light-theme select,
-.light-theme .custom-select,
 .light-theme textarea {
   background-color: #ffffff;
   border-color: #e5e7eb;
 }
-input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, .custom-select:hover, textarea:hover {
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover {
   border-color: var(--border-hover);
 }
-input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, .custom-select:focus, textarea:focus {
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--text);
   box-shadow: 0 0 0 1px var(--text);
 }
 .dark-theme input:not([type="checkbox"]):not([type="radio"]):focus,
 .dark-theme select:focus,
-.dark-theme .custom-select:focus,
 .dark-theme textarea:focus {
   border-color: #ededed;
   box-shadow: 0 0 0 1px #ededed;
 }
 
 /* select 用内联 SVG 箭头替换系统原生粗箭头；文本输入框不加背景图 */
-select, .custom-select {
+select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -1150,7 +1147,7 @@ select, .custom-select {
   padding-right: 32px !important;
   cursor: pointer;
 }
-.light-theme select, .light-theme .custom-select {
+.light-theme select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23555555' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") !important;
 }
 select option { background: var(--surface); color: var(--text); padding: 6px 10px; }
