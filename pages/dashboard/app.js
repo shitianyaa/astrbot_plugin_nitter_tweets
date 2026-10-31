@@ -76,7 +76,7 @@ function renderTabCounts() {
 function initEls() {
   const ids = [
     "refreshBtn","themeToggleBtn","themeLabel",
-    "railSchedulerStatus","noticeStack","toastContainer",
+    "railSchedulerStatus","noticeStack",
     "overviewView","groupsView","historyView","mirrorView","storageView","configView",
     "tabCountGroups","tabCountHistory","tabCountInstances","tabCountStorage","tabCountConfig",
     "cmdkBtn","groupsTitle","historyTitle","storageContent","cleanCacheBtn",
@@ -206,7 +206,7 @@ async function apiPost(endpoint, body) {
 }
 
 /* ==========================================================================
-   5. Feedback（通知栈 / toast / 时间与体积格式化）
+   5. Feedback（通知栈 / 时间与体积格式化）
    ========================================================================== */
 /* 顶部通知栈：所有提示都进同一个栈，垂直排列，互不重叠。
    结果提示停留 NOTICE_TTL 后自动移除；进行中提示不挂计时，跟随动作生命周期。 */
@@ -316,12 +316,6 @@ function showAlert(msg, type = "success") {
 }
 function hideAlert() {
   clearNotices(["success", "warn", "error"]);
-}
-function showToast(msg) {
-  if (!els.toastContainer) return;
-  const t = h("div", { class: "toast", text: msg });
-  els.toastContainer.appendChild(t);
-  setTimeout(() => t.remove(), 2800);
 }
 function parsePushedAt(raw) {
   const s = String(raw ?? "").trim();
@@ -1465,7 +1459,7 @@ function renderEntities(group, draft) {
           const v = inp?.value.trim(); if (!v) return;
           const existing = (draft[field] || []).some(item => (typeof item === "object" ? item.query : item) === v)
             || (draft.invalid_watch_users || []).includes(v);
-          if (existing) { showToast("订阅源已存在"); return; }
+          if (existing) { showAlert("订阅源已存在", "warn"); return; }
           // 添加是纯增量操作：只写草稿，用户点「保存」时统一提交
           const current = state.groupDrafts[group.group_id]?.[field] || [];
           updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
@@ -1483,7 +1477,7 @@ function renderBulkSubscriptions(group) {
   const run = endpoint => {
     if (state.actionBusy) return;
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
-    if (!entries.length) { showToast("请先填写用户名"); return; }
+    if (!entries.length) { showAlert("请先填写用户名", "warn"); return; }
     const importing = endpoint.endsWith("/import");
     // 批量接口直接落库（不经抽屉草稿），所以移除仍要确认，导入免确认
     const commit = () => withAction(async () => {
@@ -1573,7 +1567,7 @@ function renderTargets(group, draft) {
         // 免确认路径用实时 draft 查重，避免保存失败重试时重复追加
         const live = state.groupDrafts[group.group_id] || draft;
         const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);
-        if (known.has(v)) { showToast("推送目标已存在"); return; }
+        if (known.has(v)) { showAlert("推送目标已存在", "warn"); return; }
         // 纯增量可逆操作：只写草稿，点页脚「保存」时统一提交
         updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
         if (inp) inp.value = "";
@@ -1643,7 +1637,7 @@ function renderTargetBlacklist(group, draft) {
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
         const v = input.value.trim();
         if (!v) return;
-        if (users.includes(v.replace(/^@+/, ""))) { showToast("用户名已在黑名单"); return; }
+        if (users.includes(v.replace(/^@+/, ""))) { showAlert("用户名已在黑名单", "warn"); return; }
         // 纯增量操作：直接提交，不再弹窗打断（移除类仍确认）
         saveTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")]);
       }}),
@@ -1682,7 +1676,7 @@ function addWatchList(groupId) {
   const err = document.getElementById("entityError");
   const showError = msg => {
     if (err) { err.textContent = msg; err.style.display = ""; }
-    else showToast(msg);
+    else showAlert(msg, "warn");
   };
   const val = inp?.value.trim(); if (!val) return;
   if (!/^\d{1,20}$/.test(val)) { showError("List ID 必须是 1-20 位正整数"); return; }
@@ -2418,7 +2412,7 @@ function replayHistoryBatch() {
       for (const sec of sections) {
         const umos = [...(boxes.get(sec.gid)?.querySelectorAll("input:checked") || [])].map(i => i.value).filter(Boolean);
         if (!umos.length) {
-          showToast(`分组「${sec.name}」未选择目标，已取消批量重推`);
+          showAlert(`分组「${sec.name}」未选择目标，已取消批量重推`, "warn");
           return undefined;
         }
         targetsByGroup[sec.gid] = umos;
@@ -2545,7 +2539,7 @@ function replayHistory(id, options) {
     action: () => {
       if (!box) return withAction(() => apiPost("web/history/replay", { record_id: id }), "重推已触发");
       const umos = [...box.querySelectorAll('input:checked')].map(i => i.value).filter(Boolean);
-      if (!umos.length) { showToast("未选择目标，已取消重推"); return undefined; }
+      if (!umos.length) { showAlert("未选择目标，已取消重推", "warn"); return undefined; }
       return withAction(() => apiPost("web/history/replay", { record_id: id, target_umos: umos }), "重推已触发");
     },
   });
@@ -2611,7 +2605,7 @@ async function probeMirror(e) {
   const query = els.mirrorQuery.value.trim();
   const list_id = els.mirrorListId.value.trim();
   if (!username && !query && !list_id) {
-    showToast("请至少填写一项测试目标（用户名、搜索标签或关键词、List ID）");
+    showAlert("请至少填写一项测试目标（用户名、搜索标签或关键词、List ID）", "warn");
     return;
   }
   const payload = {
@@ -3056,7 +3050,7 @@ async function saveConfigDraft() {
     if (result.reloaded) {
       state.configJustSaved = true;
       setTimeout(() => { state.configJustSaved = false; renderConfigBarState(); }, 2400);
-      showToast("配置已保存，插件已热重载");
+      showAlert("配置已保存，插件已热重载", "success");
     } else showAlert(result.warning || "配置已保存，但插件热重载失败", "error");
   } catch (err) {
     showAlert(err.message || "保存配置失败", "error");
@@ -3185,7 +3179,7 @@ function configControl(item, value) {
     });
     input.addEventListener("change", () => {
       if (input.value.trim() === "") return;
-      if (Number.isNaN(Number(input.value))) showToast("该配置项需要数字");
+      if (Number.isNaN(Number(input.value))) showAlert("该配置项需要数字", "warn");
     });
     wrap.append(input);
     return wrap;

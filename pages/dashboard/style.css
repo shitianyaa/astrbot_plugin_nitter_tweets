@@ -1001,26 +1001,6 @@ a:hover { text-decoration: underline; }
   font-size: 14px;
 }
 
-#toastContainer {
-  position: fixed;
-  bottom: 20px; right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 1100;
-  pointer-events: none;
-}
-.toast {
-  background: var(--text);
-  color: var(--bg);
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  box-shadow: var(--shadow);
-  animation: rise-in 0.16s ease-out;
-  pointer-events: auto;
-}
-
 /* 通知栈体系：锚在导航壳下方，栈本身穿透点击，栈内节点各自接收事件。
    纯浮层覆盖：高度不参与文档流，也不再让 .main / 吸顶元素避让——早先按栈
    实测高度顶开内容，会把整页往下推 40~50px 再弹回，观感是"页面被挤压跳动"。
