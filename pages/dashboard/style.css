@@ -5,8 +5,18 @@
    彻底打破老式单列方块堆叠，引入宽屏自适应 2+1 仪表盘与 Bento 工作台。
    ========================================================================== */
 
+/* 默认界面字体：霞鹜新晰黑（LXGW Neo XiHei，IPA Font License v1.0，随 fonts/ 分发）。
+   本地文件 + font-display: swap：加载期间先用后备系统字体渲染，不阻塞首帧。 */
+@font-face {
+  font-family: "LXGW Neo XiHei";
+  src: url("./fonts/LXGWNeoXiHei.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "LXGW Neo XiHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   /* Vercel 极简单色主色 (Disciplined Monochrome) */
@@ -330,7 +340,7 @@ a:hover { text-decoration: underline; }
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px 24px 80px;
+  padding: 16px 24px 24px;
 }
 
 .view { display: none; }
@@ -747,8 +757,8 @@ a:hover { text-decoration: underline; }
 @media (min-width: 681px) {
   #historyView.active {
     display: flex; flex-direction: column;
-    height: calc(100vh - var(--topheader-height) - 112px);
-    height: calc(100dvh - var(--topheader-height) - 112px);
+    height: calc(100vh - var(--topheader-height) - 56px);
+    height: calc(100dvh - var(--topheader-height) - 56px);
   }
   #historyView > .section-header { flex: none; margin-bottom: 10px; }
   .history-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
@@ -882,8 +892,8 @@ a:hover { text-decoration: underline; }
 @media (min-width: 681px) {
   #configView.active {
     display: flex; flex-direction: column;
-    height: calc(100vh - var(--topheader-height) - 112px);
-    height: calc(100dvh - var(--topheader-height) - 112px);
+    height: calc(100vh - var(--topheader-height) - 56px);
+    height: calc(100dvh - var(--topheader-height) - 56px);
   }
   #configView .config-layout { flex: 1 1 auto; min-height: 0; align-items: stretch; }
   #configView .config-nav { position: static; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
