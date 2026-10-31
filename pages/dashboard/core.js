@@ -22,6 +22,9 @@ const state = {
   configDraft: {}, configSearch: "", configSearchPinned: false, configActive: "",
   configSaving: false, providers: [],
   targetBlacklists: [], targetBlacklistTarget: "",
+  // 黑名单草稿（跨分组共享资源，但增删跟随所在抽屉的「保存」落库）：
+  // gid -> { target_umo -> { adds: [], removes: [] } }，保存成功后清空
+  pendingBlacklists: {},
   history: null, selectedGroupId: "",
   // 总览「最新推送记录」独立取数：不受历史页筛选与分页影响
   recentPushes: [],

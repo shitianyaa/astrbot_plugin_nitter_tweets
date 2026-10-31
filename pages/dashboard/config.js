@@ -290,9 +290,9 @@ async function saveConfigDraft() {
     }
     refreshConfigRows(touched);
     if (result.reloaded) {
+      // 成功状态由吸顶操作条徽标表达（✓ 配置已保存并热重载），不再发通知弹窗
       state.configJustSaved = true;
       setTimeout(() => { state.configJustSaved = false; renderConfigBarState(); }, 2400);
-      showAlert("配置已保存，插件已热重载", "success");
     } else showAlert(result.warning || "配置已保存，但插件热重载失败", "error");
   } catch (err) {
     showAlert(err.message || "保存配置失败", "error");

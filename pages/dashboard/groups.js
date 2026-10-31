@@ -77,7 +77,7 @@ function isGroupDirty(groupId) {
     snapJson = JSON.stringify(snapshotGroup(g));
     groupSnapJsonCache.set(g, snapJson);
   }
-  return snapJson !== draftJson(d);
+  return snapJson !== draftJson(d) || hasPendingBlacklist(groupId);
 }
 
 let groupListRenderPending = false;
@@ -230,6 +230,7 @@ function selectGroup(gid, { force = false } = {}) {
       confirmText: "丢弃并切换", danger: true,
       action: () => {
         state.groupDrafts[prev.group_id] = snapshotGroup(prev);
+        delete state.pendingBlacklists[prev.group_id];
         selectGroup(gid, { force: true });
       },
     });
@@ -331,6 +332,7 @@ function discardGroupDraft() {
   if (!g) return;
   state.groupDrafts[gid] = snapshotGroup(g);
   delete state.targetProbeResults[gid];
+  delete state.pendingBlacklists[gid];
   markData("groups");
   refreshGroupSheet(gid);
 }
@@ -499,43 +501,41 @@ function renderEntities(group, draft) {
 
 function renderBulkSubscriptions(group) {
   const area = h("textarea", { rows: 3, class: "ta-full", placeholder: "每行一个用户名，也可用逗号分隔" });
-  const run = endpoint => {
+  const run = mode => {
     if (state.actionBusy) return;
     const entries = area.value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
     if (!entries.length) { showAlert("请先填写用户名", "warn"); return; }
-    const importing = endpoint.endsWith("/import");
-    // 批量接口直接落库（不经抽屉草稿），所以移除仍要确认，导入免确认
-    const commit = () => withAction(async () => {
-      const res = await apiPost(endpoint, { group_id: group.group_id, entries });
-      delete state.groupDrafts[group.group_id];
-      await reloadGroupState();
-      const s = res?.summary || {};
-      const notes = [
-        s.invalid?.length ? `无效 ${s.invalid.length} 个` : "",
-        s.duplicates?.length ? `重复 ${s.duplicates.length} 个` : "",
-        s.missing?.length ? `不存在 ${s.missing.length} 个` : "",
-      ].filter(Boolean);
-      return { ...res, message: notes.length ? `${res.message}（${notes.join("，")}）` : res.message };
-    }, undefined, { reload: false }).then(() => refreshGroupSheet(group.group_id));
-    if (importing) {
-      commit();
+    // 草稿语义：批量增删与单个添加同权，页脚「保存」才落库（保存后由后端
+    // 分组解析隔离无效条目），这里不发通知、不直接调接口
+    const apply = () => {
+      const d = state.groupDrafts[group.group_id]; if (!d) return;
+      if (mode === "import") {
+        const known = new Set([...(d.watch_users || []), ...(d.invalid_watch_users || [])]);
+        const fresh = entries.filter(v => !known.has(v));
+        updateDraft(group.group_id, "watch_users", [...(d.watch_users || []), ...fresh]);
+      } else {
+        const drop = new Set(entries);
+        updateDraft(group.group_id, "watch_users", (d.watch_users || []).filter(v => !drop.has(v)));
+        updateDraft(group.group_id, "invalid_watch_users", (d.invalid_watch_users || []).filter(v => !drop.has(v)));
+      }
+      rerenderEntityChips(group.group_id);
       area.value = "";
-      return;
-    }
+    };
+    if (mode === "import") { apply(); return; }
     openConfirm({
-      title: "确认批量移除订阅？",
-      desc: `共 ${entries.length} 个用户名，确认后立即从配置中移除。`,
+      title: "确认从草稿移除订阅？",
+      desc: `共 ${entries.length} 个用户名，保存后生效；未保存前可随时放弃更改恢复。`,
       confirmText: "移除",
       danger: true,
-      action: commit,
+      action: apply,
     });
   };
   return h("div", { class: "subsection" }, [
     h("span", { class: "section-head", text: "批量导入 / 移除" }),
     area,
     h("div", { class: "input-action-row" }, [
-      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "导入", onClick: () => run("web/subscriptions/import") }),
-      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "移除", onClick: () => run("web/subscriptions/delete") }),
+      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "导入", onClick: () => run("import") }),
+      h("button", { class: "btn btn-sm", "data-busy-control": "true", text: "移除", onClick: () => run("remove") }),
     ]),
   ]);
 }
@@ -639,16 +639,87 @@ function renderInvalidTargets(group, draft, probe) {
   ]);
 }
 
+/* 黑名单草稿（pending）：服务器名单 + 待增/待删合并出生效视图，页脚「保存」
+   时随分组一起落库。加入/移除只动 pending，不发通知。 */
+function pendingBlacklistFor(gid, target) {
+  const rec = state.pendingBlacklists[gid];
+  return rec ? rec[target] : null;
+}
+
+function ensurePendingBlacklist(gid, target) {
+  if (!state.pendingBlacklists[gid]) state.pendingBlacklists[gid] = {};
+  if (!state.pendingBlacklists[gid][target]) {
+    state.pendingBlacklists[gid][target] = { adds: [], removes: [] };
+  }
+  return state.pendingBlacklists[gid][target];
+}
+
+function hasPendingBlacklist(gid) {
+  const rec = state.pendingBlacklists[gid];
+  return !!rec && Object.values(rec).some(p => p.adds.length || p.removes.length);
+}
+
+function renderBlacklistChips(group, target, serverUsers) {
+  const gid = group.group_id;
+  const p = pendingBlacklistFor(gid, target);
+  const adds = p ? p.adds : [];
+  const removes = new Set(p ? p.removes : []);
+  const chip = (u, state_) => {
+    const pendingAdd = state_ === "pending-add";
+    const removing = state_ === "removing";
+    return h("span", { class: `chip mono${removing ? " chip-removing" : ""}`, title: removing ? "保存后移除" : u }, [
+      `@${u}`,
+      pendingAdd ? h("span", { class: "badge badge-warn", text: "待保存" }) : null,
+      h("button", {
+        class: "btn-icon chip-remove",
+        title: removing ? "撤销移除" : pendingAdd ? "撤销添加" : "移除",
+        "aria-label": `${removing ? "撤销移除" : "移除"} ${u}`,
+        html: svgIcon("close", 12),
+        onClick: () => {
+          if (state.actionBusy) return;
+          const rec = ensurePendingBlacklist(gid, target);
+          if (removing) { rec.removes = rec.removes.filter(x => x !== u); }
+          else if (pendingAdd) { rec.adds = rec.adds.filter(x => x !== u); }
+          else {
+            confirmGroupMutation(gid, {
+              title: "移除黑名单用户？",
+              desc: `@${u} 将从草稿中移除，点击抽屉底部的「保存」后生效。`,
+              confirmText: "移除", danger: true, successText: false,
+              mutate: () => { ensurePendingBlacklist(gid, target).removes.push(u); scheduleGroupListRender(); },
+            });
+            return;
+          }
+          rerenderBlacklistChips(gid, target, serverUsers);
+          refreshSheetSaveState();
+        },
+      }),
+    ]);
+  };
+  const nodes = [
+    ...serverUsers.map(u => chip(u, removes.has(u) ? "removing" : "normal")),
+    ...adds.map(u => chip(u, "pending-add")),
+  ];
+  return h("div", { class: "chip-list", "data-blacklist-chips": "true" },
+    nodes.length ? nodes : [h("span", { class: "hint-subtle", text: "黑名单为空" })]);
+}
+
+function rerenderBlacklistChips(gid, target, serverUsers) {
+  scheduleGroupListRender();   // pending 变化影响卡片「未保存」徽标
+  const container = els.sheetBody?.querySelector('[data-blacklist-chips="true"]');
+  if (container) container.replaceWith(renderBlacklistChips({ group_id: gid }, target, serverUsers));
+}
+
 function renderTargetBlacklist(group, draft) {
+  const gid = group.group_id;
   const targets = draft.push_targets || [];
   const rows = Array.isArray(state.targetBlacklists) ? state.targetBlacklists : [];
   if (!targets.includes(state.targetBlacklistTarget)) state.targetBlacklistTarget = targets[0] || "";
   const selected = state.targetBlacklistTarget;
-  const users = [...((rows.find(r => r.target_umo === selected) || {}).blocked_users || [])];
+  const serverUsers = [...((rows.find(r => r.target_umo === selected) || {}).blocked_users || [])];
   const box = h("div", { class: "subsection" }, [
     h("div", { class: "section-head" }, [
       iconEl("ban", 16), "目标作者黑名单",
-      h("span", { class: "hint", text: "跨分组共享，仅影响后台推送" }),
+      h("span", { class: "hint", text: "跨分组共享，仅影响后台推送；改动随「保存」落库" }),
     ]),
   ]);
   if (!targets.length) {
@@ -662,7 +733,7 @@ function renderTargetBlacklist(group, draft) {
       return { value: t, text: id ? `${label} · ${replayTargetShortId(id)}` : label };
     }),
   });
-  select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(group.group_id); });
+  select.onChange(v => { state.targetBlacklistTarget = v; rerenderTargetsSection(gid); });
   const input = h("input", { type: "text", placeholder: "用户名或 @用户名" });
   box.append(
     h("div", { class: "input-action-row" }, [
@@ -670,38 +741,37 @@ function renderTargetBlacklist(group, draft) {
       h("button", { class: "btn btn-sm", html: svgIcon("plus", 14), text: "加入", onClick: () => {
         const v = input.value.trim();
         if (!v) return;
-        if (users.includes(v.replace(/^@+/, ""))) { showAlert("用户名已在黑名单", "warn"); return; }
-        // 纯增量操作：直接提交，不再弹窗打断（移除类仍确认）
-        saveTargetBlacklist(group.group_id, selected, [...users, v.replace(/^@+/, "")]);
+        const uname = v.replace(/^@+/, "");
+        const removes = new Set(pendingBlacklistFor(gid, selected)?.removes || []);
+        const known = new Set([...serverUsers, ...(pendingBlacklistFor(gid, selected)?.adds || [])]);
+        if (known.has(uname) && !removes.has(uname)) { showAlert("用户名已在黑名单", "warn"); return; }
+        ensurePendingBlacklist(gid, selected).adds.push(uname);
+        input.value = "";
+        rerenderBlacklistChips(gid, selected, serverUsers);
+        refreshSheetSaveState();
       }}),
     ]),
-    h("div", { class: "chip-list" }, users.length
-      ? users.map(u => h("span", { class: "chip mono" }, [
-          `@${u}`,
-          h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${u}`, html: svgIcon("close", 12), onClick: () => confirmTargetBlacklist(group.group_id, selected, users.filter(x => x !== u), "移除黑名单用户？", "移除", true) }),
-        ]))
-      : [h("span", { class: "hint-subtle", text: "黑名单为空" })]),
+    renderBlacklistChips(group, selected, serverUsers),
   );
   return box;
 }
 
-function saveTargetBlacklist(gid, target, users) {
-  withAction(async () => {
-    await apiPost("web/target-blacklists/update", { target_umo: target, blocked_users: users });
+/* 页脚保存的收尾步骤：把该分组抽屉里累计的黑名单增删按 target 合并落库。
+   任一 target 失败即抛错（withAction 统一提示），pending 保留供重试。 */
+async function flushPendingBlacklists(gid) {
+  const rec = state.pendingBlacklists[gid];
+  if (!rec) return;
+  for (const [target, p] of Object.entries(rec)) {
+    if (!p.adds.length && !p.removes.length) continue;
+    const serverUsers = [...((state.targetBlacklists.find(r => r.target_umo === target) || {}).blocked_users || [])];
+    const removes = new Set(p.removes);
+    const merged = [...serverUsers.filter(u => !removes.has(u)), ...p.adds];
+    await apiPost("web/target-blacklists/update", { target_umo: target, blocked_users: merged });
     const rest = state.targetBlacklists.filter(r => r.target_umo !== target);
-    if (users.length) rest.push({ target_umo: target, blocked_users: [...users] });
+    if (merged.length) rest.push({ target_umo: target, blocked_users: merged });
     state.targetBlacklists = rest.sort((a, b) => a.target_umo.localeCompare(b.target_umo));
-  }, "黑名单已更新", { reload: false, rerender: () => rerenderTargetsSection(gid) });
-}
-
-function confirmTargetBlacklist(gid, target, users, title, confirmText, danger) {
-  openConfirm({
-    title,
-    desc: "确认后立即保存并刷新黑名单。",
-    confirmText,
-    danger,
-    action: () => saveTargetBlacklist(gid, target, users),
-  });
+  }
+  delete state.pendingBlacklists[gid];
 }
 
 function addWatchList(groupId) {
@@ -791,6 +861,8 @@ async function saveGroup(gid, successText = "分组已保存") {
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
     const res = await apiPost("web/groups/update", buildGroupPayload(d));
+    // 黑名单增删随本次保存落库；失败则抛错走统一提示，pending 保留可重试
+    await flushPendingBlacklists(gid);
     delete state.groupDrafts[gid];
     delete state.targetProbeResults[gid];
     if (res?.group) {
@@ -828,6 +900,7 @@ function confirmDeleteGroup(gid) {
     action: () => withAction(async () => {
       await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
       delete state.targetProbeResults[gid];
+      delete state.pendingBlacklists[gid];
       state.selectedGroupId = "";
     }, "分组已删除"),
   });

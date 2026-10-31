@@ -471,6 +471,8 @@ a:hover { text-decoration: underline; }
   line-height: 1.4;
 }
 .chip svg { width: 12px; height: 12px; color: var(--text-muted); }
+/* 黑名单草稿态：待删条目删除线弱化（保存后消失，× 可撤销），待加条目挂「待保存」徽标 */
+.chip.chip-removing { text-decoration: line-through; opacity: 0.55; }
 .chip-action { cursor: pointer; transition: background var(--transition), border-color var(--transition); }
 .chip-action:hover { background: var(--blue-soft); border-color: var(--blue-border); color: var(--blue); }
 .chip-remove { margin-left: 2px; }

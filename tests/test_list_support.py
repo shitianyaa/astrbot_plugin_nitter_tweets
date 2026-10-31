@@ -618,10 +618,13 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
     assert "web/target-blacklists/update" in source
     assert "目标作者黑名单" in source
     assert "function renderTargetBlacklist(group, draft)" in source
-    assert "function saveTargetBlacklist(gid, target, users)" in source
-    assert "跨分组共享，仅影响后台推送" in source
-    assert "web/subscriptions/import" in source
-    assert "web/subscriptions/delete" in source
+    # 黑名单/批量增删均为草稿操作：pending 结构 + 页脚保存时统一落库
+    assert "function saveTargetBlacklist" not in source
+    assert "function flushPendingBlacklists(gid)" in source
+    assert "hasPendingBlacklist(groupId)" in source
+    assert "跨分组共享，仅影响后台推送；改动随「保存」落库" in source
+    assert "web/subscriptions/import" not in source
+    assert "web/subscriptions/delete" not in source
     assert "批量导入 / 移除" in source
     assert "间隔检查使用全局检查间隔" in source
     assert "ban: '<circle" in source
