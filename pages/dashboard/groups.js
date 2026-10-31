@@ -179,12 +179,6 @@ function groupCard(g) {
               : isList ? `List（${sources.length} 个）` : `关注博主（${sources.length} 位）`,
           }),
         ]),
-        h("button", {
-          class: "nav-btn gc-manage-btn",
-          type: "button",
-          text: "+ 管理",
-          onClick: () => openGroupSheet(g.group_id),
-        }),
       ]),
       h("div", { class: "gc-chips", style: { marginTop: "6px" } },
         preview.length
@@ -222,7 +216,6 @@ function groupCard(g) {
         : [h("div", { class: "hint", text: "未配置推送目标" })]),
     ]),
     h("div", { class: "gc-card-actions" }, [
-      h("button", { class: "nav-btn", type: "button", text: "测试目标连通", onClick: () => probeTargets(g.group_id) }),
       h("button", { class: "nav-btn btn-primary", type: "button", text: "编辑详细配置", onClick: () => openGroupSheet(g.group_id) }),
     ]),
   ]);
@@ -384,6 +377,24 @@ function refreshGroupSheet(gid) {
   refreshSheetSaveState();
 }
 
+/* 添加类操作后的 chips 原位重绘：只动 chip 区，不重建分区（输入框在容器外，
+   连续录入时焦点不丢）。removeChildren/replaceWith 语义见 renderEntityChips 尾部。 */
+function rerenderEntityChips(gid) {
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = g ? (state.groupDrafts[gid] || snapshotGroup(g)) : null;
+  if (!g || !d) return;
+  const container = els.sheetBody?.querySelector('[data-entity-chips="true"]');
+  if (container) renderEntityChips(container, g, d);
+}
+
+function rerenderTargetChips(gid) {
+  const g = state.groups.find(x => x.group_id === gid);
+  const d = g ? (state.groupDrafts[gid] || snapshotGroup(g)) : null;
+  if (!g || !d) return;
+  const container = els.sheetBody?.querySelector('[data-target-chips="true"]');
+  if (container) container.replaceWith(renderTargetChips(g, d, state.targetProbeResults[gid]));
+}
+
 function toggleRow(checked, label, onChange) {
   return h("label", { class: "toggle" }, [
     h("input", { type: "checkbox", checked, onChange: e => onChange(e.target.checked) }),
@@ -477,6 +488,7 @@ function renderEntities(group, draft) {
           const current = state.groupDrafts[group.group_id]?.[field] || [];
           updateDraft(group.group_id, field, [...current, isTag ? { query: v, type: "tag" } : v]);
           if (inp) inp.value = "";
+          rerenderEntityChips(group.group_id);
         }
       }}),
     ]),
@@ -528,6 +540,37 @@ function renderBulkSubscriptions(group) {
   ]);
 }
 
+/* 推送目标 chips 独立成节点并带 data-target-chips 标记：添加类操作后
+   rerenderTargetChips 用 replaceWith 原位替换这一块，其余控件不动。 */
+function renderTargetChips(group, draft, probe) {
+  const targets = draft.push_targets || [];
+  return h("div", { class: "chip-list", "data-target-chips": "true" },
+    targets.map(t => {
+      const info = probe?.targets?.find(x => x.umo === t);
+      const { label, id: targetId } = replayTargetParts(t);
+      return h("span", { class: "chip", title: t }, [
+        h("span", { text: label }),
+        targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+        info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
+        h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${t}`, html: svgIcon("close", 12), onClick: () => {
+          if (state.actionBusy) return;
+          confirmGroupMutation(group.group_id, {
+            title: "移除推送目标？",
+            desc: `将从草稿中移除 ${t}，点击抽屉底部的「保存」后生效。`,
+            confirmText: "移除",
+            danger: true,
+            successText: false,
+            mutate: () => {
+              const current = state.groupDrafts[group.group_id]?.push_targets || [];
+              updateDraft(group.group_id, "push_targets", current.filter(x => x !== t));
+            },
+          });
+        }}),
+      ]);
+    })
+  );
+}
+
 function renderTargets(group, draft) {
   const targets = draft.push_targets || [];
   const invalidTargets = draft.invalid_push_targets || [];
@@ -545,31 +588,7 @@ function renderTargets(group, draft) {
         h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length && !invalidTargets.length, onClick: () => probeTargets(group.group_id) }),
       ]),
     ]),
-    h("div", { class: "chip-list" },
-      targets.map(t => {
-        const info = probe?.targets?.find(x => x.umo === t);
-        const { label, id: targetId } = replayTargetParts(t);
-        return h("span", { class: "chip", title: t }, [
-          h("span", { text: label }),
-          targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
-          info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
-          h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${t}`, html: svgIcon("close", 12), onClick: () => {
-            if (state.actionBusy) return;
-            confirmGroupMutation(group.group_id, {
-              title: "移除推送目标？",
-              desc: `将从草稿中移除 ${t}，点击抽屉底部的「保存」后生效。`,
-              confirmText: "移除",
-              danger: true,
-              successText: false,
-              mutate: () => {
-                const current = state.groupDrafts[group.group_id]?.push_targets || [];
-                updateDraft(group.group_id, "push_targets", current.filter(x => x !== t));
-              },
-            });
-          }}),
-        ]);
-      })
-    ),
+    renderTargetChips(group, draft, probe),
     renderInvalidTargets(group, draft, probe),
     h("div", { class: "input-action-row" }, [
       h("input", { id: "newTargetInput", type: "text", placeholder: "aiocqhttp:GroupMessage:123456" }),
@@ -584,6 +603,7 @@ function renderTargets(group, draft) {
         // 纯增量可逆操作：只写草稿，点页脚「保存」时统一提交
         updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);
         if (inp) inp.value = "";
+        rerenderTargetChips(group.group_id);
       }}),
     ]),
     renderTargetBlacklist(group, draft),
@@ -699,6 +719,7 @@ function addWatchList(groupId) {
   // 纯增量操作：只写草稿，点页脚「保存」时统一提交
   updateDraft(groupId, "watch_lists", [...(d.watch_lists || []), val]);
   if (inp) inp.value = "";
+  rerenderEntityChips(groupId);
 }
 
 /* --------------------------------------------------------------------------

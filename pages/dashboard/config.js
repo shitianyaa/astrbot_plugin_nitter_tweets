@@ -139,14 +139,12 @@ function renderConfig() {
   renderConfigBarState();
 }
 
-/* 操作条与导航徽标的局部刷新：控件提交/保存/放弃后只动这些小块 */
+/* 操作条与导航徽标的局部刷新：控件提交/保存/放弃后只动这些小块。
+   未保存改动只由状态徽标（badge-warn 文案）表达，操作条本身两种状态同款。 */
 function renderConfigBarState() {
   const root = els.configView; if (!root) return;
   const slot = root.querySelector(".config-bar-state");
   const total = configDirtyKeys.size;
-  // 有未保存改动时整条操作条切到强调色：任何一处控件一改，顶部立刻可见
-  const bar = root.querySelector(".config-actionbar");
-  if (bar) bar.classList.toggle("is-dirty", total > 0 && !state.configJustSaved);
   if (slot) {
     if (state.configJustSaved) {
       slot.replaceChildren(h("span", { class: "badge badge-ok", text: "✓ 配置已保存并热重载" }));
@@ -414,15 +412,24 @@ function configControl(item, value) {
   if (item.type === "int" || item.type === "float") {
     const input = h("input", { type: "number", step: item.type === "float" ? "any" : "1" });
     if (value !== null && value !== undefined) input.value = String(value);
-    // input 实时提交草稿（顶部操作条立刻出现强调色），change 只做一次校验提示
+    // input 实时提交草稿（顶部状态徽标立刻变化）；删空不提交，红边提示待处理
     input.addEventListener("input", () => {
-      if (input.value.trim() === "") return;
+      if (input.value.trim() === "") { input.classList.add("is-empty-edit"); return; }
+      input.classList.remove("is-empty-edit");
       const num = Number(input.value);
       if (Number.isNaN(num)) return;
       commit(num);
     });
     input.addEventListener("change", () => {
-      if (input.value.trim() === "") return;
+      if (input.value.trim() === "") {
+        // 删空后失焦：还原为草稿/已保存值，避免「看起来删掉了、实际旧值还在」
+        input.classList.remove("is-empty-edit");
+        const current = state.configDraft[item.key] !== undefined
+          ? state.configDraft[item.key] : item.value;
+        input.value = current === null || current === undefined ? "" : String(current);
+        showAlert("数值不能为空，已还原", "warn");
+        return;
+      }
       if (Number.isNaN(Number(input.value))) showAlert("该配置项需要数字", "warn");
     });
     wrap.append(input);

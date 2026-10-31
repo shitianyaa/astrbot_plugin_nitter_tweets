@@ -802,22 +802,8 @@ a:hover { text-decoration: underline; }
   margin-bottom: 16px;
   transition: border-color var(--transition), background-color var(--transition);
 }
-/* 有未保存改动：操作条整体切成强调色（蓝边 + 淡蓝底 + 左侧色条），
-   任意控件一改顶部立刻可见，不必等失焦或滚动到别处 */
-.config-actionbar.is-dirty {
-  border-color: var(--blue-border);
-  background-image: linear-gradient(var(--blue-soft), var(--blue-soft));
-  outline: 1px solid var(--blue-border);
-  outline-offset: -1px;
-}
-.config-actionbar.is-dirty::after {
-  content: "";
-  position: absolute;
-  left: 0; top: 8px; bottom: 8px;
-  width: 3px;
-  border-radius: var(--radius-pill);
-  background: var(--blue);
-}
+/* 未保存改动只通过状态徽标（badge-warn 文案）表达，操作条本身两种状态同款样式：
+   整条切换强调色会与「配置已同步」的常态观感割裂 */
 .config-actionbar::before {
   content: "";
   position: absolute;
@@ -876,6 +862,8 @@ a:hover { text-decoration: underline; }
   padding: 6px 10px; word-break: break-word;
 }
 .config-control input[type="text"], .config-control input[type="number"] { width: 240px; height: 34px; }
+/* 数字项被整体删空：红边提示（此时草稿仍是原值），失焦即还原 */
+.config-control input.is-empty-edit { border-color: var(--red-border); }
 .config-control select { width: 240px; height: 34px; }
 /* 自绘下拉在配置行里与输入框同宽，避免被 flex 压成只有几个字宽 */
 .config-control .dd { display: block; width: 100%; max-width: 240px; }
@@ -1692,7 +1680,6 @@ input[type="number"] { -moz-appearance: textfield; }
   border: 1px solid var(--border);
 }
 .gc-meta-grid > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gc-manage-btn { padding: 2px 8px; font-size: 11px; }
 .gc-chips-header {
   display: flex;
   justify-content: space-between;
