@@ -322,3 +322,49 @@ def test_update_group_partial_enabled_survives_dirty_stored_name():
     groups = config_get(config, "tweet_groups")
     assert [g["name"] for g in groups] == ["同名", "同名"]
     assert [g["enabled"] for g in groups] == [False, False]
+
+
+def test_update_group_response_carries_serialized_group():
+    """update 响应带回与 web/groups 同一序列化的分组，供前端原位替换。
+
+    契约背景：卡片启停走部分更新，前端用响应里的 group 原位替换状态并保留
+    attention_items；响应缺对象时前端虽有整组重拉兜底，但快路径省请求。
+    序列化桩与 NitterWebAPI._schedule_groups / _serialize_group 同构。
+    """
+
+    class _SerializingEditor(WebUIGroupEditor):
+        def _schedule_groups(self):
+            return self.scheduler.config_reader.schedule_groups(
+                log_invalid_targets=False
+            )
+
+        def _serialize_group(self, group):
+            return {
+                "group_id": group.group_id,
+                "name": group.name,
+                "enabled": group.enabled,
+                "attention_items": [],
+            }
+
+    config = _FakeConfig(
+        {
+            "tweet_groups": [
+                {
+                    "name": "G",
+                    "group_id": "g",
+                    "group_type": "blogger",
+                    "watch_users": ["nasa"],
+                }
+            ]
+        }
+    )
+    plugin = MagicMock()
+    plugin.config = config
+    plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+    editor = _SerializingEditor(plugin)
+
+    result = editor.update_group({"group_id": "g", "enabled": False})
+
+    assert result["success"] is True
+    assert result["group"]["group_id"] == "g"
+    assert result["group"]["enabled"] is False
