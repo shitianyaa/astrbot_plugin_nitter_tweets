@@ -74,6 +74,9 @@ function switchView(v) {
   els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === v));
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
   updateHeader();
+  // 诊断终端先开轮询再渲染：否则首轮标题按 timer=0 画成「已暂停」，
+  // 首次 markData 后才跳回「实时」，进页时肉眼可见地闪一下
+  if (v === "mirror") startLogPolling();
   flushView(v);
   // 切页时按视图重新取数：此前只有视图被标脏才刷新，别处（调度器、另一个
   // 浏览器标签）产生的新数据要等手动点「刷新数据」才出现。只取当前视图
@@ -82,7 +85,6 @@ function switchView(v) {
   // 诊断终端只在实例诊断视图可见时轮询，切走即停
   if (v === "mirror") {
     reloadLogs({ reset: true }).catch(() => {});
-    startLogPolling();
   } else {
     stopLogPolling();
   }
@@ -203,7 +205,8 @@ function bindEvents() {
       if (cmdkOpen) { closeCmdk(); return; }
       if (els.createGroupModal?.classList.contains("open")) { closeCreateGroupModal(); return; }
       if (sheetOpen) { closeSheet(); return; }
-      closeConfirm();
+      // 没有任何弹层时不调 closeConfirm：它会无条件把焦点还给上次确认框的
+      // 锚点，空按 Esc 会莫名抢走焦点
       return;
     }
     if (e.key !== "Tab") return;

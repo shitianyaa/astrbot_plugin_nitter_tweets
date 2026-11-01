@@ -270,11 +270,20 @@ function groupCard(g) {
 async function toggleGroupEnabled(gid, enabled, input) {
   if (!state.groups.some(g => g.group_id === gid)) return;
   const res = await withAction(async () => {
-    await apiPost("web/groups/update", { group_id: gid, enabled });
+    const updated = await apiPost("web/groups/update", { group_id: gid, enabled });
+    // update 响应带回完整分组：原位替换即可，不走 withAction 默认的
+    // refreshViewData("groups")——那要发 5 个请求（reloadGroupState 3 个 +
+    // 历史 + 最近推送），而启停不碰这些数据。总览计数/健康徽标由
+    // markData("overview") 冲刷，与 saveGroup 同一收尾。
+    state.groups = state.groups.map(g =>
+      g.group_id === updated.group.group_id ? updated.group : g,
+    );
     // 草稿走 updateDraft：rev 缓存必须失效，否则脏检查会读到旧 JSON
     updateDraft(gid, "enabled", enabled);
+    markData("groups");
+    markData("overview");
     return { message: enabled ? "分组已启用" : "分组已停用" };
-  });
+  }, undefined, { reload: false });
   // 失败或被在途动作丢弃时 withAction 返回 null，且不会重渲染：
   // 浏览器已经把勾选框翻过去了，必须手动退回。读草稿而不是 !enabled，
   // 免得依赖「渲染时的草稿值仍等于 !enabled」这个时序假设。
