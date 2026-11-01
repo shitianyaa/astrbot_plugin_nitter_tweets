@@ -14,6 +14,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from plugin_api.api_history import WebAPIHistoryMixin
 from shared.utils import TweetItem, TweetMedia
@@ -296,3 +297,37 @@ class WebHistoryReplayRouteTest(unittest.TestCase):
         assert result["success"] is True
         assert api.scheduler.single_calls == [(3, ["tg:GroupMessage:1"])]
         assert api.scheduler.batch_calls == []
+
+
+class WebHistoryRouteLimitTest(unittest.TestCase):
+    """路由层 limit 钳制必须与 build_history 的上限一致。
+
+    回归背景：build_history 上限放宽到 150 时，handle_history 路由层仍钳
+    maximum=50，前端选 100/150 只会拿到 50 条。这里在路由层捕获透传值，
+    保证两处上限不再各自漂移。
+    """
+
+    def test_route_passes_limit_up_to_build_history_cap(self):
+        from plugin_api.api import NitterWebAPI
+
+        api = NitterWebAPI(types.SimpleNamespace())
+        captured = {}
+
+        async def fake_build_history(group_id, username, limit, offset, status):
+            captured["limit"] = limit
+            return {"success": True, "records": [], "total": 0}
+
+        async def fake_json_response(action):
+            return await action()
+
+        api.build_history = fake_build_history
+        api._json_response = fake_json_response
+        fake_request = types.SimpleNamespace(
+            args=types.SimpleNamespace(
+                get=lambda key, default=None: {"limit": "100"}.get(key, default)
+            )
+        )
+        with mock.patch("plugin_api.api.request", fake_request):
+            asyncio.run(api.handle_history())
+
+        assert captured["limit"] == 100

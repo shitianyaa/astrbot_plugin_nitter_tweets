@@ -115,7 +115,7 @@ class NitterWebAPI(
             username = str(request.args.get("username", "") or "").strip()
             status = str(request.args.get("status", "") or "").strip()
             limit = self._parse_int(
-                request.args.get("limit"), 10, minimum=1, maximum=50
+                request.args.get("limit"), 10, minimum=1, maximum=150
             )
             offset = self._parse_int(
                 request.args.get("offset"), 0, minimum=0, maximum=10_000_000
