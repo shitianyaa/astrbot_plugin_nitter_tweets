@@ -363,7 +363,8 @@ function historyRow(r) {
       openHistoryDetail(r.id);
     },
   }, [
-    h("span", { class: "deploy-check" }, [checkbox]),
+    // label 包裹：点"文字前"整片区域都原生联动勾选；stopPropagation 防止行点击误开抽屉
+    h("label", { class: "deploy-check", onClick: e => e.stopPropagation() }, [checkbox]),
     h("div", { class: "deploy-info" }, [
       h("div", { class: "deploy-title", text: title, title }),
       h("div", { class: "deploy-sub" }, [

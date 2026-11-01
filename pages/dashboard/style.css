@@ -798,6 +798,12 @@ a:hover { text-decoration: underline; }
   justify-content: center;
   flex: 0 0 auto;
   cursor: pointer;
+  /* 命中区扩展：负 margin 贴到行边缘并撑满整行高度、探进右间隙，
+     视觉位置不变（负 margin 与 padding 等量对冲），点击"文字前"整片
+     区域都能切换勾选，不必瞄准 15px 小方框 */
+  align-self: stretch;
+  margin: -12px -12px -12px -18px;
+  padding: 12px 24px 12px 18px;
 }
 .deploy-check input { width: 15px; height: 15px; cursor: pointer; margin: 0; accent-color: var(--text); }
 
