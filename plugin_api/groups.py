@@ -110,14 +110,11 @@ class WebUIGroupEditor:
             if "name" in data:
                 name = self._validated_name(groups, self._text(data, "name"), index)
             else:
-                # 存量分组可能没有 name，解析器会拿 group_id 兜底展示；
-                # 这种空名不校验也不报错，否则卡片启停直接失败
-                stored_name = str(raw_group.get("name") or "").strip()
-                name = (
-                    self._validated_name(groups, stored_name, index)
-                    if stored_name
-                    else ""
-                )
+                # 调用方没提交 name 就原样保留，不重跑校验：存量可能为空
+                # （解析器用 group_id 兜底展示），也可能是历史脏值（重名、
+                # 与现有标识冲突），重跑校验会让卡片启停被存量数据卡死。
+                # 与下面 daily_check_times 的「缺省 = 不校验也不回写」同一契约。
+                name = str(raw_group.get("name") or "").strip()
             # 缺省 = 不校验也不回写。存量 daily_check_times 可能是运行期只
             # warning 跳过的脏值（AstrBot 设置页可手填），拿回来重跑校验会让
             # 卡片启停直接失败。

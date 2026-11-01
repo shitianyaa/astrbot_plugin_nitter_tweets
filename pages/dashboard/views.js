@@ -437,7 +437,12 @@ function historyRow(r) {
         text: title,
         title,
         "aria-label": `查看 ${r.username || "unknown"} 的推送详情`,
-        onClick: e => { e.stopPropagation(); openHistoryDetail(r.id); },
+        onClick: e => {
+          e.stopPropagation();
+          if (e.detail > 1) return;                            // 双击序列只认第一击
+          if (window.getSelection()?.type === "Range") return; // 正在划选正文
+          openHistoryDetail(r.id);
+        },
       }),
       h("div", { class: "deploy-sub" }, [
         h("span", { text: r.username ? `@${r.username}` : "unknown" }),

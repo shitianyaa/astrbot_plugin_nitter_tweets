@@ -709,8 +709,17 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     # 原生按钮，键盘用户能拿到可访问名称
     assert 'class: "deploy-title deploy-title-btn"' in source
     assert 'aria-label": `查看 ${r.username || "unknown"} 的推送详情`' in source
+    # 标题按钮要沿用行上的双击/划选保护，否则拖选复制会直接弹抽屉。
+    # 数次数而不是判存在：行自己的 onClick 也有这两句，判存在等于没断言
+    assert source.count("if (e.detail > 1) return;") == 2
+    assert source.count('if (window.getSelection()?.type === "Range") return;') == 2
+    # 原生 button 的按钮外观得靠 CSS 抹掉，否则会退回灰边框/居中/不截断
+    assert ".deploy-title-btn {" in style
     # 下拉内 Esc 只关下拉，不能冒泡到 document 把抽屉一起关掉
     assert "e.stopPropagation(); close(true);" in source
+    # 删除分组只在选中项仍指向它时才清空并关抽屉
+    assert "if (state.selectedGroupId === gid) {" in source
+    assert "if (sheetOpen) closeSheet({ force: true });" in source
     assert ".deploy-row {" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style

@@ -289,3 +289,36 @@ def test_update_group_partial_enabled_works_without_stored_name():
     assert _group_raw(config)["enabled"] is False
     # 显式提交空名仍然要报错
     assert editor.update_group({"group_id": "noname", "name": "  "})["success"] is False
+
+
+def test_update_group_partial_enabled_survives_dirty_stored_name():
+    """存量脏名（重名/与标识冲突）也不能卡住启停。
+
+    调用方没提交 name，就没有可校验的东西；重跑 _validated_name 会让这类
+    分组在卡片上点不动。与 daily_check_times 的「缺省 = 不校验也不回写」
+    同一契约。
+    """
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "同名",
+                "group_id": "a",
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+            },
+            {
+                "name": "同名",
+                "group_id": "b",
+                "group_type": "blogger",
+                "watch_users": ["spacex"],
+            },
+        ]
+    )
+
+    for gid in ("a", "b"):
+        result = editor.update_group({"group_id": gid, "enabled": False})
+        assert result["success"] is True, result
+
+    groups = config_get(config, "tweet_groups")
+    assert [g["name"] for g in groups] == ["同名", "同名"]
+    assert [g["enabled"] for g in groups] == [False, False]
