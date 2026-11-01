@@ -1897,11 +1897,42 @@ input[type="number"] { -moz-appearance: textfield; }
   align-items: center;
   gap: 8px;
 }
-.gc-del-btn { justify-self: start; color: var(--red); }
-.gc-del-btn:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red-border); color: var(--red); }
-.gc-toggle-btn { justify-self: center; }
-.gc-toggle-btn.on { color: var(--green); background: var(--green-soft); border-color: var(--green-border); }
-.gc-edit-btn { justify-self: end; }
+.gc-del-btn {
+  justify-self: start;
+  color: var(--red);
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  padding: 4px 10px;
+  border-radius: var(--radius-btn, 6px);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.gc-del-btn:hover:not(:disabled) {
+  background: var(--red-soft);
+  border-color: var(--red-border);
+  color: var(--red);
+}
+.gc-del-placeholder { justify-self: start; visibility: hidden; }
+.gc-toggle {
+  justify-self: center;
+  padding: 4px 6px;
+  border-radius: var(--radius-btn, 6px);
+  transition: background var(--transition);
+}
+.gc-toggle:hover {
+  background: var(--surface-hover);
+}
+.gc-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.gc-edit-btn {
+  justify-self: end;
+  white-space: nowrap;
+}
 
 /* ==========================================================================
    Storage · 构成条

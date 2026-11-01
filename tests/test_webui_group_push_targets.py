@@ -169,3 +169,41 @@ def test_set_import_group_users_preserves_invalid_watch_users():
         "spacex",
         "!!bad!!",
     ]
+
+
+def test_update_group_partial_payload_preserves_untouched_fields():
+    """缺省字段保留原值：卡片启停只提交 {group_id, enabled}。
+
+    回归背景：卡片上的启用开关曾用整份分组快照拼 payload，于是
+    - 别处刚改过的 push_targets / watch_* 会被本页旧值写回；
+    - tag/list 分组里通不过校验的无效订阅条目被整段抹掉（这些条目
+      无法原样回写：_normalized_watch_queries / _normalized_watch_lists
+      遇到无效条目直接抛错）。
+    """
+    config = _FakeConfig(
+        {
+            "tweet_groups": [
+                {
+                    "name": "列表组",
+                    "group_id": "lists",
+                    "group_type": "list",
+                    "watch_lists": ["12345", "not-a-list"],
+                    "push_targets": ["aiocqhttp:GroupMessage:1"],
+                    "enabled": True,
+                }
+            ]
+        }
+    )
+    plugin = MagicMock()
+    plugin.config = config
+    plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+    editor = WebUIGroupEditor(plugin)
+
+    result = editor.update_group({"group_id": "lists", "enabled": False})
+
+    assert result["success"] is True
+    raw = _group_raw(config)
+    assert raw["enabled"] is False
+    assert raw["name"] == "列表组"
+    assert raw["watch_lists"] == ["12345", "not-a-list"]
+    assert raw["push_targets"] == ["aiocqhttp:GroupMessage:1"]

@@ -231,31 +231,47 @@ function groupCard(g) {
     ]),
     h("div", { class: "gc-card-actions" }, [
       g.group_id !== "default"
-        ? h("button", { class: "btn btn-ghost btn-sm gc-del-btn", type: "button", text: "删除分组", onClick: () => confirmDeleteGroup(g.group_id) })
-        : null,
+        ? h("button", {
+            class: "btn btn-sm gc-del-btn",
+            type: "button",
+            text: "删除分组",
+            title: `删除分组 [${g.name || g.group_id}]`,
+            onClick: e => { e.stopPropagation(); confirmDeleteGroup(g.group_id); },
+          })
+        : h("span", { class: "gc-del-placeholder", "aria-hidden": "true" }),
+      h("label", {
+        class: "toggle gc-toggle",
+        title: g.enabled ? "点击停用此分组" : "点击启用此分组",
+        onClick: e => e.stopPropagation(),
+      }, [
+        h("input", {
+          type: "checkbox",
+          checked: !!g.enabled,
+          onChange: e => toggleGroupEnabled(g.group_id, e.target.checked),
+        }),
+        h("span", { class: "toggle-track" }),
+        h("span", { class: "gc-toggle-label", text: g.enabled ? "已启用" : "已停用" }),
+      ]),
       h("button", {
-        class: `btn btn-sm gc-toggle-btn${g.enabled ? " on" : ""}`,
+        class: "btn btn-sm btn-primary gc-edit-btn",
         type: "button",
-        title: "直接切换启用状态并保存，无需进入抽屉",
-        onClick: () => toggleGroupEnabled(g.group_id, !g.enabled),
-      }, [h("span", { text: g.enabled ? "● 启用中" : "○ 已停用" })]),
-      h("button", { class: "nav-btn btn-primary gc-edit-btn", type: "button", text: "编辑详细配置", onClick: () => openGroupSheet(g.group_id) }),
+        text: "编辑详细配置",
+        onClick: e => { e.stopPropagation(); openGroupSheet(g.group_id); },
+      }),
     ]),
   ]);
 }
 
-/* 卡片上的启用开关：绕过草稿直接落盘（update 是全量 payload，按服务器
-   现值构建再翻转 enabled）。若该分组已有未保存草稿，同步其 enabled 字段，
-   避免服务器切换后草稿脏检查拿旧值误报「未保存」。 */
+/* 卡片上的启用开关：只翻 enabled 一个字段，落盘走部分更新。
+   不读 state.groups 拼全量 payload——那会把别处刚改过的 push_targets /
+   watch_users 用本页的旧值写回，也会把 tag/list 分组里通不过校验的无效
+   订阅条目整段抹掉（update_group 对缺省字段保留原值）。 */
 async function toggleGroupEnabled(gid, enabled) {
-  const server = state.groups.find(g => g.group_id === gid);
-  if (!server) return;
+  if (!state.groups.some(g => g.group_id === gid)) return;
   await withAction(async () => {
-    const payload = buildGroupPayload(snapshotGroup(server));
-    payload.enabled = enabled;
-    await apiPost("web/groups/update", payload);
-    const d = state.groupDrafts[gid];
-    if (d) d.enabled = enabled;
+    await apiPost("web/groups/update", { group_id: gid, enabled });
+    // 草稿走 updateDraft：rev 缓存必须失效，否则脏检查会读到旧 JSON
+    updateDraft(gid, "enabled", enabled);
     return { message: enabled ? "分组已启用" : "分组已停用" };
   });
 }
@@ -344,7 +360,7 @@ function openGroupSheet(gid) {
   const footer = [
     h("span", { class: "badge sheet-gid mono", text: g.group_id }),
     g.group_id !== "default"
-      ? h("button", { class: "btn btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet({ force: true }); confirmDeleteGroup(gid); } })
+      ? h("button", { class: "btn btn-danger", type: "button", text: "删除分组", onClick: () => confirmDeleteGroup(gid) })
       : null,
     h("button", { class: "btn", type: "button", text: "关闭", onClick: () => closeSheet() }),
     h("button", {
@@ -960,10 +976,15 @@ function confirmDeleteGroup(gid) {
     desc: "此操作不可恢复，订阅规则与历史关联将被清理。",
     danger: true,
     action: () => withAction(async () => {
+      // 抽屉开在被删分组上时，等删除真正成功再关：先关再问会让「取消」
+      // 把用户留在编辑器外面（closeSheet 的未保存守卫也被绕过了）。
+      const editingDeletedGroup = sheetOpen && state.selectedGroupId === gid;
       await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
       delete state.targetProbeResults[gid];
       delete state.pendingBlacklists[gid];
+      delete state.groupDrafts[gid];
       state.selectedGroupId = "";
+      if (editingDeletedGroup) closeSheet({ force: true });
     }, "分组已删除"),
   });
 }

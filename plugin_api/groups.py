@@ -102,7 +102,14 @@ class WebUIGroupEditor:
         stable_group_id = self._group_identifier(raw_group, index + 1)
 
         try:
-            name = self._validated_name(groups, self._text(data, "name"), index)
+            # 缺省 name = 保留原值（与下面 push_targets / watch_* 的
+            # data.get(key, raw_group.get(key)) 一致）：卡片启停开关只提交
+            # {group_id, enabled}，不该被迫把整份分组配置读出来再写回。
+            name = self._validated_name(
+                groups,
+                self._text(data, "name") or str(raw_group.get("name") or ""),
+                index,
+            )
             daily_check_times = self._normalized_times(
                 data.get("daily_check_times", raw_group.get("daily_check_times", []))
             )
@@ -170,20 +177,33 @@ class WebUIGroupEditor:
                 raw_group.get("hide_original_when_translated", False),
             )
         )
+        # 只校验调用方真正提交的订阅源：键缺失 = 保留原值。存量配置里
+        # 可能已有迁移阶段原样保留的无效条目，把 raw 值再拿回来跑一遍校验
+        # 会让「只改 enabled」这种部分更新直接失败，而前端也无法把无效
+        # 条目原样回写（校验会抛错）。这与下面 blogger 分支的
+        # `if "watch_users" in data` 是同一个契约。
         if existing_type == "tag":
-            try:
-                raw_group["watch_queries"] = self._normalized_watch_queries(
-                    data.get("watch_queries", raw_group.get("watch_queries", []))
+            if "watch_queries" in data:
+                try:
+                    raw_group["watch_queries"] = self._normalized_watch_queries(
+                        data.get("watch_queries")
+                    )
+                except ValueError as exc:
+                    return {"success": False, "error": str(exc)}
+            else:
+                raw_group.setdefault(
+                    "watch_queries", raw_group.get("watch_queries") or []
                 )
-            except ValueError as exc:
-                return {"success": False, "error": str(exc)}
         elif existing_type == "list":
-            try:
-                raw_group["watch_lists"] = self._normalized_watch_lists(
-                    data.get("watch_lists", raw_group.get("watch_lists", []))
-                )
-            except ValueError as exc:
-                return {"success": False, "error": str(exc)}
+            if "watch_lists" in data:
+                try:
+                    raw_group["watch_lists"] = self._normalized_watch_lists(
+                        data.get("watch_lists")
+                    )
+                except ValueError as exc:
+                    return {"success": False, "error": str(exc)}
+            else:
+                raw_group.setdefault("watch_lists", raw_group.get("watch_lists") or [])
         else:
             if "watch_users" in data:
                 raw_group["watch_users"] = self._normalized_list(
