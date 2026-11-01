@@ -11,6 +11,11 @@ import re
 
 from astrbot.api import logger
 
+try:
+    from . import log_buffer
+except ImportError:
+    import log_buffer
+
 LOG_PREFIX = "[NitterTweets]"
 
 ALLOWED_DIAGNOSTIC_FIELDS = {
@@ -160,23 +165,53 @@ def sanitize_diagnostic(value: object) -> str:
     return text
 
 
-_LEVELS = ("debug", "info", "warning", "error")
+_LEVELS = ("debug", "info", "warning", "error", "critical")
 
 
-def _emit(level: str, message: str) -> None:
-    """Dispatch to the astrbot logger method for the given level name."""
-    name = level if level in _LEVELS else "info"
+def _normalize_level(level: int | str) -> str:
+    """把整数级别或级别名归一成 ``_LEVELS`` 里的名字。
+
+    运行时模块严禁 ``import logging``，调用方统一传名字字符串；整数形式保留
+    兼容，供历史调用点与测试使用。未知值降级为 info。
+    """
+    if isinstance(level, str):
+        name = level.strip().lower()
+        if name == "warn":
+            return "warning"
+        return name if name in _LEVELS else "info"
+    try:
+        value = int(level)
+    except (TypeError, ValueError):
+        return "info"
+    return {
+        10: "debug",
+        20: "info",
+        30: "warning",
+        40: "error",
+        50: "critical",
+    }.get(value, "info")
+
+
+def _emit(level: int | str, message: str, *, lines: list[str] | None = None) -> None:
+    """统一出口：写宿主 logger，并把同一份文本放进 WebUI 环缓冲。"""
+    name = _normalize_level(level)
+    # 按名派发而非 logger.log：astrbot 的插件 logger 是上下文代理，
+    # 走具名方法才能稳定命中调用方插件自己的 logger。
     if name == "debug":
         logger.debug(message)
     elif name == "warning":
         logger.warning(message)
     elif name == "error":
         logger.error(message)
+    elif name == "critical":
+        # 环缓冲按原名记 critical，宿主侧若降级成 info 会出现两边级别不一致
+        logger.critical(message)
     else:
         logger.info(message)
+    log_buffer.append(name, lines if lines is not None else [message])
 
 
-def safe_task_log(level: str, title: str, **fields: object) -> None:
+def safe_task_log(level: int | str, title: str, **fields: object) -> None:
     """Emit a clean, indented multi-line Chinese task summary block.
 
     ``level`` is a logger method name: "debug" / "info" / "warning" / "error".
@@ -306,10 +341,10 @@ def safe_task_log(level: str, title: str, **fields: object) -> None:
     if elapsed_ms is not None:
         lines.append(f"  任务耗时: {format_elapsed(elapsed_ms)}")
 
-    _emit(level, "\n".join(lines))
+    _emit(level, "\n".join(lines), lines=lines)
 
 
-def safe_log(level: str, event_name: str, **fields: object) -> None:
+def safe_log(level: int | str, event_name: str, **fields: object) -> None:
     """Emit a structured single-line diagnostic log event.
 
     ``level`` is a logger method name: "debug" / "info" / "warning" / "error".

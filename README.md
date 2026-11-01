@@ -1,8 +1,8 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.7.5-blue?style=for-the-badge" /></a>
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=blue" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.8.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
   <br />
@@ -16,6 +16,8 @@
 </p>
 
 通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
+
+> 欢迎加入 QQ 群「Bot 测试群」**209949919**  一起玩
 
 > 首页只保留**上手与定位**。边界行为、平台差异、完整配置见 [进阶说明](./docs/advanced.md)。
 
@@ -38,20 +40,26 @@
 
 <p align="center">
   <img src="./docs/assets/readme/dashboard-overview.png" alt="Nitter 推文控制台总览" />
+  <br/>
+  <sub>全新 1.8.0 规范 WebUI 运维面板（总览 · 极简单色体系）</sub>
 </p>
 
 <div align="center">
   <table>
     <tr>
-      <td align="center">
-        <img src="./docs/assets/readme/qq-delivery.png" width="380" alt="QQ 推送效果"/>
+      <td align="center" width="38%" valign="middle">
+        <img src="./docs/assets/readme/qq-delivery-mobile.jpg" width="330" alt="QQ 真实推送效果"/>
         <br/>
-        <sub>OneBot（普通直发）</sub>
+        <sub>手机端 QQ 群真实推送<br/>（推文合并转发 / 高清图文直发）</sub>
       </td>
-      <td align="center">
-        <img src="./docs/assets/readme/qq-official-markdown.png" width="380" alt="QQ Official Markdown 推送效果"/>
+      <td align="center" width="62%" valign="top">
+        <img src="./docs/assets/readme/dashboard-config.png" alt="双栏可视化插件配置"/>
         <br/>
-        <sub>QQ Official（官方 Markdown）</sub>
+        <sub>双栏可视化配置面板（即时检索 / 零配置门槛 / 运行时热重载）</sub>
+        <br/><br/>
+        <img src="./docs/assets/readme/qq-official-markdown.png" width="400" alt="QQ Official 官方 Markdown 效果"/>
+        <br/>
+        <sub>QQ Official 官方 Markdown 推送效果</sub>
       </td>
     </tr>
   </table>
@@ -223,13 +231,18 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 ## 致谢
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- 字体：WebUI 界面使用 [MiSans](https://hyperos.mi.com/font/)（小米，随插件内置，许可见其官方发布页，`pages/dashboard/fonts/LICENSE-MiSans.txt` 为摘要）、诊断终端使用 [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（SIL OFL 1.1，全文见 `pages/dashboard/fonts/JetBrainsMono-OFL.txt`）
 - [count.getloli.com](https://count.getloli.com/)：提供 README 猫猫计数图片
 - 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
 - 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成
 
 ## 许可证
 
-MIT，见 [LICENSE](./LICENSE)。
+本项目基于 [GNU Affero General Public License v3.0 (AGPL-3.0)](./LICENSE) 协议开源。
+
+- **开源互惠与网络服务约束**：私下使用、以及未分发的修改，不产生源码公开义务。分发本插件或其修改版时，需满足 AGPL-3.0 第 4–6 节，以相同协议提供对应源代码（或按第 6 节提供获取途径），并保留原作者的版权声明与修改记录；修改后以网络服务形式向远程用户提供交互功能时，需向这些用户提供该修改版的对应源代码（第 13 节）。未修改的网络服务不附加公开义务；
+- **禁止闭源与盗用**：严禁任何未保留原作者版权的二次分发、闭源倒卖或二次封装为商业闭源软件的行为；
+- **第三方资产独立授权**：`pages/dashboard/fonts/` 下内置的字体属于独立聚合分发资产，分别遵循其各自独立许可证（MiSans 字体遵循小米官方许可；JetBrains Mono 字体遵循 SIL Open Font License 1.1），详见各字体目录下的许可文本。
 
 ## 免责声明
 

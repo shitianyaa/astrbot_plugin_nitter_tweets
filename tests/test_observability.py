@@ -157,13 +157,15 @@ def test_emit_covers_all_level_names_and_unknown_falls_back_to_info(monkeypatch)
 
     mock_logger.reset_mock()
     safe_log("critical", "level_probe", status="ok")
-    assert mock_logger.info.call_count == 1
-    (message,) = mock_logger.info.call_args.args
+    # critical 必须同名派发到宿主：环缓冲按 "critical" 记录，宿主侧降级成
+    # info 会出现两边级别不一致（审查修正项）
+    assert mock_logger.critical.call_count == 1
+    (message,) = mock_logger.critical.call_args.args
     assert message == "[NitterTweets] event=level_probe | status=ok"
     assert not mock_logger.debug.called
+    assert not mock_logger.info.called
     assert not mock_logger.warning.called
     assert not mock_logger.error.called
-    assert not mock_logger.critical.called
 
 
 # --- has_translation suppression tests (f19d28a regression) ---

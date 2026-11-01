@@ -273,7 +273,11 @@ def test_webui_update_by_alias_preserves_stable_group_id():
         }
     )
 
-    assert result == {"success": True, "group_id": "stable_id"}
+    # group_id 仍用稳定标识；group 为 None（本测试的编辑器无序列化能力，
+    # 前端据 presence 走原位替换或整组重拉）
+    assert result["success"] is True
+    assert result["group_id"] == "stable_id"
+    assert result["group"] is None
     saved = config_get(config, "tweet_groups", [])[0]
     assert saved["group_id"] == "stable_id"
     assert saved["name"] == "Updated name"

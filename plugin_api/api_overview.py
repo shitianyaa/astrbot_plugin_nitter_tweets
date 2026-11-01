@@ -93,6 +93,7 @@ class WebAPIOverviewMixin:
             "schedule_enabled": bool(
                 getattr(self.scheduler, "schedule_enabled", False)
             ),
+            "last_check_at": getattr(self.scheduler, "last_check_at", None),
         }
         features = {
             "images": resolve_send_image_attachments(self.config),
@@ -114,6 +115,7 @@ class WebAPIOverviewMixin:
                 counts, scheduler_state, instances, groups
             ),
             maintenance=await self._maintenance_snapshot(),
+            push_stats=await self._push_stats_snapshot(),
             terminology=self._terminology(),
         )
 
@@ -143,6 +145,23 @@ class WebAPIOverviewMixin:
         return {
             "cache": cache,
             "seen": {"total": sum(seen_by_group.values()), "by_group": seen_by_group},
+        }
+
+    async def _push_stats_snapshot(self) -> dict[str, Any] | None:
+        """推送记录总量与成功率快照；读取失败返回 None，不影响总览。"""
+        try:
+            total = await self.storage.count_push_history("", "", "")
+            success = await self.storage.count_push_history("", "", "success")
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] 读取推送统计失败: {type(exc).__name__}: {exc}"
+            )
+            return None
+        return {
+            "total": int(total),
+            "success": int(success),
+            # 零记录时无成功率可言，前端据此显示占位而非 0%
+            "success_rate": round(success / total, 4) if total else None,
         }
 
     async def build_groups(self) -> dict[str, Any]:

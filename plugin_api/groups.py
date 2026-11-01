@@ -102,9 +102,26 @@ class WebUIGroupEditor:
         stable_group_id = self._group_identifier(raw_group, index + 1)
 
         try:
-            name = self._validated_name(groups, self._text(data, "name"), index)
-            daily_check_times = self._normalized_times(
-                data.get("daily_check_times", raw_group.get("daily_check_times", []))
+            # 缺省 name = 保留原值（与下面 push_targets / watch_* 的
+            # data.get(key, raw_group.get(key)) 一致）：卡片启停开关只提交
+            # {group_id, enabled}，不该被迫把整份分组配置读出来再写回。
+            # 注意用 "name" in data 判提交，不能用真值判：提交空名必须照旧报错，
+            # 不能静默回退成旧名。
+            if "name" in data:
+                name = self._validated_name(groups, self._text(data, "name"), index)
+            else:
+                # 调用方没提交 name 就原样保留，不重跑校验：存量可能为空
+                # （解析器用 group_id 兜底展示），也可能是历史脏值（重名、
+                # 与现有标识冲突），重跑校验会让卡片启停被存量数据卡死。
+                # 与下面 daily_check_times 的「缺省 = 不校验也不回写」同一契约。
+                name = str(raw_group.get("name") or "").strip()
+            # 缺省 = 不校验也不回写。存量 daily_check_times 可能是运行期只
+            # warning 跳过的脏值（AstrBot 设置页可手填），拿回来重跑校验会让
+            # 卡片启停直接失败。
+            daily_check_times = (
+                self._normalized_times(data.get("daily_check_times"))
+                if "daily_check_times" in data
+                else None
             )
             push_targets = self._normalized_list(
                 data.get("push_targets", raw_group.get("push_targets", []))
@@ -138,7 +155,8 @@ class WebUIGroupEditor:
                 raw_group.get("interval_check_enabled", True),
             )
         )
-        raw_group["daily_check_times"] = daily_check_times
+        if daily_check_times is not None:
+            raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
         raw_group["filter_reposts_enabled"] = self._bool(
             data.get(
@@ -170,20 +188,33 @@ class WebUIGroupEditor:
                 raw_group.get("hide_original_when_translated", False),
             )
         )
+        # 只校验调用方真正提交的订阅源：键缺失 = 保留原值。存量配置里
+        # 可能已有迁移阶段原样保留的无效条目，把 raw 值再拿回来跑一遍校验
+        # 会让「只改 enabled」这种部分更新直接失败，而前端也无法把无效
+        # 条目原样回写（校验会抛错）。这与下面 blogger 分支的
+        # `if "watch_users" in data` 是同一个契约。
         if existing_type == "tag":
-            try:
-                raw_group["watch_queries"] = self._normalized_watch_queries(
-                    data.get("watch_queries", raw_group.get("watch_queries", []))
-                )
-            except ValueError as exc:
-                return {"success": False, "error": str(exc)}
+            if "watch_queries" in data:
+                try:
+                    raw_group["watch_queries"] = self._normalized_watch_queries(
+                        data.get("watch_queries")
+                    )
+                except ValueError as exc:
+                    return {"success": False, "error": str(exc)}
+            elif raw_group.get("watch_queries") is None:
+                # 只把 null 归一成空列表（与改动前的行为一致），不做校验
+                raw_group["watch_queries"] = []
         elif existing_type == "list":
-            try:
-                raw_group["watch_lists"] = self._normalized_watch_lists(
-                    data.get("watch_lists", raw_group.get("watch_lists", []))
-                )
-            except ValueError as exc:
-                return {"success": False, "error": str(exc)}
+            if "watch_lists" in data:
+                try:
+                    raw_group["watch_lists"] = self._normalized_watch_lists(
+                        data.get("watch_lists")
+                    )
+                except ValueError as exc:
+                    return {"success": False, "error": str(exc)}
+            elif raw_group.get("watch_lists") is None:
+                # 只把 null 归一成空列表（与改动前的行为一致），不做校验
+                raw_group["watch_lists"] = []
         else:
             if "watch_users" in data:
                 raw_group["watch_users"] = self._normalized_list(
@@ -197,7 +228,43 @@ class WebUIGroupEditor:
         save_error = self._save_groups(previous_groups, groups)
         if save_error:
             return {"success": False, "error": f"配置保存失败：{save_error}"}
-        return {"success": True, "group_id": raw_group["group_id"]}
+        return {
+            "success": True,
+            "group_id": raw_group["group_id"],
+            # 与 web/groups 同一序列化的分组对象（含 attention_items）：
+            # 前端拿它原位替换卡片数据，省一次 groups 拉取。尽力而为——
+            # 序列化依赖 NitterWebAPI 上的 _schedule_groups/_serialize_group，
+            # 拿不到（独立构造的编辑器/解析异常）时为 None，前端走整组重拉。
+            "group": self._serialized_updated_group(stable_group_id),
+        }
+
+    def _serialized_updated_group(self, group_id: str) -> dict[str, Any] | None:
+        """按 web/groups 的序列化形状返回刚保存的分组；失败返回 None。"""
+        try:
+            parsed = next(
+                (
+                    group
+                    for group in self._schedule_groups()
+                    if group.group_id == group_id
+                ),
+                None,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] WebUI 分组保存后序列化失败（前端将整组重拉）: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
+        if parsed is None:
+            return None
+        try:
+            return self._serialize_group(parsed)
+        except Exception as exc:
+            logger.warning(
+                f"[NitterTweets] WebUI 分组序列化失败（前端将整组重拉）: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return None
 
     def delete_group(self, data: dict[str, Any]) -> dict[str, Any]:
         group_id = self._text(data, "group_id")
