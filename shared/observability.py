@@ -165,7 +165,7 @@ def sanitize_diagnostic(value: object) -> str:
     return text
 
 
-_LEVELS = ("debug", "info", "warning", "error")
+_LEVELS = ("debug", "info", "warning", "error", "critical")
 
 
 def _normalize_level(level: int | str) -> str:
@@ -176,7 +176,9 @@ def _normalize_level(level: int | str) -> str:
     """
     if isinstance(level, str):
         name = level.strip().lower()
-        return "warning" if name == "warn" else name
+        if name == "warn":
+            return "warning"
+        return name if name in _LEVELS else "info"
     try:
         value = int(level)
     except (TypeError, ValueError):
@@ -201,6 +203,9 @@ def _emit(level: int | str, message: str, *, lines: list[str] | None = None) -> 
         logger.warning(message)
     elif name == "error":
         logger.error(message)
+    elif name == "critical":
+        # 环缓冲按原名记 critical，宿主侧若降级成 info 会出现两边级别不一致
+        logger.critical(message)
     else:
         logger.info(message)
     log_buffer.append(name, lines if lines is not None else [message])

@@ -45,6 +45,17 @@ def _dashboard_js_source() -> str:
     )
 
 
+def test_dashboard_script_tags_match_load_order():
+    """index.html 的 <script src> 顺序必须与 DASHBOARD_JS_FILES 一致。
+
+    classic script 的顶层 let/const/function 跨文件共享全局词法环境，
+    顺序错乱（boot 提前、core 殿后）在运行时才炸，这里把加载顺序钉死。
+    """
+    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
+    srcs = re.findall(r'<script src="\./([\w-]+\.js)"></script>', index)
+    assert srcs == list(DASHBOARD_JS_FILES)
+
+
 def _tweet(status_id: str, *, retweet: bool = False) -> TweetItem:
     return TweetItem(
         text=f"tweet {status_id}",
@@ -688,7 +699,9 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
         in source
     )
     # 删除孤儿后原位联动刷新孤儿清单、历史列表与总览最新推送
-    assert "renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes()," in source
+    assert (
+        "renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes()," in source
+    )
     assert "transition: all" not in style
     # 历史行已由 tweet-card 迁移到 deploy-row：悬停反馈与选中态仍走同一套 token
     assert ".deploy-row:hover" in style
@@ -859,9 +872,9 @@ def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
     assert "current.filter(x => x !== t)" in source
 
 
-def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
-    """切页签必须重新取数（否则别处产生的新数据要等手动刷新），历史筛选
-    改变后立即查询，配置搜索跨分组定位并说明命中原因。"""
+def test_dashboard_views_wires_filters_immediately():
+    """历史筛选改变后立即查询（字符串级接线断言；行为级覆盖等有 JS 测试
+    基建再补）。切页签重新取数、配置搜索定位见同文件其余断言。"""
     source = _dashboard_js_source()
 
     # 进入视图按 TTL 取数；分组的脏编辑不被外部数据打断
@@ -876,7 +889,9 @@ def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
     # applyHistoryFilters 提升为 boot 分片顶层函数，动作在途时置 pendingHistoryApply，
     # 由 withAction 收尾补跑（在途丢弃不再静默吞掉筛选变更）
     assert "async function applyHistoryFilters() {" in source
-    assert "if (state.actionBusy) { state.pendingHistoryApply = true; return; }" in source
+    assert (
+        "if (state.actionBusy) { state.pendingHistoryApply = true; return; }" in source
+    )
     assert (
         "els.historyLimitSelect?.onChange?.(() => { applyHistoryFilters(); });"
         in source

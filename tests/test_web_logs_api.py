@@ -106,3 +106,27 @@ def test_safe_task_log_redacts_instance_path():
 
     joined = "\n".join(log_buffer.snapshot()[0]["lines"])
     assert "secret-path" not in joined
+
+
+def test_safe_log_accepts_level_name_strings_including_aliases():
+    """字符串级别与别名归一：运行时模块禁 import logging，调用方传名字串。
+
+    "warn" 归一为 warning；未知名字与宿主侧一致降级为 info，缓冲与宿主
+    不允许出现两个不同的级别。
+    """
+    safe_log("warning", "media_transport", status="ok")
+    safe_log("warn", "media_transport", status="ok")
+    safe_log("totally-unknown-level", "media_transport", status="ok")
+
+    entries = log_buffer.snapshot()
+    assert [e["level"] for e in entries] == ["warning", "warning", "info"]
+
+
+def test_emit_integer_critical_reaches_buffer_and_host_consistently():
+    """整数 50 归一为 critical：缓冲与宿主派发用同一级别名。"""
+    from shared.observability import _emit
+
+    _emit(50, " catastrophic ")
+
+    entries = log_buffer.snapshot()
+    assert [e["level"] for e in entries] == ["critical"]
