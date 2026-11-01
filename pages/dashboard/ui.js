@@ -85,9 +85,16 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
   });
   root.setOptions = next => {
     opts = next.map(o => ({ value: String(o.value), text: o.text }));
-    if (!opts.some(o => o.value === current)) current = opts[0]?.value ?? "";
+    // 当前选中项被移出新选项时 current 会静默重置为第一项：必须回调 onChange，
+    // 否则调用方 state 还留着旧值，与下拉显示脱钩（如删除分组后的历史筛选）
+    let resetToDefault = false;
+    if (!opts.some(o => o.value === current)) {
+      current = opts[0]?.value ?? "";
+      resetToDefault = true;
+    }
     syncTrigger();
     if (!list.hidden) renderList();
+    if (resetToDefault && onChange) onChange();
   };
   root.onChange = fn => { onChange = fn; };
   syncTrigger();
@@ -458,10 +465,21 @@ async function reloadLogs({ reset = false } = {}) {
   }
 }
 
+/* 轮询失败容错：一次网络抖动不该永久杀掉终端（切回视图才会重启），
+   连续 LOG_POLL_MAX_FAILURES 次失败才认定通道坏了主动停掉。 */
+const LOG_POLL_MAX_FAILURES = 5;
+let logPollFailures = 0;
+
 function startLogPolling() {
   stopLogPolling();
+  logPollFailures = 0;
   state.logsTimer = setInterval(() => {
-    reloadLogs().catch(() => stopLogPolling());
+    reloadLogs()
+      .then(() => { logPollFailures = 0; })
+      .catch(() => {
+        logPollFailures += 1;
+        if (logPollFailures >= LOG_POLL_MAX_FAILURES) stopLogPolling();
+      });
   }, LOG_POLL_MS);
 }
 

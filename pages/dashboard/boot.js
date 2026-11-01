@@ -194,6 +194,8 @@ function bindEvents() {
     if (e.key === "Escape") {
       if (cmdkOpen) { closeCmdk(); return; }
       if (els.createGroupModal?.classList.contains("open")) { closeCreateGroupModal(); return; }
+      // 确认框压在抽屉之上（z-index 更高），Escape 要从最顶层往下关
+      if (els.confirmDialog && !els.confirmDialog.hidden) { closeConfirm(); return; }
       if (sheetOpen) { closeSheet(); return; }
       closeConfirm();
       return;
@@ -201,6 +203,7 @@ function bindEvents() {
     if (e.key !== "Tab") return;
     if (els.confirmDialog && !els.confirmDialog.hidden) { trapFocus(els.confirmDialog, e); return; }
     if (els.createGroupModal?.classList.contains("open")) { trapFocus(els.createGroupModal, e); return; }
+    if (cmdkOpen) { trapFocus(els.cmdkOverlay, e); return; }
     if (sheetOpen) trapFocus(els.detailSheet, e);
   });
 }

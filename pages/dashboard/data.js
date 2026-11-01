@@ -18,12 +18,19 @@ async function reloadGroupState() {
   const [groups, blacklists, overview] = await Promise.all([
     apiGet("web/groups"), apiGet("web/target-blacklists"), apiGet("web/overview"),
   ]);
+  // 「干净」草稿（用户没编辑过，只是 syncGroupDrafts 的全量快照）必须跟随服务器
+  // 重建：不然服务器侧的变更被旧快照锁死——草稿与新数据永久对不上，假 dirty
+  // 常驻，分组页自动刷新失效，保存还会把旧值写回。编辑过的草稿原样保留。
+  const cleanGids = new Set(
+    state.groups.filter(g => !isGroupDirty(g.group_id)).map(g => g.group_id),
+  );
   state.groups = groups.groups || [];
   state.targetBlacklists = blacklists.target_blacklists || [];
   state.overview = overview;
   if (!state.selectedGroupId || !state.groups.some(g => g.group_id === state.selectedGroupId)) {
     state.selectedGroupId = state.groups[0]?.group_id || "";
   }
+  for (const gid of cleanGids) delete state.groupDrafts[gid];
   syncGroupDrafts();
   markData("groups");
   markData("overview");
@@ -81,7 +88,16 @@ async function refreshViewData(view) {
       return true;
     }
     if (view === "config") { await reloadConfigState(); return true; }
-    if (view === "history") { await refreshHistoryData(); return true; }
+    if (view === "history") {
+      // 总览「最新推送」与历史页共用 web/history 数据源：重推/删孤儿后只刷
+      // 历史会让总览在 15s 节流窗口内继续显示旧记录，这里并行补齐
+      const results = await Promise.allSettled([
+        refreshHistoryData(), refreshRecentPushes(),
+      ]);
+      const failed = results.find(r => r.status === "rejected");
+      if (failed) throw failed.reason;
+      return true;
+    }
     if (view === "storage") {
       // 存储运维只用概览里的 maintenance，不需要再拉最近推送
       await reloadOverviewData();

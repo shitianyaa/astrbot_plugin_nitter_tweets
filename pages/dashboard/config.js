@@ -149,7 +149,9 @@ function renderConfigBarState() {
   const slot = root.querySelector(".config-bar-state");
   const total = configDirtyKeys.size;
   if (slot) {
-    if (state.configJustSaved) {
+    // 「已保存」徽标只表达真正的空脏状态：保存后的展示窗口内又有新编辑时，
+    // 必须立即让位给未保存计数，否则 2.4s 内的修改会被掩盖
+    if (state.configJustSaved && total === 0) {
       slot.replaceChildren(h("span", { class: "badge badge-ok", text: "✓ 配置已保存并热重载" }));
     } else {
       slot.replaceChildren(
