@@ -220,14 +220,14 @@ a:hover { text-decoration: underline; }
   padding: 12px 24px;
   height: 56px;
 }
-.brand-triangle {
+.brand-logo, .brand-triangle {
   width: 22px;
-  height: 19px;
-  fill: var(--text);
+  height: 22px;
   flex: none;
+  display: block;
   transition: transform var(--transition);
 }
-.brand-triangle:hover { transform: scale(1.08); }
+.brand-logo:hover, .brand-triangle:hover { transform: scale(1.08); }
 .nav-crumb { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; min-width: 0; white-space: nowrap; }
 .nav-crumb .slash { color: var(--text-subtle); font-weight: 300; }
 .nav-crumb .org { color: var(--text-muted); }
