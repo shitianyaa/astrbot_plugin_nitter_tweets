@@ -102,6 +102,20 @@ function refreshOnEnter(view) {
   refreshViewData(view).catch(() => {});
 }
 
+/* 历史筛选统一入口：下拉/输入/回车都汇到这里立即查询。撞上其他动作在途时
+   withAction 会丢弃并发调用，先记 pendingHistoryApply，动作收尾统一补跑——
+   否则「下拉已经变了、列表还是旧筛选」会被静默吞掉。 */
+async function applyHistoryFilters() {
+  if (state.actionBusy) { state.pendingHistoryApply = true; return; }
+  state.historyGroupId = els.historyGroupSelect.value;
+  state.historyUsername = els.historyUsername.value.trim();
+  state.historyLimit = parseInt(els.historyLimitSelect.value, 10) || 20;
+  state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
+  state.historySelection.clear();
+  state.historyOffset = 0; // 重置页码
+  await withAction(() => refreshHistoryData(), false, { reload: false });
+}
+
 function bindEvents() {
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.refreshBtn?.addEventListener("click", () => {
@@ -126,15 +140,6 @@ function bindEvents() {
   // 实例诊断页的探测按钮在 section-header 上，表单 submit 仍保留给回车提交
   els.mirrorProbeBtn?.addEventListener("click", () => probeMirror());
 
-  const applyHistoryFilters = async () => {
-    state.historyGroupId = els.historyGroupSelect.value;
-    state.historyUsername = els.historyUsername.value.trim();
-    state.historyLimit = parseInt(els.historyLimitSelect.value, 10) || 20;
-    state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
-    state.historySelection.clear();
-    state.historyOffset = 0; // 重置页码
-    await withAction(() => refreshHistoryData(), false, { reload: false });
-  };
   els.historyRefreshBtn?.addEventListener("click", applyHistoryFilters);
   // 下拉与条数改变即刻查询：此前只有点「筛选」才生效，看起来像切换后没刷新
   els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });

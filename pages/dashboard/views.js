@@ -358,8 +358,15 @@ function historyRow(r) {
 
   return h("div", {
     class: `deploy-row${state.historySelection.has(r.id) ? " selected" : ""}`,
+    role: "button",
+    tabindex: "0",
     title: "点击查看详情",
     dataset: { recordId: String(r.id) },
+    onkeydown: e => {
+      // 勾选框/按钮自身的键盘语义优先，不当作「打开详情」
+      if (e.target.closest("input, button, a, label")) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openHistoryDetail(r.id); }
+    },
     onClick: e => {
       if (e.detail > 1) return; // 双击/多击序列只认第一击
       if (window.getSelection()?.type === "Range") return; // 正在划选正文，不当作点选
@@ -703,7 +710,14 @@ function confirmDeleteOrphan(gid) {
     title: `删除废弃分组 [${gid}] 历史？`,
     desc: "该分组已不存在，删除后相关记录彻底清除。",
     danger: true,
-    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: () => renderHistoryOrphans().catch(err => showAlert(err.message || "孤儿列表刷新失败", "warn")) }),
+    action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: async () => {
+      // 删除同时影响孤儿清单、历史列表与总览最新推送，一并原位刷新
+      const results = await Promise.allSettled([
+        renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes(),
+      ]);
+      const failed = results.find(r => r.status === "rejected");
+      if (failed) showAlert(failed.reason?.message || "孤儿列表刷新失败", "warn");
+    } }),
   });
 }
 

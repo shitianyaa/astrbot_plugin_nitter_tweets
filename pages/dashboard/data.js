@@ -127,7 +127,14 @@ async function withAction(action, successText, { reload = true, rerender = null 
     }
     return res;
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
-  finally { state.actionBusy = false; state.busyLabel = ""; setBusy(false); }
+  finally {
+    state.actionBusy = false; state.busyLabel = ""; setBusy(false);
+    // 在途期间被丢弃的历史筛选在这里补跑（applyHistoryFilters 定义于 boot 分片）
+    if (state.pendingHistoryApply) {
+      state.pendingHistoryApply = false;
+      if (typeof applyHistoryFilters === "function") applyHistoryFilters();
+    }
+  }
 }
 
 async function reloadAll(options = {}) {

@@ -31,6 +31,8 @@ const state = {
   historyGroupId: "", historyUsername: "", historyLimit: 20,
   historyStatus: "", historySelection: new Set(),
   historyOffset: 0,
+  // 历史筛选在动作在途时被 withAction 丢弃后置位，动作收尾统一补跑
+  pendingHistoryApply: false,
   pendingAction: null, lastFocusedElement: null,
   statusNotice: null, statusNoticeClosed: false,
   // 诊断终端：插件日志环缓冲（web/logs），只在 mirror 视图可见时轮询

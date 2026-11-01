@@ -687,7 +687,8 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
         'await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });'
         in source
     )
-    assert "rerender: () => renderHistoryOrphans().catch" in source
+    # 删除孤儿后原位联动刷新孤儿清单、历史列表与总览最新推送
+    assert "renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes()," in source
     assert "transition: all" not in style
     # 历史行已由 tweet-card 迁移到 deploy-row：悬停反馈与选中态仍走同一套 token
     assert ".deploy-row:hover" in style
@@ -871,8 +872,11 @@ def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
         'if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;'
         in source
     )
-    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」；条数也是自绘下拉
-    assert "const applyHistoryFilters = async () => {" in source
+    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」；条数也是自绘下拉。
+    # applyHistoryFilters 提升为 boot 分片顶层函数，动作在途时置 pendingHistoryApply，
+    # 由 withAction 收尾补跑（在途丢弃不再静默吞掉筛选变更）
+    assert "async function applyHistoryFilters() {" in source
+    assert "if (state.actionBusy) { state.pendingHistoryApply = true; return; }" in source
     assert (
         "els.historyLimitSelect?.onChange?.(() => { applyHistoryFilters(); });"
         in source

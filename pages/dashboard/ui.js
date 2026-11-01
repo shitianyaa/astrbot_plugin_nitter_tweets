@@ -422,22 +422,26 @@ function renderErrorTerminal(rawError, { title = "delivery_error.log", status = 
 
 /* 在途守卫：轮询与「进入视图时的 reset 拉取」可能重叠，两次请求会拿到同一批
    seq 各自 concat，同一批日志在终端里出现两遍（接口慢于 3s 轮询间隔即可复现）。
-   reset 请求优先：它清空后重拉，普通增量请求直接让位。 */
+   reset 请求优先：它清空后重拉，普通增量请求直接让位。代际号作废 reset 之前
+   出发的在途增量——只拦新请求拦不住已经发出去的，旧响应会把刚清空的 state
+   重新填满；seq 去重防重不防序，写入后再按 seq 排序兜底。 */
 let logsInFlight = null;
 let logsResetPending = false;
+let logsGeneration = 0;
 
 async function reloadLogs({ reset = false } = {}) {
   if (reset) {
     logsResetPending = true;
-    // 让在途的增量请求失效，避免它把旧数据写回刚清空的 state
+    logsGeneration += 1;
     state.logs = [];
     state.logsAfterSeq = 0;
   } else if (logsInFlight || logsResetPending) {
     return;   // 已有请求在途，本轮跳过；下一次轮询自然会补上
   }
-
+  const myGeneration = logsGeneration;
   const request = (async () => {
     const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
+    if (myGeneration !== logsGeneration) return; // reset 已作废本次写入
     const incoming = res.entries || [];
     state.logsMax = res.max_entries || state.logsMax;
     if (incoming.length) {
@@ -445,7 +449,7 @@ async function reloadLogs({ reset = false } = {}) {
       const seen = new Set(state.logs.map(e => e.seq));
       const fresh = incoming.filter(e => !seen.has(e.seq));
       if (fresh.length) {
-        state.logs = state.logs.concat(fresh);
+        state.logs = state.logs.concat(fresh).sort((a, b) => a.seq - b.seq);
         state.logsAfterSeq = fresh[fresh.length - 1].seq;
       }
       // 前端与后端同上限，避免长时间停留后无限增长
