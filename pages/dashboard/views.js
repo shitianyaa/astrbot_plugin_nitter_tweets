@@ -167,12 +167,13 @@ function renderOverview() {
       successRate, stats?.success_rate != null, () => switchView("history")),
     metricBox("活跃订阅分组", "分组规模", `${c.enabled_groups || 0} / ${c.groups || 0}`,
       `${c.watch_users || 0} 位博主 · ${c.watch_queries || 0} 个关键词 · ${c.watch_lists || 0} 个列表`, false, goGroups),
+    // 两卡与存储运维页一一对应：缓存卡→占用分布区块，去重卡→Seen DB 区块
     metricBox("本地媒体缓存", "本地磁盘", cacheInfo ? formatBytes(cacheInfo.bytes) : "0 KB",
       cacheInfo && cacheInfo.files
         ? `${cacheInfo.files} 个文件（${cacheInfo.images || 0} 图 / ${cacheInfo.videos || 0} 视频）`
-        : "当前无缓存文件", false, null),
+        : "当前无缓存文件", false, () => switchView("storage")),
     metricBox("已读去重记录", "Watermark", String(seenInfo?.total ?? 0),
-      "防重复推送机制运行中", false, null),
+      "防重复推送机制运行中", false, () => switchView("storage")),
   ]);
 
   // ---- 4. 最新推送记录（前 5 条）：原型单列布局，紧跟指标卡 ----
