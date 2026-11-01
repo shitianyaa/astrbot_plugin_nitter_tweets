@@ -1169,6 +1169,7 @@ def test_attention_nav_covers_every_overview_attention_key():
     渲染成不可点，而 CHANGELOG 写的是「均可点击跳转」。
     """
     import ast
+    import json
 
     tree = ast.parse(
         (ROOT / "plugin_api" / "api_overview.py").read_text(encoding="utf-8")
@@ -1203,6 +1204,18 @@ def test_attention_nav_covers_every_overview_attention_key():
     assert backend_keys, "没解析到后端 attention key，断言本身失效了"
     assert backend_keys <= nav_keys, f"缺少跳转目标：{sorted(backend_keys - nav_keys)}"
 
+    # view=config 的目标必须是 _conf_schema.json 里真实存在的顶层分组键，
+    # 否则 typo（如 schedule 打成 schedul）只会静默跳到第一组
+    schema_keys = set(
+        json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    )
+    config_targets = re.findall(
+        r'^\s*(\w+):\s*\{ view: "config", group: "(\w+)" \}', nav_block, re.M
+    )
+    assert config_targets, "没解析到 config 类跳转目标，断言本身失效了"
+    for key, group in config_targets:
+        assert group in schema_keys, f"{key} 指向不存在的配置分组 {group}"
+
 
 def test_with_action_drains_pending_history_filter_replay():
     """在途期间被丢弃的历史筛选必须由收尾补跑。
@@ -1213,4 +1226,10 @@ def test_with_action_drains_pending_history_filter_replay():
     source = _dashboard_js_source()
 
     assert "function drainPendingHistoryApply() {" in source
-    assert source.count("drainPendingHistoryApply();") == 2
+    # 只数调用次数会漏掉「调用点不在 finally 里」这种错位，也会在将来
+    # 合法新增调用点时误报；直接断言两条路径的 finally 里都有它
+    for fn in ("withAction", "probeMirror"):
+        pattern = (
+            rf"async function {fn}\b.*?finally\s*\{{[^}}]*drainPendingHistoryApply\(\);"
+        )
+        assert re.search(pattern, source, re.S), f"{fn} 的 finally 没补跑历史筛选"

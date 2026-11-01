@@ -105,13 +105,22 @@ class WebUIGroupEditor:
             # 缺省 name = 保留原值（与下面 push_targets / watch_* 的
             # data.get(key, raw_group.get(key)) 一致）：卡片启停开关只提交
             # {group_id, enabled}，不该被迫把整份分组配置读出来再写回。
+            # 注意用 "name" in data 判提交，不能用真值判：提交空名必须照旧报错，
+            # 不能静默回退成旧名。
             name = self._validated_name(
                 groups,
-                self._text(data, "name") or str(raw_group.get("name") or ""),
+                self._text(data, "name")
+                if "name" in data
+                else str(raw_group.get("name") or ""),
                 index,
             )
-            daily_check_times = self._normalized_times(
-                data.get("daily_check_times", raw_group.get("daily_check_times", []))
+            # 缺省 = 不校验也不回写。存量 daily_check_times 可能是运行期只
+            # warning 跳过的脏值（AstrBot 设置页可手填），拿回来重跑校验会让
+            # 卡片启停直接失败。
+            daily_check_times = (
+                self._normalized_times(data.get("daily_check_times"))
+                if "daily_check_times" in data
+                else None
             )
             push_targets = self._normalized_list(
                 data.get("push_targets", raw_group.get("push_targets", []))
@@ -145,7 +154,8 @@ class WebUIGroupEditor:
                 raw_group.get("interval_check_enabled", True),
             )
         )
-        raw_group["daily_check_times"] = daily_check_times
+        if daily_check_times is not None:
+            raw_group["daily_check_times"] = daily_check_times
         raw_group["push_targets"] = push_targets
         raw_group["filter_reposts_enabled"] = self._bool(
             data.get(
@@ -190,10 +200,8 @@ class WebUIGroupEditor:
                     )
                 except ValueError as exc:
                     return {"success": False, "error": str(exc)}
-            else:
-                raw_group.setdefault(
-                    "watch_queries", raw_group.get("watch_queries") or []
-                )
+            elif "watch_queries" not in raw_group:
+                raw_group["watch_queries"] = []
         elif existing_type == "list":
             if "watch_lists" in data:
                 try:
@@ -202,8 +210,8 @@ class WebUIGroupEditor:
                     )
                 except ValueError as exc:
                     return {"success": False, "error": str(exc)}
-            else:
-                raw_group.setdefault("watch_lists", raw_group.get("watch_lists") or [])
+            elif "watch_lists" not in raw_group:
+                raw_group["watch_lists"] = []
         else:
             if "watch_users" in data:
                 raw_group["watch_users"] = self._normalized_list(

@@ -241,16 +241,17 @@ function groupCard(g) {
         : h("span", { class: "gc-del-placeholder", "aria-hidden": "true" }),
       h("label", {
         class: "toggle gc-toggle",
-        title: g.enabled ? "点击停用此分组" : "点击启用此分组",
+        title: d.enabled ? "点击停用此分组" : "点击启用此分组",
         onClick: e => e.stopPropagation(),
       }, [
         h("input", {
           type: "checkbox",
-          checked: !!g.enabled,
-          onChange: e => toggleGroupEnabled(g.group_id, e.target.checked),
+          // 与同卡其它状态一样读草稿，不读服务器快照
+          checked: !!d.enabled,
+          onChange: e => toggleGroupEnabled(g.group_id, e.target.checked, e.target),
         }),
         h("span", { class: "toggle-track" }),
-        h("span", { class: "gc-toggle-label", text: g.enabled ? "已启用" : "已停用" }),
+        h("span", { class: "gc-toggle-label", text: d.enabled ? "已启用" : "已停用" }),
       ]),
       h("button", {
         class: "btn btn-sm btn-primary gc-edit-btn",
@@ -266,14 +267,17 @@ function groupCard(g) {
    不读 state.groups 拼全量 payload——那会把别处刚改过的 push_targets /
    watch_users 用本页的旧值写回，也会把 tag/list 分组里通不过校验的无效
    订阅条目整段抹掉（update_group 对缺省字段保留原值）。 */
-async function toggleGroupEnabled(gid, enabled) {
+async function toggleGroupEnabled(gid, enabled, input) {
   if (!state.groups.some(g => g.group_id === gid)) return;
-  await withAction(async () => {
+  const res = await withAction(async () => {
     await apiPost("web/groups/update", { group_id: gid, enabled });
     // 草稿走 updateDraft：rev 缓存必须失效，否则脏检查会读到旧 JSON
     updateDraft(gid, "enabled", enabled);
     return { message: enabled ? "分组已启用" : "分组已停用" };
   });
+  // 失败或被在途动作丢弃时 withAction 返回 null，且不会重渲染：
+  // 浏览器已经把勾选框翻过去了，必须手动退回，否则开关与服务端状态脱钩
+  if (res === null && input) input.checked = !enabled;
 }
 
 function selectGroup(gid, { force = false } = {}) {

@@ -207,3 +207,66 @@ def test_update_group_partial_payload_preserves_untouched_fields():
     assert raw["name"] == "列表组"
     assert raw["watch_lists"] == ["12345", "not-a-list"]
     assert raw["push_targets"] == ["aiocqhttp:GroupMessage:1"]
+
+
+def _partial_update_editor(groups: list[dict]) -> tuple[WebUIGroupEditor, _FakeConfig]:
+    config = _FakeConfig({"tweet_groups": groups})
+    plugin = MagicMock()
+    plugin.config = config
+    plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+    return WebUIGroupEditor(plugin), config
+
+
+def test_update_group_still_rejects_blank_name():
+    """缺省 name 才保留原值；显式提交空名必须照旧报错。
+
+    回归背景：缺省回退曾用真值判断（`self._text(data,"name") or 旧名`），
+    于是 {"name": "   "} 被当成「未提交」静默回退，用户在抽屉里清空名字
+    点保存会收到「分组已保存」但名字没变。
+    """
+    editor, _ = _partial_update_editor(
+        [
+            {
+                "name": "G",
+                "group_id": "g",
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+            }
+        ]
+    )
+
+    result = editor.update_group({"group_id": "g", "name": "   "})
+
+    assert result["success"] is False
+    assert "分组名称不能为空" in result["error"]
+
+
+def test_update_group_partial_skips_stale_daily_check_times_validation():
+    """缺省 daily_check_times 不回写也不校验：存量脏值不该挡住启停。
+
+    回归背景：运行期 parse_daily_times 对越界/非法时间只 warning 跳过，
+    AstrBot 设置页可手填出这种值。部分更新若把存量原值拿回来重跑校验，
+    这类分组连启停都点不动。显式提交脏时间仍然要报错。
+    """
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "G",
+                "group_id": "g",
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "daily_check_times": ["09:00", "not-a-time"],
+            }
+        ]
+    )
+
+    toggled = editor.update_group({"group_id": "g", "enabled": False})
+    assert toggled["success"] is True
+    raw = _group_raw(config)
+    assert raw["enabled"] is False
+    # 脏值原样留着，等用户在抽屉里自己修
+    assert raw["daily_check_times"] == ["09:00", "not-a-time"]
+
+    rejected = editor.update_group({"group_id": "g", "daily_check_times": ["25:00"]})
+    assert rejected["success"] is False
+    assert "每日检查时间格式无效" in rejected["error"]
