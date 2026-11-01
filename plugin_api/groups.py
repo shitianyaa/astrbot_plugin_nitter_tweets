@@ -200,7 +200,8 @@ class WebUIGroupEditor:
                     )
                 except ValueError as exc:
                     return {"success": False, "error": str(exc)}
-            elif "watch_queries" not in raw_group:
+            elif raw_group.get("watch_queries") is None:
+                # 只把 null 归一成空列表（与改动前的行为一致），不做校验
                 raw_group["watch_queries"] = []
         elif existing_type == "list":
             if "watch_lists" in data:
@@ -210,7 +211,8 @@ class WebUIGroupEditor:
                     )
                 except ValueError as exc:
                     return {"success": False, "error": str(exc)}
-            elif "watch_lists" not in raw_group:
+            elif raw_group.get("watch_lists") is None:
+                # 只把 null 归一成空列表（与改动前的行为一致），不做校验
                 raw_group["watch_lists"] = []
         else:
             if "watch_users" in data:

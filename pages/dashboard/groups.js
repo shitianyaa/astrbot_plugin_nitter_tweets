@@ -276,8 +276,11 @@ async function toggleGroupEnabled(gid, enabled, input) {
     return { message: enabled ? "分组已启用" : "分组已停用" };
   });
   // 失败或被在途动作丢弃时 withAction 返回 null，且不会重渲染：
-  // 浏览器已经把勾选框翻过去了，必须手动退回，否则开关与服务端状态脱钩
-  if (res === null && input) input.checked = !enabled;
+  // 浏览器已经把勾选框翻过去了，必须手动退回。读草稿而不是 !enabled，
+  // 免得依赖「渲染时的草稿值仍等于 !enabled」这个时序假设。
+  if (res === null && input) {
+    input.checked = !!(state.groupDrafts[gid] || {}).enabled;
+  }
 }
 
 function selectGroup(gid, { force = false } = {}) {

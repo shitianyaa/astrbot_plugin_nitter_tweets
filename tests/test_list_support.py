@@ -1226,10 +1226,19 @@ def test_with_action_drains_pending_history_filter_replay():
     source = _dashboard_js_source()
 
     assert "function drainPendingHistoryApply() {" in source
-    # 只数调用次数会漏掉「调用点不在 finally 里」这种错位，也会在将来
-    # 合法新增调用点时误报；直接断言两条路径的 finally 里都有它
-    for fn in ("withAction", "probeMirror"):
-        pattern = (
-            rf"async function {fn}\b.*?finally\s*\{{[^}}]*drainPendingHistoryApply\(\);"
+    # 只数调用次数会漏掉「调用点不在 finally 里」这种错位。先按函数切块再
+    # 看块内的 finally：跨函数匹配的正则会在首个候选失败后向后吞，把
+    # probeMirror 的 finally 当成 withAction 的，反而比计数更弱。
+    bodies = {
+        m.group(1): m.group(2)
+        for m in re.finditer(
+            r"async function (\w+)\b(.*?)(?=\nasync function |\Z)", source, re.S
         )
-        assert re.search(pattern, source, re.S), f"{fn} 的 finally 没补跑历史筛选"
+    }
+    for fn in ("withAction", "probeMirror"):
+        body = bodies.get(fn) or ""
+        assert "finally {" in body, f"{fn} 没有 finally"
+        finally_body = body.split("finally {", 1)[1].split("}", 1)[0]
+        assert "drainPendingHistoryApply();" in finally_body, (
+            f"{fn} 的 finally 没补跑历史筛选"
+        )
