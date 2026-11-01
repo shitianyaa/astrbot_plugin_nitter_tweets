@@ -17,6 +17,8 @@
 
 通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
 
+> 欢迎加入 QQ 群「Bot 测试群」**209949919**  一起玩
+
 > 首页只保留**上手与定位**。边界行为、平台差异、完整配置见 [进阶说明](./docs/advanced.md)。
 
 ## 目录
@@ -223,6 +225,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 ## 致谢
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)、[Nitter](https://github.com/zedeus/nitter)、[xdown.app](https://xdown.app/)、[AstrBot](https://github.com/Soulter/AstrBot)
+- 字体：WebUI 界面使用 [MiSans](https://hyperos.mi.com/font/)（小米，随插件内置）、诊断终端使用 [JetBrains Mono](https://www.jetbrains.com/lp/mono/)（SIL OFL 1.1）；许可全文见 `pages/dashboard/fonts/` 下的 `LICENSE-MiSans.txt` 与 `JetBrainsMono-OFL.txt`
 - [count.getloli.com](https://count.getloli.com/)：提供 README 猫猫计数图片
 - 感谢 [tutianyu101](https://github.com/tutianyu101) 参与新版本测试
 - 图标风格参考 [PeeGayhub 表情包](https://t.me/addstickers/PeeGayhub)；素材由 GPT 生成

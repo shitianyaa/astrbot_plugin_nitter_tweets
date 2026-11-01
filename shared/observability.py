@@ -206,17 +206,6 @@ def _emit(level: int | str, message: str, *, lines: list[str] | None = None) -> 
     log_buffer.append(name, lines if lines is not None else [message])
 
 
-def log_lines(level: int | str, lines: list[str]) -> None:
-    """输出一段已格式化的多行日志块（同时进宿主日志与 WebUI 环缓冲）。
-
-    供 scheduler 等无法 ``import logging`` 的模块直接写摘要块使用；
-    调用方负责保证 ``lines`` 已脱敏。
-    """
-    if not lines:
-        return
-    _emit(level, "\n".join(lines), lines=list(lines))
-
-
 def safe_task_log(level: int | str, title: str, **fields: object) -> None:
     """Emit a clean, indented multi-line Chinese task summary block.
 
@@ -367,7 +356,6 @@ def safe_log(level: int | str, event_name: str, **fields: object) -> None:
 __all__ = [
     "LOG_PREFIX",
     "format_elapsed",
-    "log_lines",
     "sanitize_sensitive_text",
     "sanitize_diagnostic",
     "safe_task_log",
