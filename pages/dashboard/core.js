@@ -88,7 +88,7 @@ function initEls() {
     "tabCountGroups","tabCountHistory","tabCountInstances","tabCountStorage","tabCountConfig",
     "cmdkBtn","groupsTitle","historyTitle","storageContent","cleanCacheBtn",
     "createGroupBtn","groupsGrid",
-    "historyGroupSelect","historyUsername","historyLimit","historyStatusSelect","historyRefreshBtn",
+    "historyGroupSelect","historyUsername","historyLimitSelect","historyStatusSelect","historyRefreshBtn",
     "historyOrphanBtn","historyPrevBtn","historyNextBtn","historyPageLabel",
     "historyOrphanResult","historyContent","historySelectAllBtn","historyBatchBar",
     "mirrorForm","mirrorUsername","mirrorQuery","mirrorListId","mirrorLimit",

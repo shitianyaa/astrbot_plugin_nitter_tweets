@@ -269,11 +269,11 @@ const HISTORY_STATUS_OPTIONS = [
 ];
 
 function upgradeHistorySelects() {
-  const mount = (slotId, opts) => {
+  const mount = (slotId, opts, value = "") => {
     const slot = els[slotId];
     if (!slot || slot.classList?.contains("dd")) return;
     // id 必须带到新节点上：CSS/测试与宿主排查都按 #historyGroupSelect 定位
-    const dd = createSelect({ id: slotId, options: opts });
+    const dd = createSelect({ id: slotId, value, options: opts });
     dd.classList.add("dd-filter");
     // 原生 select 的 aria-label 随节点一起没了，从占位上的 data-label 还原
     const label = slot.dataset?.label;
@@ -283,6 +283,11 @@ function upgradeHistorySelects() {
   };
   mount("historyGroupSelect", [{ value: "", text: "全部分组" }]);
   mount("historyStatusSelect", HISTORY_STATUS_OPTIONS);
+  mount(
+    "historyLimitSelect",
+    ["20", "50", "100", "150"].map(v => ({ value: v, text: v })),
+    String(state.historyLimit || 20),
+  );
 }
 
 function syncHistoryGroupOptions() {

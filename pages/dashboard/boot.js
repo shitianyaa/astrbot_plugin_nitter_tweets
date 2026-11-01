@@ -129,7 +129,7 @@ function bindEvents() {
   const applyHistoryFilters = async () => {
     state.historyGroupId = els.historyGroupSelect.value;
     state.historyUsername = els.historyUsername.value.trim();
-    state.historyLimit = parseInt(els.historyLimit.value, 10) || 20;
+    state.historyLimit = parseInt(els.historyLimitSelect.value, 10) || 20;
     state.historyStatus = els.historyStatusSelect ? els.historyStatusSelect.value : "";
     state.historySelection.clear();
     state.historyOffset = 0; // 重置页码
@@ -139,7 +139,7 @@ function bindEvents() {
   // 下拉与条数改变即刻查询：此前只有点「筛选」才生效，看起来像切换后没刷新
   els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });
   els.historyStatusSelect?.onChange?.(() => { applyHistoryFilters(); });
-  els.historyLimit?.addEventListener("change", applyHistoryFilters);
+  els.historyLimitSelect?.onChange?.(() => { applyHistoryFilters(); });
   els.historyUsername?.addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); applyHistoryFilters(); }
   });

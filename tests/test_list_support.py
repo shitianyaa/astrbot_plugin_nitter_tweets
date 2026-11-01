@@ -871,10 +871,11 @@ def test_dashboard_views_refresh_on_enter_and_filters_apply_immediately():
         'if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;'
         in source
     )
-    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」
+    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」；条数也是自绘下拉
     assert "const applyHistoryFilters = async () => {" in source
     assert (
-        'els.historyLimit?.addEventListener("change", applyHistoryFilters);' in source
+        "els.historyLimitSelect?.onChange?.(() => { applyHistoryFilters(); });"
+        in source
     )
     assert (
         "els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });"
@@ -982,7 +983,7 @@ def test_dashboard_history_filters_use_shared_custom_select():
     # JS 侧统一由 createSelect 注入，且 id 带到新节点上
     assert "function upgradeHistorySelects()" in source
     assert "upgradeHistorySelects();" in source
-    assert "const dd = createSelect({ id: slotId, options: opts });" in source
+    assert "const dd = createSelect({ id: slotId, value, options: opts });" in source
     assert "slot.replaceWith(dd);" in source
     assert "els[slotId] = dd;" in source
     # 状态选项仍保持四项（全部 / 成功 / 部分失败 / 失败）
