@@ -91,9 +91,13 @@ function renderOverview() {
   const running = !!s.running && !!s.schedule_enabled;
   const lastCheck = s.last_check_at ? relativeTime(s.last_check_at) : "暂无记录";
   const targets = collectPushTargets();
-  const targetText = targets.length
-    ? targets.slice(0, 2).map(t => replayTargetShortLabel(t)).join(" · ") + (targets.length > 2 ? ` 等 ${targets.length} 个` : "")
+  const targetCount = targets.length;
+  const targetText = targetCount
+    ? `${targetCount} 个推送目标`
     : "未配置";
+  const targetTitle = targetCount
+    ? targets.map(t => replayTargetShortLabel(t)).join("\n")
+    : "暂无生效的推送目标";
   const primaryInstance = inst.length ? redactInstanceLabel(inst[0]) : "未配置";
   const filterOn = cfg.filter_reposts_enabled !== false;
   const hero = h("section", { class: "hero-card" }, [
@@ -119,7 +123,7 @@ function renderOverview() {
         ]),
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "已生效推送目标" }),
-          h("span", { class: "meta-value", text: targetText, title: targets.join("\n") }),
+          h("span", { class: "meta-value", text: targetText, title: targetTitle }),
         ]),
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "主力解析节点" }),
@@ -353,7 +357,7 @@ function historyRow(r) {
   });
 
   return h("div", {
-    class: "deploy-row",
+    class: `deploy-row${state.historySelection.has(r.id) ? " selected" : ""}`,
     title: "点击查看详情",
     dataset: { recordId: String(r.id) },
     onClick: e => {
@@ -495,6 +499,8 @@ function setHistoryRecordSelected(id, selected, checkbox) {
   if (selected) state.historySelection.add(id);
   else state.historySelection.delete(id);
   if (checkbox) checkbox.checked = selected;
+  // 行高亮与勾选框一起原位切换，不重建行（保键盘焦点与滚动位置）
+  checkbox?.closest(".deploy-row")?.classList.toggle("selected", selected);
   renderHistoryBatchBar();
 }
 
@@ -506,6 +512,7 @@ function syncHistoryCheckboxes() {
     const id = /^\d+$/.test(raw) ? Number(raw) : raw;
     const box = card.querySelector(".deploy-check input");
     if (box) box.checked = state.historySelection.has(id);
+    card.classList.toggle("selected", state.historySelection.has(id));
   }
 }
 

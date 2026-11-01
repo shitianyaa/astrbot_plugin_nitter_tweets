@@ -180,8 +180,23 @@
     <!-- ⌘K 命令面板 -->
     <div id="cmdkOverlay" class="palette-veil" role="dialog" aria-modal="true" aria-label="快捷面板">
       <div class="palette">
-        <input id="cmdkInput" class="palette-input" type="text" placeholder="输入命令或跳转到视图…" autocomplete="off" />
+        <div class="palette-header">
+          <span class="palette-search-icon" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </span>
+          <input id="cmdkInput" class="palette-input" type="text" placeholder="输入命令或跳转到视图…" autocomplete="off" />
+          <kbd class="palette-esc-badge" aria-hidden="true">ESC</kbd>
+        </div>
         <div id="cmdkList" class="palette-list"></div>
+        <div class="palette-footer" aria-hidden="true">
+          <div class="palette-tips">
+            <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
+            <span><kbd>↵</kbd> 执行</span>
+          </div>
+          <div class="palette-tips">
+            <span><kbd>esc</kbd> 关闭</span>
+          </div>
+        </div>
       </div>
     </div>
 

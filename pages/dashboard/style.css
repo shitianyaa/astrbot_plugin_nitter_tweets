@@ -38,11 +38,11 @@
   --accent: #000000;
   --accent-invert: #ffffff;
 
-  /* 品牌蓝：仅用于链接/标点/代码，不作为大面积按钮底色 */
-  --blue: #0070f3;
-  --blue-hover: #0060df;
-  --blue-soft: rgba(0, 112, 243, 0.08);
-  --blue-border: rgba(0, 112, 243, 0.35);
+  /* 科技冷蓝：仅用于代码/外链/日志级别，不作为大面积操作底色与导航激活色 */
+  --blue: #0969da;
+  --blue-hover: #0550ae;
+  --blue-soft: rgba(9, 105, 218, 0.06);
+  --blue-border: rgba(9, 105, 218, 0.25);
 
   /* Light mode (Default) — Vercel 纯白清爽底色，hairline 边框 */
   --bg: #ffffff;
@@ -52,7 +52,6 @@
   --surface-elevated: #ffffff;
   --border: #eaeaea;
   --border-strong: #d4d4d4;
-  --border-subtle: #f0f0f0;
   --border-hover: #888888;
   --backdrop: rgba(0, 0, 0, 0.4);
 
@@ -78,7 +77,6 @@
   --radius-pill: 9999px;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow: 0 0 0 1px var(--border);
   --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border);
   --shadow-dialog: 0 0 0 1px var(--border), 0 16px 48px rgba(0, 0, 0, 0.12);
 
@@ -106,7 +104,6 @@
   --surface-elevated: #121212;
   --border: #222222;
   --border-strong: #333333;
-  --border-subtle: #161616;
   --border-hover: #555555;
   --backdrop: rgba(0, 0, 0, 0.7);
 
@@ -114,10 +111,10 @@
   --text-muted: #a1a1a1;
   --text-subtle: #666666;
 
-  --blue: #0070f3;
-  --blue-hover: #3291ff;
-  --blue-soft: rgba(0, 112, 243, 0.14);
-  --blue-border: rgba(0, 112, 243, 0.35);
+  --blue: #4493f8;
+  --blue-hover: #58a6ff;
+  --blue-soft: rgba(56, 139, 253, 0.1);
+  --blue-border: rgba(56, 139, 253, 0.25);
   --green: #10b981;
   --green-soft: rgba(16, 185, 129, 0.12);
   --green-border: rgba(16, 185, 129, 0.3);
@@ -130,7 +127,6 @@
   --red-border: rgba(255, 51, 51, 0.3);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow: 0 0 0 1px var(--border);
   --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--border);
   --shadow-dialog: 0 0 0 1px var(--border-strong), 0 16px 48px rgba(0, 0, 0, 0.55);
 
@@ -517,7 +513,7 @@ a:hover { text-decoration: underline; }
 /* 黑名单草稿态：待删条目删除线弱化（保存后消失，× 可撤销），待加条目挂「待保存」徽标 */
 .chip.chip-removing { text-decoration: line-through; opacity: 0.55; }
 .chip-action { cursor: pointer; transition: background var(--transition), border-color var(--transition); }
-.chip-action:hover { background: var(--blue-soft); border-color: var(--blue-border); color: var(--blue); }
+.chip-action:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text); }
 .chip-remove { margin-left: 2px; }
 .chip-remove:hover { color: var(--red); background: var(--red-soft); }
 .chip.chip-invalid { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
@@ -536,7 +532,7 @@ a:hover { text-decoration: underline; }
   margin-top: 2px;
   animation: rise-in 0.16s ease-out;
 }
-.input-error, .is-error {
+.input-error {
   border-color: var(--red) !important;
   animation: input-shake 0.22s ease-in-out !important;
 }
@@ -590,7 +586,9 @@ a:hover { text-decoration: underline; }
   transition: transform var(--transition);
   box-shadow: 0 1px 3px rgba(0,0,0,0.18);
 }
-.toggle input:checked + .toggle-track { background: var(--blue); }
+.toggle input:checked + .toggle-track { background: var(--accent); }
+:root.dark-theme .toggle input:checked + .toggle-track { background: #ededed; }
+:root.dark-theme .toggle input:checked + .toggle-track::after { background: #121212; }
 .toggle input:checked + .toggle-track::after { transform: translateX(14px); }
 
 /* Custom Dropdown (createSelect) · 现代工程级自绘下拉 */
@@ -700,8 +698,8 @@ a:hover { text-decoration: underline; }
   background: var(--surface-hover);
 }
 .dd-option.selected {
-  background: var(--blue-soft);
-  color: var(--blue);
+  background: var(--surface-hover);
+  color: var(--text);
   font-weight: 600;
 }
 
@@ -815,15 +813,23 @@ a:hover { text-decoration: underline; }
   gap: 12px;
   padding: 10px 16px;
   margin-top: 10px;
-  background: var(--surface);
-  border: 1px solid var(--blue-border);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-dialog);
   z-index: 5;
   animation: rise-in 0.16s ease-out;
 }
 .history-batch-bar[hidden] { display: none; }
-.history-batch-count { font-size: 13px; font-weight: 600; color: var(--blue); white-space: nowrap; }
+.history-batch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .history-batch-hint { font-size: 12px; color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-batch-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
 
@@ -892,12 +898,20 @@ a:hover { text-decoration: underline; }
   transition: background var(--transition), color var(--transition);
 }
 .config-nav-item:hover { background: var(--surface-hover); }
-.config-nav-item.active { background: var(--blue-soft); color: var(--blue); font-weight: 600; }
+.config-nav-item.active {
+  background: var(--surface-hover);
+  color: var(--text);
+  font-weight: 600;
+}
+:root:not(.dark-theme) .config-nav-item.active {
+  background: var(--surface-elevated);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 1px var(--border);
+}
 /* 搜索期间只按分组名命中、字段 0 命中：保留可见但降权，说明"点进去也没有" */
 .config-nav-item.no-hit { opacity: 0.55; }
 .config-nav-item.no-hit .config-nav-count { font-style: italic; }
 .config-nav-count { font-size: 11px; color: var(--text-muted); }
-.config-nav-item.active .config-nav-count { color: var(--blue); opacity: 0.75; }
+.config-nav-item.active .config-nav-count { color: var(--text-muted); font-weight: 500; }
 .config-group-head {
   display: flex; align-items: baseline; justify-content: space-between;
   padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
@@ -929,7 +943,7 @@ a:hover { text-decoration: underline; }
 }
 .config-item-head { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 /* 搜索态：命中的字段卡加一道左侧强调线，并标注命中位置 */
-.config-item-hit { border-left: 2px solid var(--blue); }
+.config-item-hit { border-left: 2px solid var(--accent); }
 .config-hit-why { font-size: 11px; color: var(--text-muted); }
 .config-label { font-size: 13px; font-weight: 600; }
 .config-key { font-size: 11px; color: var(--text-muted); }
@@ -1017,8 +1031,8 @@ a:hover { text-decoration: underline; }
   min-width: 0;
   transition: background var(--transition), border-color var(--transition);
 }
-.replay-target:hover { background: var(--blue-soft); border-color: var(--blue-border); }
-.replay-target input { accent-color: var(--blue); margin: 0; }
+.replay-target:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.replay-target input { accent-color: var(--accent); margin: 0; }
 .replay-target.offline { opacity: 0.5; cursor: not-allowed; }
 .replay-target.offline:hover { background: transparent; border-color: var(--border); }
 .replay-target-label { font-weight: 500; flex: 0 0 auto; }
@@ -1686,6 +1700,10 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .deploy-row:last-child { border-bottom: none; }
 .deploy-row:hover { background: var(--surface-hover); }
+.deploy-row.selected {
+  background: var(--blue-soft);
+  border-color: var(--blue-border);
+}
 
 /* 行尾三点菜单：原型 menu-btn */
 .menu-btn {
@@ -2248,11 +2266,11 @@ input[type="number"] { -moz-appearance: textfield; }
   z-index: 970;
   display: none;
   place-items: start center;
-  padding: 12vh 20px 20px;
+  padding: max(80px, 14vh) 16px 24px;
 }
 .palette-veil.open { display: grid; }
 .palette {
-  width: min(560px, 92vw);
+  width: min(500px, calc(100vw - 32px));
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2260,40 +2278,117 @@ input[type="number"] { -moz-appearance: textfield; }
   overflow: hidden;
   animation: pop-in 0.16s ease-out;
 }
+.palette-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-elevated);
+}
+.palette-search-icon {
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.palette-esc-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  color: var(--text-subtle);
+  line-height: 1;
+  user-select: none;
+  flex: 0 0 auto;
+}
 .palette-input {
-  width: 100%;
+  flex: 1;
+  width: auto;
+  min-width: 0;
   border: none !important;
-  border-bottom: 1px solid var(--border) !important;
-  border-radius: 0 !important;
   background: transparent !important;
   color: var(--text);
-  padding: 14px 18px;
-  font-size: 14px;
+  padding: 13px 0;
+  font-size: 13.5px;
   box-shadow: none !important;
 }
 .palette-input:focus {
   outline: none !important;
   border: none !important;
-  border-bottom: 1px solid var(--border) !important;
   box-shadow: none !important;
 }
-.palette-list { max-height: 320px; overflow-y: auto; padding: 6px; }
+.palette-list { max-height: 280px; overflow-y: auto; padding: 6px; }
 .pal-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 11px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-btn, 6px);
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text);
   cursor: pointer;
   min-width: 0;
+  transition: background var(--transition), color var(--transition);
 }
 .pal-item > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pal-item:hover, .pal-item.selected { background: var(--surface-hover); }
-.pal-sub { font-size: 10.5px; color: var(--text-subtle); flex: none; }
+.pal-item:hover, .pal-item.selected {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.pal-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  line-height: 1.2;
+}
+.pal-item.selected .pal-sub {
+  background: var(--surface-elevated);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
 .pal-empty { padding: 18px; text-align: center; color: var(--text-subtle); font-size: 12.5px; }
+.palette-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--text-subtle);
+  user-select: none;
+}
+.palette-tips {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.palette-tips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.palette-tips kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1.5px 5px;
+  border-radius: 3px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  line-height: 1;
+}
 
 /* ==========================================================================
    响应式断点
