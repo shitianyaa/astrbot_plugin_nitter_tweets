@@ -998,7 +998,7 @@ a:hover { text-decoration: underline; }
 .dialog-panel h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .dialog-desc { font-size: 13px; color: var(--text-muted); min-width: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.dialog.is-danger .dialog-panel { border-color: var(--red-border); }
+.dialog.is-danger .dialog-panel { border-color: var(--border-strong); }
 .dialog-actions .btn-danger {
   background: var(--red);
   color: #ffffff;
@@ -2270,7 +2270,7 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .palette-veil.open { display: grid; }
 .palette {
-  width: min(500px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2321,7 +2321,7 @@ input[type="number"] { -moz-appearance: textfield; }
   border: none !important;
   box-shadow: none !important;
 }
-.palette-list { max-height: 280px; overflow-y: auto; padding: 6px; }
+.palette-list { max-height: 380px; overflow-y: auto; padding: 6px; }
 .pal-item {
   display: flex;
   align-items: center;
