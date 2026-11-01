@@ -270,3 +270,22 @@ def test_update_group_partial_skips_stale_daily_check_times_validation():
     rejected = editor.update_group({"group_id": "g", "daily_check_times": ["25:00"]})
     assert rejected["success"] is False
     assert "每日检查时间格式无效" in rejected["error"]
+
+
+def test_update_group_partial_enabled_works_without_stored_name():
+    """存量无 name 的分组也要能启停。
+
+    回归背景：解析器会用 group_id 兜底展示这类分组，但缺省回退读的是
+    raw_group 里的空 name，交给 _validated_name 会直接报「名称不能为空」，
+    于是卡片开关对这类分组整体不可用。
+    """
+    editor, config = _partial_update_editor(
+        [{"group_id": "noname", "group_type": "blogger", "watch_users": ["nasa"]}]
+    )
+
+    result = editor.update_group({"group_id": "noname", "enabled": False})
+
+    assert result["success"] is True
+    assert _group_raw(config)["enabled"] is False
+    # 显式提交空名仍然要报错
+    assert editor.update_group({"group_id": "noname", "name": "  "})["success"] is False

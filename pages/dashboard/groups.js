@@ -994,13 +994,16 @@ function confirmDeleteGroup(gid) {
     action: () => withAction(async () => {
       // 抽屉开在被删分组上时，等删除真正成功再关：先关再问会让「取消」
       // 把用户留在编辑器外面（closeSheet 的未保存守卫也被绕过了）。
-      const editingDeletedGroup = sheetOpen && state.selectedGroupId === gid;
       await apiPost("web/groups/delete", { group_id: gid, force: true, confirm: "DELETE" });
       delete state.targetProbeResults[gid];
       delete state.pendingBlacklists[gid];
       delete state.groupDrafts[gid];
-      state.selectedGroupId = "";
-      if (editingDeletedGroup) closeSheet({ force: true });
+      // 只在选中项仍指向被删分组时才清空并关抽屉：请求在途时用户可能已经
+      // 切到另一个分组，无条件清空会让那个抽屉的保存态与脏守卫读错分组。
+      if (state.selectedGroupId === gid) {
+        state.selectedGroupId = "";
+        if (sheetOpen) closeSheet({ force: true });
+      }
     }, "分组已删除"),
   });
 }

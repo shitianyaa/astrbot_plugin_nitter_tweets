@@ -705,6 +705,12 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "transition: all" not in style
     # 历史行已由 tweet-card 迁移到 deploy-row：悬停反馈与选中态仍走同一套 token
     assert ".deploy-row:hover" in style
+    # 历史行本身不做可聚焦元素（行内含勾选框与按钮），详情入口是标题上的
+    # 原生按钮，键盘用户能拿到可访问名称
+    assert 'class: "deploy-title deploy-title-btn"' in source
+    assert 'aria-label": `查看 ${r.username || "unknown"} 的推送详情`' in source
+    # 下拉内 Esc 只关下拉，不能冒泡到 document 把抽屉一起关掉
+    assert "e.stopPropagation(); close(true);" in source
     assert ".deploy-row {" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
@@ -928,8 +934,12 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
         "state.logsAfterSeq = Math.max(state.logsAfterSeq, ...fresh.map(e => e.seq));"
         in source
     )
-    # 插件重启后 seq 从头计数，旧游标要能自愈
+    # 插件重启后 seq 从头计数，旧游标要能自愈（会话标识 + next_seq 二级兜底）
+    assert "state.logsSession && res.session_id !== state.logsSession" in source
     assert "res.next_seq && res.next_seq <= state.logsAfterSeq" in source
+    # 跳过的一轮不能算成功，否则「请求比 3s 间隔还慢 + 一直失败」时失败计数
+    # 会在 0/1 之间振荡，永远到不了停止阀值
+    assert 'if (result !== "skipped") logPollFailures = 0;' in source
 
 
 def test_dashboard_terminal_preserves_scroll_and_node():

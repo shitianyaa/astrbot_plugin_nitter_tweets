@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Any
 
 MAX_ENTRIES = 200
+
+# 进程级会话标识：插件重启（热重载）后 seq 从 1 重新计数，客户端靠它判定
+# 自己缓存的 after_seq 是否还有效。
+_SESSION_ID = uuid.uuid4().hex
 
 _LEVEL_NAMES = {
     10: "debug",
@@ -86,6 +91,11 @@ def snapshot(after_seq: int = 0, limit: int = MAX_ENTRIES) -> list[dict[str, Any
     return picked[-cap:]
 
 
+def session_id() -> str:
+    """本进程的环缓冲会话标识；进程重启后会变。"""
+    return _SESSION_ID
+
+
 def next_seq() -> int:
     """下一个待分配的 seq。
 
@@ -104,4 +114,12 @@ def clear() -> None:
         _next_seq = 1
 
 
-__all__ = ["MAX_ENTRIES", "append", "clear", "level_name", "next_seq", "snapshot"]
+__all__ = [
+    "MAX_ENTRIES",
+    "append",
+    "clear",
+    "level_name",
+    "next_seq",
+    "session_id",
+    "snapshot",
+]

@@ -1720,11 +1720,19 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .deploy-row:last-child { border-bottom: none; }
 .deploy-row:hover { background: var(--surface-hover); }
-/* 历史行用 tabindex 保键盘可达但不声明 button 角色（行内含勾选框与重推按钮），
-   所以全局 [role="button"]:focus-visible 盖不到它，焦点环得自己补。
-   只挑没有 role 的行：总览的 deployRow 仍带 role="button"，继续走全局描边。
-   内缩 2px：行贴在 overflow:hidden 的表格容器里，外描边会被裁掉。 */
-.deploy-row[tabindex]:not([role]):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 历史行标题兼作详情入口：原生 button 去掉按钮外观，沿用文本截断样式 */
+.deploy-title-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.deploy-title-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
 .deploy-row.selected {
   background: var(--blue-soft);
   border-color: var(--blue-border);

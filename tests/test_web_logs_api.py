@@ -154,3 +154,17 @@ def test_build_logs_exposes_next_seq_for_cursor_invalidation():
     # 游标追平服务端序号时仍然可用，不该被当成失效
     assert build_logs(2)["entries"] == []
     assert log_buffer.next_seq() == 3
+
+
+def test_build_logs_exposes_stable_session_id():
+    """接口得吐进程级会话标识：插件重启后 seq 从 1 重数，客户端靠它判失效。
+
+    只靠 next_seq 判不出来——重启后若已刷出比旧游标更多的条数，
+    next_seq 会大于游标，看起来完全正常，旧游标以下的日志永远拿不到。
+    """
+    first = build_logs(0)["session_id"]
+    second = build_logs(0)["session_id"]
+
+    assert first
+    assert first == second
+    assert first == log_buffer.session_id()

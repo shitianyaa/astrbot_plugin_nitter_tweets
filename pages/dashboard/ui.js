@@ -74,7 +74,7 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
     const idx = items.indexOf(document.activeElement);
     if (e.key === "ArrowDown") { e.preventDefault(); items[Math.min(idx + 1, items.length - 1)]?.focus(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); items[Math.max(idx - 1, 0)]?.focus(); }
-    else if (e.key === "Escape") { e.preventDefault(); close(true); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(true); }
     else if (e.key === "Tab") close();
   });
 
@@ -438,14 +438,23 @@ async function reloadLogs({ reset = false } = {}) {
     state.logs = [];
     state.logsAfterSeq = 0;
   } else if (logsInFlight || logsResetPending) {
-    return;   // 已有请求在途，本轮跳过；下一次轮询自然会补上
+    // 跳过的一轮既不算成功也不算失败：返回值让调用方别拿去重置失败计数
+    return "skipped";
   }
   const myGeneration = logsGeneration;
   const request = (async () => {
     const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
     if (myGeneration !== logsGeneration) return; // reset 已作废本次写入
-    // 插件进程重启后 seq 从 1 重新计数，旧游标比服务端下一个序号还大，
-    // 增量请求会永远返回空。游标不可能存在就清空重拉一次。
+    // 插件进程重启后 seq 从 1 重新计数：旧游标可能已小于新序号（重启后
+    // 又刷出更多条），只靠 next_seq 兜不住，以会话标识为准清空重拉。
+    if (res.session_id) {
+      if (state.logsSession && res.session_id !== state.logsSession) {
+        state.logsSession = res.session_id;
+        return reloadLogs({ reset: true });
+      }
+      state.logsSession = res.session_id;
+    }
+    // 二级兜底：游标不可能存在（比服务端下一个序号还大）时同样重拉
     if (state.logsAfterSeq && res.next_seq && res.next_seq <= state.logsAfterSeq) {
       return reloadLogs({ reset: true });
     }
@@ -488,7 +497,7 @@ function startLogPolling() {
   logPollFailures = 0;
   state.logsTimer = setInterval(() => {
     reloadLogs()
-      .then(() => { logPollFailures = 0; })
+      .then(result => { if (result !== "skipped") logPollFailures = 0; })
       .catch(() => {
         logPollFailures += 1;
         if (logPollFailures >= LOG_POLL_MAX_FAILURES) stopLogPolling();

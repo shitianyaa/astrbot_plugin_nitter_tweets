@@ -416,17 +416,8 @@ function historyRow(r) {
 
   return h("div", {
     class: `deploy-row${state.historySelection.has(r.id) ? " selected" : ""}`,
-    // 不声明 role="button"：行内含可聚焦的勾选框与重推按钮，声明了会让
-    // 浏览器按 presentational children 规则扁平化它们的角色与名称。
-    // tabindex + onkeydown 保留键盘可达性。
-    tabindex: "0",
     title: "点击查看详情",
     dataset: { recordId: String(r.id) },
-    onkeydown: e => {
-      // 勾选框/按钮自身的键盘语义优先，不当作「打开详情」
-      if (e.target.closest("input, button, a, label")) return;
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openHistoryDetail(r.id); }
-    },
     onClick: e => {
       if (e.detail > 1) return; // 双击/多击序列只认第一击
       if (window.getSelection()?.type === "Range") return; // 正在划选正文，不当作点选
@@ -437,7 +428,17 @@ function historyRow(r) {
     // label 包裹：点"文字前"整片区域都原生联动勾选；stopPropagation 防止行点击误开抽屉
     h("label", { class: "deploy-check", onClick: e => e.stopPropagation() }, [checkbox]),
     h("div", { class: "deploy-info" }, [
-      h("div", { class: "deploy-title", text: title, title }),
+      // 标题兼作详情入口：行本身不做可聚焦元素（行内含勾选框与按钮，
+      // 再声明 button 角色会把它们的角色与名称扁平化掉），键盘用户走这个
+      // 原生按钮；鼠标点行内其它位置仍由行 onClick 处理。
+      h("button", {
+        class: "deploy-title deploy-title-btn",
+        type: "button",
+        text: title,
+        title,
+        "aria-label": `查看 ${r.username || "unknown"} 的推送详情`,
+        onClick: e => { e.stopPropagation(); openHistoryDetail(r.id); },
+      }),
       h("div", { class: "deploy-sub" }, [
         h("span", { text: r.username ? `@${r.username}` : "unknown" }),
         h("span", { text: relativeTime(r.pushed_at) }),

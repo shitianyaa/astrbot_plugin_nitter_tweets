@@ -107,13 +107,17 @@ class WebUIGroupEditor:
             # {group_id, enabled}，不该被迫把整份分组配置读出来再写回。
             # 注意用 "name" in data 判提交，不能用真值判：提交空名必须照旧报错，
             # 不能静默回退成旧名。
-            name = self._validated_name(
-                groups,
-                self._text(data, "name")
-                if "name" in data
-                else str(raw_group.get("name") or ""),
-                index,
-            )
+            if "name" in data:
+                name = self._validated_name(groups, self._text(data, "name"), index)
+            else:
+                # 存量分组可能没有 name，解析器会拿 group_id 兜底展示；
+                # 这种空名不校验也不报错，否则卡片启停直接失败
+                stored_name = str(raw_group.get("name") or "").strip()
+                name = (
+                    self._validated_name(groups, stored_name, index)
+                    if stored_name
+                    else ""
+                )
             # 缺省 = 不校验也不回写。存量 daily_check_times 可能是运行期只
             # warning 跳过的脏值（AstrBot 设置页可手填），拿回来重跑校验会让
             # 卡片启停直接失败。

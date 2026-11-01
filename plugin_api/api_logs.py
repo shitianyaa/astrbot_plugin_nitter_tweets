@@ -22,6 +22,8 @@ class WebAPILogsMixin:
         return self._ok(
             entries=entries,
             max_entries=log_buffer.MAX_ENTRIES,
-            # 游标失效检测：插件重启后 seq 从头计数，前端据此清空重拉
+            # 会话标识：进程重启后变，前端据此判定游标失效
+            session_id=log_buffer.session_id(),
+            # 二级兜底：游标比下一个序号还大时同样重拉
             next_seq=log_buffer.next_seq(),
         )
