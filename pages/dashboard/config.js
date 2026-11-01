@@ -395,7 +395,7 @@ function configItemChildren(item) {
   return [
     h("div", { class: "config-item-head" }, [
       h("span", { class: "config-label", text: item.description || item.key }),
-      h("span", { class: "config-key mono", text: item.key }),
+      h("span", { class: "config-key", text: item.key }),
       differsFromDefault ? h("button", {
         class: "btn btn-ghost btn-sm config-reset", text: "恢复默认",
         title: item.default === null ? "清空" : "重置为此项默认值",

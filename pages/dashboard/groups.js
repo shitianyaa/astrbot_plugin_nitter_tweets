@@ -178,10 +178,10 @@ function groupCard(g) {
       }),
     ]),
     h("div", { class: "gc-meta-grid" }, [
-      h("div", {}, [h("span", { text: "检查间隔: " }), h("span", { class: "mono", text: intervalOn ? `${g.check_interval_minutes ?? "—"} 分钟` : "已关闭" })]),
-      h("div", {}, [h("span", { text: "转推过滤: " }), h("span", { class: "mono", text: repostFilter })]),
-      h("div", {}, [h("span", { text: "每日定时: " }), h("span", { class: "mono", text: daily || "无" })]),
-      h("div", {}, [h("span", { text: "纯文本过滤: " }), h("span", { class: "mono", text: plainFilter })]),
+      h("div", {}, [h("span", { text: "检查间隔: " }), h("span", { text: intervalOn ? `${g.check_interval_minutes ?? "—"} 分钟` : "已关闭" })]),
+      h("div", {}, [h("span", { text: "转推过滤: " }), h("span", { text: repostFilter })]),
+      h("div", {}, [h("span", { text: "每日定时: " }), h("span", { text: daily || "无" })]),
+      h("div", {}, [h("span", { text: "纯文本过滤: " }), h("span", { text: plainFilter })]),
     ]),
     h("div", {}, [
       h("div", { class: "gc-chips-header" }, [
@@ -429,7 +429,7 @@ function renderEntityChips(container, group, draft) {
   const entityValue = item => (item && typeof item === "object" ? item.query : item);
   const nodes = (draft[field] || []).map(item => {
     const val = entityValue(item);
-    return h("span", { class: "chip mono" }, [
+    return h("span", { class: "chip" }, [
       iconEl(icon, 12), val,
       h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${val}`, html: svgIcon("close", 12), onClick: () => {
         if (state.actionBusy) return;
@@ -450,7 +450,7 @@ function renderEntityChips(container, group, draft) {
   // 无效订阅源（仅博主分组的 watch_users 有隔离区）：可见、可显式移除
   if (!isTag && !isList) {
     (draft.invalid_watch_users || []).forEach(val => {
-      nodes.push(h("span", { class: "chip chip-invalid mono", title: val }, [
+      nodes.push(h("span", { class: "chip chip-invalid", title: val }, [
         iconEl(icon, 12), val,
         h("span", { class: "badge badge-danger", text: "无效" }),
         h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${val}`, html: svgIcon("close", 12), onClick: () => {
@@ -571,7 +571,7 @@ function renderTargetChips(group, draft, probe) {
       const { label, id: targetId } = replayTargetParts(t);
       return h("span", { class: "chip", title: t }, [
         h("span", { text: label }),
-        targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+        targetId ? h("span", { class: "replay-target-id", text: replayTargetShortId(targetId) }) : null,
         info ? h("span", { class: `badge ${info.valid ? "badge-ok" : "badge-danger"}`, text: info.platform_kind || (info.valid ? "有效" : "失败") }) : null,
         h("button", { class: "btn-icon chip-remove", title: "移除", "aria-label": `移除 ${t}`, html: svgIcon("close", 12), onClick: () => {
           if (state.actionBusy) return;

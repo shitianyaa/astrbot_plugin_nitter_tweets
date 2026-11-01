@@ -115,7 +115,7 @@ function renderOverview() {
       h("div", { class: "hero-meta-grid" }, [
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "上次检查时间" }),
-          h("span", { class: "meta-value mono", text: lastCheck }),
+          h("span", { class: "meta-value", text: lastCheck }),
         ]),
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "已生效推送目标" }),
@@ -123,7 +123,7 @@ function renderOverview() {
         ]),
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "主力解析节点" }),
-          h("span", { class: "meta-value mono", text: primaryInstance, title: "路径片段已在界面脱敏" }),
+          h("span", { class: "meta-value", text: primaryInstance, title: "路径片段已在界面脱敏" }),
         ]),
         h("div", { class: "meta-item" }, [
           h("span", { class: "meta-label", text: "全局转推过滤" }),
@@ -195,7 +195,7 @@ function metricBox(label, sub, value, delta, deltaUp = false, onClick = null) {
       h("span", { class: "metric-label", text: label }),
       h("span", { class: "metric-sub", text: sub }),
     ]),
-    h("div", { class: "metric-val mono", text: value }),
+    h("div", { class: "metric-val", text: value }),
     h("div", { class: `metric-delta${deltaUp ? " up" : ""}`, text: delta }),
   ]);
 }
@@ -221,13 +221,13 @@ function deployRow(r, { compact = false, onSelect = null } = {}) {
       h("div", { class: "deploy-title", text: title, title }),
       h("div", { class: "deploy-sub" }, [
         h("span", { class: "branch-tag", text: r.group_name || r.group_id || "—" }),
-        h("span", { class: "mono", text: author }),
+        h("span", { text: author }),
         r.has_media ? h("span", { text: "· 附件媒体" }) : null,
       ]),
     ]),
     h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
-    h("span", { class: "deploy-time mono", text: compact ? relativeTime(r.pushed_at) : formatDateTime(r.pushed_at) }),
-    h("span", { class: "deploy-duration mono", text: r.instance ? redactInstanceLabel(r.instance) : (r.source || "") }),
+    h("span", { class: "deploy-time", text: compact ? relativeTime(r.pushed_at) : formatDateTime(r.pushed_at) }),
+    h("span", { class: "deploy-duration", text: r.instance ? redactInstanceLabel(r.instance) : (r.source || "") }),
     h("button", {
       class: "menu-btn",
       type: "button",
@@ -362,7 +362,7 @@ function historyRow(r) {
     h("div", { class: "deploy-info" }, [
       h("div", { class: "deploy-title", text: title, title }),
       h("div", { class: "deploy-sub" }, [
-        h("span", { class: "mono", text: r.username ? `@${r.username}` : "unknown" }),
+        h("span", { text: r.username ? `@${r.username}` : "unknown" }),
         h("span", { text: relativeTime(r.pushed_at) }),
         h("span", { class: `branch-tag ${glyphClass}`, text: stLabel }),
         r.group_name ? h("span", { class: "branch-tag", text: r.group_name }) : null,
@@ -396,7 +396,7 @@ function openHistoryDetail(recordId) {
     // 1. 顶部标签与作者时间
     h("div", { class: "detail-header-card" }, [
       h("div", { class: "row row-wrap" }, [
-        h("span", { class: "badge mono", text: `#${r.id}` }),
+        h("span", { class: "badge", text: `#${r.id}` }),
         h("span", { class: "badge", text: r.group_name || r.group_id || "-" }),
         h("span", {
           class: `badge ${r.delivery_status === "success" ? "badge-ok" : r.delivery_status === "partial_failed" ? "badge-warn" : "badge-danger"}`,
@@ -407,7 +407,7 @@ function openHistoryDetail(recordId) {
       h("div", { class: "detail-author-row" }, [
         h("span", { class: "detail-author-name", text: r.username ? `@${r.username}` : "未知作者" }),
         h("span", { class: "detail-sep", text: "·" }),
-        h("span", { class: "detail-time mono", text: formatDateTime(r.pushed_at) || "-" }),
+        h("span", { class: "detail-time", text: formatDateTime(r.pushed_at) || "-" }),
       ]),
     ]),
 
@@ -448,7 +448,7 @@ function openHistoryDetail(recordId) {
       h("div", { class: "detail-meta-grid" }, [
         h("div", { class: "detail-meta-item" }, [
           h("span", { class: "detail-meta-k", text: "投递目标" }),
-          h("span", { class: "detail-meta-v mono", text: replayTargetShortLabel(r.target_umo) || "-" }),
+          h("span", { class: "detail-meta-v", text: replayTargetShortLabel(r.target_umo) || "-" }),
         ]),
         h("div", { class: "detail-meta-item" }, [
           h("span", { class: "detail-meta-k", text: "触发来源" }),
@@ -456,7 +456,7 @@ function openHistoryDetail(recordId) {
         ]),
         h("div", { class: "detail-meta-item detail-meta-full" }, [
           h("span", { class: "detail-meta-k", text: "解析节点" }),
-          h("span", { class: "detail-meta-v mono", text: redactInstanceLabel(r.instance) || "-" }),
+          h("span", { class: "detail-meta-v", text: redactInstanceLabel(r.instance) || "-" }),
         ]),
       ]),
     ]),
@@ -588,7 +588,7 @@ function replayHistoryBatch() {
           return h("label", { class: `replay-target${o.available ? "" : " offline"}`, title: o.umo || "" }, [
             h("input", { type: "checkbox", checked: !!o.available, disabled: !o.available, value: o.umo || "" }),
             h("span", { class: "replay-target-label", text: o.available ? label : `${label}（已下线）` }),
-            targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+            targetId ? h("span", { class: "replay-target-id", text: replayTargetShortId(targetId) }) : null,
           ]);
         }));
       boxes.set(sec.gid, box);
@@ -674,7 +674,7 @@ async function renderHistoryOrphans() {
         onClick: () => els.historyOrphanResult.replaceChildren(),
       }),
     ]),
-    h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip mono" }, [
+    h("div", { class: "chip-list" }, ops.map(o => h("span", { class: "chip" }, [
       `${o.group_id} (${o.record_count}条)`,
       h("button", { class: "btn btn-danger btn-sm", text: "删除", onClick: () => confirmDeleteOrphan(o.group_id) }),
     ]))),
@@ -721,7 +721,7 @@ function replayHistory(id, options) {
         return h("label", { class: `replay-target${o.available ? "" : " offline"}`, title: o.umo || "" }, [
           h("input", { type: "checkbox", checked: !!o.available, disabled: !o.available, value: o.umo || "" }),
           h("span", { class: "replay-target-label", text: o.available ? label : `${label}（已下线）` }),
-          targetId ? h("span", { class: "replay-target-id mono", text: replayTargetShortId(targetId) }) : null,
+          targetId ? h("span", { class: "replay-target-id", text: replayTargetShortId(targetId) }) : null,
         ]);
       }));
     desc = h("div", {}, [h("div", { text: "选择重推目标（已下线目标不可选）：" }), box]);
@@ -757,7 +757,7 @@ function renderMirrorBase() {
   } else {
     els.instanceList.replaceChildren(...inst.map(u => h("button", {
       type: "button",
-      class: "chip chip-action mono",
+      class: "chip chip-action",
       text: redactInstanceLabel(u),
       title: u,
       onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; },
@@ -837,7 +837,7 @@ async function probeMirror(e) {
           h("div", { class: "inst-head" }, [
             h("div", {}, [
               h("div", { class: "inst-title-row" }, [
-                h("span", { class: "mono", text: redactInstanceLabel(r.instance), title: r.instance }),
+                h("span", { text: redactInstanceLabel(r.instance), title: r.instance }),
                 h("span", {
                   class: `badge-status ${r.success ? "ready" : "warn"}`,
                   text: r.success ? "● 生效中" : "● 有异常",
@@ -856,7 +856,7 @@ async function probeMirror(e) {
           h("div", { class: "probe-checks" }, rows.length ? rows : [
             h("div", { class: "inst-row" }, [
               h("span", { text: "未指定测试目标（用户名 / 搜索词 / List ID）" }),
-              h("span", { class: "mono", text: "skipped" }),
+              h("span", { text: "skipped" }),
             ]),
           ]),
         ]);
@@ -933,11 +933,11 @@ function renderStorage() {
   const seenRows = state.groups.length
     ? state.groups.map(g => h("div", { class: "inst-row" }, [
         h("span", { text: g.name }),
-        h("span", { class: "mono", text: `${seenByGroup[g.group_id] ?? 0} 条已记录` }),
+        h("span", { text: `${seenByGroup[g.group_id] ?? 0} 条已记录` }),
       ]))
     : [h("div", { class: "inst-row" }, [
         h("span", { text: "尚无分组" }),
-        h("span", { class: "mono", text: "—" }),
+        h("span", { text: "—" }),
       ])];
 
   const seenBox = h("div", { class: "storage-box" }, [

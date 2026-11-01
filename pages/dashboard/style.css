@@ -5,19 +5,34 @@
    彻底打破老式单列方块堆叠，引入宽屏自适应 2+1 仪表盘与 Bento 工作台。
    ========================================================================== */
 
-/* 默认界面字体：霞鹜新晰黑（LXGW Neo XiHei，IPA Font License v1.0，随 fonts/ 分发）。
-   本地文件 + font-display: swap：加载期间先用后备系统字体渲染，不阻塞首帧。 */
+/* 默认界面字体：MiSans（小米官方许可，免费商用；Regular+Bold 真粗体）。
+   等宽面（日志终端/终端标题）：JetBrains Mono，中文回退 MiSans。
+   均为本地文件 + font-display: swap，不阻塞首帧。许可见 fonts/ 目录。 */
 @font-face {
-  font-family: "LXGW Neo XiHei";
-  src: url("./fonts/LXGWNeoXiHei.woff2") format("woff2");
+  font-family: "MiSans";
+  src: url("./fonts/MiSans-Regular.woff2") format("woff2");
+  font-weight: 100 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "MiSans";
+  src: url("./fonts/MiSans-Bold.woff2") format("woff2");
+  font-weight: 600 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/JetBrainsMono-Regular.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 
 :root {
-  --font-sans: "LXGW Neo XiHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-mono: "Geist Mono", "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-sans: "MiSans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "MiSans", "SF Mono", Menlo, Consolas, monospace;
 
   /* Vercel 极简单色主色 (Disciplined Monochrome) */
   --accent: #000000;
