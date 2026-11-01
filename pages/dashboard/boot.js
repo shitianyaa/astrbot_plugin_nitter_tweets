@@ -197,10 +197,11 @@ function bindEvents() {
       return;
     }
     if (e.key === "Escape") {
+      // 按 z-index 从顶层往下关：confirmDialog 1000 > cmdk 970 >
+      // createGroupModal 960 > detailSheet 950
+      if (els.confirmDialog && !els.confirmDialog.hidden) { closeConfirm(); return; }
       if (cmdkOpen) { closeCmdk(); return; }
       if (els.createGroupModal?.classList.contains("open")) { closeCreateGroupModal(); return; }
-      // 确认框压在抽屉之上（z-index 更高），Escape 要从最顶层往下关
-      if (els.confirmDialog && !els.confirmDialog.hidden) { closeConfirm(); return; }
       if (sheetOpen) { closeSheet(); return; }
       closeConfirm();
       return;

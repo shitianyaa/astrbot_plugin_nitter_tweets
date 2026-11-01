@@ -82,6 +82,9 @@ function renderOverview() {
           onClick: clickable ? () => jumpAttention(item) : undefined,
           onkeydown: clickable
             ? e => {
+                // 嵌套的「前往处理」按钮自己处理键盘，否则 preventDefault
+                // 会吞掉它的原生激活
+                if (e.target.closest("button")) return;
                 if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpAttention(item); }
               }
             : undefined,
@@ -413,7 +416,9 @@ function historyRow(r) {
 
   return h("div", {
     class: `deploy-row${state.historySelection.has(r.id) ? " selected" : ""}`,
-    role: "button",
+    // 不声明 role="button"：行内含可聚焦的勾选框与重推按钮，声明了会让
+    // 浏览器按 presentational children 规则扁平化它们的角色与名称。
+    // tabindex + onkeydown 保留键盘可达性。
     tabindex: "0",
     title: "点击查看详情",
     dataset: { recordId: String(r.id) },

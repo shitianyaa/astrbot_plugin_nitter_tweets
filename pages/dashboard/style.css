@@ -1555,11 +1555,12 @@ input[type="number"] { -moz-appearance: textfield; }
 .attention-row.warning { background: var(--yellow-soft); border-color: var(--yellow-border); color: var(--yellow-ink); }
 .attention-row.info { background: var(--surface-hover); border-color: var(--border); color: var(--text); }
 .attention-row.error { background: var(--red-soft); border-color: var(--red-border); color: var(--red); }
-/* 可跳转的提醒：整行可点（分组类直达抽屉，全局类跳对应配置分组/分组页） */
+/* 可跳转的提醒：整行可点（分组类直达抽屉，全局类跳对应配置分组/分组页）。
+   焦点环不在这里写：行已带 role="button"，全局 [role="button"]:focus-visible
+   已经给了 accent 描边，再覆盖成 --border-strong 反而降低对比度。 */
 .attention-row.clickable { cursor: pointer; transition: border-color var(--transition), filter var(--transition); }
 .attention-row.clickable:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); filter: brightness(0.985); }
 .dark-theme .attention-row.clickable:hover { filter: brightness(1.15); }
-.attention-row.clickable:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
 .attention-title { font-weight: 700; flex: none; }
 .attention-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .attention-btn {
@@ -1709,6 +1710,11 @@ input[type="number"] { -moz-appearance: textfield; }
 }
 .deploy-row:last-child { border-bottom: none; }
 .deploy-row:hover { background: var(--surface-hover); }
+/* 历史行用 tabindex 保键盘可达但不声明 button 角色（行内含勾选框与重推按钮），
+   所以全局 [role="button"]:focus-visible 盖不到它，焦点环得自己补。
+   只挑没有 role 的行：总览的 deployRow 仍带 role="button"，继续走全局描边。
+   内缩 2px：行贴在 overflow:hidden 的表格容器里，外描边会被裁掉。 */
+.deploy-row[tabindex]:not([role]):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .deploy-row.selected {
   background: var(--blue-soft);
   border-color: var(--blue-border);
@@ -1901,22 +1907,7 @@ input[type="number"] { -moz-appearance: textfield; }
   align-items: center;
   gap: 8px;
 }
-.gc-del-btn {
-  justify-self: start;
-  color: var(--red);
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
-  padding: 4px 10px;
-  border-radius: var(--radius-btn, 6px);
-  font-size: 12px;
-  font-weight: 500;
-  transition: background var(--transition), border-color var(--transition), color var(--transition);
-}
-.gc-del-btn:hover:not(:disabled) {
-  background: var(--red-soft);
-  border-color: var(--red-border);
-  color: var(--red);
-}
+.gc-del-btn { justify-self: start; }
 .gc-del-placeholder { justify-self: start; visibility: hidden; }
 .gc-toggle {
   justify-self: center;

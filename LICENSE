@@ -664,7 +664,7 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 --------------------------------------------------------------------------------
 Third-Party Asset Licenses:
 
-The bundled fonts located in  are subject to their
+The bundled fonts located in pages/dashboard/fonts/ are subject to their
 respective licenses as distributed within that directory:
 - MiSans: Subject to the Xiaomi MiSans Font License (see LICENSE-MiSans.txt)
 - JetBrains Mono: Licensed under the SIL Open Font License 1.1 (see JetBrainsMono-OFL.txt)

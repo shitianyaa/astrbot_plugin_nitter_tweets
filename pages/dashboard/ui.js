@@ -86,7 +86,8 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
   root.setOptions = next => {
     opts = next.map(o => ({ value: String(o.value), text: o.text }));
     // 当前选中项被移出新选项时 current 会静默重置为第一项：必须回调 onChange，
-    // 否则调用方 state 还留着旧值，与下拉显示脱钩（如删除分组后的历史筛选）
+    // 否则调用方 state 还留着旧值，与下拉显示脱钩（如删除分组后的历史筛选）。
+    // 注意这个回调也会因「选项消失」而触发，不只是用户点击。
     let resetToDefault = false;
     if (!opts.some(o => o.value === current)) {
       current = opts[0]?.value ?? "";

@@ -232,7 +232,7 @@ function groupCard(g) {
     h("div", { class: "gc-card-actions" }, [
       g.group_id !== "default"
         ? h("button", {
-            class: "btn btn-sm gc-del-btn",
+            class: "btn btn-sm btn-danger gc-del-btn",
             type: "button",
             text: "删除分组",
             title: `删除分组 [${g.name || g.group_id}]`,
