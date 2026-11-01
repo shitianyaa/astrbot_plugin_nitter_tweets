@@ -1551,6 +1551,11 @@ input[type="number"] { -moz-appearance: textfield; }
 .attention-row.warning { background: var(--yellow-soft); border-color: var(--yellow-border); color: var(--yellow-ink); }
 .attention-row.info { background: var(--surface-hover); border-color: var(--border); color: var(--text); }
 .attention-row.error { background: var(--red-soft); border-color: var(--red-border); color: var(--red); }
+/* 可跳转的提醒：整行可点（分组类直达抽屉，全局类跳对应配置分组/分组页） */
+.attention-row.clickable { cursor: pointer; transition: border-color var(--transition), filter var(--transition); }
+.attention-row.clickable:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); filter: brightness(0.985); }
+.dark-theme .attention-row.clickable:hover { filter: brightness(1.15); }
+.attention-row.clickable:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
 .attention-title { font-weight: 700; flex: none; }
 .attention-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
 .attention-btn {
@@ -1882,15 +1887,21 @@ input[type="number"] { -moz-appearance: textfield; }
 .target-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .target-umo { font-size: 10.5px; color: var(--text-subtle); flex: none; max-width: 55%; }
 .target-row.gone { background: var(--yellow-soft); color: var(--yellow-ink); }
+/* 卡片操作条三栏：删除（左）| 启用开关（中）| 编辑（右）；default 组无删除，左格留空 */
 .gc-card-actions {
   margin-top: auto;
   padding-top: 12px;
   border-top: 1px solid var(--border);
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
   gap: 8px;
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
+.gc-del-btn { justify-self: start; color: var(--red); }
+.gc-del-btn:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red-border); color: var(--red); }
+.gc-toggle-btn { justify-self: center; }
+.gc-toggle-btn.on { color: var(--green); background: var(--green-soft); border-color: var(--green-border); }
+.gc-edit-btn { justify-self: end; }
 
 /* ==========================================================================
    Storage · 构成条
@@ -2046,6 +2057,8 @@ input[type="number"] { -moz-appearance: textfield; }
   flex: none;
 }
 .sheet-footer:empty { display: none; }
+/* 页脚按钮用标准尺寸（.btn-sm 的 12px 在抽屉页脚显得逼仄），分组 ID 升为中性徽标 */
+.sheet-gid { font-size: 13px; font-weight: 500; padding: 3px 9px; }
 .sheet-scrim {
   position: fixed;
   inset: 0;

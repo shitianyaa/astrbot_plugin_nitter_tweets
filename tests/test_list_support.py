@@ -664,7 +664,7 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert 'confirmText: "添加并保存"' not in source
     assert 'confirmText: "移除并保存"' not in source
     assert (
-        'h("button", {\n      class: "btn btn-sm btn-primary", type: "button", text: "保存",'
+        'h("button", {\n      class: "btn btn-primary", type: "button", text: "保存",'
         in source
     )
     assert "function refreshSheetSaveState()" in source

@@ -230,9 +230,34 @@ function groupCard(g) {
         : [h("div", { class: "hint", text: "未配置推送目标" })]),
     ]),
     h("div", { class: "gc-card-actions" }, [
-      h("button", { class: "nav-btn btn-primary", type: "button", text: "编辑详细配置", onClick: () => openGroupSheet(g.group_id) }),
+      g.group_id !== "default"
+        ? h("button", { class: "btn btn-ghost btn-sm gc-del-btn", type: "button", text: "删除分组", onClick: () => confirmDeleteGroup(g.group_id) })
+        : null,
+      h("button", {
+        class: `btn btn-sm gc-toggle-btn${g.enabled ? " on" : ""}`,
+        type: "button",
+        title: "直接切换启用状态并保存，无需进入抽屉",
+        onClick: () => toggleGroupEnabled(g.group_id, !g.enabled),
+      }, [h("span", { text: g.enabled ? "● 启用中" : "○ 已停用" })]),
+      h("button", { class: "nav-btn btn-primary gc-edit-btn", type: "button", text: "编辑详细配置", onClick: () => openGroupSheet(g.group_id) }),
     ]),
   ]);
+}
+
+/* 卡片上的启用开关：绕过草稿直接落盘（update 是全量 payload，按服务器
+   现值构建再翻转 enabled）。若该分组已有未保存草稿，同步其 enabled 字段，
+   避免服务器切换后草稿脏检查拿旧值误报「未保存」。 */
+async function toggleGroupEnabled(gid, enabled) {
+  const server = state.groups.find(g => g.group_id === gid);
+  if (!server) return;
+  await withAction(async () => {
+    const payload = buildGroupPayload(snapshotGroup(server));
+    payload.enabled = enabled;
+    await apiPost("web/groups/update", payload);
+    const d = state.groupDrafts[gid];
+    if (d) d.enabled = enabled;
+    return { message: enabled ? "分组已启用" : "分组已停用" };
+  });
 }
 
 function selectGroup(gid, { force = false } = {}) {
@@ -317,13 +342,13 @@ function openGroupSheet(gid) {
   ]);
 
   const footer = [
-    h("span", { class: "mono hint", text: g.group_id }),
+    h("span", { class: "badge sheet-gid mono", text: g.group_id }),
     g.group_id !== "default"
-      ? h("button", { class: "btn btn-sm btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet({ force: true }); confirmDeleteGroup(gid); } })
+      ? h("button", { class: "btn btn-danger", type: "button", text: "删除分组", onClick: () => { closeSheet({ force: true }); confirmDeleteGroup(gid); } })
       : null,
-    h("button", { class: "btn btn-sm", type: "button", text: "关闭", onClick: () => closeSheet() }),
+    h("button", { class: "btn", type: "button", text: "关闭", onClick: () => closeSheet() }),
     h("button", {
-      class: "btn btn-sm btn-primary", type: "button", text: "保存",
+      class: "btn btn-primary", type: "button", text: "保存",
       "data-sheet-save": "true",
       onClick: () => saveGroup(gid, "分组已保存"),
     }),

@@ -68,11 +68,24 @@ function renderOverview() {
   const cacheInfo = mt.cache;
   const seenInfo = mt.seen || null;
 
-  // ---- 1. 顶部告警条：attention_items 逐条横幅（原型 attention-row） ----
+  // ---- 1. 顶部告警条：attention_items 逐条横幅（原型 attention-row）。
+  // 所有提醒都可点击归位：分组类直达抽屉，全局类跳到对应配置分组/分组页 ----
   const attention = att.length
     ? h("div", { class: "attention-box" }, att.map(item => {
         const level = item.level === "error" ? "error" : (item.level === "warning" || item.level === "warn") ? "warning" : "info";
-        return h("div", { class: `attention-row ${level}` }, [
+        const clickable = !!(item.group_id || ATTENTION_NAV[item.key]);
+        return h("div", {
+          class: `attention-row ${level}${clickable ? " clickable" : ""}`,
+          role: clickable ? "button" : null,
+          tabindex: clickable ? "0" : null,
+          title: clickable ? "点击前往处理" : null,
+          onClick: clickable ? () => jumpAttention(item) : undefined,
+          onkeydown: clickable
+            ? e => {
+                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jumpAttention(item); }
+              }
+            : undefined,
+        }, [
           h("span", { class: "attention-title", text: item.title || "" }),
           h("span", { class: "attention-detail", text: `· ${item.detail || ""}` }),
           item.group_id
@@ -80,7 +93,7 @@ function renderOverview() {
                 class: "attention-btn",
                 type: "button",
                 text: "前往处理",
-                onClick: () => goGroupEditor(item.group_id),
+                onClick: e => { e.stopPropagation(); goGroupEditor(item.group_id); },
               })
             : null,
         ]);
@@ -248,6 +261,34 @@ function replayTargetShortLabel(umo) {
   return id ? `${label} ${id}` : label;
 }
 
+
+/* 全局类提醒的归位目标（分组类提醒自带 group_id 直达抽屉，不走这张表）：
+   key 与后端 _overview_attention_items 的 key 一一对应。 */
+const ATTENTION_NAV = {
+  scheduler_not_running: { view: "config", group: "schedule" },
+  schedule_disabled: { view: "config", group: "schedule" },
+  no_instances: { view: "config", group: "basic" },
+  no_groups: { view: "groups" },
+  no_enabled_groups: { view: "groups" },
+  invalid_push_targets: { view: "groups" },
+  invalid_watch_users: { view: "groups" },
+  invalid_watch_queries: { view: "groups" },
+  invalid_watch_lists: { view: "groups" },
+};
+
+function jumpAttention(item) {
+  if (item.group_id) { goGroupEditor(item.group_id); return; }
+  const nav = ATTENTION_NAV[item.key];
+  if (!nav) return;
+  if (nav.view === "config") {
+    // 配置页导航以 state.configActive 决定右栏内容，切页前先钉住目标分组
+    state.configActive = nav.group;
+    state.configSearchPinned = true;
+    switchView("config");
+    return;
+  }
+  switchView("groups");
+}
 
 function goGroupEditor(gid) {
   state.selectedGroupId = gid;
