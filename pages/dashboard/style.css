@@ -1331,6 +1331,10 @@ input[type="number"] { -moz-appearance: textfield; }
   box-shadow: 0 0 6px currentColor;
 }
 
+/* 轮询已停（连续失败或切走视图）：点与文字一起降为次要色，不再假装实时 */
+.mac-terminal-status.paused { color: var(--text-subtle); }
+.mac-terminal-status.paused .mac-status-indicator { box-shadow: none; }
+
 .mac-terminal-body {
   padding: 12px 15px;
   font-size: 11.5px;

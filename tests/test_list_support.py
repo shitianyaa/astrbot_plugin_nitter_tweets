@@ -923,7 +923,13 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
     # 按 seq 去重，即便守卫失效也不会重复追加
     assert "const seen = new Set(state.logs.map(e => e.seq));" in source
     assert "const fresh = incoming.filter(e => !seen.has(e.seq));" in source
-    assert "state.logsAfterSeq = fresh[fresh.length - 1].seq;" in source
+    # 游标取 max：这行不该依赖后端一定按升序返回
+    assert (
+        "state.logsAfterSeq = Math.max(state.logsAfterSeq, ...fresh.map(e => e.seq));"
+        in source
+    )
+    # 插件重启后 seq 从头计数，旧游标要能自愈
+    assert "res.next_seq && res.next_seq <= state.logsAfterSeq" in source
 
 
 def test_dashboard_terminal_preserves_scroll_and_node():
@@ -1153,3 +1159,58 @@ def test_status_and_export_render_list_group():
     assert "List ID: 12345" in rendered
     assert "转发过滤: 开启（全局 开，分组 开）" in rendered
     assert "(lists1, List, 1 个): 12345" in exported
+
+
+def test_attention_nav_covers_every_overview_attention_key():
+    """总览「需要关注」的每个 key 都要有跳转目标（自带 group_id 的除外）。
+
+    回归背景：ATTENTION_NAV 曾只覆盖 _overview_attention_items 自己产出的 9 个
+    key，漏掉它 extend 进来的 _overview_group_diagnostics 聚合条目——那些行
+    渲染成不可点，而 CHANGELOG 写的是「均可点击跳转」。
+    """
+    import ast
+
+    tree = ast.parse(
+        (ROOT / "plugin_api" / "api_overview.py").read_text(encoding="utf-8")
+    )
+    backend_keys = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name not in {
+            "_overview_attention_items",
+            "_overview_group_diagnostics",
+        }:
+            continue
+        for sub in ast.walk(node):
+            if not isinstance(sub, ast.Dict):
+                continue
+            names = {k.value for k in sub.keys if isinstance(k, ast.Constant)}
+            consts = {
+                k.value: v.value
+                for k, v in zip(sub.keys, sub.values)
+                if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+            }
+            # 带 group_id 的条目由 jumpAttention 直达抽屉，不需要进导航表
+            if "key" in consts and "group_id" not in names:
+                backend_keys.add(consts["key"])
+
+    nav_block = re.search(
+        r"const ATTENTION_NAV = \{(.*?)\n\};", _dashboard_js_source(), re.S
+    ).group(1)
+    nav_keys = set(re.findall(r"^\s*(\w+):\s*\{", nav_block, re.M))
+
+    assert backend_keys, "没解析到后端 attention key，断言本身失效了"
+    assert backend_keys <= nav_keys, f"缺少跳转目标：{sorted(backend_keys - nav_keys)}"
+
+
+def test_with_action_drains_pending_history_filter_replay():
+    """在途期间被丢弃的历史筛选必须由收尾补跑。
+
+    withAction 与 probeMirror 都自管 actionBusy，两条路径都要收口，
+    否则筛选变更被静默吞掉、还会留到下一次动作才意外触发。
+    """
+    source = _dashboard_js_source()
+
+    assert "function drainPendingHistoryApply() {" in source
+    assert source.count("drainPendingHistoryApply();") == 2

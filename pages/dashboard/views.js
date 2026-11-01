@@ -263,7 +263,8 @@ function replayTargetShortLabel(umo) {
 
 
 /* 全局类提醒的归位目标（分组类提醒自带 group_id 直达抽屉，不走这张表）：
-   key 与后端 _overview_attention_items 的 key 一一对应。 */
+   key 与后端 _overview_attention_items 的 key 一一对应，包含它
+   extend 进来的 _overview_group_diagnostics 聚合条目。测试会断言两边不漂移。 */
 const ATTENTION_NAV = {
   scheduler_not_running: { view: "config", group: "schedule" },
   schedule_disabled: { view: "config", group: "schedule" },
@@ -274,6 +275,15 @@ const ATTENTION_NAV = {
   invalid_watch_users: { view: "groups" },
   invalid_watch_queries: { view: "groups" },
   invalid_watch_lists: { view: "groups" },
+  // 以下来自 _overview_group_diagnostics：跨分组的聚合条目，不带 group_id，
+  // 只能落到分组列表页，不能直达某个抽屉
+  groups_without_push_targets: { view: "groups" },
+  groups_without_watch_users: { view: "groups" },
+  groups_without_watch_queries: { view: "groups" },
+  groups_without_watch_lists: { view: "groups" },
+  groups_without_check_triggers: { view: "groups" },
+  groups_with_invalid_watch_queries: { view: "groups" },
+  groups_with_invalid_watch_lists: { view: "groups" },
 };
 
 function jumpAttention(item) {
@@ -281,9 +291,13 @@ function jumpAttention(item) {
   const nav = ATTENTION_NAV[item.key];
   if (!nav) return;
   if (nav.view === "config") {
-    // 配置页导航以 state.configActive 决定右栏内容，切页前先钉住目标分组
+    // 配置页导航以 state.configActive 决定右栏内容，切页前先钉住目标分组。
+    // 残留的搜索词会把目标字段过滤掉，必须先清空；配置页若在 15s 节流
+    // 窗口内刚渲染过，switchView 不会重渲染，所以还要主动标脏。
     state.configActive = nav.group;
     state.configSearchPinned = true;
+    state.configSearch = "";
+    markDirtyView("config");
     switchView("config");
     return;
   }
@@ -752,9 +766,10 @@ function confirmDeleteOrphan(gid) {
     desc: "该分组已不存在，删除后相关记录彻底清除。",
     danger: true,
     action: () => withAction(() => apiPost("web/history/orphans/delete", { group_id: gid, confirm: "DELETE" }), "删除成功", { reload: false, rerender: async () => {
-      // 删除同时影响孤儿清单、历史列表与总览最新推送，一并原位刷新
+      // 删除同时影响孤儿清单、历史列表与总览统计，一并原位刷新
       const results = await Promise.allSettled([
         renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes(),
+        reloadOverviewData(),
       ]);
       const failed = results.find(r => r.status === "rejected");
       if (failed) showAlert(failed.reason?.message || "孤儿列表刷新失败", "warn");
@@ -937,7 +952,8 @@ async function probeMirror(e) {
     els.mirrorResult.replaceChildren(h("div", { class: "alert error", text: `探测失败: ${err.message}` }));
     renderMirrorTerminal();
   } finally {
-    state.actionBusy = false; setBusy(false);
+    state.actionBusy = false; state.busyLabel = ""; setBusy(false);
+    drainPendingHistoryApply();
   }
 }
 

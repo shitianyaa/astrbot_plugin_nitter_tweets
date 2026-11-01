@@ -166,7 +166,8 @@ function renderConfigBarState() {
   if (discard) discard.disabled = !total || state.configSaving;
   if (save) {
     save.disabled = !total || state.configSaving;
-    save.textContent = state.configSaving ? "保存并重载中…" : state.configJustSaved ? "已保存 ✓" : "保存并重载";
+    // 与上面徽标同一条件：保存后的展示窗口内又有新编辑时，按钮不能还说「已保存」
+    save.textContent = state.configSaving ? "保存并重载中…" : state.configJustSaved && total === 0 ? "已保存 ✓" : "保存并重载";
   }
 }
 

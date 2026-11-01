@@ -19,4 +19,9 @@ class WebAPILogsMixin:
 
     async def build_logs(self, after_seq: int = 0) -> dict[str, Any]:
         entries = log_buffer.snapshot(after_seq)
-        return self._ok(entries=entries, max_entries=log_buffer.MAX_ENTRIES)
+        return self._ok(
+            entries=entries,
+            max_entries=log_buffer.MAX_ENTRIES,
+            # 游标失效检测：插件重启后 seq 从头计数，前端据此清空重拉
+            next_seq=log_buffer.next_seq(),
+        )

@@ -311,9 +311,10 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
       h("span", { class: "mac-dot green" }),
     ]),
     h("span", { class: "mac-terminal-title", text: title }),
-    h("span", { class: "mac-terminal-status" }, [
+    // 轮询停了就不能再显示「实时」：连续失败达阀值或切走视图都会停掉
+    h("span", { class: `mac-terminal-status${state.logsTimer ? "" : " paused"}` }, [
       h("span", { class: "mac-status-indicator" }),
-      h("span", { text: "实时" }),
+      h("span", { text: state.logsTimer ? "实时" : "已暂停" }),
     ]),
   ]);
 
@@ -442,6 +443,11 @@ async function reloadLogs({ reset = false } = {}) {
   const request = (async () => {
     const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
     if (myGeneration !== logsGeneration) return; // reset 已作废本次写入
+    // 插件进程重启后 seq 从 1 重新计数，旧游标比服务端下一个序号还大，
+    // 增量请求会永远返回空。游标不可能存在就清空重拉一次。
+    if (state.logsAfterSeq && res.next_seq && res.next_seq <= state.logsAfterSeq) {
+      return reloadLogs({ reset: true });
+    }
     const incoming = res.entries || [];
     state.logsMax = res.max_entries || state.logsMax;
     if (incoming.length) {
@@ -450,7 +456,9 @@ async function reloadLogs({ reset = false } = {}) {
       const fresh = incoming.filter(e => !seen.has(e.seq));
       if (fresh.length) {
         state.logs = state.logs.concat(fresh).sort((a, b) => a.seq - b.seq);
-        state.logsAfterSeq = fresh[fresh.length - 1].seq;
+        // 取最大值而不是「最后一个」：已经按 seq 排序兜底，这行不该再依赖
+        // 后端一定按升序返回
+        state.logsAfterSeq = Math.max(state.logsAfterSeq, ...fresh.map(e => e.seq));
       }
       // 前端与后端同上限，避免长时间停留后无限增长
       if (state.logsMax && state.logs.length > state.logsMax) {
@@ -485,10 +493,14 @@ function startLogPolling() {
         if (logPollFailures >= LOG_POLL_MAX_FAILURES) stopLogPolling();
       });
   }, LOG_POLL_MS);
+  markData("logs");   // 让终端状态标签从「已暂停」回到「实时」
 }
 
 function stopLogPolling() {
-  if (state.logsTimer) { clearInterval(state.logsTimer); state.logsTimer = 0; }
+  if (!state.logsTimer) return;
+  clearInterval(state.logsTimer);
+  state.logsTimer = 0;
+  markData("logs");   // 让终端状态标签跟着变成「已暂停」
 }
 
 /* ==========================================================================

@@ -122,11 +122,35 @@ def test_safe_log_accepts_level_name_strings_including_aliases():
     assert [e["level"] for e in entries] == ["warning", "warning", "info"]
 
 
-def test_emit_integer_critical_reaches_buffer_and_host_consistently():
+def test_emit_integer_critical_reaches_buffer_and_host_consistently(monkeypatch):
     """整数 50 归一为 critical：缓冲与宿主派发用同一级别名。"""
+    from unittest.mock import MagicMock
+
     from shared.observability import _emit
+
+    mock_logger = MagicMock()
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     _emit(50, " catastrophic ")
 
     entries = log_buffer.snapshot()
     assert [e["level"] for e in entries] == ["critical"]
+    # 宿主要真收到 critical：曾因 _emit 缺 critical 分支而降级成 info，
+    # 缓冲与宿主级别对不上
+    assert mock_logger.critical.call_count == 1
+    assert not mock_logger.info.called
+
+
+def test_build_logs_exposes_next_seq_for_cursor_invalidation():
+    """接口得吐 next_seq：插件重启后 seq 从 1 重数，前端靠它判定游标失效。"""
+    log_buffer.clear()
+    log_buffer.append(logging.INFO, ["one"])
+    log_buffer.append(logging.INFO, ["two"])
+
+    payload = build_logs(0)
+
+    assert payload["next_seq"] == 3
+    assert payload["max_entries"] == log_buffer.MAX_ENTRIES
+    # 游标追平服务端序号时仍然可用，不该被当成失效
+    assert build_logs(2)["entries"] == []
+    assert log_buffer.next_seq() == 3

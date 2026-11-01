@@ -51,13 +51,20 @@ async function reloadConfigState() {
   markData("config");
 }
 
+/* 历史请求代际：视图进入触发的刷新（refreshOnEnter 不走 actionBusy）与筛选/
+   翻页触发的刷新可能重叠，旧响应晚到会把新筛选的结果盖回去。只让最新一次
+   请求写入 state；被作废的那次仍正常返回，让 withAction 照旧收尾。 */
+let historyRequestSeq = 0;
+
 async function refreshHistoryData() {
+  const seq = ++historyRequestSeq;
   const data = await apiGet("web/history", {
     group_id: state.historyGroupId || undefined,
     username: state.historyUsername || undefined,
     limit: state.historyLimit, offset: state.historyOffset,
     status: state.historyStatus || undefined,
   });
+  if (seq !== historyRequestSeq) return data;
   state.history = data;
   state.historySelection.clear();
   markData("history");
@@ -89,10 +96,11 @@ async function refreshViewData(view) {
     }
     if (view === "config") { await reloadConfigState(); return true; }
     if (view === "history") {
-      // 总览「最新推送」与历史页共用 web/history 数据源：重推/删孤儿后只刷
-      // 历史会让总览在 15s 节流窗口内继续显示旧记录，这里并行补齐
+      // 总览的「最新推送」与推送统计（push_stats / 历史页签计数）都跟历史
+      // 数据同源：重推、删孤儿后只刷历史会让总览在 15s 节流窗口内继续
+      // 显示旧记录与旧成功率。三路并行补齐。
       const results = await Promise.allSettled([
-        refreshHistoryData(), refreshRecentPushes(),
+        refreshHistoryData(), refreshRecentPushes(), reloadOverviewData(),
       ]);
       const failed = results.find(r => r.status === "rejected");
       if (failed) throw failed.reason;
@@ -129,12 +137,17 @@ async function withAction(action, successText, { reload = true, rerender = null 
   } catch (err) { showAlert(err.message || "操作失败", "error"); return null; }
   finally {
     state.actionBusy = false; state.busyLabel = ""; setBusy(false);
-    // 在途期间被丢弃的历史筛选在这里补跑（applyHistoryFilters 定义于 boot 分片）
-    if (state.pendingHistoryApply) {
-      state.pendingHistoryApply = false;
-      if (typeof applyHistoryFilters === "function") applyHistoryFilters();
-    }
+    drainPendingHistoryApply();
   }
+}
+
+/* 在途期间被丢弃的历史筛选在这里补跑（applyHistoryFilters 定义于 boot 分片）。
+   withAction 与 probeMirror 都自管 actionBusy，两条路径都必须收口——
+   否则筛选变更被静默吞掉，并且会留到下一次动作才意外触发。 */
+function drainPendingHistoryApply() {
+  if (!state.pendingHistoryApply) return;
+  state.pendingHistoryApply = false;
+  if (typeof applyHistoryFilters === "function") applyHistoryFilters();
 }
 
 async function reloadAll(options = {}) {

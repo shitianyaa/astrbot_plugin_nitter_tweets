@@ -86,6 +86,16 @@ def snapshot(after_seq: int = 0, limit: int = MAX_ENTRIES) -> list[dict[str, Any
     return picked[-cap:]
 
 
+def next_seq() -> int:
+    """下一个待分配的 seq。
+
+    客户端用它判定游标是否还有效：插件进程重启后 seq 从 1 重新计数，
+    旧的 ``after_seq`` 会比新序号还大，接口将永远返回空。
+    """
+    with _lock:
+        return _next_seq
+
+
 def clear() -> None:
     """清空缓冲（测试与显式重置用）。"""
     global _next_seq
@@ -94,4 +104,4 @@ def clear() -> None:
         _next_seq = 1
 
 
-__all__ = ["MAX_ENTRIES", "append", "clear", "level_name", "snapshot"]
+__all__ = ["MAX_ENTRIES", "append", "clear", "level_name", "next_seq", "snapshot"]
