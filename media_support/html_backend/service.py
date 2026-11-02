@@ -57,7 +57,7 @@ class HtmlNitterService:
         config: HtmlBackendConfig | None = None,
         *,
         log: Callable[[str], None] | None = None,
-        brief_log: bool = True,
+        debug_log: Callable[[str], None] | None = None,
         score_book: HostScoreBook | None = None,
     ):
         self.config = config or HtmlBackendConfig()
@@ -66,7 +66,7 @@ class HtmlNitterService:
         self.log = (
             log
             if isinstance(log, QuietHtmlLog)
-            else QuietHtmlLog(raw_log, brief=bool(brief_log))
+            else QuietHtmlLog(raw_log, debug_emit=debug_log)
         )
         session_dir = self.config.session_dir
         rate = RateLimitConfig(global_min_interval=self.config.min_interval)

@@ -17,11 +17,15 @@ except ImportError:
 class WebAPILogsMixin:
     """logs 数据组装。"""
 
-    async def build_logs(self, after_seq: int = 0) -> dict[str, Any]:
-        entries = log_buffer.snapshot(after_seq)
+    async def build_logs(
+        self, after_seq: int = 0, level: str = "main"
+    ) -> dict[str, Any]:
+        level = log_buffer.normalize_ring(level)
+        entries = log_buffer.snapshot(after_seq, ring=level)
         return self._ok(
             entries=entries,
-            max_entries=log_buffer.MAX_ENTRIES,
+            level=level,
+            max_entries=log_buffer.ring_max_entries(level),
             # 会话标识：进程重启后变，前端据此判定游标失效
             session_id=log_buffer.session_id(),
             # 二级兜底：游标比下一个序号还大时同样重拉

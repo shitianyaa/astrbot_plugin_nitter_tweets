@@ -41,7 +41,6 @@ def _client_with_instance(instance: str = "http://nitter:8080") -> NitterClient:
             "retry_attempts": 2,
             "retry_delay_seconds": 0.0,
             "filter_reposts_enabled": True,
-            "brief_log_enabled": True,
         }.get(key, default)
     )
     config.__getitem__ = MagicMock(

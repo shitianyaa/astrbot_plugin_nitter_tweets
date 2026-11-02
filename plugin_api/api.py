@@ -132,7 +132,7 @@ class NitterWebAPI(
             after_seq = self._parse_int(
                 request.args.get("after_seq"), 0, minimum=0, maximum=10_000_000
             )
-            return await self.build_logs(after_seq)
+            return await self.build_logs(after_seq, request.args.get("level", "main"))
 
         return await self._json_response(action)
 

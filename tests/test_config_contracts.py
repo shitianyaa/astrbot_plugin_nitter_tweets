@@ -96,16 +96,20 @@ def test_every_schema_group_item_key_is_mapped():
 
 def test_retired_configuration_is_removed_without_losing_other_config():
     keys = (
+        "brief_log_enabled",
         "concurrent_fetch_enabled",
         "fetch_concurrency",
         "concurrent_prepare_enabled",
         "prepare_concurrency",
     )
     for migrated in (False, True):
-        old = dict(zip(keys, (True, 8, True, 8)))
+        old = dict(zip(keys, (False, True, 8, True, 8)))
         config = {
             **old,
-            "performance": dict(old),
+            "performance": {
+                key: value for key, value in old.items() if key != "brief_log_enabled"
+            },
+            "logging": {"brief_log_enabled": False},
             "basic": {"instances": ["http://nitter:8080"]},
             "tweet_groups": [{"group_id": "kept", "watch_users": ["NASA"], **old}],
             LEGACY_CONFIG_MIGRATION_KEY: migrated,
@@ -113,6 +117,7 @@ def test_retired_configuration_is_removed_without_losing_other_config():
         assert migrate_legacy_grouped_config(config)
         assert not (set(keys) & config.keys())
         assert config["performance"] == {}
+        assert config["logging"] == {}
         assert config["basic"]["instances"] == ["http://nitter:8080"]
         assert config["tweet_groups"] == [{"group_id": "kept", "watch_users": ["NASA"]}]
         assert config[LEGACY_CONFIG_MIGRATION_KEY] is True
@@ -193,7 +198,6 @@ def test_unified_service_uses_instances_for_rss_and_html():
         {
             "instances": ["http://nitter:8080"],
             "filter_reposts_enabled": "off",
-            "brief_log_enabled": "no",
             "html_max_pages": "4",
         }
     )
@@ -202,7 +206,7 @@ def test_unified_service_uses_instances_for_rss_and_html():
     assert service.html.config.instances == service.instances
     assert service.html.config.filter_reposts is False
     assert service.html.config.max_pages == 4
-    assert service.html.log.brief is False
+    assert callable(service.html.log.debug_emit)
 
 
 def test_legacy_instances_are_diagnostic_only():

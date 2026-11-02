@@ -948,7 +948,7 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
     assert "res.next_seq && res.next_seq <= state.logsAfterSeq" in source
     # 跳过的一轮不能算成功，否则「请求比 3s 间隔还慢 + 一直失败」时失败计数
     # 会在 0/1 之间振荡，永远到不了停止阀值
-    assert 'if (result !== "skipped") logPollFailures = 0;' in source
+    assert 'generation === logsGeneration && result !== "skipped"' in source
 
 
 def test_dashboard_terminal_preserves_scroll_and_node():
@@ -1097,6 +1097,8 @@ def test_dashboard_redesign_architecture_guards():
     assert "function openCmdk(" in source
     assert "function renderTerminal(" in source
     assert 'class: "mac-terminal-bar"' in source
+    assert '"data-logs-level": level' in source
+    assert "level: myLevel" in source
     assert 'class: "mac-dots"' in source
     # 抽屉/面板/弹窗的焦点圈与焦点恢复：打开时记录锚点，关闭时归还
     assert "state.sheetReturnFocus = document.activeElement;" in source

@@ -4,14 +4,12 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from astrbot.api import logger
-
 try:
     from ..config import config_get, parse_config_bool
-    from ..shared import TweetItem, clamp_float, clamp_int, sanitize_sensitive_text
+    from ..shared import TweetItem, clamp_float, clamp_int, safe_block_log
 except ImportError:
     from config import config_get, parse_config_bool
-    from shared import TweetItem, clamp_float, clamp_int, sanitize_sensitive_text
+    from shared import TweetItem, clamp_float, clamp_int, safe_block_log
 
 from .client import NitterClient
 from .html_backend.service import HtmlBackendConfig, HtmlNitterService
@@ -53,11 +51,16 @@ class NitterService(NitterClient):
             ),
             log=log
             or (
-                lambda message: logger.info(
-                    f"[NitterTweets][html] {sanitize_sensitive_text(message)}"
+                lambda message: safe_block_log(
+                    "info", f"[NitterTweets][html] {message}"
                 )
             ),
-            brief_log=self.brief_log_enabled,
+            debug_log=log
+            or (
+                lambda message: safe_block_log(
+                    "debug", f"[NitterTweets][html] {message}"
+                )
+            ),
             score_book=self.host_scores,
         )
 

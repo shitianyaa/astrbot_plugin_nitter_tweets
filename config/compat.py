@@ -55,6 +55,7 @@ IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
 REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
 REMOVED_FEATURE_CONFIG_KEYS = frozenset(
     {
+        "brief_log_enabled",
         "concurrent_fetch_enabled",
         "fetch_concurrency",
         "concurrent_prepare_enabled",
@@ -129,7 +130,6 @@ CONFIG_GROUP_BY_KEY = {
     "check_interval_minutes": "schedule",
     "daily_check_enabled": "schedule",
     "daily_check_times": "schedule",
-    "brief_log_enabled": "logging",
     "send_batch_summary_enabled": "push",
     "merge_tweet_threshold": "push",
     "forward_reject_plain_fallback_enabled": "push",

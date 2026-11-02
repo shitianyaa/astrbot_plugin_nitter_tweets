@@ -202,7 +202,7 @@ def test_manual_log_ai_emits_when_translation_enabled(monkeypatch):
 def test_scheduler_log_ai_skipped_when_translation_disabled(monkeypatch):
     """Scheduler path: translator.enabled=False suppresses per-tweet AI logs."""
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner_send.logger", mock_logger)
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
     monkeypatch.setattr(
         "scheduler.runner_send.format_ai_tweet_summary",
         lambda *a, **kw: "dummy",
@@ -210,29 +210,33 @@ def test_scheduler_log_ai_skipped_when_translation_disabled(monkeypatch):
 
     runner = SchedulerSendMixin()
     runner.translator = SimpleNamespace(enabled=False)
-    runner.brief_log_enabled = False
-
     runner._log_ai_process_results("test", [MagicMock(), MagicMock()], None)
     mock_logger.info.assert_not_called()
+    mock_logger.debug.assert_not_called()
 
 
-def test_scheduler_log_ai_skipped_when_brief_log_enabled(monkeypatch):
-    """Scheduler path: brief_log_enabled also suppresses per-tweet AI logs."""
+def test_scheduler_log_ai_debug_does_not_flush_main_ring(monkeypatch):
+    from shared import log_buffer
+
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner_send.logger", mock_logger)
-
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
+    monkeypatch.setattr(
+        "scheduler.runner_send.format_ai_tweet_summary", lambda *a, **kw: "done"
+    )
+    log_buffer.clear()
+    log_buffer.append("warning", ["keep warning"])
     runner = SchedulerSendMixin()
     runner.translator = SimpleNamespace(enabled=True)
-    runner.brief_log_enabled = True
-
     runner._log_ai_process_results("test", [MagicMock()], None)
     mock_logger.info.assert_not_called()
+    assert log_buffer.snapshot()[0]["lines"] == ["keep warning"]
+    assert log_buffer.snapshot(ring="debug")[0]["lines"] == ["done"]
+    log_buffer.clear()
 
 
-def test_scheduler_log_ai_emits_when_enabled_and_not_brief(monkeypatch):
-    """Scheduler path: both translator.enabled and not brief → logs emitted."""
+def test_scheduler_log_ai_emits_debug_when_translation_enabled(monkeypatch):
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner_send.logger", mock_logger)
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
     monkeypatch.setattr(
         "scheduler.runner_send.format_ai_tweet_summary",
         lambda *a, **kw: "dummy",
@@ -240,10 +244,9 @@ def test_scheduler_log_ai_emits_when_enabled_and_not_brief(monkeypatch):
 
     runner = SchedulerSendMixin()
     runner.translator = SimpleNamespace(enabled=True)
-    runner.brief_log_enabled = False
-
     runner._log_ai_process_results("test", [MagicMock(), MagicMock()], None)
-    assert mock_logger.info.call_count == 2
+    assert mock_logger.debug.call_count == 2
+    mock_logger.info.assert_not_called()
 
 
 def test_safe_block_log_redacts_secrets_sessions_and_preserves_lines(monkeypatch):

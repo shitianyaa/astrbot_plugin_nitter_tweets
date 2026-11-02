@@ -471,7 +471,9 @@ class HtmlNitterPool:
         for index, base in enumerate(hosts, 1):
             host = self.session.host_of(base)
             try:
-                self.log(f"search try {index}/{total} query={q!r} kind={resolved}")
+                self.log(
+                    f"search try {index}/{total} query_chars={len(q)} kind={resolved}"
+                )
                 tweets = self._as_search_result(
                     self._paginate_search(
                         base,
@@ -520,7 +522,7 @@ class HtmlNitterPool:
             empty_success_result.host_attempts = attempts
             self.log(
                 f"search empty after rotate hosts={total}, "
-                f"query={q!r} kind={resolved}, "
+                f"query_chars={len(q)} kind={resolved}, "
                 f"attempts={'; '.join(attempts)}"
             )
             return empty_success_base, empty_success_result

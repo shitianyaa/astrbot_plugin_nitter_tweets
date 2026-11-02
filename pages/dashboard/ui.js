@@ -305,6 +305,8 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
       ]));
     }
   }
+  const focusedLevel = container.contains(document.activeElement)
+    ? document.activeElement?.dataset?.logsLevel : null;
   const bar = h("div", { class: "mac-terminal-bar" }, [
     h("div", { class: "mac-dots" }, [
       h("span", { class: "mac-dot red" }),
@@ -312,6 +314,15 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
       h("span", { class: "mac-dot green" }),
     ]),
     h("span", { class: "mac-terminal-title", text: title }),
+    h("div", { class: "terminal-levels", role: "group", "aria-label": "日志档位" }, [
+      ...[["main", "摘要与告警"], ["debug", "DEBUG 过程"]].map(([level, label]) =>
+        h("button", {
+          type: "button", class: "nav-btn terminal-level-btn",
+          "data-logs-level": level, "aria-pressed": String(state.logsLevel === level),
+          text: label, onClick: () => setLogsLevel(level),
+        })
+      ),
+    ]),
     // 轮询停了就不能再显示「实时」：连续失败达阀值或切走视图都会停掉
     h("span", { class: `mac-terminal-status${state.logsTimer ? "" : " paused"}` }, [
       h("span", { class: "mac-status-indicator" }),
@@ -326,6 +337,7 @@ function renderTerminal(container, entries, { title = "probe.sh", empty = "暂�
     body = h("div", { class: "mac-terminal-body" }, lines.length ? lines : [h("div", { class: "term-empty", text: empty })]);
   }
   container.replaceChildren(bar, body);
+  if (focusedLevel) bar.querySelector(`[data-logs-level="${focusedLevel}"]`)?.focus({ preventScroll: true });
   // 只有本来就在底部才跟随新日志；用户往上翻看时保持原位
   if (wasAtBottom) body.scrollTop = body.scrollHeight;
 }
@@ -431,6 +443,18 @@ let logsInFlight = null;
 let logsResetPending = false;
 let logsGeneration = 0;
 
+async function setLogsLevel(level) {
+  if (!["main", "debug"].includes(level) || level === state.logsLevel) return;
+  state.logsLevel = level;
+  logPollFailures = 0;
+  const request = reloadLogs({ reset: true });
+  const generation = logsGeneration;
+  markData("logs");
+  try { await request; } catch (error) {
+    if (generation === logsGeneration) showAlert(error.message || "日志读取失败", "error");
+  }
+}
+
 async function reloadLogs({ reset = false } = {}) {
   if (reset) {
     logsResetPending = true;
@@ -442,9 +466,11 @@ async function reloadLogs({ reset = false } = {}) {
     return "skipped";
   }
   const myGeneration = logsGeneration;
+  const myLevel = state.logsLevel;
   const request = (async () => {
-    const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined });
-    if (myGeneration !== logsGeneration) return; // reset 已作废本次写入
+    const res = await apiGet("web/logs", { after_seq: state.logsAfterSeq || undefined, level: myLevel });
+    if (myGeneration !== logsGeneration || myLevel !== state.logsLevel) return "skipped";
+    if (res.level && res.level !== myLevel) throw new Error("日志档位响应不一致");
     // 插件进程重启后 seq 从 1 重新计数：旧游标可能已小于新序号（重启后
     // 又刷出更多条），只靠 next_seq 兜不住，以会话标识为准清空重拉。
     if (res.session_id) {
@@ -480,10 +506,13 @@ async function reloadLogs({ reset = false } = {}) {
 
   logsInFlight = request;
   try {
-    await request;
+    return await request;
+  } catch (error) {
+    if (myGeneration !== logsGeneration || myLevel !== state.logsLevel) return "skipped";
+    throw error;
   } finally {
     if (logsInFlight === request) logsInFlight = null;
-    if (reset) logsResetPending = false;
+    if (reset && myGeneration === logsGeneration) logsResetPending = false;
   }
 }
 
@@ -495,14 +524,19 @@ let logPollFailures = 0;
 function startLogPolling() {
   stopLogPolling();
   logPollFailures = 0;
-  state.logsTimer = setInterval(() => {
+  const timer = setInterval(() => {
+    const generation = logsGeneration;
     reloadLogs()
-      .then(result => { if (result !== "skipped") logPollFailures = 0; })
+      .then(result => {
+        if (state.logsTimer === timer && generation === logsGeneration && result !== "skipped") logPollFailures = 0;
+      })
       .catch(() => {
+        if (state.logsTimer !== timer || generation !== logsGeneration) return;
         logPollFailures += 1;
         if (logPollFailures >= LOG_POLL_MAX_FAILURES) stopLogPolling();
       });
   }, LOG_POLL_MS);
+  state.logsTimer = timer;
   markData("logs");   // 让终端状态标签从「已暂停」回到「实时」
 }
 
