@@ -7,8 +7,8 @@
 3. 小步修改，单次提交只围绕一个目的。
 4. 补最小回归测试。
 5. 同步用户文档、配置文档或维护文档。
-6. 跑对应测试。
-7. 检查 `git status --short`。
+6. 跑对应测试；提交完整改动或准备合并前跑 `python scripts/check.py`。
+7. 检查 `git status --short`；PR 的 Quality Gate 必须通过，main 合入后再验最终提交。
 
 多步任务同时更新 `Progress/YYYY-MM-DD*.md`，记录原始要求、清单、变更文件、命令输出和未解决风险；`Progress/` 不进入提交。
 
