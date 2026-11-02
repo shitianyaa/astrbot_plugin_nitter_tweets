@@ -10,6 +10,8 @@ test/ export-ignore
 .pi/ export-ignore
 .pi-subagents/ export-ignore
 Progress/ export-ignore
+scripts/ export-ignore
+requirements-dev.txt export-ignore
 *.pyc export-ignore
 __pycache__/ export-ignore
 
