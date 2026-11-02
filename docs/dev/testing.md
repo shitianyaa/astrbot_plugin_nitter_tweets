@@ -18,7 +18,8 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | --- | --- | --- |
 | 调度、seen、私人号 OneBot 合并、QQ Official、Telegram flood | `python -m pytest -q tests/test_delivery_platforms.py tests/test_scheduler_delivery.py tests/test_qq_official_delivery.py` | 独立扫描基准、发送调用失败跳过、准备失败不推进基准、合并顺序、官方 Markdown/纯文本切换、媒体部分成功、限流重试 |
 | 发布版本元数据 | `python -m pytest -q tests/test_release_version.py` | README 徽章、`metadata.yaml`、`main.py`、CHANGELOG 版本一致，QQ Official 最低 AstrBot 版本 |
-| 结构化日志与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、时间线/空页/登录维护/异常页分类 |
+| 结构化日志、双环与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_log_buffer.py tests/test_web_logs_api.py tests/test_html_quiet_log.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、主环/DEBUG 独立容量与读取、HTML 过程分流、页面分类 |
+| Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_list_support.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
 | 媒体传输编码 | `python -m pytest -q tests/test_media_transport.py` | 梯度组成、base64 上限、URL 主机白名单、传输降级先于内容降级、`uncertain` 不推进、编码记忆、非 OneBot 恒 `path` |
 | 发送失败分类与提示 | `python -m pytest -q tests/test_image_send_rejected_notice.py` | 拒收签名识别、ENOENT 不误判、`rejected` 保持 retryable 以免跳过有损降级链、拒收判定排在 uncertain 之前、提示链接遵循 `omit_status_url`、仅媒体不补提示 |

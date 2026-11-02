@@ -12,8 +12,8 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
 - `push`: `tweet_groups`、推送间隔、合并阈值、批次概括横幅与目标级作者黑名单。
-- `performance`: 后台账号并发拉取和并发准备。
-- `logging`: 日志模式。
+
+日志采用固定分级，不再暴露配置开关。实例诊断页切换摘要与告警 / DEBUG 过程，独立有界内存缓冲各保留 200 条，重载即清。旧日志与并发配置会在升级时静默清除，不影响其他配置与迁移标记。
 
 ## 抓取后端与实例配置
 
@@ -31,6 +31,8 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 > **详细原理与架构约束**（包括 List 物理隔离、转推守卫 Retweet Guard、Tag SafeSearch 回退等细节）：参见 [进阶说明 - 抓取后端策略](../advanced.md#抓取后端策略fetch_backend)。
 
 同一自建实例同时承担 RSS 和 HTML。旧版 `search_instances`、`blogger_html_instances`、`concurrent_fetch_instances` 已删除，仅在启动日志中提示，不读取、不迁移、不写回。
+
+后台 FxTwitter 博主抓取固定最多三并发；Nitter 优先合并 RSS，逐账号回退和媒体/翻译准备均串行。旧并发配置已退役，不影响多实例故障切换。
 
 关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
 

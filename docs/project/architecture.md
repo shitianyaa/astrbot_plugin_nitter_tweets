@@ -122,5 +122,7 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 - `rendering/`: 推文文本、平台安全 Markdown、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。
-- `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数。
+- `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数；现成多行块通过 `safe_block_log` 输出，原始异常堆栈不进入诊断环。
+- `shared/log_buffer.py`: 主环与 DEBUG 过程独立的有界内存缓冲，各保留 200 条；通过 `web/logs` 按档位与全局 seq 增量读取，重载即清。
+- `media_support/html_backend/logging_util.py`: HTML 重要诊断与 DEBUG 过程分流，单字符串回调兼容，始终抑制 session load。
 - `shared/arbiter.py`: 被动链接跨 Bot 表情仲裁（EmojiLikeArbiter 协议，表情 289 占坑 / 124 胜出确认）。
