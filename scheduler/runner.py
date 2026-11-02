@@ -1182,8 +1182,6 @@ class NitterTweetScheduler(
                     f"group={group.group_id}, reason={reason_text or 'unknown'}"
                 )
             skip_plain_text = filter_plain_text_enabled or media_only_effective
-            use_fetch_parallel = self._should_use_concurrent_fetch(group)
-            use_prepare_parallel = self._should_use_concurrent_prepare(group)
             self._log_verbose_info(
                 "[NitterTweets] 定时检查开始: "
                 f"group={group.group_id}, reason={reason}, "
@@ -1191,11 +1189,7 @@ class NitterTweetScheduler(
                 f"invalid_targets={len(result.invalid_targets)}, "
                 f"首屏扫描={fetch_limit}, qq_merge_threshold={merge_threshold}, "
                 f"skip_plain_text={skip_plain_text}, "
-                f"拉取并发={'开' if use_fetch_parallel else '关'}, "
-                f"拉取数={group.fetch_concurrency}, "
-                f"实例数={len(getattr(self.nitter, 'instances', []))}, "
-                f"准备并发={'开' if use_prepare_parallel else '关'}, "
-                f"准备数={group.prepare_concurrency}"
+                f"实例数={len(getattr(self.nitter, 'instances', []))}"
             )
             discovered_batches: list[PendingTweetBatch] = []
             group_plain_text_filtered_total = 0
@@ -1525,42 +1519,23 @@ class NitterTweetScheduler(
             )
             immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
             self._set_discovered_batch_progress(discovered_batches)
-            if self._should_use_concurrent_prepare(group):
-                (
-                    pending_batches,
-                    immediate_batches_sent,
-                ) = await self._prepare_immediate_batches_concurrently(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
-            else:
-                (
-                    pending_batches,
-                    immediate_batches_sent,
-                ) = await self._prepare_discovered_batches_serial(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
+            (
+                pending_batches,
+                immediate_batches_sent,
+            ) = await self._prepare_discovered_batches_serial(
+                group,
+                discovered_batches,
+                result,
+                targets[0],
+                seen_map,
+                immediate_targets,
+                buffered_targets,
+                target_interval,
+                user_interval,
+                group_label,
+                immediate_batch_summary_tracker,
+                immediate_batches_sent,
+            )
 
             if pending_batches:
                 try:

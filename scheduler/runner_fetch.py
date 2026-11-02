@@ -65,6 +65,9 @@ def _classify_html_fetch(
     return SourceStatus.FILTERED_EMPTY
 
 
+FX_FETCH_CONCURRENCY = 3
+
+
 class SchedulerFetchMixin:
     """博主与标签的抓取入口。"""
 
@@ -133,7 +136,6 @@ class SchedulerFetchMixin:
                         fetch_limit,
                         skip_plain_text,
                         scan_watermarks.get(username),
-                        concurrent=False,
                     )
                 )
             return results
@@ -145,10 +147,7 @@ class SchedulerFetchMixin:
 
         if backend in ("mix", "fx") and fx_client is not None:
             filter_reposts = self._effective_filter_reposts(group)
-            concurrency = (
-                max(1, group.fetch_concurrency) if group.fetch_concurrency else 3
-            )
-            semaphore = asyncio.Semaphore(concurrency)
+            semaphore = asyncio.Semaphore(FX_FETCH_CONCURRENCY)
 
             async def fetch_one_fx(
                 index: int, username: str
@@ -264,7 +263,6 @@ class SchedulerFetchMixin:
                             fetch_limit,
                             skip_plain_text,
                             scan_watermarks.get(username),
-                            concurrent=False,
                             force_nitter=True,
                         )
                     )
@@ -290,45 +288,22 @@ class SchedulerFetchMixin:
                 skip_plain_text,
                 scan_watermarks,
             )
-        if not self._should_use_concurrent_fetch(group):
-            results = []
-            for index, username in enumerate(accounts):
-                # Add delay between queries (except before the first one)
-                if index > 0 and group.send_user_interval > 0:
-                    await asyncio.sleep(group.send_user_interval)
-                results.append(
-                    await self._fetch_group_user(
-                        group,
-                        index,
-                        username,
-                        fetch_limit,
-                        skip_plain_text,
-                        scan_watermarks.get(username),
-                        concurrent=False,
-                        force_nitter=True,
-                    )
-                )
-            return results
-
-        semaphore = asyncio.Semaphore(group.fetch_concurrency)
-
-        async def fetch_with_limit(index: int, username: str) -> UserFetchResult:
-            async with semaphore:
-                return await self._fetch_group_user(
+        results = []
+        for index, username in enumerate(accounts):
+            if index > 0 and group.send_user_interval > 0:
+                await asyncio.sleep(group.send_user_interval)
+            results.append(
+                await self._fetch_group_user(
                     group,
                     index,
                     username,
                     fetch_limit,
                     skip_plain_text,
                     scan_watermarks.get(username),
-                    concurrent=True,
                     force_nitter=True,
                 )
-
-        tasks = [
-            fetch_with_limit(index, username) for index, username in enumerate(accounts)
-        ]
-        return list(await asyncio.gather(*tasks))
+            )
+        return results
 
     async def _fetch_group_users_merged(
         self,
@@ -384,7 +359,6 @@ class SchedulerFetchMixin:
                             fetch_limit,
                             skip_plain_text,
                             scan_watermarks.get(username),
-                            concurrent=False,
                             force_nitter=True,
                         )
                     )
@@ -427,7 +401,6 @@ class SchedulerFetchMixin:
                             fetch_limit,
                             skip_plain_text,
                             scan_watermarks.get(username),
-                            concurrent=False,
                             force_nitter=True,
                         )
                     )
@@ -444,7 +417,6 @@ class SchedulerFetchMixin:
         skip_plain_text: bool,
         scan_watermark: list[str] | None,
         *,
-        concurrent: bool,
         force_nitter: bool = False,
     ) -> UserFetchResult:
         filter_reposts = self._effective_filter_reposts(group)
@@ -472,12 +444,7 @@ class SchedulerFetchMixin:
         backend = self.fetch_backend
         fx_client = self._get_fxtwitter_client()
         fx_failed_attempt: str | None = None
-        if (
-            not force_nitter
-            and not concurrent
-            and backend in ("mix", "fx")
-            and fx_client is not None
-        ):
+        if not force_nitter and backend in ("mix", "fx") and fx_client is not None:
             try:
                 tweets, _ = await asyncio.to_thread(
                     fx_client.fetch_user_timeline,
@@ -540,32 +507,17 @@ class SchedulerFetchMixin:
             # retweets the user wants to keep are not silently dropped.
             use_media_path = skip_plain_text and filter_reposts
             media_path = f"{username}/media" if use_media_path else ""
-            scheduler_method = (
-                "fetch_tweets_for_scheduler_from_instances"
-                if concurrent
-                else "fetch_tweets_for_scheduler"
+            fetch_for_scheduler = getattr(
+                self.nitter, "fetch_tweets_for_scheduler", None
             )
-            fetch_for_scheduler = getattr(self.nitter, scheduler_method, None)
             if callable(fetch_for_scheduler):
-                if concurrent:
-                    instance, scan_result = await fetch_for_scheduler(
-                        username,
-                        scan_watermark,
-                        self.nitter.instances,
-                        start_index=index,
-                        skip_plain_text=skip_plain_text,
-                        retry_attempts=getattr(self.nitter, "retry_attempts", 2),
-                        filter_reposts=filter_reposts,
-                        path_override=media_path,
-                    )
-                else:
-                    instance, scan_result = await fetch_for_scheduler(
-                        username,
-                        scan_watermark,
-                        skip_plain_text=skip_plain_text,
-                        filter_reposts=filter_reposts,
-                        path_override=media_path,
-                    )
+                instance, scan_result = await fetch_for_scheduler(
+                    username,
+                    scan_watermark,
+                    skip_plain_text=skip_plain_text,
+                    filter_reposts=filter_reposts,
+                    path_override=media_path,
+                )
                 raw_anchor_status_ids = getattr(scan_result, "anchor_status_ids", None)
                 anchor_status_ids = (
                     list(scan_result.scanned_status_ids)[:20]
@@ -597,31 +549,16 @@ class SchedulerFetchMixin:
                     )
                 )
 
-            if concurrent:
-                (
-                    instance,
-                    tweets,
-                    plain_text_filtered,
-                ) = await self.nitter.fetch_tweets_with_stats_from_instances(
-                    username,
-                    fetch_limit,
-                    self.nitter.instances,
-                    start_index=index,
-                    skip_plain_text=skip_plain_text,
-                    retry_attempts=getattr(self.nitter, "retry_attempts", 2),
-                    filter_reposts=filter_reposts,
-                )
-            else:
-                (
-                    instance,
-                    tweets,
-                    plain_text_filtered,
-                ) = await self.nitter.fetch_tweets_with_stats(
-                    username,
-                    fetch_limit,
-                    skip_plain_text=skip_plain_text,
-                    filter_reposts=filter_reposts,
-                )
+            (
+                instance,
+                tweets,
+                plain_text_filtered,
+            ) = await self.nitter.fetch_tweets_with_stats(
+                username,
+                fetch_limit,
+                skip_plain_text=skip_plain_text,
+                filter_reposts=filter_reposts,
+            )
             if not tweets:
                 html_result = await self._fetch_user_html_after_rss(
                     index,
@@ -1086,11 +1023,4 @@ class SchedulerFetchMixin:
                 plain_text_filtered=plain_text_filtered,
             ),
             host_attempts=host_attempts,
-        )
-
-    def _should_use_concurrent_fetch(self, group: ScheduleGroup) -> bool:
-        return (
-            bool(group.concurrent_fetch_enabled)
-            and bool(getattr(self.nitter, "instances", []))
-            and group.fetch_concurrency > 1
         )

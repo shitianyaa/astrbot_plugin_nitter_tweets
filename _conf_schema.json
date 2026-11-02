@@ -718,37 +718,6 @@
       }
     }
   },
-  "performance": {
-    "description": "并发与限流",
-    "type": "object",
-    "hint": "控制后台检查的并发抓取和并发准备。默认关闭；建议只在自建 Nitter 镜像和模型额度充足时开启。",
-    "items": {
-      "concurrent_fetch_enabled": {
-        "description": "启用后台并发拉取",
-        "type": "bool",
-        "default": false,
-        "hint": "开启且并发数大于 1 时，后台检查会使用基础设置中的 instances 并发拉取多个账号。手动 /推文、/镜像测试 不受影响。"
-      },
-      "fetch_concurrency": {
-        "description": "账号拉取并发数",
-        "type": "int",
-        "default": 3,
-        "hint": "后台检查同时拉取多少个账号 RSS，范围 1-8。请按自建 Nitter 的资源和限流策略调整。"
-      },
-      "concurrent_prepare_enabled": {
-        "description": "启用媒体和模型并发准备",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后，不同推文或账号批次可以并发准备；每条推文内部仍先翻译、后下载媒体，发送仍按关注账号和推文顺序执行。"
-      },
-      "prepare_concurrency": {
-        "description": "推文准备并发数",
-        "type": "int",
-        "default": 2,
-        "hint": "后台检查同时准备多少条推文或账号批次，范围 1-8。数值越大，对 xdown、模型 provider 和本机网络压力越高。"
-      }
-    }
-  },
   "_legacy_grouped_config_migrated": {
     "description": "Legacy grouped config migration completed",
     "type": "bool",
@@ -979,34 +948,6 @@
       "08:00"
     ],
     "hint": "格式 HH:MM，每行一个。",
-    "invisible": true
-  },
-  "concurrent_fetch_enabled": {
-    "description": "启用后台并发拉取",
-    "type": "bool",
-    "default": false,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "fetch_concurrency": {
-    "description": "账号拉取并发数",
-    "type": "int",
-    "default": 3,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "concurrent_prepare_enabled": {
-    "description": "启用媒体和模型并发准备",
-    "type": "bool",
-    "default": false,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "prepare_concurrency": {
-    "description": "推文准备并发数",
-    "type": "int",
-    "default": 2,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
     "invisible": true
   },
   "merge_tweet_threshold": {

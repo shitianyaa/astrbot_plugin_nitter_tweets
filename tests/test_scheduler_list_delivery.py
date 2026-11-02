@@ -235,7 +235,6 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             20,
             False,
             None,
-            concurrent=False,
         )
 
         self.assertEqual(backend.filter_reposts_calls, [False])

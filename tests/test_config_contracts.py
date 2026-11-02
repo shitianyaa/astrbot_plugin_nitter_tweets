@@ -94,6 +94,30 @@ def test_every_schema_group_item_key_is_mapped():
     )
 
 
+def test_retired_configuration_is_removed_without_losing_other_config():
+    keys = (
+        "concurrent_fetch_enabled",
+        "fetch_concurrency",
+        "concurrent_prepare_enabled",
+        "prepare_concurrency",
+    )
+    for migrated in (False, True):
+        old = dict(zip(keys, (True, 8, True, 8)))
+        config = {
+            **old,
+            "performance": dict(old),
+            "basic": {"instances": ["http://nitter:8080"]},
+            "tweet_groups": [{"group_id": "kept", "watch_users": ["NASA"], **old}],
+            LEGACY_CONFIG_MIGRATION_KEY: migrated,
+        }
+        assert migrate_legacy_grouped_config(config)
+        assert not (set(keys) & config.keys())
+        assert config["performance"] == {}
+        assert config["basic"]["instances"] == ["http://nitter:8080"]
+        assert config["tweet_groups"] == [{"group_id": "kept", "watch_users": ["NASA"]}]
+        assert config[LEGACY_CONFIG_MIGRATION_KEY] is True
+
+
 def test_code_defaults_are_empty_for_self_hosted_only():
     assert DEFAULT_INSTANCES == []
     assert HtmlBackendConfig().instances == []

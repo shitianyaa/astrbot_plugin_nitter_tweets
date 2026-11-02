@@ -411,12 +411,6 @@ class NitterWebAPI(
             "send_target_interval": self._group_value(
                 effective_group, "send_target_interval", 1.5
             ),
-            "concurrent_fetch_enabled": bool(
-                self._group_value(effective_group, "concurrent_fetch_enabled", False)
-            ),
-            "concurrent_prepare_enabled": bool(
-                self._group_value(effective_group, "concurrent_prepare_enabled", False)
-            ),
             "filter_reposts_enabled": self._global_filter_reposts_enabled(),
         }
 

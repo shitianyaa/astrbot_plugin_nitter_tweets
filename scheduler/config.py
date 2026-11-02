@@ -108,10 +108,6 @@ class ScheduleGroup:
     send_target_interval: float
     send_user_interval: float
     notify_no_updates: bool
-    concurrent_fetch_enabled: bool
-    fetch_concurrency: int
-    concurrent_prepare_enabled: bool
-    prepare_concurrency: int
     filter_plain_text_enabled: bool
     media_only_enabled: bool
     omit_status_url: bool
@@ -187,10 +183,6 @@ class SchedulerConfigReader:
             send_target_interval=1.5,
             send_user_interval=2.0,
             notify_no_updates=False,
-            concurrent_fetch_enabled=False,
-            fetch_concurrency=3,
-            concurrent_prepare_enabled=False,
-            prepare_concurrency=2,
             filter_plain_text_enabled=False,
             media_only_enabled=False,
             omit_status_url=True,
@@ -413,20 +405,6 @@ class SchedulerConfigReader:
             ),
             notify_no_updates=self.parse_bool(
                 config_get(self.config, "notify_no_updates", False), False
-            ),
-            concurrent_fetch_enabled=self.parse_bool(
-                config_get(self.config, "concurrent_fetch_enabled", False),
-                False,
-            ),
-            fetch_concurrency=clamp_int(
-                config_get(self.config, "fetch_concurrency", 3), 1, 8
-            ),
-            concurrent_prepare_enabled=self.parse_bool(
-                config_get(self.config, "concurrent_prepare_enabled", False),
-                False,
-            ),
-            prepare_concurrency=clamp_int(
-                config_get(self.config, "prepare_concurrency", 2), 1, 8
             ),
             filter_plain_text_enabled=self.parse_bool(
                 raw_group.get("filter_plain_text_enabled", filter_plain_text_default),
