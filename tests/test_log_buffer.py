@@ -111,6 +111,25 @@ def test_clear_resets_sequence():
     assert entries[0]["lines"] == ["after"]
 
 
+def test_debug_ring_is_independent_and_sequence_is_global():
+    log_buffer.append("warning", ["main warning"])
+    for i in range(log_buffer.MAX_DEBUG_ENTRIES + 5):
+        log_buffer.append("debug", [str(i)])
+    log_buffer.append("error", ["main error"])
+    assert [e["lines"] for e in log_buffer.snapshot()] == [
+        ["main warning"],
+        ["main error"],
+    ]
+    debug = log_buffer.snapshot(ring="debug")
+    assert len(debug) == log_buffer.MAX_DEBUG_ENTRIES
+    assert debug[0]["lines"] == ["5"]
+    assert debug[-1]["seq"] < log_buffer.snapshot()[-1]["seq"]
+    assert log_buffer.snapshot(ring="invalid") == log_buffer.snapshot()
+    log_buffer.clear()
+    assert log_buffer.snapshot(ring="debug") == []
+    assert log_buffer.next_seq() == 1
+
+
 def test_snapshot_returns_copies():
     log_buffer.append(20, ["original"])
     entries = log_buffer.snapshot()

@@ -116,6 +116,8 @@ _SENSITIVE_ASSIGNMENT_RE = re.compile(
 _URL_QUERY_RE = re.compile(r"(https?://[^\s/?#]+(?:/[^\s?#]*)?)\?[^\s)]+")
 _BARE_URL_RE = re.compile(r"https?://\S+")
 _WS_RE = re.compile(r"\s+")
+_UMO_RE = re.compile(r"\b[\w.-]+:\w*Message:[^\s,;\]\)]+")
+_COOKIE_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*[:=].*$")
 
 
 def format_elapsed(milliseconds: float | int) -> str:
@@ -192,23 +194,44 @@ def _normalize_level(level: int | str) -> str:
     }.get(value, "info")
 
 
-def _emit(level: int | str, message: str, *, lines: list[str] | None = None) -> None:
+def _emit(
+    level: int | str,
+    message: str,
+    *,
+    lines: list[str] | None = None,
+    exc_info: bool = False,
+) -> None:
     """统一出口：写宿主 logger，并把同一份文本放进 WebUI 环缓冲。"""
     name = _normalize_level(level)
     # 按名派发而非 logger.log：astrbot 的插件 logger 是上下文代理，
     # 走具名方法才能稳定命中调用方插件自己的 logger。
+    kwargs = {"exc_info": True} if exc_info else {}
     if name == "debug":
-        logger.debug(message)
+        logger.debug(message, **kwargs)
     elif name == "warning":
-        logger.warning(message)
+        logger.warning(message, **kwargs)
     elif name == "error":
-        logger.error(message)
+        logger.error(message, **kwargs)
     elif name == "critical":
         # 环缓冲按原名记 critical，宿主侧若降级成 info 会出现两边级别不一致
-        logger.critical(message)
+        logger.critical(message, **kwargs)
     else:
-        logger.info(message)
+        logger.info(message, **kwargs)
     log_buffer.append(name, lines if lines is not None else [message])
+
+
+def safe_block_log(level: int | str, text: str, *, exc_info: bool = False) -> None:
+    """安全输出现成文本块；原始异常堆栈只交给宿主，不进入诊断环。"""
+    lines = []
+    for line in str(text or "").splitlines():
+        line = _COOKIE_RE.sub("Cookie: ***", line)
+        line = _UMO_RE.sub("<会话已隐藏>", line)
+        line = redact_instance_urls(sanitize_sensitive_text(line))
+        # 保留换行和缩进，不允许控制字符伪造终端内容。
+        line = "".join(ch for ch in line if ch == "\t" or ord(ch) >= 32)
+        lines.append(line)
+    if any(line.strip() for line in lines):
+        _emit(level, "\n".join(lines), lines=lines, exc_info=exc_info)
 
 
 def safe_task_log(level: int | str, title: str, **fields: object) -> None:
@@ -364,5 +387,6 @@ __all__ = [
     "sanitize_sensitive_text",
     "sanitize_diagnostic",
     "safe_task_log",
+    "safe_block_log",
     "safe_log",
 ]

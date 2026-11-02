@@ -246,6 +246,28 @@ def test_scheduler_log_ai_emits_when_enabled_and_not_brief(monkeypatch):
     assert mock_logger.info.call_count == 2
 
 
+def test_safe_block_log_redacts_secrets_sessions_and_preserves_lines(monkeypatch):
+    from shared import log_buffer
+    from shared.observability import safe_block_log
+
+    mock_logger = MagicMock()
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
+    log_buffer.clear()
+    safe_block_log(
+        "error",
+        "summary\n  token=hidden https://internal.example/private\nCookie: secret_cookie\ntarget=telegram:FriendMessage:secret_session",
+        exc_info=True,
+    )
+    entry = log_buffer.snapshot()[0]
+    text = "\n".join(entry["lines"])
+    assert entry["lines"][0] == "summary"
+    assert entry["lines"][1].startswith("  token=***")
+    for secret in ("hidden", "internal.example", "secret_cookie", "secret_session"):
+        assert secret not in text
+    mock_logger.error.assert_called_once_with(text, exc_info=True)
+    log_buffer.clear()
+
+
 def test_manual_task_log_dynamic_operation_labels(monkeypatch):
     mock_logger = MagicMock()
     monkeypatch.setattr("shared.observability.logger", mock_logger)
