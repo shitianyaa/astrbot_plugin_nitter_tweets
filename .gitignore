@@ -39,5 +39,8 @@ Progress/
 # CodeGraph 本地索引（每台机器各自生成，不入库）
 .codegraph/
 
+# 经验教训库（本地维护，不入库）
+/Lesson/
+
 # 开发计划（本地维护，不入库；正式进度记录仍在 Progress/）
 /PLAN/
