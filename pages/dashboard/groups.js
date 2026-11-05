@@ -24,7 +24,9 @@ function snapshotGroup(group) {
       snap[f] = Array.isArray(group[f]) ? [...group[f]] : [];
     } else if (f === "watch_queries") {
       snap[f] = Array.isArray(group[f]) ? group[f].map(q => typeof q === "string" ? { query: q, type: "tag" } : { query: q.query, type: q.type || "tag" }) : [];
-    } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","media_only_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
+    } else if (f === "media_only_enabled") {
+      snap[f] = typeof group[f] === "string" ? group[f] : (group[f] ? "仅媒体（保留作者）" : "完整推文");
+    } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
       snap[f] = !!group[f];
     } else { snap[f] = group[f] || ""; }
   }
@@ -333,6 +335,12 @@ function openGroupSheet(gid) {
   state.selectedGroupId = gid;
   const d = state.groupDrafts[gid] || snapshotGroup(g);
 
+  const contentSelect = createSelect({
+    value: d.media_only_enabled,
+    options: ["完整推文", "仅媒体（保留作者）", "仅媒体（不含文字）"].map(value => ({ value, text: value })),
+  });
+  contentSelect.onChange(value => updateDraft(gid, "media_only_enabled", value));
+
   const body = h("div", { class: "vstack" }, [
     // 名称 + 启停
     h("label", { class: "field" }, [
@@ -348,7 +356,11 @@ function openGroupSheet(gid) {
       toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
       toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(gid, "filter_reposts_enabled", v)),
       toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(gid, "filter_plain_text_enabled", v)),
-      toggleRow(d.media_only_enabled, "仅保留含媒体推文（图片/视频）", v => updateDraft(gid, "media_only_enabled", v)),
+      h("label", { class: "field" }, [
+        h("span", { text: "推送内容" }),
+        contentSelect,
+        h("span", { class: "hint-line", text: "不含文字：只发送图片、视频或 GIF，不附加作者、正文、翻译、链接和概括。QQ 合并转发仍按原设置执行。" }),
+      ]),
       toggleRow(d.omit_status_url, "省略原推链接", v => updateDraft(gid, "omit_status_url", v)),
       toggleRow(d.hide_original_when_translated, "翻译后隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
     ]),

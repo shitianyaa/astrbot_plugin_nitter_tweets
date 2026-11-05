@@ -318,6 +318,59 @@ def _kind(component) -> str:
     return type(component).__name__.lower().lstrip("_")
 
 
+def test_pure_media_renderer_has_no_text_in_direct_or_forward_content():
+    from delivery import TweetSender
+
+    original = TweetSender(
+        {"send_image_attachments": True, "send_video_attachments": True}
+    )
+    sender = original.without_media_text()
+    tweet = _tw(media=[_img_media(), _vid_media()], translation="translated")
+    video_only = _tw(media=[_vid_media()])
+    batches = [("nasa", "", [tweet, video_only])]
+    r = sender.renderer
+    direct = r.build_merged_direct_components(
+        batches, media_only=True, batch_summary="summary"
+    )
+    assert [_kind(c) for c in direct] == ["image", "video", "video"]
+    for nodes in (
+        r.build_onebot_nodes(
+            SimpleNamespace(get_self_id=lambda: "1", get_sender_id=lambda: None),
+            "nasa",
+            "",
+            [tweet, video_only],
+            media_only=True,
+        ),
+        r.build_merged_onebot_nodes_for_uin(
+            1, batches, media_only=True, batch_summary="summary"
+        ),
+    ):
+        assert len(nodes) == 3
+        assert all(node["data"]["content"] for node in nodes)
+        assert all(
+            segment["type"] in {"image", "video"}
+            for node in nodes
+            for segment in node["data"]["content"]
+        )
+    for nodes in (
+        r.build_nodes_for_uin(1, "nasa", "", [tweet, video_only], media_only=True),
+        r.build_merged_nodes_for_uin(1, batches, media_only=True),
+    ):
+        assert len(nodes.nodes) == 3
+        assert all(node.content for node in nodes.nodes)
+        assert all(
+            _kind(c) in {"image", "video"} for node in nodes.nodes for c in node.content
+        )
+    assert r.format_plain("nasa", "", [tweet], media_only=True) == ""
+    assert r.format_merged_plain(batches, media_only=True) == ""
+    assert r.format_video_attachment_text(1, "nasa", tweet, media_only=True) == ""
+    assert original.renderer.hide_media_text is False
+    assert (
+        _kind(original.renderer.build_media_only_components("nasa", tweet)[0])
+        == "plain"
+    )
+
+
 def test_forward_nodes_merge_images_into_tweet_node():
     tweet = _tw(media=[_img_media(), _img_media("b.jpg")])
     r = R(send_image_attachments=True, send_video_attachments=False)

@@ -205,6 +205,7 @@ class SchedulerPrepareMixin:
             tweet_index=tweet_index,
             tweet_total=len(discovered_batch.tweets),
             media_only=discovered_batch.media_only,
+            hide_media_text=discovered_batch.hide_media_text,
             omit_status_url=bool(getattr(discovered_batch, "omit_status_url", True)),
             hide_original_when_translated=bool(
                 getattr(discovered_batch, "hide_original_when_translated", False)
@@ -267,7 +268,11 @@ class SchedulerPrepareMixin:
 
     def _media_only_effective(self, group: ScheduleGroup) -> bool:
         return bool(
-            group.media_only_enabled and not self._media_only_unavailable_reason(group)
+            group.hide_media_text
+            or (
+                group.media_only_enabled
+                and not self._media_only_unavailable_reason(group)
+            )
         )
 
     async def _handle_media_prepare_status(

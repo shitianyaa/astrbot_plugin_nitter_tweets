@@ -7,6 +7,8 @@ from astrbot.api import logger
 
 try:
     from ..config import (
+        MEDIA_ONLY_MODES,
+        resolve_media_only_mode,
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
@@ -22,6 +24,8 @@ try:
     )
 except ImportError:
     from config import (
+        MEDIA_ONLY_MODES,
+        resolve_media_only_mode,
         TWEET_GROUP_TEMPLATE_KEY,
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
@@ -75,7 +79,7 @@ class WebUIGroupEditor:
                 "daily_check_times": [],
                 "filter_reposts_enabled": True,
                 "filter_plain_text_enabled": False,
-                "media_only_enabled": False,
+                "media_only_enabled": MEDIA_ONLY_MODES[0],
                 "omit_status_url": True,
                 "hide_original_when_translated": False,
             }
@@ -170,7 +174,7 @@ class WebUIGroupEditor:
                 raw_group.get("filter_plain_text_enabled", False),
             )
         )
-        raw_group["media_only_enabled"] = self._bool(
+        raw_group["media_only_enabled"] = resolve_media_only_mode(
             data.get(
                 "media_only_enabled",
                 raw_group.get("media_only_enabled", False),

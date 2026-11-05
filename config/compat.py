@@ -312,6 +312,16 @@ def resolve_manual_send_interval(config) -> float:
     return max(0.0, min(60.0, value))
 
 
+MEDIA_ONLY_MODES = ("完整推文", "仅媒体（保留作者）", "仅媒体（不含文字）")
+
+
+def resolve_media_only_mode(value) -> str:
+    """Accept legacy booleans and the current content-mode dropdown values."""
+    if isinstance(value, str) and value in MEDIA_ONLY_MODES:
+        return value
+    return MEDIA_ONLY_MODES[1 if parse_config_bool(value, False) else 0]
+
+
 def media_only_unavailable_reason(
     config,
     *,
@@ -353,6 +363,18 @@ def sanitize_removed_feature_group(group: dict) -> bool:
 
 def migrate_legacy_grouped_config(config) -> bool:
     changed = sanitize_removed_feature_config(config)
+    for raw_groups in (
+        _dict_get(config, "tweet_groups", []),
+        config_get(config, "tweet_groups", []),
+    ):
+        groups = [raw_groups] if isinstance(raw_groups, dict) else raw_groups
+        if isinstance(groups, list):
+            for group in groups:
+                if isinstance(group, dict) and "media_only_enabled" in group:
+                    mode = resolve_media_only_mode(group["media_only_enabled"])
+                    if group["media_only_enabled"] != mode:
+                        group["media_only_enabled"] = mode
+                        changed = True
     if _migrate_video_resolution_preference(config):
         changed = True
     if _migrate_max_video_duration_grouped_config(config):

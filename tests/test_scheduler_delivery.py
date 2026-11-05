@@ -2732,6 +2732,85 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         second = await scheduler.run_check(reason="test_merged_exception_history_again")
         self.assertEqual(second.new_tweet_count, 0)
 
+    async def test_pure_media_keeps_merge_routing_and_suppresses_summary(self):
+        from rendering import TweetMessageRenderer
+
+        class PureSender(_Sender):
+            without_media_text = TweetSender.without_media_text
+
+            async def send_to_umo_with_outcome(self, *args, **kwargs):
+                assert self.renderer.hide_media_text
+                return await super().send_to_umo_with_outcome(*args, **kwargs)
+
+            async def send_merged_to_umo(self, *args, **kwargs):
+                assert self.renderer.hide_media_text
+                return await super().send_merged_to_umo(*args, **kwargs)
+
+        events = []
+        qq, tg = "aiocqhttp:GroupMessage:1", "telegram:FriendMessage:2"
+        sender = PureSender(merge_targets={qq}, events=events)
+        sender.renderer = TweetMessageRenderer()
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [
+                            self._make_tweet("NASA", "102"),
+                            self._make_tweet("NASA", "101"),
+                        ],
+                        "scanned_status_ids": ["102", "101", "100"],
+                        "anchor_status_ids": ["102", "101", "100"],
+                    }
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "send_image_attachments": True,
+                "notify_no_updates": True,
+                "send_batch_summary_enabled": True,
+                "merge_tweet_threshold": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+                "tweet_groups": [
+                    {
+                        "group_id": "pure",
+                        "enabled": True,
+                        "watch_users": ["NASA"],
+                        "push_targets": [qq, tg],
+                        "media_only_enabled": "仅媒体（不含文字）",
+                    }
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+            media=_StatusMedia(
+                {"101": ("ready", Path("101.jpg")), "102": ("ready", Path("102.jpg"))},
+                events,
+            ),
+            translator=_RecordingTranslator(events),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("pure", "NASA", ["100"])
+        result = await scheduler.run_check(reason="test_pure", group_name="pure")
+        self.assertEqual(result.push_mode, "mixed")
+        self.assertEqual([call[0] for call in sender.sent], [tg, tg])
+        self.assertEqual([call[0] for call in sender.merged_sent], [qq])
+        self.assertEqual(sender.merged_batch_summaries, [(qq, "")])
+        self.assertEqual(sender.summary_sends, [])
+        self.assertFalse(any(event.startswith("translate:") for event in events))
+        self.assertFalse(sender.renderer.hide_media_text)
+        self.assertEqual(
+            set(await scheduler.storage.get_seen_ids("pure", "NASA")),
+            {"100", "101", "102"},
+        )
+        await scheduler.run_check(
+            reason="test_pure_again", group_name="pure", notify_no_updates=True
+        )
+
     async def test_media_only_ready_sends_without_translation_or_body(self):
         events = []
         target = "telegram:FriendMessage:1"

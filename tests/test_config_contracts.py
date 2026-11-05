@@ -28,6 +28,81 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
 
 
+def test_media_content_modes_preserve_legacy_values_and_survive_repeat_migration():
+    modes = compat.MEDIA_ONLY_MODES
+    for old, expected in ((False, modes[0]), (True, modes[1]), (modes[2], modes[2])):
+        config = {
+            "tweet_groups": [{"group_id": "media", "media_only_enabled": old}],
+            LEGACY_CONFIG_MIGRATION_KEY: True,
+        }
+        migrate_legacy_grouped_config(config)
+        assert config["tweet_groups"][0]["media_only_enabled"] == expected
+        assert migrate_legacy_grouped_config(config) is False
+        group = SchedulerConfigReader(config, None).schedule_groups()[0]
+        assert group.media_only_mode == expected
+        assert group.media_only_enabled == (expected != modes[0])
+        assert group.hide_media_text == (expected == modes[2])
+
+
+def test_media_content_mode_dropdown_matches_all_group_templates():
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    templates = schema["push"]["items"]["tweet_groups"]["templates"]
+    for template in templates.values():
+        field = template["items"]["media_only_enabled"]
+        assert field["type"] == "string"
+        assert field["options"] == list(compat.MEDIA_ONLY_MODES)
+        assert field["default"] == compat.MEDIA_ONLY_MODES[0]
+
+
+def test_legacy_media_bool_survives_host_schema_upgrade(tmp_path):
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from config import config_get
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "push": {
+                    "tweet_groups": [{"group_id": "media", "media_only_enabled": True}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = AstrBotConfig(
+        str(path), schema=json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    assert config_get(config, "tweet_groups")[0]["media_only_enabled"] is True
+    migrate_legacy_grouped_config(config)
+    assert (
+        config_get(config, "tweet_groups")[0]["media_only_enabled"]
+        == compat.MEDIA_ONLY_MODES[1]
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8-sig"))["push"]["tweet_groups"][0][
+            "media_only_enabled"
+        ]
+        == compat.MEDIA_ONLY_MODES[1]
+    )
+
+
+def test_pure_media_never_falls_back_to_full_content_when_media_disabled():
+    from scheduler.runner_prepare import SchedulerPrepareMixin
+
+    group = SchedulerConfigReader(
+        {
+            "send_image_attachments": False,
+            "send_video_attachments": False,
+            "tweet_groups": [
+                {"group_id": "pure", "media_only_enabled": compat.MEDIA_ONLY_MODES[2]}
+            ],
+        },
+        None,
+    ).schedule_groups()[0]
+    assert SchedulerPrepareMixin._media_only_effective(None, group) is True
+
+
 def _migration_keys() -> set[str]:
     return {
         value

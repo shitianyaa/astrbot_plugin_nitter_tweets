@@ -60,6 +60,29 @@ def _adapter(sender):
     )
 
 
+@pytest.mark.asyncio
+async def test_qq_official_pure_media_skips_empty_markdown_and_text():
+    sender = _sender(images=True, videos=True)
+    sender.renderer.hide_media_text = True
+    sender.renderer.send_batch_summary_enabled = False
+    adapter = _adapter(sender)
+    tweet = _tweet(
+        media=[
+            TweetMedia("image", "https://pbs.example/a.jpg", Path("a.jpg")),
+            TweetMedia("video", "https://video.example/a.mp4", Path("a.mp4")),
+        ]
+    )
+    outcome = await adapter.send_to_umo(
+        object(), "qq_official:GroupMessage:1", "nasa", "", [tweet], media_only=True
+    )
+    assert outcome.success
+    assert sender._send_context_message.await_count == 2
+    assert all(
+        _chain_components(call.args[2]) and not _plain_text(call.args[2])
+        for call in sender._send_context_message.await_args_list
+    )
+
+
 def _official_umo_adapter(sender, api, *, message_type="GroupMessage"):
     profile = SimpleNamespace(
         message_type=message_type,

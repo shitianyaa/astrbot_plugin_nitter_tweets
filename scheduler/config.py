@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from ..config import config_get, migrate_default_group_config
+    from ..config import (
+        MEDIA_ONLY_MODES,
+        config_get,
+        migrate_default_group_config,
+        resolve_media_only_mode,
+    )
     from ..shared import clamp_float, clamp_int, load_instances, normalize_username
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -19,7 +24,12 @@ try:
         normalize_stable_group_id,
     )
 except ImportError:
-    from config import config_get, migrate_default_group_config
+    from config import (
+        MEDIA_ONLY_MODES,
+        config_get,
+        migrate_default_group_config,
+        resolve_media_only_mode,
+    )
     from shared import clamp_float, clamp_int, load_instances, normalize_username
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -119,6 +129,11 @@ class ScheduleGroup:
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
     filter_reposts_enabled: bool = True
+    media_only_mode: str = MEDIA_ONLY_MODES[0]
+
+    @property
+    def hide_media_text(self) -> bool:
+        return self.media_only_mode == MEDIA_ONLY_MODES[2]
 
     @property
     def is_tag_group(self) -> bool:
@@ -410,9 +425,12 @@ class SchedulerConfigReader:
                 raw_group.get("filter_plain_text_enabled", filter_plain_text_default),
                 False,
             ),
-            media_only_enabled=self.parse_bool(
-                raw_group.get("media_only_enabled", False),
-                False,
+            media_only_enabled=resolve_media_only_mode(
+                raw_group.get("media_only_enabled")
+            )
+            != MEDIA_ONLY_MODES[0],
+            media_only_mode=resolve_media_only_mode(
+                raw_group.get("media_only_enabled")
             ),
             omit_status_url=self.parse_bool(
                 raw_group.get("omit_status_url", True),

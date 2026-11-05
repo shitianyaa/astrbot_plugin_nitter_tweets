@@ -321,7 +321,12 @@ class SchedulerSendMixin:
                         getattr(batch, "hide_original_when_translated", False)
                     )
                     send_attempted = True
-                    outcome = await self.sender.send_to_umo_with_outcome(
+                    sender = (
+                        self.sender.without_media_text()
+                        if batch.hide_media_text
+                        else self.sender
+                    )
+                    outcome = await sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
                         batch.username,
@@ -677,7 +682,12 @@ class SchedulerSendMixin:
                 if any(batch.media_only for batch in target_batch_objects):
                     merge_kwargs["media_only"] = True
                 send_attempted = True
-                outcome = await self.sender.send_merged_to_umo(
+                sender = (
+                    self.sender.without_media_text()
+                    if all(batch.hide_media_text for batch in target_batch_objects)
+                    else self.sender
+                )
+                outcome = await sender.send_merged_to_umo(
                     self.context,
                     umo,
                     [

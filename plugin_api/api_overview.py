@@ -455,7 +455,7 @@ class WebAPIOverviewMixin:
                 global_filter_reposts_enabled and group_filter_reposts_enabled
             ),
             "filter_plain_text_enabled": group.filter_plain_text_enabled,
-            "media_only_enabled": group.media_only_enabled,
+            "media_only_enabled": group.media_only_mode,
             "omit_status_url": bool(getattr(group, "omit_status_url", True)),
             "hide_original_when_translated": bool(
                 getattr(group, "hide_original_when_translated", False)
@@ -469,7 +469,11 @@ class WebAPIOverviewMixin:
 
     def _media_only_effective(self, group: ScheduleGroup) -> bool:
         return bool(
-            group.media_only_enabled and not media_only_unavailable_reason(self.config)
+            group.hide_media_text
+            or (
+                group.media_only_enabled
+                and not media_only_unavailable_reason(self.config)
+            )
         )
 
     @staticmethod

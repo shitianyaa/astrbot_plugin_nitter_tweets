@@ -1421,6 +1421,7 @@ class NitterTweetScheduler(
                             fetched_ids=scanned_status_ids,
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
+                            hide_media_text=group.hide_media_text,
                             omit_status_url=bool(
                                 getattr(group, "omit_status_url", True)
                             ),
@@ -1494,6 +1495,8 @@ class NitterTweetScheduler(
                 fetch_failures,
                 group_type=group.group_type,
             )
+            if group.hide_media_text:
+                check_batch_summary = ""
             immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
             self._set_discovered_batch_progress(discovered_batches)
             (
@@ -1596,7 +1599,9 @@ class NitterTweetScheduler(
 
             duration_ms = (time.perf_counter() - check_started) * 1000
             self._log_check_result(result, duration_ms=duration_ms)
-            if self._should_notify_no_updates(result, notify_no_updates, group):
+            if not group.hide_media_text and self._should_notify_no_updates(
+                result, notify_no_updates, group
+            ):
                 await self._send_no_update_notice(result, target_interval)
             return result
         finally:

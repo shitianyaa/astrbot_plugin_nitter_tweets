@@ -22,6 +22,29 @@ from scheduler.config import SchedulerConfigReader
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_content_mode_survives_partial_updates_and_can_switch_back():
+    from config import MEDIA_ONLY_MODES
+
+    config = _FakeConfig(
+        {
+            "tweet_groups": [
+                {"group_id": "media", "name": "media", "media_only_enabled": True}
+            ]
+        }
+    )
+    editor = _make_editor(config)
+    assert editor.update_group(
+        {"group_id": "media", "media_only_enabled": MEDIA_ONLY_MODES[2]}
+    )["success"]
+    assert _group_raw(config)["media_only_enabled"] == MEDIA_ONLY_MODES[2]
+    assert editor.update_group({"group_id": "media", "enabled": False})["success"]
+    assert _group_raw(config)["media_only_enabled"] == MEDIA_ONLY_MODES[2]
+    assert editor.update_group(
+        {"group_id": "media", "media_only_enabled": MEDIA_ONLY_MODES[0]}
+    )["success"]
+    assert _group_raw(config)["media_only_enabled"] == MEDIA_ONLY_MODES[0]
+
+
 class _FakeConfig(dict):
     def save_config(self) -> None:
         return None
