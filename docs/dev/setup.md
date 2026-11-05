@@ -4,7 +4,7 @@
 
 - Python 3.12+；CI 使用 Python 3.13。
 - Node 24，用于 Dashboard 语法与行为检查。
-- `requirements-dev.txt` 固定真实 AstrBot SDK、pytest、pytest-asyncio、Ruff 和 pre-commit。
+- `requirements-dev.txt` 固定真实 AstrBot SDK、pytest、pytest-asyncio 和 Ruff。
 
 ```powershell
 python -m pip install -r requirements-dev.txt
@@ -15,8 +15,6 @@ python scripts/check.py
 默认使用系统临时目录；需要固定产物位置时加 `--temp-root <目录>`。不要全局安装或升级依赖，建议在独立虚拟环境运行。插件的 `requirements.txt` 仍为空白占位，开发依赖不进入插件运行安装或发布包。
 
 `requirements-dev.txt` 里的 AstrBot SDK 是经过验证的基线，升级它应当作为独立改动并重跑门禁，而不是随手跟随最新版。`pytest.ini` 已设置 `pythonpath = .`，因此从仓库根目录直接跑 `pytest` 或 `python -m pytest` 都可导入插件模块；不需要修改 `PYTHONPATH`。
-
-可选启用本仓库提交 hook：`pre-commit install`。仅检查暂存 Python 的 Ruff 和格式，不自动修改文件，也不在每次 commit 跑全量 pytest。安装 hook 会改变本仓库 Git hooks，须由维护者明确执行。
 
 ## 常用目录
 

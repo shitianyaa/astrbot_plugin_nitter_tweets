@@ -127,7 +127,7 @@ ruff check .
 ruff format --check .
 ```
 
-- Ruff：**0.15.22**；与 `.pre-commit-config.yaml` 保持一致。
+- Ruff：**0.15.22**；与 `requirements-dev.txt` 和 `scripts/check.py` 保持一致。
 - 链接解析：`tests/test_status_link_preview.py`
 - 合并 RSS 管道：`tests/test_merged_rss.py`
 - List：`tests/test_list_rss.py`、`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`
