@@ -125,6 +125,7 @@ class FakeGitHub:
         self.notes = notes
         self.fail_upload = fail_upload
         self.writes = []
+        self.download_paths = []
         if asset:
             self.release["assets"] = [{"name": archive.name, "id": 1}]
 
@@ -135,7 +136,9 @@ class FakeGitHub:
         return self.release
 
     def download_asset(self, tag, name, destination):
-        destination.write_bytes(self.data)
+        self.download_paths.append(destination)
+        with destination.open("xb") as target:
+            target.write(self.data)
         return destination
 
     def call(self, *args, **kwargs):
@@ -187,6 +190,7 @@ def test_new_publication_verifies_draft_before_visibility(publication):
         ("release", "edit"),
     ]
     assert remote.release["draft"] is False
+    assert len(remote.download_paths) == len(set(remote.download_paths)) == 2
 
 
 def test_tag_mismatch_never_writes(publication):
@@ -244,6 +248,7 @@ def test_resume_draft_checks_existing_asset(publication):
         == "published"
     )
     assert not any(args[1] == "upload" for args in remote.writes)
+    assert len(remote.download_paths) == len(set(remote.download_paths)) == 3
 
 
 @pytest.mark.parametrize("status", [403, 429, 500])
