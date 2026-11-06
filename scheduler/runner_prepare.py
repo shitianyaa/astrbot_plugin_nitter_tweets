@@ -13,6 +13,7 @@ try:
     from ..shared import (
         TweetItem,
         format_subscription_source,
+        safe_block_log,
         sanitize_diagnostic,
     )
     from ..shared.media_status import (
@@ -41,6 +42,7 @@ except ImportError:
     from shared import (
         TweetItem,
         format_subscription_source,
+        safe_block_log,
         sanitize_diagnostic,
     )
     from shared.media_status import (
@@ -303,21 +305,13 @@ class SchedulerPrepareMixin:
             )
             return
 
-        result.media_only_skipped += 1
-        if status_id:
-            await self._store_incremental_seen_ids(
-                group_id,
-                batch.username,
-                [status_id],
-                seen_map,
-            )
+        result.media_only_retrying += 1
         safe_error = sanitize_diagnostic(error) if error else "no media"
-        logger.warning(
-            "[NitterTweets] 仅媒体推文准备失败，已标记已读跳过以避免死循环重推: "
+        safe_block_log(
+            "warning",
+            "[NitterTweets] 仅媒体推文准备失败，保留未读，下轮重试: "
             f"source={source_label}, status={status_id}, "
-            f"status={status}, error={safe_error}。"
-            "（若因视频过大或下载超时，建议在配置中将「媒体画质偏好」(media_quality) 设为 medium/low，"
-            "或调小「单个媒体大小上限 MB」(media_max_size_mb)）"
+            f"media_status={status}, error={safe_error}",
         )
 
     @staticmethod

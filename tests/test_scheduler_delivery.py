@@ -2807,9 +2807,16 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             set(await scheduler.storage.get_seen_ids("pure", "NASA")),
             {"100", "101", "102"},
         )
+        notice_calls = []
+
+        async def record_notice(*args, **kwargs):
+            notice_calls.append((args, kwargs))
+
+        scheduler._send_no_update_notice = record_notice
         await scheduler.run_check(
             reason="test_pure_again", group_name="pure", notify_no_updates=True
         )
+        self.assertEqual(notice_calls, [])
 
     async def test_media_only_ready_sends_without_translation_or_body(self):
         events = []
@@ -2936,7 +2943,26 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": ["101", "100"]},
         )
 
-    async def test_media_only_transient_failure_marks_seen_and_advances_watermark(self):
+    async def test_media_only_transient_failure_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries("transient_failure", True)
+
+    async def test_pure_media_transient_failure_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries(
+            "transient_failure", "仅媒体（不含文字）"
+        )
+
+    async def test_media_only_no_candidate_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries("no_candidate", True)
+
+    async def test_pure_media_no_candidate_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries(
+            "no_candidate", "仅媒体（不含文字）"
+        )
+
+    async def _assert_media_only_failure_retries(self, status, mode):
+        class RetrySender(_Sender):
+            without_media_text = TweetSender.without_media_text
+
         target = "telegram:FriendMessage:1"
         nitter = _SchedulerNitter(
             {
@@ -2949,8 +2975,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 ]
             }
         )
-        sender = _Sender()
-        media = _StatusMedia({"101": ("transient_failure", None)})
+        sender = RetrySender()
+        sender.renderer = TweetMessageRenderer()
+        media = _StatusMedia({"101": (status, None)})
         scheduler = self._create_scheduler(
             {
                 "schedule_enabled": True,
@@ -2963,7 +2990,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                         "enabled": True,
                         "watch_users": ["NASA"],
                         "push_targets": [target],
-                        "media_only_enabled": True,
+                        "media_only_enabled": mode,
                     }
                 ],
             },
@@ -2981,15 +3008,14 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             reason="test_media_only_retry_first", group_name="media"
         )
 
-        self.assertEqual(first.media_only_skipped, 1)
-        self.assertEqual(first.media_only_retrying, 0)
+        self.assertEqual(first.media_only_skipped, 0)
+        self.assertEqual(first.media_only_retrying, 1)
         self.assertEqual(sender.sent, [])
-        self.assertEqual(
-            await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
-        )
+        self.assertIn("cleanup:101", media.events)
+        self.assertEqual(await scheduler.storage.get_seen_ids("media", "NASA"), ["100"])
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("media"),
-            {"NASA": ["101", "100"]},
+            {"NASA": ["100"]},
         )
 
         media.statuses["101"] = ("ready", Path("101.jpg"))
@@ -2997,8 +3023,8 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             reason="test_media_only_retry_second", group_name="media"
         )
 
-        self.assertEqual(second.new_tweet_count, 0)
-        self.assertEqual(sender.sent, [])
+        self.assertEqual(second.new_tweet_count, 1)
+        self.assertEqual([item[3] for item in sender.sent], [["101"]])
         self.assertEqual(
             await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
         )
@@ -3025,13 +3051,33 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
         events = []
         sender = _Sender(events=events)
-        translator = _RecordingTranslator(events)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingTranslator(_RecordingTranslator):
+            active = 0
+            max_active = 0
+
+            async def attach_translations(self, tweets, target):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await super().attach_translations(tweets, target)
+                    if tweets[0].status_id == "101":
+                        started.set()
+                        await release.wait()
+                finally:
+                    self.active -= 1
+
+        translator = BlockingTranslator(events)
         scheduler = self._create_scheduler(
             {
                 "schedule_enabled": True,
                 "send_image_attachments": True,
                 "concurrent_prepare_enabled": True,
                 "prepare_concurrency": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
                 "tweet_groups": [
                     {
                         "group_id": "media",
@@ -3052,7 +3098,19 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("media", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("media", "NASA", ["100"])
 
-        await scheduler.run_check(reason="test_completion_order", group_name="media")
+        task = asyncio.create_task(
+            scheduler.run_check(reason="test_completion_order", group_name="media")
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            await asyncio.sleep(0)
+            self.assertNotIn("translate:102", events)
+            self.assertEqual(sender.sent, [])
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=2)
+
+        self.assertEqual(translator.max_active, 1)
 
         self.assertEqual([item[3] for item in sender.sent], [["101"], ["102"]])
         self.assertEqual(

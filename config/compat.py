@@ -317,8 +317,10 @@ MEDIA_ONLY_MODES = ("完整推文", "仅媒体（保留作者）", "仅媒体（
 
 def resolve_media_only_mode(value) -> str:
     """Accept legacy booleans and the current content-mode dropdown values."""
-    if isinstance(value, str) and value in MEDIA_ONLY_MODES:
-        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if value in MEDIA_ONLY_MODES:
+            return value
     return MEDIA_ONLY_MODES[1 if parse_config_bool(value, False) else 0]
 
 

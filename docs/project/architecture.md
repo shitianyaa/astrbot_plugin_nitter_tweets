@@ -96,7 +96,7 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 5. 下载到普通缓存
 6. 普通媒体发送后清理
 
-定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。`transient_failure` 与 `no_candidate` 不写 seen 且不推进扫描基准，下轮重试；`policy_skipped` 允许基准推进。手动命令和历史重推始终使用完整内容。
+定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。`transient_failure` 与 `no_candidate` 清理本轮媒体缓存，不写 seen 且不推进扫描基准，下轮重试；`policy_skipped` 写 seen 并允许基准推进。两种仅媒体模式使用相同重试规则。手动命令和历史重推始终使用完整内容。
 
 升级到发送后删除策略时会自动执行一次普通缓存清理。
 

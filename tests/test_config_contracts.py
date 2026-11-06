@@ -30,7 +30,13 @@ SCHEMA_PATH = ROOT / "_conf_schema.json"
 
 def test_media_content_modes_preserve_legacy_values_and_survive_repeat_migration():
     modes = compat.MEDIA_ONLY_MODES
-    for old, expected in ((False, modes[0]), (True, modes[1]), (modes[2], modes[2])):
+    for old, expected in (
+        (False, modes[0]),
+        (True, modes[1]),
+        (modes[2], modes[2]),
+        (f" \t{modes[1]}\n", modes[1]),
+        (f" \t{modes[2]}\n", modes[2]),
+    ):
         config = {
             "tweet_groups": [{"group_id": "media", "media_only_enabled": old}],
             LEGACY_CONFIG_MIGRATION_KEY: True,

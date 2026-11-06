@@ -31,7 +31,8 @@ def test_content_dropdown_preserves_draft_and_payload():
 const assert = require("node:assert/strict");
 let callback;
 let options;
-function createSelect(params) { options = params.options; return { onChange(fn) { callback = fn; } }; }
+let initialValue;
+function createSelect(params) { options = params.options; initialValue = params.value; return { onChange(fn) { callback = fn; } }; }
 let writes = 0;
 function updateDraft(groupId, key, value) { assert.equal(groupId, "group"); writes++; d[key] = value; }
 const gid = "group";
@@ -42,6 +43,7 @@ assert.equal(d.media_only_enabled, "仅媒体（保留作者）");
 assert.equal(snapshotGroup({ media_only_enabled: false }).media_only_enabled, "完整推文");
 SELECTOR
 assert.equal(writes, 0);
+assert.equal(initialValue, "仅媒体（保留作者）");
 assert.deepEqual(options.map(o => o.value), ["完整推文", "仅媒体（保留作者）", "仅媒体（不含文字）"]);
 callback("仅媒体（不含文字）");
 assert.equal(writes, 1);

@@ -16,6 +16,8 @@ python scripts/check.py
 
 `requirements-dev.txt` 里的 AstrBot SDK 是经过验证的基线，升级它应当作为独立改动并重跑门禁，而不是随手跟随最新版。`pytest.ini` 已设置 `pythonpath = .`，因此从仓库根目录直接跑 `pytest` 或 `python -m pytest` 都可导入插件模块；不需要修改 `PYTHONPATH`。
 
+1.9.0 已移除 pre-commit 配置。若以前执行过 `pre-commit install`，请在该仓库运行 `pre-commit uninstall` 移除旧 hook，否则提交时会因缺少配置文件而失败。直接在原开发环境运行，无需重新安装；后续检查使用 `python scripts/check.py`。
+
 ## 常用目录
 
 ```text
