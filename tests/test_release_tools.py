@@ -50,10 +50,15 @@ def test_first_heading_cannot_be_skipped(tmp_path, heading):
 
 def test_publication_requires_date_and_consistent_versions(tmp_path):
     root = candidate(tmp_path)
+    path = root / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    heading = next(line for line in text.splitlines() if line.startswith("## "))
+    path.write_text(
+        text.replace(heading, heading.split(" - ", 1)[0], 1), encoding="utf-8"
+    )
     info = release_info(root)
     with pytest.raises(ValueError, match="requires a changelog date"):
         release_info(root, publishing=True)
-    path = root / "CHANGELOG.md"
     text = path.read_text(encoding="utf-8")
     path.write_text(
         text.replace(
