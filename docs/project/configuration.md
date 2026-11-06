@@ -12,8 +12,8 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
 - `push`: `tweet_groups`、推送间隔、合并阈值、批次概括横幅与目标级作者黑名单。
-- `performance`: 后台账号并发拉取和并发准备。
-- `logging`: 日志模式。
+
+日志采用固定分级，不再暴露配置开关。实例诊断页切换摘要与告警 / DEBUG 过程，独立有界内存缓冲各保留 200 条，重载即清。旧日志与并发配置会在升级时静默清除，不影响其他配置与迁移标记。
 
 ## 抓取后端与实例配置
 
@@ -31,6 +31,8 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 > **详细原理与架构约束**（包括 List 物理隔离、转推守卫 Retweet Guard、Tag SafeSearch 回退等细节）：参见 [进阶说明 - 抓取后端策略](../advanced.md#抓取后端策略fetch_backend)。
 
 同一自建实例同时承担 RSS 和 HTML。旧版 `search_instances`、`blogger_html_instances`、`concurrent_fetch_instances` 已删除，仅在启动日志中提示，不读取、不迁移、不写回。
+
+后台 FxTwitter 博主抓取固定最多三并发；Nitter 优先合并 RSS，逐账号回退和媒体/翻译准备均串行。旧并发配置已退役，不影响多实例故障切换。
 
 关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
 
@@ -60,7 +62,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `filter_plain_text_enabled`: 是否过滤无作者媒体的纯文本推文。博主 RSS 在转发过滤也开启时改走 `/{user}/media/rss` 相册专线（含合并流），转发过滤关闭时保持主页 RSS 由本地过滤以保留转推；Tag 搜索追加 `filter:media` 服务端过滤并辅以本地兜底；List RSS 仅做本地过滤。手动命令不受影响。
 - `omit_status_url`: 该分组定时发送时去除推文链接（默认 `true`）。开启后不附带原文 URL 明文，并去掉正文/译文中的 http(s)；关闭时普通正文/译文中的外部链接保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理。Telegram 在作者头部使用 Markdown 链接到推文，并在底层发送时关闭网页预览。仅媒体模式不调用翻译。
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
-- `media_only_enabled`: 定时推送只发送作者和成功准备的媒体；受全局媒体开关及单条媒体数量上限控制，全局不可用时回退完整内容。
+- `media_only_enabled`: 分组「推送内容」下拉，支持「完整推文」「仅媒体（保留作者）」「仅媒体（不含文字）」。旧布尔 false/true 分别兼容前两项。两种仅媒体模式均不调用翻译，受全局媒体类型与单条媒体数量上限控制；保留作者模式在全局媒体不可用时沿用完整内容回退，不含文字模式则不发送。后者不附加作者、正文、翻译、链接、概括或无更新提示，仍遵循现有 QQ 合并转发设置，节点昵称和时间由客户端显示。Pages 分组抽屉使用相同下拉，修改草稿后点击页脚保存生效。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
 - `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
 

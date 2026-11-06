@@ -29,7 +29,9 @@ def _tweet(status_id: str = "1") -> TweetItem:
 
 def _adapter() -> LarkDeliveryAdapter:
     sender = SimpleNamespace(
-        renderer=SimpleNamespace(build_direct_components=MagicMock(return_value=[])),
+        renderer=SimpleNamespace(
+            hide_media_text=False, build_direct_components=MagicMock(return_value=[])
+        ),
         _platform_inst_from_context=MagicMock(return_value=None),
         _is_uncertain_delivery_error=MagicMock(return_value=False),
         _log_uncertain_delivery=MagicMock(),
@@ -104,6 +106,21 @@ async def test_scheduled_media_only_with_media_stays_success(monkeypatch):
     outcome = await _send(adapter, media_only=True)
 
     assert outcome.success is True
+
+
+@pytest.mark.asyncio
+async def test_pure_media_lark_post_has_no_generated_title(monkeypatch):
+    from delivery.lark_support import _lark_post_title
+
+    adapter = _adapter()
+    adapter.sender.renderer.hide_media_text = True
+    _patch_umo(monkeypatch, media=["image"])
+    outcome = await _send(adapter, media_only=True)
+    assert outcome.success
+    title = lark_module.send_lark_post.await_args.args[1]
+    assert title is None
+    assert _lark_post_title(title) == ""
+    assert _lark_post_title("") == "Nitter 推文"
 
 
 @pytest.mark.asyncio

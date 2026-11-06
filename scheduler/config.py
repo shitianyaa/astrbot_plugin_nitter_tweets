@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from astrbot.api import logger
 
 try:
-    from ..config import config_get, migrate_default_group_config
+    from ..config import (
+        MEDIA_ONLY_MODES,
+        config_get,
+        migrate_default_group_config,
+        resolve_media_only_mode,
+    )
     from ..shared import clamp_float, clamp_int, load_instances, normalize_username
     from ..shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -19,7 +24,12 @@ try:
         normalize_stable_group_id,
     )
 except ImportError:
-    from config import config_get, migrate_default_group_config
+    from config import (
+        MEDIA_ONLY_MODES,
+        config_get,
+        migrate_default_group_config,
+        resolve_media_only_mode,
+    )
     from shared import clamp_float, clamp_int, load_instances, normalize_username
     from shared.group_ids import (
         DEFAULT_GROUP_ALIASES,
@@ -108,10 +118,6 @@ class ScheduleGroup:
     send_target_interval: float
     send_user_interval: float
     notify_no_updates: bool
-    concurrent_fetch_enabled: bool
-    fetch_concurrency: int
-    concurrent_prepare_enabled: bool
-    prepare_concurrency: int
     filter_plain_text_enabled: bool
     media_only_enabled: bool
     omit_status_url: bool
@@ -123,6 +129,11 @@ class ScheduleGroup:
     target_info: PushTargetParseResult
     aliases: list[str] = field(default_factory=list)
     filter_reposts_enabled: bool = True
+    media_only_mode: str = MEDIA_ONLY_MODES[0]
+
+    @property
+    def hide_media_text(self) -> bool:
+        return self.media_only_mode == MEDIA_ONLY_MODES[2]
 
     @property
     def is_tag_group(self) -> bool:
@@ -187,10 +198,6 @@ class SchedulerConfigReader:
             send_target_interval=1.5,
             send_user_interval=2.0,
             notify_no_updates=False,
-            concurrent_fetch_enabled=False,
-            fetch_concurrency=3,
-            concurrent_prepare_enabled=False,
-            prepare_concurrency=2,
             filter_plain_text_enabled=False,
             media_only_enabled=False,
             omit_status_url=True,
@@ -414,27 +421,16 @@ class SchedulerConfigReader:
             notify_no_updates=self.parse_bool(
                 config_get(self.config, "notify_no_updates", False), False
             ),
-            concurrent_fetch_enabled=self.parse_bool(
-                config_get(self.config, "concurrent_fetch_enabled", False),
-                False,
-            ),
-            fetch_concurrency=clamp_int(
-                config_get(self.config, "fetch_concurrency", 3), 1, 8
-            ),
-            concurrent_prepare_enabled=self.parse_bool(
-                config_get(self.config, "concurrent_prepare_enabled", False),
-                False,
-            ),
-            prepare_concurrency=clamp_int(
-                config_get(self.config, "prepare_concurrency", 2), 1, 8
-            ),
             filter_plain_text_enabled=self.parse_bool(
                 raw_group.get("filter_plain_text_enabled", filter_plain_text_default),
                 False,
             ),
-            media_only_enabled=self.parse_bool(
-                raw_group.get("media_only_enabled", False),
-                False,
+            media_only_enabled=resolve_media_only_mode(
+                raw_group.get("media_only_enabled")
+            )
+            != MEDIA_ONLY_MODES[0],
+            media_only_mode=resolve_media_only_mode(
+                raw_group.get("media_only_enabled")
             ),
             omit_status_url=self.parse_bool(
                 raw_group.get("omit_status_url", True),

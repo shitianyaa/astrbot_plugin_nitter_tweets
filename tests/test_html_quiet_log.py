@@ -1,78 +1,99 @@
-"""QuietHtmlLog filters HTML backend chatter under brief_log_enabled."""
-
-from __future__ import annotations
+"""HTML重要日志与DEBUG过程分流，回调兼容和会话加载抑制。"""
 
 from media_support.html_backend.logging_util import QuietHtmlLog
 
 
-def test_brief_drops_session_try_empty_and_cooling():
-    out: list[str] = []
-    log = QuietHtmlLog(out.append, brief=True)
-
+def test_process_goes_to_debug_and_session_load_is_suppressed():
+    main, debug = [], []
+    log = QuietHtmlLog(main.append, debug_emit=debug.append)
     log("session load nitter.example keys=['a']")
-    log("search try 1/3 host=nitter.example query='#x' kind=tag")
-    log("user try 1/2 host=nitter.example user=nasa")
-    log("search empty host=nitter.example, rotate next (1/3)")
-    log("defer cooling nitter.example remain=30s")
-    log("skip cooling nitter.example remain=10s")
-    assert out == []
-
-
-def test_brief_keeps_failures_and_summaries():
-    out: list[str] = []
-    log = QuietHtmlLog(out.append, brief=True)
-
-    log("search fail host=a.example, rotate next (1/2): boom")
-    log("search ok after rotate host=b.example tried=2/2")
-    log("search empty after rotate hosts=2, query='#x' kind=tag, last_empty=a.example")
-    log("punish a.example http=429 cooldown=30s")
-
-    assert out == [
-        "search fail host=a.example, rotate next (1/2): boom",
-        "search ok after rotate host=b.example tried=2/2",
-        "search empty after rotate hosts=2, query='#x' kind=tag, last_empty=a.example",
-        "punish a.example http=429 cooldown=30s",
+    processes = [
+        "search try 1/3 query='#x' kind=tag",
+        "user try 1/2 user=nasa",
+        "list try 1/2 list_id=123",
+        "search empty, rotate next (1/3)",
+        "user empty, rotate next (1/3)",
+        "defer cooling remain=30s",
+        "defer cooling remain=10s",
+        "search global retry 1/2: all cooling",
     ]
+    for text in processes:
+        log(text)
+    assert main == []
+    assert debug == processes
 
 
-def test_verbose_keeps_ordinary_response_errors():
-    out: list[str] = []
-    log = QuietHtmlLog(out.append, brief=False)
-
-    log("search fail host=h1, rotate next (1/2): HTTP 503")
-    log("search fail host=h2, rotate next (2/2): invalid page")
-
-    assert out == [
-        "search fail host=h1, rotate next (1/2): HTTP 503",
-        "search fail host=h2, rotate next (2/2): invalid page",
+def test_important_failures_and_rotation_summaries_stay_visible():
+    main, debug = [], []
+    log = QuietHtmlLog(main.append, debug_emit=debug.append)
+    messages = [
+        "search fail, rotate next (1/2): HTTP 503",
+        "search ok after rotate tried=2/2",
+        "search empty after rotate hosts=2",
+        "punish host http=429 cooldown=30s",
+        "search fail, rotate next (2/2): invalid page",
     ]
+    for text in messages:
+        log(text)
+    assert main == messages
+    assert debug == []
 
 
-def test_verbose_keeps_try_lines_but_still_drops_session_load():
-    out: list[str] = []
-    log = QuietHtmlLog(out.append, brief=False)
-
-    log("session load h1 keys=['c']")
-    log("search try 1/1 host=h1 query='x' kind=phrase")
-    log("defer cooling h1 remain=5s")
-    log("defer cooling h1 remain=4s")  # once per host in verbose
-
-    assert out == [
-        "search try 1/1 host=h1 query='x' kind=phrase",
-        "defer cooling h1 remain=5s",
-    ]
+def test_custom_single_callback_keeps_process_without_new_protocol():
+    messages = []
+    log = QuietHtmlLog(messages.append)
+    log("session load host keys=[]")
+    log("user try 1/2 user=nasa")
+    log("defer cooling remain=5s")
+    assert messages == ["user try 1/2 user=nasa", "defer cooling remain=5s"]
 
 
-def test_service_wraps_plain_log_with_quiet():
+def test_service_wraps_callbacks_and_keeps_both_routes():
     from media_support.html_backend.service import HtmlBackendConfig, HtmlNitterService
 
-    out: list[str] = []
-    svc = HtmlNitterService(
-        HtmlBackendConfig(instances=["https://a.example"]),
-        log=out.append,
-        brief_log=True,
+    main, debug = [], []
+    service = HtmlNitterService(
+        HtmlBackendConfig(), log=main.append, debug_log=debug.append
     )
-    svc.log("session load a.example keys=[]")
-    svc.log("search try 1/1 host=a.example query='q' kind=phrase")
-    svc.log("punish a.example http=429 cooldown=30s")
-    assert out == ["punish a.example http=429 cooldown=30s"]
+    service.log("session load host keys=[]")
+    service.log("search try 1/1 query='q' kind=phrase")
+    service.log("punish host http=429 cooldown=30s")
+    assert main == ["punish host http=429 cooldown=30s"]
+    assert debug == ["search try 1/1 query='q' kind=phrase"]
+
+
+def test_search_process_does_not_include_raw_query(monkeypatch):
+    from unittest.mock import MagicMock
+    from media_support.html_backend.pool import (
+        HtmlNitterPool,
+        PoolConfig,
+        HtmlSearchResult,
+    )
+
+    log = MagicMock()
+    pool = HtmlNitterPool(PoolConfig(instances=[]), log=log)
+    monkeypatch.setattr(
+        pool, "_hosts_for_rotation", lambda instance: ["http://test.example"]
+    )
+    monkeypatch.setattr(pool, "_paginate_search", lambda *a, **kw: HtmlSearchResult([]))
+    pool.search("private query token=secret", limit=1)
+    lines = [call.args[0] for call in log.call_args_list]
+    assert any("query_chars=" in line for line in lines)
+    assert all(
+        "private query" not in line and "token=secret" not in line for line in lines
+    )
+
+
+def test_production_service_records_debug_even_with_default_config(monkeypatch):
+    from unittest.mock import MagicMock
+    from media_support.nitter import NitterService
+    from shared import log_buffer
+
+    monkeypatch.setattr("shared.observability.logger", MagicMock())
+    log_buffer.clear()
+    service = NitterService({})
+    service.html.log("search try 1/1 query='q' kind=phrase")
+    service.html.log("search fail, rotate next: timeout")
+    assert len(log_buffer.snapshot(ring="debug")) == 1
+    assert len(log_buffer.snapshot()) == 1
+    log_buffer.clear()

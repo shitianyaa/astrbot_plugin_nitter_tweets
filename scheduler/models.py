@@ -99,6 +99,7 @@ class PendingTweetBatch:
     tweet_index: int = 0
     tweet_total: int = 0
     media_only: bool = False
+    hide_media_text: bool = False
     omit_status_url: bool = True
     hide_original_when_translated: bool = False
     media_status: str = "ready"
@@ -527,108 +528,6 @@ class ScheduledCheckResult:
             lines.append(f"  任务耗时: {elapsed_str}")
 
         return "\n".join(lines)
-
-    def format_brief_log_lines(self) -> list[str]:
-        if self.skipped_reason:
-            return [self.format_log_summary()]
-
-        lines = [
-            (
-                "[NitterTweets] 推送结果: "
-                f"group={self.group_name}({self.group_id}), "
-                f"type={self.group_type}, "
-                f"reason={self.reason}, "
-                f"mode={self.push_mode}, "
-                f"checked={self.checked_user_count}, "
-                f"new={self.new_tweet_count}, "
-                f"status={self._source_status_summary()}, "
-                f"watermark={self._watermark_summary()}, "
-                f"push_success={self.pushed_target_successes}/"
-                f"{self.pushed_target_attempts}, "
-                f"failed={len(self.failed_users)}, "
-                f"invalid_targets={len(self.invalid_targets)}, "
-                f"warnings={len(self.delivery_warnings)}"
-            )
-        ]
-        if self.plain_text_filtered:
-            lines[0] += f", filtered_plain_text={self.plain_text_filtered}"
-        if self.target_blocked_filtered:
-            lines[0] += f", target_blocked={self.target_blocked_filtered}"
-        if self.media_only_skipped or self.media_only_retrying:
-            lines[0] += (
-                f", media_skipped={self.media_only_skipped},"
-                f" media_retrying={self.media_only_retrying}"
-            )
-        if self.failed_users:
-            failed_items = [
-                sanitize_diagnostic(
-                    redact_instance_urls(f"{self._failure_label(user)}: {error}")
-                )
-                for user, error in self.failed_users.items()
-            ]
-            lines.append(
-                "[NitterTweets] 失败详情: "
-                + _format_limited_values(failed_items, limit=5, separator="; ")
-            )
-        if self.baseline_rebuilt_users:
-            rebuilt_items = [
-                sanitize_diagnostic(
-                    f"{self._subscription_label(user)}({count} 个第一页基线 ID)"
-                )
-                for user, count in self.baseline_rebuilt_users.items()
-            ]
-            lines.append(
-                "[NitterTweets] 扫描未完整，自动重建基准: "
-                + _format_limited_values(rebuilt_items, limit=5, separator="; ")
-                + self._baseline_rebuild_notice()
-            )
-        if self.baseline_rebuild_failed_users:
-            rebuild_items = [
-                sanitize_diagnostic(f"{self._subscription_label(user)}: {error}")
-                for user, error in self.baseline_rebuild_failed_users.items()
-            ]
-            lines.append(
-                "[NitterTweets] 扫描未完整，自动重建基准未完成: "
-                + _format_limited_values(rebuild_items, limit=5, separator="; ")
-            )
-        if self.source_attempts:
-            attempts = [
-                sanitize_diagnostic(
-                    f"{self._subscription_label(user)}: {'；'.join(details)}"
-                )
-                for user, details in self.source_attempts.items()
-                if details
-            ]
-            if attempts:
-                lines.append(
-                    "[NitterTweets] 实例结果: "
-                    + _format_limited_values(attempts, limit=5, separator="; ")
-                )
-        if self.invalid_targets:
-            lines.append(
-                "[NitterTweets] 无效推送目标: "
-                + _format_limited_values(
-                    [
-                        sanitize_diagnostic(value)
-                        for value in dict.fromkeys(self.invalid_targets)
-                    ],
-                    limit=5,
-                    separator="; ",
-                )
-            )
-        if self.delivery_warnings:
-            lines.append(
-                "[NitterTweets] 发送状态提示: "
-                + _format_limited_values(
-                    [
-                        sanitize_diagnostic(value)
-                        for value in dict.fromkeys(self.delivery_warnings)
-                    ],
-                    limit=5,
-                    separator="; ",
-                )
-            )
-        return lines
 
     def _failure_label(self, user: str) -> str:
         source = str(user or "").strip()

@@ -18,6 +18,7 @@ try:
     from ..shared import (
         format_subscription_source,
         redact_instance_urls,
+        safe_block_log,
         sanitize_sensitive_text,
     )
     from ..shared.group_ids import GLOBAL_GROUP_ID
@@ -74,6 +75,7 @@ except ImportError:
     from shared import (
         format_subscription_source,
         redact_instance_urls,
+        safe_block_log,
         sanitize_sensitive_text,
     )
     from shared.group_ids import GLOBAL_GROUP_ID
@@ -246,15 +248,8 @@ class NitterTweetScheduler(
             group.enabled for group in self._schedule_groups(log_invalid_targets=False)
         )
 
-    @property
-    def brief_log_enabled(self) -> bool:
-        return parse_config_bool(
-            config_get(self.config, "brief_log_enabled", True), True
-        )
-
     def _log_verbose_info(self, message: str) -> None:
-        if not self.brief_log_enabled:
-            logger.info(message)
+        safe_block_log("debug", message)
 
     async def _ensure_storage_ready(self) -> bool:
         """Serialize storage migration for the scheduler and manual checks."""
@@ -294,31 +289,10 @@ class NitterTweetScheduler(
     def _log_check_result(
         self, result: ScheduledCheckResult, duration_ms: float | None = None
     ) -> None:
-        if self.brief_log_enabled:
-            structured_log = result.format_structured_task_log(duration_ms=duration_ms)
-            if result.needs_attention:
-                logger.warning(structured_log)
-            else:
-                logger.info(structured_log)
-            return
-
-        if result.needs_attention:
-            logger.warning(result.format_log_summary())
-        else:
-            logger.info(result.format_log_summary())
-
-        warning_prefixes = (
-            "[NitterTweets] 失败详情:",
-            "[NitterTweets] 扫描未完整，自动重建基准:",
-            "[NitterTweets] 扫描未完整，自动重建基准未完成:",
-            "[NitterTweets] 无效推送目标:",
-            "[NitterTweets] 发送状态提示:",
+        safe_block_log(
+            "warning" if result.needs_attention else "info",
+            result.format_structured_task_log(duration_ms=duration_ms),
         )
-        for detail in result.format_brief_log_lines()[1:]:
-            if detail.startswith(warning_prefixes):
-                logger.warning(detail)
-            else:
-                logger.info(detail)
 
     def _log_enabled_state(self, enabled: bool) -> None:
         if self._last_enabled_state is enabled:
@@ -471,7 +445,7 @@ class NitterTweetScheduler(
         group = self._schedule_group(group_name)
         if group is None:
             result = self._unknown_group_result(reason, group_name)
-            logger.warning(result.format_log_summary())
+            safe_block_log("warning", result.format_log_summary())
             return result
 
         observable = self._is_observable_check_reason(reason)
@@ -483,24 +457,26 @@ class NitterTweetScheduler(
                 "list": "List",
             }
             type_cn = type_map.get(group.group_type, group.group_type)
-            logger.info(
+            safe_block_log(
+                "info",
                 f"[NitterTweets] 开始检查: {group.name}({group.group_id}) · "
-                f"{len(group.account_keys)} 个{type_cn}"
+                f"{len(group.account_keys)} 个{type_cn}",
             )
 
         try:
             if not await self._ensure_storage_ready():
                 result = self._new_check_result(reason, group, target_override)
                 result.skipped_reason = "storage_not_ready"
-                logger.warning(
+                safe_block_log(
+                    "warning",
                     "[NitterTweets] 检查因存储未就绪跳过: "
                     f"group_id={group.group_id}, group_type={group.group_type}, "
-                    f"reason={reason}, error={self._storage_init_error or 'unknown'}"
+                    f"reason={reason}, error={self._storage_init_error or 'unknown'}",
                 )
             elif not observable and self._check_lock.locked():
                 result = self._new_check_result(reason, group, target_override)
                 result.skipped_reason = "check_already_running"
-                logger.warning(result.format_log_summary())
+                safe_block_log("warning", result.format_log_summary())
             else:
                 async with self._check_lock:
                     result = await self._run_check_unlocked(
@@ -514,7 +490,8 @@ class NitterTweetScheduler(
         except Exception as exc:
             if observable:
                 duration_ms = (time.perf_counter() - started) * 1000
-                logger.error(
+                safe_block_log(
+                    "error",
                     "[NitterTweets] 检查异常: "
                     f"group_id={group.group_id}, group_type={group.group_type}, "
                     f"sources={len(group.account_keys)}, targets={len(group.targets)}, "
@@ -1182,8 +1159,6 @@ class NitterTweetScheduler(
                     f"group={group.group_id}, reason={reason_text or 'unknown'}"
                 )
             skip_plain_text = filter_plain_text_enabled or media_only_effective
-            use_fetch_parallel = self._should_use_concurrent_fetch(group)
-            use_prepare_parallel = self._should_use_concurrent_prepare(group)
             self._log_verbose_info(
                 "[NitterTweets] 定时检查开始: "
                 f"group={group.group_id}, reason={reason}, "
@@ -1191,11 +1166,7 @@ class NitterTweetScheduler(
                 f"invalid_targets={len(result.invalid_targets)}, "
                 f"首屏扫描={fetch_limit}, qq_merge_threshold={merge_threshold}, "
                 f"skip_plain_text={skip_plain_text}, "
-                f"拉取并发={'开' if use_fetch_parallel else '关'}, "
-                f"拉取数={group.fetch_concurrency}, "
-                f"实例数={len(getattr(self.nitter, 'instances', []))}, "
-                f"准备并发={'开' if use_prepare_parallel else '关'}, "
-                f"准备数={group.prepare_concurrency}"
+                f"实例数={len(getattr(self.nitter, 'instances', []))}"
             )
             discovered_batches: list[PendingTweetBatch] = []
             group_plain_text_filtered_total = 0
@@ -1450,6 +1421,7 @@ class NitterTweetScheduler(
                             fetched_ids=scanned_status_ids,
                             seen_ids=seen_ids,
                             media_only=media_only_effective,
+                            hide_media_text=group.hide_media_text,
                             omit_status_url=bool(
                                 getattr(group, "omit_status_url", True)
                             ),
@@ -1523,44 +1495,27 @@ class NitterTweetScheduler(
                 fetch_failures,
                 group_type=group.group_type,
             )
+            if group.hide_media_text:
+                check_batch_summary = ""
             immediate_batch_summary_tracker = BatchSummaryTracker(check_batch_summary)
             self._set_discovered_batch_progress(discovered_batches)
-            if self._should_use_concurrent_prepare(group):
-                (
-                    pending_batches,
-                    immediate_batches_sent,
-                ) = await self._prepare_immediate_batches_concurrently(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
-            else:
-                (
-                    pending_batches,
-                    immediate_batches_sent,
-                ) = await self._prepare_discovered_batches_serial(
-                    group,
-                    discovered_batches,
-                    result,
-                    targets[0],
-                    seen_map,
-                    immediate_targets,
-                    buffered_targets,
-                    target_interval,
-                    user_interval,
-                    group_label,
-                    immediate_batch_summary_tracker,
-                    immediate_batches_sent,
-                )
+            (
+                pending_batches,
+                immediate_batches_sent,
+            ) = await self._prepare_discovered_batches_serial(
+                group,
+                discovered_batches,
+                result,
+                targets[0],
+                seen_map,
+                immediate_targets,
+                buffered_targets,
+                target_interval,
+                user_interval,
+                group_label,
+                immediate_batch_summary_tracker,
+                immediate_batches_sent,
+            )
 
             if pending_batches:
                 try:
@@ -1644,7 +1599,9 @@ class NitterTweetScheduler(
 
             duration_ms = (time.perf_counter() - check_started) * 1000
             self._log_check_result(result, duration_ms=duration_ms)
-            if self._should_notify_no_updates(result, notify_no_updates, group):
+            if not group.hide_media_text and self._should_notify_no_updates(
+                result, notify_no_updates, group
+            ):
                 await self._send_no_update_notice(result, target_interval)
             return result
         finally:

@@ -381,49 +381,6 @@ class _PartiallyFailingNitter(_MultiUserNitter):
         return "https://nitter.test", self.tweets_by_user.get(username, [])[:limit], 0
 
 
-class _ConcurrentNitter(_MultiUserNitter):
-    def __init__(
-        self, tweets_by_user, events=None, failures_by_user=None, filtered=None
-    ):
-        super().__init__(tweets_by_user, events=events)
-        self.failures_by_user = failures_by_user or {}
-        self.filtered = filtered or {}
-        self.release_first = scheduler_module.asyncio.Event()
-
-    async def fetch_tweets_with_stats_from_instances(
-        self,
-        username,
-        limit,
-        instances,
-        start_index=0,
-        skip_plain_text=False,
-        retry_attempts=3,
-        filter_reposts=None,
-    ):
-        self.filter_reposts_calls.append(filter_reposts)
-        self.concurrent_calls.append(
-            (username, tuple(instances), start_index, skip_plain_text, retry_attempts)
-        )
-        self.events.append(f"concurrent_fetch_start:{username}")
-        if username == "NASA":
-            await self.release_first.wait()
-        else:
-            self.release_first.set()
-        self.events.append(f"concurrent_fetch_done:{username}")
-        if username in self.failures_by_user:
-            raise RuntimeError(self.failures_by_user[username])
-        return (
-            "https://concurrent.test",
-            self.tweets_by_user.get(username, [])[:limit],
-            self.filtered.get(username, 0),
-        )
-
-
-class _NoConcurrentNitter(_MultiUserNitter):
-    async def fetch_tweets_with_stats_from_instances(self, *args, **kwargs):
-        raise AssertionError("concurrent fetch should not be used")
-
-
 class _Media:
     def __init__(self):
         self.attached = 0
@@ -518,22 +475,6 @@ class _RecordingTranslator(_Translator):
 
     async def attach_translations(self, tweets, target):
         self.events.append("translate:" + ",".join(tweet.status_id for tweet in tweets))
-        await super().attach_translations(tweets, target)
-
-
-class _OutOfOrderTranslator(_Translator):
-    def __init__(self, events):
-        self.events = events
-        self.release_first = scheduler_module.asyncio.Event()
-
-    async def attach_translations(self, tweets, target):
-        status_id = tweets[0].status_id
-        self.events.append(f"translate_start:{status_id}")
-        if status_id == "101":
-            await self.release_first.wait()
-        else:
-            self.release_first.set()
-        self.events.append(f"translate_done:{status_id}")
         await super().attach_translations(tweets, target)
 
 
@@ -998,7 +939,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             published="",
         )
 
-    async def test_blogger_repost_filter_override_reaches_serial_and_concurrent_fetch(
+    async def test_blogger_repost_filter_override_reaches_rss_and_html_fetch(
         self,
     ):
         class HtmlBackend:
@@ -1062,34 +1003,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             20,
             False,
             None,
-            concurrent=False,
-        )
-
-        concurrent_nitter = _MultiUserNitter(
-            {"NASA": [self._make_tweet("NASA", "100")]}
-        )
-        concurrent_scheduler = self._create_scheduler(
-            config,
-            nitter=concurrent_nitter,
-        )
-        concurrent_group = concurrent_scheduler._schedule_groups(
-            log_invalid_targets=False
-        )[0]
-        concurrent_nitter.instances = ["https://nitter.test"]
-
-        await concurrent_scheduler._fetch_group_user(
-            concurrent_group,
-            0,
-            "NASA",
-            20,
-            False,
-            None,
-            concurrent=True,
         )
 
         self.assertEqual(serial_nitter.filter_reposts_calls, [False])
         self.assertEqual(html_backend.filter_reposts_calls, [False])
-        self.assertEqual(concurrent_nitter.filter_reposts_calls, [False])
 
     async def test_blogger_media_path_only_when_both_plain_text_and_repost_filter_on(
         self,
@@ -1120,9 +1037,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         nitter_both = _SchedulerNitter({"NASA": scan})
         sched_both = self._create_scheduler(config_both, nitter=nitter_both)
         group_both = sched_both._schedule_groups(log_invalid_targets=False)[0]
-        await sched_both._fetch_group_user(
-            group_both, 0, "NASA", 20, True, None, concurrent=False
-        )
+        await sched_both._fetch_group_user(group_both, 0, "NASA", 20, True, None)
         self.assertEqual(nitter_both.path_overrides, ["NASA/media"])
 
         # Case 2: plain_text on, repost filter off → regular RSS
@@ -1143,9 +1058,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         nitter_no_repost = _SchedulerNitter({"NASA": list(scan)})
         sched_nr = self._create_scheduler(config_no_repost, nitter=nitter_no_repost)
         group_nr = sched_nr._schedule_groups(log_invalid_targets=False)[0]
-        await sched_nr._fetch_group_user(
-            group_nr, 0, "NASA", 20, True, None, concurrent=False
-        )
+        await sched_nr._fetch_group_user(group_nr, 0, "NASA", 20, True, None)
         self.assertEqual(nitter_no_repost.path_overrides, [""])
 
     async def test_blogger_merged_skipped_when_repost_filter_off(self):
@@ -1239,7 +1152,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             20,
             False,
             None,
-            concurrent=False,
         )
 
         self.assertEqual(result.scanned_status_ids, ["102", "101"])
@@ -2820,6 +2732,92 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         second = await scheduler.run_check(reason="test_merged_exception_history_again")
         self.assertEqual(second.new_tweet_count, 0)
 
+    async def test_pure_media_keeps_merge_routing_and_suppresses_summary(self):
+        from rendering import TweetMessageRenderer
+
+        class PureSender(_Sender):
+            without_media_text = TweetSender.without_media_text
+
+            async def send_to_umo_with_outcome(self, *args, **kwargs):
+                assert self.renderer.hide_media_text
+                return await super().send_to_umo_with_outcome(*args, **kwargs)
+
+            async def send_merged_to_umo(self, *args, **kwargs):
+                assert self.renderer.hide_media_text
+                return await super().send_merged_to_umo(*args, **kwargs)
+
+        events = []
+        qq, tg = "aiocqhttp:GroupMessage:1", "telegram:FriendMessage:2"
+        sender = PureSender(merge_targets={qq}, events=events)
+        sender.renderer = TweetMessageRenderer()
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [
+                            self._make_tweet("NASA", "102"),
+                            self._make_tweet("NASA", "101"),
+                        ],
+                        "scanned_status_ids": ["102", "101", "100"],
+                        "anchor_status_ids": ["102", "101", "100"],
+                    }
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "send_image_attachments": True,
+                "notify_no_updates": True,
+                "send_batch_summary_enabled": True,
+                "merge_tweet_threshold": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+                "tweet_groups": [
+                    {
+                        "group_id": "pure",
+                        "enabled": True,
+                        "watch_users": ["NASA"],
+                        "push_targets": [qq, tg],
+                        "media_only_enabled": "仅媒体（不含文字）",
+                    }
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+            media=_StatusMedia(
+                {"101": ("ready", Path("101.jpg")), "102": ("ready", Path("102.jpg"))},
+                events,
+            ),
+            translator=_RecordingTranslator(events),
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        await scheduler.storage.add_seen_ids("pure", "NASA", ["100"])
+        result = await scheduler.run_check(reason="test_pure", group_name="pure")
+        self.assertEqual(result.push_mode, "mixed")
+        self.assertEqual([call[0] for call in sender.sent], [tg, tg])
+        self.assertEqual([call[0] for call in sender.merged_sent], [qq])
+        self.assertEqual(sender.merged_batch_summaries, [(qq, "")])
+        self.assertEqual(sender.summary_sends, [])
+        self.assertFalse(any(event.startswith("translate:") for event in events))
+        self.assertFalse(sender.renderer.hide_media_text)
+        self.assertEqual(
+            set(await scheduler.storage.get_seen_ids("pure", "NASA")),
+            {"100", "101", "102"},
+        )
+        notice_calls = []
+
+        async def record_notice(*args, **kwargs):
+            notice_calls.append((args, kwargs))
+
+        scheduler._send_no_update_notice = record_notice
+        await scheduler.run_check(
+            reason="test_pure_again", group_name="pure", notify_no_updates=True
+        )
+        self.assertEqual(notice_calls, [])
+
     async def test_media_only_ready_sends_without_translation_or_body(self):
         events = []
         target = "telegram:FriendMessage:1"
@@ -2945,7 +2943,26 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": ["101", "100"]},
         )
 
-    async def test_media_only_transient_failure_marks_seen_and_advances_watermark(self):
+    async def test_media_only_transient_failure_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries("transient_failure", True)
+
+    async def test_pure_media_transient_failure_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries(
+            "transient_failure", "仅媒体（不含文字）"
+        )
+
+    async def test_media_only_no_candidate_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries("no_candidate", True)
+
+    async def test_pure_media_no_candidate_retries_without_advancing_seen(self):
+        await self._assert_media_only_failure_retries(
+            "no_candidate", "仅媒体（不含文字）"
+        )
+
+    async def _assert_media_only_failure_retries(self, status, mode):
+        class RetrySender(_Sender):
+            without_media_text = TweetSender.without_media_text
+
         target = "telegram:FriendMessage:1"
         nitter = _SchedulerNitter(
             {
@@ -2958,8 +2975,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 ]
             }
         )
-        sender = _Sender()
-        media = _StatusMedia({"101": ("transient_failure", None)})
+        sender = RetrySender()
+        sender.renderer = TweetMessageRenderer()
+        media = _StatusMedia({"101": (status, None)})
         scheduler = self._create_scheduler(
             {
                 "schedule_enabled": True,
@@ -2972,7 +2990,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                         "enabled": True,
                         "watch_users": ["NASA"],
                         "push_targets": [target],
-                        "media_only_enabled": True,
+                        "media_only_enabled": mode,
                     }
                 ],
             },
@@ -2990,15 +3008,14 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             reason="test_media_only_retry_first", group_name="media"
         )
 
-        self.assertEqual(first.media_only_skipped, 1)
-        self.assertEqual(first.media_only_retrying, 0)
+        self.assertEqual(first.media_only_skipped, 0)
+        self.assertEqual(first.media_only_retrying, 1)
         self.assertEqual(sender.sent, [])
-        self.assertEqual(
-            await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
-        )
+        self.assertIn("cleanup:101", media.events)
+        self.assertEqual(await scheduler.storage.get_seen_ids("media", "NASA"), ["100"])
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("media"),
-            {"NASA": ["101", "100"]},
+            {"NASA": ["100"]},
         )
 
         media.statuses["101"] = ("ready", Path("101.jpg"))
@@ -3006,8 +3023,8 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             reason="test_media_only_retry_second", group_name="media"
         )
 
-        self.assertEqual(second.new_tweet_count, 0)
-        self.assertEqual(sender.sent, [])
+        self.assertEqual(second.new_tweet_count, 1)
+        self.assertEqual([item[3] for item in sender.sent], [["101"]])
         self.assertEqual(
             await scheduler.storage.get_seen_ids("media", "NASA"), ["101", "100"]
         )
@@ -3016,7 +3033,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             {"NASA": ["101", "100"]},
         )
 
-    async def test_concurrent_prepare_sends_in_completion_order(self):
+    async def test_retired_concurrent_prepare_config_uses_serial_order(self):
         target = "telegram:FriendMessage:1"
         nitter = _SchedulerNitter(
             {
@@ -3034,13 +3051,33 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
         events = []
         sender = _Sender(events=events)
-        translator = _OutOfOrderTranslator(events)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingTranslator(_RecordingTranslator):
+            active = 0
+            max_active = 0
+
+            async def attach_translations(self, tweets, target):
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                try:
+                    await super().attach_translations(tweets, target)
+                    if tweets[0].status_id == "101":
+                        started.set()
+                        await release.wait()
+                finally:
+                    self.active -= 1
+
+        translator = BlockingTranslator(events)
         scheduler = self._create_scheduler(
             {
                 "schedule_enabled": True,
                 "send_image_attachments": True,
                 "concurrent_prepare_enabled": True,
                 "prepare_concurrency": 2,
+                "send_target_interval": 0,
+                "send_user_interval": 0,
                 "tweet_groups": [
                     {
                         "group_id": "media",
@@ -3061,9 +3098,25 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.storage.add_seen_ids("media", "NASA", ["100"])
         await scheduler.storage.set_scan_watermark("media", "NASA", ["100"])
 
-        await scheduler.run_check(reason="test_completion_order", group_name="media")
+        task = asyncio.create_task(
+            scheduler.run_check(reason="test_completion_order", group_name="media")
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            await asyncio.sleep(0)
+            self.assertNotIn("translate:102", events)
+            self.assertEqual(sender.sent, [])
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=2)
 
-        self.assertEqual([item[3] for item in sender.sent], [["102"], ["101"]])
+        self.assertEqual(translator.max_active, 1)
+
+        self.assertEqual([item[3] for item in sender.sent], [["101"], ["102"]])
+        self.assertEqual(
+            [event for event in events if event.startswith("translate:")],
+            ["translate:101", "translate:102"],
+        )
 
     def test_media_only_renderer_does_not_leak_body_or_link(self):
         renderer = TweetMessageRenderer(
@@ -3514,54 +3567,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             ["100"],
         )
 
-    async def test_concurrent_prepare_cancellation_cleans_all_started_media(self):
-        target = "aiocqhttp:GroupMessage:1"
-        media = _BlockingMedia("102")
-        sender = _Sender(merge_targets={target})
-        nitter = _MultiUserNitter(
-            {
-                "NASA": [
-                    self._make_tweet("NASA", "102"),
-                    self._make_tweet("NASA", "101"),
-                ]
-            }
-        )
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "watch_users": ["NASA"],
-                "push_targets": [target],
-                "merge_tweet_threshold": 2,
-                "concurrent_prepare_enabled": True,
-                "prepare_concurrency": 2,
-                "send_target_interval": 0,
-                "send_user_interval": 0,
-            },
-            nitter=nitter,
-            media=media,
-            sender=sender,
-        )
-        await scheduler.storage.migrate_and_sync(
-            scheduler._schedule_groups(log_invalid_targets=False)
-        )
-        await scheduler.storage.add_seen_ids("global", "NASA", ["100"])
-
-        task = asyncio.create_task(
-            scheduler.run_check(reason="test_concurrent_prepare_cancel")
-        )
-        await asyncio.wait_for(media.all_attached.wait(), timeout=1)
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-
-        self.assertCountEqual(media.attached_ids, ["101", "102"])
-        self.assertCountEqual(media.cleaned_ids, ["101", "102"])
-        self.assertEqual(len(media.cleaned_ids), 2)
-        self.assertEqual(
-            await scheduler.storage.get_seen_ids("global", "NASA"),
-            ["100"],
-        )
-
     async def test_telegram_flood_control_waits_and_retries_same_message(self):
         sender = TweetSender({})
         calls = []
@@ -3664,7 +3669,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.pushed_target_attempts, 0)
         self.assertEqual(len(sender.sent), 2)
 
-    async def test_concurrent_fetch_passes_path_override_without_type_error(self):
+    async def test_scheduler_fetch_passes_path_override_without_type_error(self):
         from unittest.mock import AsyncMock
 
         from media_support.client import NitterClient, SchedulerFetchResult
@@ -3708,7 +3713,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 path_override="NASA/media",
             )
 
-        # 2. Integration call through runner._fetch_group_user with concurrent=True
+        # 2. The serial scheduler path forwards the same media override.
         runner = SchedulerFetchMixin()
         runner.nitter = client
         runner.config = {}
@@ -3734,7 +3739,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 20,
                 skip_plain_text=True,
                 scan_watermark=["100"],
-                concurrent=True,
+                force_nitter=True,
             )
             self.assertEqual(user_result.username, "NASA")
             self.assertIsNone(user_result.error)
@@ -3744,7 +3749,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 ["http://127.0.0.1:8080"],
                 skip_plain_text=True,
                 retry_attempts=2,
-                total_retry_attempts_per_instance=False,
                 filter_reposts=True,
                 path_override="NASA/media",
             )

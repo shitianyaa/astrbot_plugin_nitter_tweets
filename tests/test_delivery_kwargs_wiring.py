@@ -31,7 +31,9 @@ def _tweet(status_id: str) -> TweetItem:
 
 
 def _lark_adapter() -> tuple[LarkDeliveryAdapter, SimpleNamespace]:
-    renderer = SimpleNamespace(build_direct_components=MagicMock(return_value=[]))
+    renderer = SimpleNamespace(
+        hide_media_text=False, build_direct_components=MagicMock(return_value=[])
+    )
     sender = SimpleNamespace(
         renderer=renderer,
         _platform_inst_from_context=MagicMock(return_value=None),

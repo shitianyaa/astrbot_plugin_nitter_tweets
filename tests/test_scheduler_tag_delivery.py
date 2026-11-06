@@ -598,7 +598,6 @@ class TagSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             20,
             False,
             None,
-            concurrent=False,
         )
 
         self.assertEqual(html.filter_reposts_calls, [False])

@@ -87,7 +87,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
 
         text = plain_text_from_components(components)
         post_title = (
-            f"@{username}"
+            None
+            if sender.renderer.hide_media_text
+            else f"@{username}"
             if media_only
             else lark_tweet_post_title(username, len(tweets), header_text)
         )
@@ -233,7 +235,9 @@ class LarkDeliveryAdapter(DefaultDeliveryAdapter):
         )
         text = plain_text_from_components(components)
         post_title = (
-            f"@{username}"
+            None
+            if sender.renderer.hide_media_text
+            else f"@{username}"
             if media_only
             else lark_tweet_post_title(username, len(tweets), header_text)
         )

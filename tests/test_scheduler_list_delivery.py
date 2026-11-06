@@ -235,7 +235,6 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             20,
             False,
             None,
-            concurrent=False,
         )
 
         self.assertEqual(backend.filter_reposts_calls, [False])
@@ -307,9 +306,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watermarks[key], ["101", "100"])
         self.assertIn("101", await scheduler.storage.get_seen_ids("lists1", key))
         self.assertEqual(sender.sent, [])
-        self.assertIn(
-            "扫描未完整，自动重建基准", "\n".join(result.format_brief_log_lines())
-        )
+        self.assertIn("基准重建:", result.format_structured_task_log())
         self.assertIn("旧积压可能被跳过", result.format_message())
 
         next_result = await scheduler.run_check(

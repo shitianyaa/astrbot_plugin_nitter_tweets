@@ -15,7 +15,7 @@
 | 标签、手动搜索 | HTML | `/search?...` | `instances` |
 | List 列表分组 | RSS 优先（HTML 回退） | `/i/lists/<id>/rss` | `instances` |
 
-同一实例同时用于用户 RSS、List RSS、用户 HTML、搜索和后台并发抓取。可以填写多个自建实例，插件会按成功率、冷却状态和配置顺序轮换。
+同一实例同时用于用户 RSS、List RSS、用户 HTML、搜索和后台抓取。可以填写多个自建实例，插件会按成功率、冷却状态和配置顺序轮换。
 
 关注对象较多时，优先在 Nitter 中建立一个 List，再订阅 List 分组。这样后台可以按 List 时间线抓取，减少逐个请求用户页面的次数，更不容易触发自建实例的 429；RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds` 重试配置。
 

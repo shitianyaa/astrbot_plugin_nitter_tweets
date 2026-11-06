@@ -23,6 +23,11 @@ except ImportError:
     from astrbot.api.event import MessageChain
 
 try:
+    from astrbot.api.message_components import Plain
+except ImportError:
+    from astrbot.core.message.components import Plain
+
+try:
     from ..config import (
         config_get,
         configured_merge_tweet_threshold,
@@ -136,6 +141,15 @@ class TweetSender(
             send_video_attachments=True,
             send_batch_summary_enabled=self.send_batch_summary_enabled,
         )
+        return sender
+
+    def without_media_text(self) -> TweetSender:
+        """Use a per-call renderer; concurrent groups keep their own text policy."""
+        sender = copy(self)
+        sender.send_batch_summary_enabled = False
+        sender.renderer = copy(self.renderer)
+        sender.renderer.send_batch_summary_enabled = False
+        sender.renderer.hide_media_text = True
         return sender
 
     async def send(
@@ -387,6 +401,11 @@ class TweetSender(
         chain: MessageChain,
         label: str,
     ) -> SendAttempt:
+        if self.renderer.hide_media_text and not any(
+            not isinstance(component, Plain) or component.text.strip()
+            for component in chain.chain
+        ):
+            return SendAttempt(success=True)
         adapter = self._delivery_adapter_for_umo(context, umo)
         custom_send = getattr(adapter, "send_context_chain", None)
         if callable(custom_send):

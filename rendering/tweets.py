@@ -65,6 +65,7 @@ class _hybrid_summary_method:
 
 class TweetMessageRenderer:
     send_batch_summary_enabled: bool = True
+    hide_media_text: bool = False
 
     def __init__(
         self,
@@ -209,6 +210,8 @@ class TweetMessageRenderer:
                                 ),
                             )
                         )
+        if self.hide_media_text:
+            nodes.nodes = [node for node in nodes.nodes if node.content]
         return nodes
 
     def build_merged_nodes_for_uin(
@@ -276,6 +279,8 @@ class TweetMessageRenderer:
                                 )
                             )
                 index += 1
+        if self.hide_media_text:
+            nodes.nodes = [node for node in nodes.nodes if node.content]
         return nodes
 
     def build_merged_onebot_nodes_for_uin(
@@ -362,6 +367,7 @@ class TweetMessageRenderer:
                 },
             }
             for item in items
+            if item["content"]
         ]
 
     def build_direct_components(
@@ -435,7 +441,7 @@ class TweetMessageRenderer:
             author = f"**{TweetMessageRenderer.qq_official_markdown_text(author)}**"
         elif link_style == "telegram_md" and status_url:
             author = TweetMessageRenderer.telegram_tweet_header(author, status_url)
-        components = [Plain(author)]
+        components = [] if self.hide_media_text else [Plain(author)]
         for media in tweet.media:
             if not media.path:
                 continue
@@ -790,6 +796,7 @@ class TweetMessageRenderer:
                 },
             }
             for item in items
+            if item["content"]
         ]
 
     @staticmethod
@@ -844,11 +851,15 @@ class TweetMessageRenderer:
         segment_builder=None,
     ) -> list[dict]:
         if media_only:
-            content = [
-                self.raw_text(
-                    f"@{TweetMessageRenderer.display_username(username, tweet)}"
-                )
-            ]
+            content = (
+                []
+                if self.hide_media_text
+                else [
+                    self.raw_text(
+                        f"@{TweetMessageRenderer.display_username(username, tweet)}"
+                    )
+                ]
+            )
         else:
             content = [
                 self.raw_text(
@@ -911,6 +922,8 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
+        if media_only and self.hide_media_text:
+            return ""
         # format_header already embeds notices when media_only is false.
         blocks = []
         header = self.format_header(
@@ -955,6 +968,8 @@ class TweetMessageRenderer:
         hide_original_when_translated: bool = False,
         link_style: str = "plain",
     ) -> str:
+        if media_only and self.hide_media_text:
+            return ""
         blocks = []
         header = self.format_merged_header(batches, group_label, batch_summary)
         if header:
@@ -1406,7 +1421,11 @@ class TweetMessageRenderer:
                 target, "send_batch_summary_enabled", True
             )
         if media_only:
-            return TweetMessageRenderer._source_node_name(username)
+            return (
+                ""
+                if getattr(target, "hide_media_text", False)
+                else TweetMessageRenderer._source_node_name(username)
+            )
         text = TweetMessageRenderer.format_tweet(
             index,
             username,

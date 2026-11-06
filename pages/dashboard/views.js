@@ -880,9 +880,10 @@ function renderMirrorTerminal() {
     if (el !== term && !parent.contains(el)) el.remove();
   });
 
+  const channel = state.logsLevel === "debug" ? "DEBUG 过程" : "摘要与告警";
   const label = state.logsMax
-    ? `节点健康并发探针 — probe.sh（最近 ${state.logs.length}/${state.logsMax} 条）`
-    : "节点健康并发探针 — probe.sh";
+    ? `${channel}（最近 ${state.logs.length}/${state.logsMax} 条）`
+    : channel;
   renderTerminal(term, state.logs, {
     title: label,
     empty: "暂无插件日志事件。触发一次检查或探测后这里会出现分级输出。",

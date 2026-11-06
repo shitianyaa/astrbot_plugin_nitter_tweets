@@ -35,6 +35,41 @@ def build_logs(after_seq: int = 0):
     return asyncio.run(_LogsAPI().build_logs(after_seq))
 
 
+def test_build_logs_can_read_debug_without_including_main():
+    log_buffer.append("info", ["summary"])
+    log_buffer.append("debug", ["process"])
+    payload = asyncio.run(_LogsAPI().build_logs(level="debug"))
+    assert payload["level"] == "debug"
+    assert payload["max_entries"] == log_buffer.MAX_DEBUG_ENTRIES
+    assert [e["lines"] for e in payload["entries"]] == [["process"]]
+    invalid = asyncio.run(_LogsAPI().build_logs(level="invalid"))
+    assert invalid["level"] == "main"
+    assert [e["lines"] for e in invalid["entries"]] == [["summary"]]
+
+
+def test_handle_logs_forwards_channel_and_cursor():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from plugin_api.api import NitterWebAPI
+
+    api = object.__new__(NitterWebAPI)
+    captured = {}
+
+    async def build(after_seq, level):
+        captured.update(after_seq=after_seq, level=level)
+        return {"success": True}
+
+    async def response(action):
+        return await action()
+
+    api.build_logs = build
+    api._json_response = response
+    request = SimpleNamespace(args={"after_seq": "7", "level": "debug"})
+    with patch("plugin_api.api.request", request):
+        asyncio.run(api.handle_logs())
+    assert captured == {"after_seq": 7, "level": "debug"}
+
+
 def test_build_logs_returns_empty_entries_when_buffer_is_empty():
     payload = build_logs()
     assert payload["success"] is True

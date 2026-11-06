@@ -73,7 +73,7 @@ def test_check_messages_and_failure_summaries_hide_internal_prefixes(
     )
 
     message = result.format_message()
-    brief = "\n".join(result.format_brief_log_lines())
+    brief = result.format_structured_task_log()
     failure_summary = SchedulerSendMixin._append_fetch_failure_summary(
         "",
         {source: "boom"},
@@ -109,14 +109,14 @@ def test_empty_html_result_is_not_reported_as_no_new_tweets():
     )
 
     message = result.format_message()
-    brief = "\n".join(result.format_brief_log_lines())
+    brief = result.format_structured_task_log()
 
     assert "抓取状态: 返回空结果 1 个" in message
     assert "水位状态: 未更新 1 个" in message
     assert "订阅源返回空结果" in message
     assert "实例结果" in message
     assert "本次没有发现需要推送的新推文。" not in message
-    assert "status=empty:1" in brief
+    assert "抓取状态: 返回空结果 1 个" in brief
 
 
 def test_structured_log_shows_effective_instance_from_single_success_attempt():
@@ -169,7 +169,7 @@ def test_structured_log_keeps_all_operational_warnings_and_accurate_labels():
     )
 
     structured = result.format_structured_task_log(duration_ms=1250)
-    detailed = "\n".join(result.format_brief_log_lines())
+    detailed = result.format_structured_task_log()
 
     assert "生效实例: nitter.example" in structured
     assert "轮换轨迹: List 2081623084780671084" in structured
@@ -194,7 +194,7 @@ def test_structured_log_keeps_all_operational_warnings_and_accurate_labels():
 
 def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
     scheduler = object.__new__(NitterTweetScheduler)
-    scheduler.config = {"brief_log_enabled": True}
+    scheduler.config = {}
     result = ScheduledCheckResult(
         reason="interval:20m",
         pushes=[
@@ -207,7 +207,7 @@ def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
         ],
     )
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner.logger", mock_logger)
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     scheduler._log_check_result(result, duration_ms=20)
 
@@ -218,7 +218,7 @@ def test_brief_scheduler_log_uses_warning_for_partial_delivery(monkeypatch):
 
 def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkeypatch):
     scheduler = object.__new__(NitterTweetScheduler)
-    scheduler.config = {"brief_log_enabled": True}
+    scheduler.config = {}
     source = "list:2081623084780671084"
     result = ScheduledCheckResult(
         reason="interval:20m",
@@ -241,7 +241,7 @@ def test_structured_log_all_success_needs_no_attention_and_logs_info_only(monkey
     assert result.needs_attention is False
 
     mock_logger = MagicMock()
-    monkeypatch.setattr("scheduler.runner.logger", mock_logger)
+    monkeypatch.setattr("shared.observability.logger", mock_logger)
 
     scheduler._log_check_result(result, duration_ms=100)
 

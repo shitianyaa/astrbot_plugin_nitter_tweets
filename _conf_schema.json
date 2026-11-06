@@ -2,10 +2,10 @@
   "basic": {
     "description": "基础设置",
     "type": "object",
-    "hint": "Nitter 请求和手动查询的基础配置。",
+    "hint": "推文来源、手动查询和链接解析。",
     "items": {
       "fetch_backend": {
-        "description": "推文抓取后端策略",
+        "description": "推文来源",
         "type": "string",
         "default": "mix",
         "options": [
@@ -13,108 +13,108 @@
           "nitter",
           "fx"
         ],
-        "hint": "抓取博主与标签推文的策略：mix 优先 FxTwitter，遇到限流/404/故障自动平滑回退至自建 Nitter；nitter 仅自建 Nitter；fx 仅 FxTwitter（推特 List 不支持 Fx，硬性保持走 Nitter）。"
+        "hint": "mix：优先 FxTwitter，失败后使用 Nitter；nitter：仅使用 Nitter；fx：仅使用 FxTwitter。List 始终使用 Nitter。"
       },
       "instances": {
-        "description": "自建 Nitter 实例列表",
+        "description": "自建 Nitter 地址",
         "type": "list",
         "default": [],
-        "hint": "填写你自己部署的 Nitter 地址，每行一个地址，不要用逗号分隔；同一列表同时用于 RSS、HTML 搜索和 List。AstrBot 与 Nitter 在同一 Docker 网络时填 http://nitter:8080；不要在 AstrBot 容器内填写 127.0.0.1，除非 Nitter 就在同一个容器。公共实例已停止维护，不再提供默认地址。"
+        "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。"
       },
       "request_timeout": {
-        "description": "单个 Nitter 实例超时秒数",
+        "description": "Nitter 请求超时（秒）",
         "type": "float",
         "default": 12.0,
-        "hint": "单次 Nitter 请求等待该实例响应的最长秒数；RSS、HTML 搜索和 List 共用此超时。"
+        "hint": "每次等待单个实例响应的最长时间。"
       },
       "retry_attempts": {
-        "description": "Nitter 请求重试轮数",
+        "description": "Nitter 重试轮数",
         "type": "int",
         "default": 2,
-        "hint": "轮换重试轮数，默认 2。插件会轮流尝试所有实例，重复指定轮数。例如 3 个实例、2 轮：A→B→C→A→B→C。同时用于 HTML 搜索和 List RSS 的全局重试。"
+        "hint": "每轮依次尝试所有 Nitter 实例。"
       },
       "retry_delay_seconds": {
-        "description": "Nitter 请求重试间隔（秒）",
+        "description": "Nitter 重试间隔（秒）",
         "type": "float",
         "default": 5.0,
-        "hint": "两次重试之间的等待秒数，默认 5。设为 0 表示不等待。"
+        "hint": "两次重试之间的等待时间，0 表示不等待。"
       },
       "filter_reposts_enabled": {
         "description": "转发过滤总开关",
         "type": "bool",
         "default": true,
-        "hint": "控制后台检查及手动命令的转发过滤总开关。关闭时所有分组都保留转发；开启后还需对应分组的“过滤转发”开关开启才会过滤。手动 /推文 与 /推图 命令亦遵循此全局总开关（不受分组子开关影响）。博主自己发布的引用或评论推文仍会保留。老配置缺少该项时按开启处理。"
+        "hint": "关闭后保留所有转发。开启后，手动查询过滤转发，后台推送还需开启分组的「过滤转发」。带评论的引用推文仍保留。"
       },
       "default_limit": {
         "description": "手动查询默认条数",
         "type": "int",
         "default": 5,
-        "hint": "用于 /推文 用户名 和 /镜像测试 [用户名] 镜像站URL 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和实例压力，建议日常不要一次请求过多。"
+        "hint": "/推文 和 /镜像测试 未填写数量时使用。"
       },
       "cooldown_seconds": {
-        "description": "用户请求冷却秒数",
+        "description": "命令冷却时间（秒）",
         "type": "float",
         "default": 15.0,
-        "hint": "同一会话同一用户的命令冷却，降低实例压力。设为 0 可关闭。"
+        "hint": "同一聊天中，同一用户两次请求的最短间隔。0 表示关闭。"
       },
       "search_sort": {
-        "description": "搜索排序方式",
+        "description": "搜索排序",
         "type": "string",
         "default": "latest",
         "options": [
           "latest",
           "top"
         ],
-        "hint": "latest=按时间序（对应 f=tweets，默认）；top=按热门度（对应 f=top，推特综合算法流）。主要影响手动 /推文搜索 与 /推文搜图；后台 Tag 增量扫描强制保持最新时间序，博主与 List RSS 不受影响。手动搜索可用「-top」按热门排序，或「-last」强制时间序（覆盖全局 top 设置）。"
+        "hint": "latest：最新；top：热门。仅影响手动搜索，后台始终按最新排序。命令可用 -top 或 -last 临时切换。"
       },
       "search_max_limit": {
-        "description": "搜索最大条数",
+        "description": "手动搜索最多条数",
         "type": "int",
         "default": 10,
-        "hint": "手动搜索允许的最大条数上限。"
+        "hint": "一次手动搜索允许获取的最多条数。"
       },
       "html_min_interval": {
-        "description": "HTML 请求最小间隔秒",
+        "description": "HTML 请求间隔（秒）",
         "type": "float",
         "default": 3.0,
-        "hint": "全局 HTML 串行节流；429 冷却另计（30s 起，封顶 5 分钟）。"
+        "hint": "两次 HTML 请求的最短间隔。遇到限流时会额外等待。"
       },
       "html_max_pages": {
-        "description": "HTML 与 Fx 最大翻页数",
+        "description": "HTML / Fx 最多翻页数",
         "type": "int",
         "default": 1,
-        "hint": "手动搜索按请求上限截断；Tag 搜索和 List HTML 回退首轮最多取 20 条建立基准，已有水位后最多翻到该页数以寻找旧水位或游标末尾。同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度。List RSS 不受此限制（按 Min-Id 分页，同 Blogger）。Tag/List 达到上限仍未命中旧基准时，max_tweets_per_check=0 会跳过推送并用当前第一页最多 20 个状态 ID 自动重建基准，正数按上限推送成功后再重建；若第一页没有有效状态 ID、发送失败或基准写入失败，则保留旧水位。持久化水位始终最多保存 20 个 ID。"
+        "hint": "限制 HTML 搜索和 FxTwitter 抓取的翻页次数，不影响 RSS。调大可查找更早的推文，但检查会更慢。扫描不完整时的处理见进阶文档。"
       },
       "auto_parse_tweet_links_enabled": {
-        "description": "自动解析聊天中的推文链接",
+        "description": "自动解析推文链接",
         "type": "bool",
         "default": false,
-        "hint": "开启后无需命令：识别消息里的公开 X/Twitter 推文链接并发送正文与媒体。默认关闭。忽略 Bot 自己的消息。翻译与「有译文时显示原文」跟随全局 AI 翻译设置。不受订阅、冷却、seen 和全局图/视频开关限制；仍受大小、时长、超时等安全限制。勿与同类链接解析插件同时对同一会话开启以免重复回复。"
+        "hint": "收到 X/Twitter 推文链接时，自动发送推文和媒体。媒体不受全局图片、视频开关限制，仍受大小和时长限制。避免与其他解析插件重复开启。"
       },
       "link_preview_arbiter_enabled": {
-        "description": "跨 Bot 仲裁（防重复解析）",
+        "description": "防止多个机器人重复解析",
         "type": "bool",
         "default": true,
-        "hint": "OneBot 群聊中多个同类 Bot 同时开启被动链接解析时，通过 QQ 表情回应仲裁，只有赢的 Bot 解析回复。会给被解析的消息贴上表情标记（永久）。单 Bot 环境可关闭以省去约 1s 仲裁延迟。协议移植自 astrbot_plugin_parser 的 EmojiLikeArbiter。"
+        "hint": "仅 OneBot 群聊有效，通过消息表情选出一个机器人回复。表情标记会保留；只有一个机器人时可关闭，减少约 1 秒等待。"
       }
     }
   },
   "media": {
     "description": "媒体设置",
     "type": "object",
-    "hint": "控制推文图片、视频/GIF 附件下载、缓存和发送行为。",
+    "hint": "图片和视频的画质、下载与发送限制。",
     "items": {
       "send_image_attachments": {
-        "description": "发送图片附件",
+        "description": "发送图片",
         "type": "bool",
         "default": true,
-        "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。"
+        "hint": "下载并发送推文中的图片。"
       },
       "send_video_attachments": {
-        "description": "发送视频/GIF 附件",
+        "description": "发送视频 / GIF",
         "type": "bool",
         "default": false,
-        "hint": "默认关闭。开启后会下载视频/GIF 并随消息发送；若在群内使用「/推图 用户名 [数量] 视频」显式指名视频，将针对该次请求临时特许放行。"
+        "hint": "下载并发送视频和 GIF。关闭时，仍可用「/推图 用户名 数量 视频」临时发送视频。"
       },
       "media_quality": {
         "description": "媒体画质",
@@ -125,173 +125,174 @@
           "medium",
           "low"
         ],
-        "hint": "图片和视频共用的三档画质。high：图片用原图（twimg name=orig）、视频取候选最高分辨率；medium：图片 name=large、视频取候选中位数档（偶数取偏低）；low：图片 name=small、视频取候选最低档。视频按候选实际存在的档位选取，不重编码。"
+        "hint": "high：高；medium：中；low：低。图片和视频共用，视频从已有画质中选择，不重新压缩。"
       },
       "max_video_duration_minutes": {
-        "description": "视频最长下载分钟数",
+        "description": "视频时长上限（分钟）",
         "type": "float",
         "default": 8.0,
-        "hint": "检测到视频/GIF 时会尽量读取时长；超过该分钟数则跳过下载并保留原文链接。范围 1-8 分钟，读不到时长时不会拦截，仍按大小上限处理。"
+        "hint": "范围 1–8，超出则跳过下载。无法获取时长时，仍按文件大小限制。"
       },
       "max_media_per_tweet": {
-        "description": "单条推文最大媒体数",
+        "description": "每条推文最多媒体数",
         "type": "int",
         "default": 4,
-        "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。"
+        "hint": "每条推文最多下载并发送的图片、视频数量，范围 0–12。"
       },
       "media_timeout": {
-        "description": "媒体解析/下载超时秒数",
-        "type": "float",
-        "default": 25.0
-      },
-      "media_max_size_mb": {
-        "description": "单个媒体大小上限 MB",
+        "description": "媒体处理超时（秒）",
         "type": "float",
         "default": 25.0,
-        "hint": "单个媒体体积上限。视频若选中画质超过此上限，会自动顺延降级到不超限的较低分辨率档位（如 4K 自动降为 1080p/720p 顺畅发送）；仅当博主提供的所有档位均超限时才跳过下载并保留原文链接。"
+        "hint": "媒体解析和下载的超时时间。"
+      },
+      "media_max_size_mb": {
+        "description": "单个媒体大小上限（MB）",
+        "type": "float",
+        "default": 25.0,
+        "hint": "超出则跳过下载。视频会先尝试更低画质，所有画质都超限才跳过。"
       },
       "media_transport_base64_max_mb": {
-        "description": "base64 传输单文件上限 MB",
+        "description": "Base64 传输上限（MB）",
         "type": "float",
         "default": 8.0,
-        "hint": "超过该大小的媒体不会走 base64，避免把大文件塞进单条消息造成内存和 payload 压力。默认 8MB 已把绝大多数视频排除在 base64 之外；调高即表示接受相应开销。范围 0.5-32。"
+        "hint": "仅 OneBot 使用。超过此大小的文件不使用 Base64 传输。范围 0.5–32，调大会增加内存占用。"
       }
     }
   },
   "ai_translation": {
     "description": "AI 翻译",
     "type": "object",
-    "hint": "控制推文翻译开关、服务商和提示词。",
+    "hint": "翻译开关、模型和提示词。",
     "items": {
       "translate_enabled": {
         "description": "翻译非中文推文",
         "type": "bool",
         "default": false,
-        "hint": "开启后会检测推文文本是否不像中文，并调用大模型生成简体中文译文。"
+        "hint": "使用 AI 将非中文推文翻译为简体中文。"
       },
       "translation_provider_id": {
-        "description": "翻译使用的模型",
+        "description": "翻译模型",
         "type": "string",
         "_special": "select_provider",
         "default": "",
-        "hint": "留空时，手动命令使用当前会话模型；定时推送会尝试使用第一个推送目标的默认模型。若定时翻译不可用，建议在这里指定模型。"
+        "hint": "留空时，手动查询使用当前聊天的模型，后台推送使用第一个推送目标的默认模型。"
       },
       "translate_min_chars": {
-        "description": "翻译最短文本长度",
+        "description": "翻译最少字数",
         "type": "int",
         "default": 8,
-        "hint": "清理链接和 @ 后，少于该长度的推文不会翻译，范围 0-1000。"
+        "hint": "去掉链接和 @提及后，少于此字数则不翻译。范围 0–1000。"
       },
       "translate_max_chars": {
-        "description": "单条翻译最大字符数",
+        "description": "翻译字数上限",
         "type": "int",
         "default": 2000,
-        "hint": "发送给模型的单条推文最大长度，范围 100-10000。"
+        "hint": "每条推文最多发送给模型的字符数，范围 100–10000。"
       },
       "translate_chinese_ratio_threshold": {
         "description": "中文占比阈值",
         "type": "float",
         "default": 0.2,
-        "hint": "中文字符占比低于该值时判定为非中文；日文假名、韩文会直接判定为需要翻译。范围 0-1。"
+        "hint": "中文占比低于此值时翻译，范围 0–1。含日文假名或韩文时也会翻译。"
       },
       "translate_prompt": {
         "description": "翻译提示词",
         "type": "text",
         "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
-        "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。"
+        "hint": "必须保留 {text}，发送时会替换为推文正文。"
       },
       "show_original_when_translated": {
         "description": "有译文时显示原文",
         "type": "bool",
         "default": true,
-        "hint": "全局开关。关闭后：手动与定时在存在 AI 译文时只发译文、隐藏原文（QQ/Telegram/Lark 等平台一致）。开启时：定时分组仍可用分组项「有翻译时只发译文」单独隐藏。无译文时始终显示原文。仅媒体模式不调用翻译，本项无效。"
+        "hint": "关闭后只显示译文；没有译文时仍显示原文。开启后，各分组仍可单独隐藏原文。"
       }
     }
   },
   "schedule": {
     "description": "后台检查",
     "type": "object",
-    "hint": "控制后台检查总开关、全局间隔、启动检查和无更新提示；分组里的间隔检查开关和每日检查时间只有在此处总开关开启后才会生效。",
+    "hint": "后台推送总开关和检查时间。",
     "items": {
       "schedule_enabled": {
         "description": "启用后台检查",
         "type": "bool",
         "default": false,
-        "hint": "开启后，插件才会按用户分组配置执行间隔检查或每日检查，并推送到对应分组的推送目标；关闭时分组里的间隔检查开关和每日检查时间均不会触发。"
+        "hint": "后台推送总开关。关闭后，间隔检查、每日检查和启动检查都不执行。"
       },
       "check_on_startup": {
         "description": "启动后立即检查",
         "type": "bool",
         "default": false,
-        "hint": "开启后，调度存储初始化完成即按分组顺序检查所有启用且同时配置了订阅源和有效推送目标的分组；包括仅每日定点检查或没有定时槽位的分组。首检完成后会锚定当前间隔和每日时间槽，避免同一轮重复触发。只有后台检查总开关开启时生效。"
+        "hint": "启动后检查所有已启用且配好订阅源和目标的分组。需开启后台检查。"
       },
       "check_interval_minutes": {
-        "description": "全局间隔检查分钟数",
+        "description": "检查间隔（分钟）",
         "type": "int",
         "default": 30,
-        "hint": "这里只设置间隔时间，不是间隔检查总开关；后台检查总开关开启后，启用间隔检查的用户分组都会按这个全局间隔运行，范围 1-1440。"
+        "hint": "启用间隔检查的分组共用此间隔，范围 1–1440。"
       },
       "notify_no_updates": {
-        "description": "后台检查无新推文时发送检查结果提示",
+        "description": "无更新时也发送提示",
         "type": "bool",
         "default": false,
-        "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次建立订阅源基线时也会向对应分组的推送目标发送检查摘要。"
+        "hint": "没有新推文或首次记录订阅时，也向推送目标发送检查结果。"
       }
     }
   },
   "push": {
-    "description": "推送目标与订阅分组",
+    "description": "推送设置",
     "type": "object",
-    "hint": "配置 QQ 合并阈值、发送间隔和订阅分组；订阅源和推送目标请在分组中填写。",
+    "hint": "推送分组、合并转发和发送间隔。",
     "items": {
       "send_batch_summary_enabled": {
-        "description": "发送推送统计与概括摘要",
+        "description": "发送推送统计",
         "type": "bool",
         "default": true,
-        "hint": "是否发送推送统计与概括摘要（例如“📬 默认分组 · 1 位博主 · 1 条新推文”）。默认开启；关闭后开启极简纯净模式，全链路（定时、间隔、手动命令）不再发送任何批次横幅、合并统计头节点及推文末尾的📎附件统计行，仅保留推文核心内容。"
+        "hint": "在推文外显示本批推送数量和附件统计，同时影响手动查询和后台推送。"
       },
       "merge_tweet_threshold": {
-        "description": "QQ 合并推送触发条数",
+        "description": "QQ 合并转发条数",
         "type": "int",
         "default": 2,
-        "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐订阅源发送。范围 0-20。"
+        "hint": "仅 OneBot：达到此条数时合并转发。0 表示关闭，1 表示始终合并。范围 0–20，其他平台不受影响。"
       },
       "forward_reject_plain_fallback_enabled": {
-        "description": "合并转发风控拒收时允许纯文本降级",
+        "description": "合并转发被拒收时发送链接",
         "type": "bool",
         "default": false,
-        "hint": "当 QQ/OneBot 合并转发因内容风控（如 retcode 1200 / res_id 失败，常由敏感图片触发）被平台拒收时，是否降级发送一条包含所有推文链接的纯文本消息保底。默认关闭：直接跳过发送违规推文并将其标记为已读（写入 seen 推进水位），避免敏感链接打乱群聊体验且防止下一轮反复重试；开启后则会在风控拒收时向群内发送纯文本链接兜底。"
+        "hint": "仅 QQ / OneBot。被风控拒收后，改发纯文本链接。关闭则跳过并记为已读，不再自动重试。"
       },
       "send_target_interval": {
-        "description": "多目标发送间隔秒数",
+        "description": "目标之间的发送间隔（秒）",
         "type": "float",
         "default": 1.5,
-        "hint": "同一订阅源的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。"
+        "hint": "向多个目标推送时，每个目标之间的等待时间。范围 0–60。"
       },
       "send_user_interval": {
-        "description": "多订阅源发送间隔秒数",
+        "description": "订阅源之间的发送间隔（秒）",
         "type": "float",
         "default": 2.0,
-        "hint": "多个订阅源都有新推文时，订阅源之间的等待时间，范围 0-60。"
+        "hint": "处理多个订阅源时的等待时间。范围 0–60，也用于标签和 List 的逐源抓取。"
       },
       "manual_send_interval": {
-        "description": "手动命令逐条发送间隔秒数",
+        "description": "手动查询发送间隔（秒）",
         "type": "float",
         "default": 0.0,
-        "hint": "手动 /推文、/推文搜索、/镜像测试 在非合并转发时，每条推文消息之间的等待秒数。0 表示不间隔。在平台适配前 sleep，对 QQ/Telegram/Lark/微信 OC 等均生效。合并转发整包发送时不使用本项。范围 0-60。"
+        "hint": "手动查询逐条发送时的间隔，0 表示不等待。范围 0–60，合并转发时不使用。"
       },
       "target_blocked_users": {
-        "description": "推送目标作者黑名单",
+        "description": "目标作者黑名单",
         "type": "list",
         "default": [],
-        "hint": "按完整 UMO 记录不希望发送到该目标的作者用户名；建议通过插件命令或 Dashboard 维护。该配置跨所有分组共享。",
+        "hint": "通过命令或 Pages 管理。同一推送目标的黑名单在所有分组间共用。",
         "invisible": true
       },
       "tweet_groups": {
         "description": "推送分组",
         "type": "template_list",
         "default": [],
-        "hint": "添加时选择「博主分组」「标签分组」或「列表分组」。三类分组分别填写关注账号、搜索订阅或公开 List ID。共用推送目标与检查/过滤；group_id 自动生成。",
+        "hint": "按博主、标签或 List 添加分组，填写订阅源和推送目标。首次检查只记录当前推文，不推送历史。",
         "templates": {
           "blogger": {
             "name": "博主分组",
@@ -302,7 +303,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 科技、新闻、NASA。"
+                "hint": "可在「/推文检查 分组名」中使用。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -324,60 +325,64 @@
                 "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_users": {
-                "description": "关注账号",
+                "description": "博主用户名",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个账号，支持 NASA、@NASA、https://x.com/NASA。首次启用某个账号只记录当前最新推文，不推送历史内容。"
+                "hint": "每行一个用户名，如 NASA。不用填写昵称或主页链接。"
               },
               "push_targets": {
-                "description": "分组推送目标",
+                "description": "推送目标",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+                "hint": "在目标聊天发送 /sid，复制返回的完整值，每行一个。"
               },
               "interval_check_enabled": {
                 "description": "启用间隔检查",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+                "hint": "按全局检查间隔运行，需开启后台检查。"
               },
               "daily_check_times": {
-                "description": "每日检查时间列表",
+                "description": "每日检查时间",
                 "type": "list",
                 "default": [],
-                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+                "hint": "每行一个时间，如 08:00。留空则不使用每日检查，需开启后台检查。"
               },
               "filter_reposts_enabled": {
                 "description": "过滤转发",
                 "type": "bool",
                 "default": true,
-                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该博主转发他人的推文；博主自己发布的引用或评论推文仍会保留。旧分组缺少本项时按开启处理。"
+                "hint": "需同时开启全局「转发过滤总开关」。带评论的引用推文仍保留。"
               },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "只推送包含图片/视频的推文，跳过纯文字推文。引用推文中的媒体不计入原创媒体。"
+                "hint": "跳过没有图片或视频的推文。引用推文中的媒体不计入。"
               },
               "media_only_enabled": {
-                "description": "仅媒体",
-                "type": "bool",
-                "default": false,
-                "hint": "只发送媒体图片/视频，不发送正文文本与翻译。"
+                "description": "推送内容",
+                "type": "string",
+                "default": "完整推文",
+                "options": [
+                  "完整推文",
+                  "仅媒体（保留作者）",
+                  "仅媒体（不含文字）"
+                ],
+                "hint": "两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效，节点昵称和时间由客户端显示。"
               },
               "omit_status_url": {
-                "description": "发送时去除推文链接",
+                "description": "去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文/译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "不附带推文链接，并去掉正文和译文中的网址。Telegram 作者头部仍可能链接到原帖。"
               },
-                    "hide_original_when_translated": {
-                        "description": "有翻译时只发译文（隐藏原文）",
-                        "type": "bool",
-                        "default": false,
-                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
-                    },
-
+              "hide_original_when_translated": {
+                "description": "有译文时隐藏原文",
+                "type": "bool",
+                "default": false,
+                "hint": "有译文时只发译文，没有译文时仍发原文。需开启 AI 翻译。"
+              },
               "aliases": {
                 "description": "分组别名",
                 "type": "list",
@@ -422,10 +427,10 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "单次检查最多推送推文数",
+                "description": "每个订阅源每次最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息；Tag/List 扫描未完整时，0 跳过推送并重建基准，正数按上限推送后重建。"
+                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
               }
             }
           },
@@ -438,7 +443,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示。"
+                "hint": "可在「/推文检查 分组名」中使用。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -461,60 +466,64 @@
                 "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_queries": {
-                "description": "搜索订阅",
+                "description": "标签或关键词",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个纯字符串：#标签 或短语。前导 # 为标签搜索，否则为短语（不会自动加 #）。不要填对象，否则 WebUI 会显示 [object Object]。也可用插件 Dashboard 管理。定时每查询约拉一页最多 20 条，按全局与分组双层开关过滤转发，再与已 seen 做差集。"
+                "hint": "每行一项。#开头按标签搜索，其他内容按关键词搜索。"
               },
               "push_targets": {
-                "description": "分组推送目标",
+                "description": "推送目标",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+                "hint": "在目标聊天发送 /sid，复制返回的完整值，每行一个。"
               },
               "interval_check_enabled": {
                 "description": "启用间隔检查",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+                "hint": "按全局检查间隔运行，需开启后台检查。"
               },
               "daily_check_times": {
-                "description": "每日检查时间列表",
+                "description": "每日检查时间",
                 "type": "list",
                 "default": [],
-                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+                "hint": "每行一个时间，如 08:00。留空则不使用每日检查，需开启后台检查。"
               },
               "filter_reposts_enabled": {
                 "description": "过滤转发",
                 "type": "bool",
                 "default": true,
-                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该搜索订阅中的纯转推。旧分组缺少本项时按开启处理。"
+                "hint": "需同时开启全局「转发过滤总开关」。带评论的引用推文仍保留。"
               },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "只推送包含图片/视频的推文，跳过纯文字推文。引用推文中的媒体不计入原创媒体。"
+                "hint": "跳过没有图片或视频的推文。引用推文中的媒体不计入。"
               },
               "media_only_enabled": {
-                "description": "仅媒体",
-                "type": "bool",
-                "default": false,
-                "hint": "只发送媒体图片/视频，不发送正文文本与翻译。"
+                "description": "推送内容",
+                "type": "string",
+                "default": "完整推文",
+                "options": [
+                  "完整推文",
+                  "仅媒体（保留作者）",
+                  "仅媒体（不含文字）"
+                ],
+                "hint": "两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效，节点昵称和时间由客户端显示。"
               },
               "omit_status_url": {
-                "description": "发送时去除推文链接",
+                "description": "去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文/译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理；Telegram 仍可用摘要文字链到原文（见发送实现）。默认开启。仅媒体模式本来就不附正文链接。"
+                "hint": "不附带推文链接，并去掉正文和译文中的网址。Telegram 作者头部仍可能链接到原帖。"
               },
-                    "hide_original_when_translated": {
-                        "description": "有翻译时只发译文（隐藏原文）",
-                        "type": "bool",
-                        "default": false,
-                        "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）。开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
-                    },
-
+              "hide_original_when_translated": {
+                "description": "有译文时隐藏原文",
+                "type": "bool",
+                "default": false,
+                "hint": "有译文时只发译文，没有译文时仍发原文。需开启 AI 翻译。"
+              },
               "aliases": {
                 "description": "分组别名",
                 "type": "list",
@@ -559,10 +568,10 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "单次检查最多推送推文数",
+                "description": "每个订阅源每次最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。适用于爆发式更新场景，避免一次推送过多消息；Tag/List 扫描未完整时，0 跳过推送并重建基准，正数按上限推送后重建。"
+                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
               }
             }
           },
@@ -575,7 +584,7 @@
                 "description": "分组名称",
                 "type": "string",
                 "default": "",
-                "hint": "用于 /推文检查 分组名 和 /推文状态 展示，例如 我关注的人、科技圈。"
+                "hint": "可在「/推文检查 分组名」中使用。"
               },
               "group_id": {
                 "description": "内部稳定分组 ID",
@@ -597,58 +606,63 @@
                 "hint": "由添加模板写入：blogger、tag 或 list。请勿手改。"
               },
               "watch_lists": {
-                "description": "Twitter List 订阅",
+                "description": "Twitter List ID",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个正 uint64 List ID（1 至 18446744073709551615，如 1553232306718257152）。从 https://x.com/i/lists/{id} 获取；必须为 Public List。刚创建不久的 List 往往要过一段时间才会被 Nitter 镜像收录/搜到，空结果时先等再查，不必立刻当配置错误。首次启用只记录基线，不推送历史。List 聚合多人推文，建议设置 max_tweets_per_check 防刷屏。"
+                "hint": "每行一个公开 List 的数字 ID，取自 x.com/i/lists/ 后面的数字。新建 List 可能暂时查不到，建议设置每次推送条数，避免刷屏。"
               },
               "push_targets": {
-                "description": "分组推送目标",
+                "description": "推送目标",
                 "type": "list",
                 "default": [],
-                "hint": "每行一个 UMO。在目标群聊或私聊发送 /sid 后复制返回值，例如 aiocqhttp:GroupMessage:123456、lark:GroupMessage:oc_xxx。"
+                "hint": "在目标聊天发送 /sid，复制返回的完整值，每行一个。"
               },
               "interval_check_enabled": {
                 "description": "启用间隔检查",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后，且后台检查总开关开启时，该分组按全局间隔检查分钟数运行。"
+                "hint": "按全局检查间隔运行，需开启后台检查。"
               },
               "daily_check_times": {
-                "description": "每日检查时间列表",
+                "description": "每日检查时间",
                 "type": "list",
                 "default": [],
-                "hint": "格式 HH:MM，每行一个；后台检查总开关开启后才会触发；留空表示该分组不使用每日定点检查。"
+                "hint": "每行一个时间，如 08:00。留空则不使用每日检查，需开启后台检查。"
               },
               "filter_reposts_enabled": {
                 "description": "过滤转发",
                 "type": "bool",
                 "default": true,
-                "hint": "分组子开关。只有全局“转发过滤总开关”和本项都开启时，才过滤该 List 时间线中的转发。旧分组缺少本项时按开启处理。"
+                "hint": "需同时开启全局「转发过滤总开关」。带评论的引用推文仍保留。"
               },
               "filter_plain_text_enabled": {
                 "description": "过滤纯文本推文",
                 "type": "bool",
                 "default": false,
-                "hint": "只推送包含图片/视频的推文，跳过纯文字推文。引用推文中的媒体不计入原创媒体。"
+                "hint": "跳过没有图片或视频的推文。引用推文中的媒体不计入。"
               },
               "media_only_enabled": {
-                "description": "仅媒体",
-                "type": "bool",
-                "default": false,
-                "hint": "只发送媒体图片/视频，不发送正文文本与翻译。"
+                "description": "推送内容",
+                "type": "string",
+                "default": "完整推文",
+                "options": [
+                  "完整推文",
+                  "仅媒体（保留作者）",
+                  "仅媒体（不含文字）"
+                ],
+                "hint": "两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效，节点昵称和时间由客户端显示。"
               },
               "omit_status_url": {
-                "description": "发送时去除推文链接",
+                "description": "去除推文链接",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后该分组定时推送不附带推文 URL 明文，正文与译文中的 http(s) 链接也会去掉，降低部分平台风控。关闭时普通正文和译文中的外部链接会保留，但当前 Nitter 来源实例改写出的同站镜像链接仍会清理。默认开启。"
+                "hint": "不附带推文链接，并去掉正文和译文中的网址。Telegram 作者头部仍可能链接到原帖。"
               },
               "hide_original_when_translated": {
-                "description": "有翻译时只发译文（隐藏原文）",
+                "description": "有译文时隐藏原文",
                 "type": "bool",
                 "default": false,
-                "hint": "需开启全局 AI 翻译。全局「有译文时显示原文」关闭时本项无效（已隐藏）；开启全局显示时，分组可再单独隐藏。仅媒体模式不调用翻译；无译文时仍显示原文。"
+                "hint": "有译文时只发译文，没有译文时仍发原文。需开启 AI 翻译。"
               },
               "aliases": {
                 "description": "分组别名",
@@ -694,58 +708,14 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "单次检查最多推送推文数",
+                "description": "每个订阅源每次最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "单个订阅源单次检查最多推送的推文条数，0 表示不限制。List 聚合多人推文，强烈建议设置（如 10），避免一次推送过多消息刷屏；扫描未完整时按该上限处理并自动重建基准。"
+                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
               }
             }
           }
         }
-      }
-    }
-  },
-  "logging": {
-    "description": "日志设置",
-    "type": "object",
-    "hint": "控制插件写入 AstrBot 后台日志的详细程度；不影响群聊/私聊中的推送内容和命令返回。",
-    "items": {
-      "brief_log_enabled": {
-        "description": "后台日志简略模式",
-        "type": "bool",
-        "default": true,
-        "hint": "开启后只保留结构化任务摘要（分组、类型、来源、生效实例、轮换轨迹、抓取/水位状态、过滤统计、实际发送比、无效目标、基准重建、耗时）以及失败详情和关键 warning/error；发送未完成、无效目标、基准重建或媒体待重试会使用 warning 级别。同时收敛 HTML 请求过程日志（session load、每次 try、冷却跳过等）。关闭后输出详细处理过程日志。老配置缺少该项时按开启处理。"
-      }
-    }
-  },
-  "performance": {
-    "description": "并发与限流",
-    "type": "object",
-    "hint": "控制后台检查的并发抓取和并发准备。默认关闭；建议只在自建 Nitter 镜像和模型额度充足时开启。",
-    "items": {
-      "concurrent_fetch_enabled": {
-        "description": "启用后台并发拉取",
-        "type": "bool",
-        "default": false,
-        "hint": "开启且并发数大于 1 时，后台检查会使用基础设置中的 instances 并发拉取多个账号。手动 /推文、/镜像测试 不受影响。"
-      },
-      "fetch_concurrency": {
-        "description": "账号拉取并发数",
-        "type": "int",
-        "default": 3,
-        "hint": "后台检查同时拉取多少个账号 RSS，范围 1-8。请按自建 Nitter 的资源和限流策略调整。"
-      },
-      "concurrent_prepare_enabled": {
-        "description": "启用媒体和模型并发准备",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后，不同推文或账号批次可以并发准备；每条推文内部仍先翻译、后下载媒体，发送仍按关注账号和推文顺序执行。"
-      },
-      "prepare_concurrency": {
-        "description": "推文准备并发数",
-        "type": "int",
-        "default": 2,
-        "hint": "后台检查同时准备多少条推文或账号批次，范围 1-8。数值越大，对 xdown、模型 provider 和本机网络压力越高。"
       }
     }
   },
@@ -806,149 +776,151 @@
     "invisible": true
   },
   "instances": {
-    "description": "自建 Nitter 实例列表",
+    "description": "自建 Nitter 地址",
     "type": "list",
     "default": [],
-    "hint": "兼容旧扁平配置；与 basic.instances 相同。实例同时用于 RSS、HTML 搜索和 List。公共实例已停止维护，请填写自建地址。",
+    "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。",
     "invisible": true
   },
   "default_limit": {
     "description": "手动查询默认条数",
     "type": "int",
     "default": 5,
-    "hint": "用于 /推文 用户名 和 /镜像测试 [用户名] 镜像站URL 未填写数量时的默认获取条数；用户填写数量时不会被此项截断。为避免刷屏和实例压力，建议日常不要一次请求过多。",
+    "hint": "/推文 和 /镜像测试 未填写数量时使用。",
     "invisible": true
   },
   "request_timeout": {
-    "description": "单个 Nitter 实例超时秒数",
+    "description": "Nitter 请求超时（秒）",
     "type": "float",
     "default": 12.0,
-    "hint": "单次 RSS 请求等待该实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。",
+    "hint": "每次等待单个实例响应的最长时间。",
     "invisible": true
   },
   "cooldown_seconds": {
-    "description": "用户请求冷却秒数",
+    "description": "命令冷却时间（秒）",
     "type": "float",
     "default": 15.0,
-    "hint": "同一会话同一用户的命令冷却，降低实例压力。设为 0 可关闭。",
+    "hint": "同一聊天中，同一用户两次请求的最短间隔。0 表示关闭。",
     "invisible": true
   },
   "send_image_attachments": {
-    "description": "发送图片附件",
+    "description": "发送图片",
     "type": "bool",
     "default": true,
-    "hint": "开启后会解析推文图片，下载到本地缓存后随消息发送；QQ/OneBot 会把图片拆成独立图片消息或合并转发节点，其他平台保持图文同消息。关闭后只保留正文和原帖链接。",
+    "hint": "下载并发送推文中的图片。",
     "invisible": true
   },
   "send_video_attachments": {
-    "description": "发送视频/GIF 附件",
+    "description": "发送视频 / GIF",
     "type": "bool",
     "default": false,
-    "hint": "默认关闭。开启后会下载视频/GIF 并随消息发送，可能受平台大小、格式、上传与本地文件权限限制；关闭时跳过视频下载。检测到视频/GIF 时会忽略图片附件（含封面）。",
+    "hint": "下载并发送视频和 GIF。关闭时，仍可用「/推图 用户名 数量 视频」临时发送视频。",
     "invisible": true
   },
   "media_quality": {
     "description": "媒体画质",
     "type": "string",
     "default": "high",
-    "hint": "图片和视频共用的三档画质。high：图片用原图（twimg name=orig）、视频取候选最高分辨率；medium：图片 name=large、视频取候选中位数档（偶数取偏低）；low：图片 name=small、视频取候选最低档。视频按候选实际存在的档位选取，不重编码。",
+    "hint": "high：高；medium：中；low：低。图片和视频共用，视频从已有画质中选择，不重新压缩。",
     "invisible": true
   },
   "max_video_duration_minutes": {
-    "description": "视频最长下载分钟数",
+    "description": "视频时长上限（分钟）",
     "type": "float",
     "default": 8.0,
-    "hint": "检测到视频/GIF 时会尽量读取时长；超过该分钟数则跳过下载并保留原文链接。范围 1-8 分钟，读不到时长时不会拦截，仍按大小上限处理。",
+    "hint": "范围 1–8，超出则跳过下载。无法获取时长时，仍按文件大小限制。",
     "invisible": true
   },
   "max_media_per_tweet": {
-    "description": "单条推文最大媒体数",
+    "description": "每条推文最多媒体数",
     "type": "int",
     "default": 4,
-    "hint": "限制每条推文最多下载并发送多少个媒体，范围 0-12。",
+    "hint": "每条推文最多下载并发送的图片、视频数量，范围 0–12。",
     "invisible": true
   },
   "media_timeout": {
-    "description": "媒体解析/下载超时秒数",
+    "description": "媒体处理超时（秒）",
     "type": "float",
     "default": 25.0,
-    "invisible": true
+    "invisible": true,
+    "hint": "媒体解析和下载的超时时间。"
   },
   "media_max_size_mb": {
-    "description": "单个媒体大小上限 MB",
+    "description": "单个媒体大小上限（MB）",
     "type": "float",
     "default": 25.0,
-    "hint": "超过上限的媒体会跳过，避免大文件拖慢机器人。",
+    "hint": "超出则跳过下载。视频会先尝试更低画质，所有画质都超限才跳过。",
     "invisible": true
   },
   "translate_enabled": {
     "description": "翻译非中文推文",
     "type": "bool",
     "default": false,
-    "hint": "开启后会检测推文文本是否不像中文，并调用大模型生成简体中文译文。",
+    "hint": "使用 AI 将非中文推文翻译为简体中文。",
     "invisible": true
   },
   "translation_provider_id": {
-    "description": "翻译使用的模型",
+    "description": "翻译模型",
     "type": "string",
     "_special": "select_provider",
     "default": "",
-    "hint": "留空时，手动命令使用当前会话模型；定时推送会尝试使用第一个推送目标的默认模型。若定时翻译不可用，建议在这里指定模型。",
+    "hint": "留空时，手动查询使用当前聊天的模型，后台推送使用第一个推送目标的默认模型。",
     "invisible": true
   },
   "translate_min_chars": {
-    "description": "翻译最短文本长度",
+    "description": "翻译最少字数",
     "type": "int",
     "default": 8,
-    "hint": "清理链接和 @ 后，少于该长度的推文不会翻译，范围 0-1000。",
+    "hint": "去掉链接和 @提及后，少于此字数则不翻译。范围 0–1000。",
     "invisible": true
   },
   "translate_max_chars": {
-    "description": "单条翻译最大字符数",
+    "description": "翻译字数上限",
     "type": "int",
     "default": 2000,
-    "hint": "发送给模型的单条推文最大长度，范围 100-10000。",
+    "hint": "每条推文最多发送给模型的字符数，范围 100–10000。",
     "invisible": true
   },
   "translate_chinese_ratio_threshold": {
     "description": "中文占比阈值",
     "type": "float",
     "default": 0.2,
-    "hint": "中文字符占比低于该值时判定为非中文；日文假名、韩文会直接判定为需要翻译。范围 0-1。",
+    "hint": "中文占比低于此值时翻译，范围 0–1。含日文假名或韩文时也会翻译。",
     "invisible": true
   },
   "translate_prompt": {
     "description": "翻译提示词",
     "type": "text",
     "default": "你是专业翻译助手。请把下面这条推文翻译成自然简体中文。保留人名、账号、标签和原有换行；不要添加解释，不要输出原文。\n\n{text}",
-    "hint": "必须包含 {text}，插件会把去除 URL 后的推文正文替换进去；链接仍保留在原文区。",
+    "hint": "必须保留 {text}，发送时会替换为推文正文。",
     "invisible": true
   },
   "show_original_when_translated": {
     "description": "有译文时显示原文",
     "type": "bool",
     "default": true,
-    "invisible": true
+    "invisible": true,
+    "hint": "关闭后只显示译文；没有译文时仍显示原文。开启后，各分组仍可单独隐藏原文。"
   },
   "schedule_enabled": {
-    "description": "启用定时检查",
+    "description": "启用后台检查",
     "type": "bool",
     "default": false,
-    "hint": "开启后会按订阅分组配置检查博主、搜索订阅或 List，并推送到对应分组的推送目标。",
+    "hint": "后台推送总开关。关闭后，间隔检查、每日检查和启动检查都不执行。",
     "invisible": true
   },
   "notify_no_updates": {
-    "description": "定时检查无新推文时发送检查结果提示",
+    "description": "无更新时也发送提示",
     "type": "bool",
     "default": false,
-    "hint": "关闭时只有发现新推文或失败时写日志；开启后，本次无更新或首次建立订阅源基线时也会向对应分组的推送目标发送检查摘要。",
+    "hint": "没有新推文或首次记录订阅时，也向推送目标发送检查结果。",
     "invisible": true
   },
   "check_on_startup": {
     "description": "启动后立即检查",
     "type": "bool",
     "default": false,
-    "hint": "开启后，调度存储初始化完成即按分组顺序检查所有启用且同时配置订阅源和有效推送目标的分组，并在首检后锚定当前调度槽位，避免同一轮重复触发。",
+    "hint": "启动后检查所有已启用且配好订阅源和目标的分组。需开启后台检查。",
     "invisible": true
   },
   "interval_check_enabled": {
@@ -959,10 +931,10 @@
     "invisible": true
   },
   "check_interval_minutes": {
-    "description": "间隔检查分钟数",
+    "description": "检查间隔（分钟）",
     "type": "int",
     "default": 30,
-    "hint": "范围 1-1440。",
+    "hint": "启用间隔检查的分组共用此间隔，范围 1–1440。",
     "invisible": true
   },
   "daily_check_enabled": {
@@ -981,60 +953,33 @@
     "hint": "格式 HH:MM，每行一个。",
     "invisible": true
   },
-  "concurrent_fetch_enabled": {
-    "description": "启用后台并发拉取",
-    "type": "bool",
-    "default": false,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "fetch_concurrency": {
-    "description": "账号拉取并发数",
-    "type": "int",
-    "default": 3,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "concurrent_prepare_enabled": {
-    "description": "启用媒体和模型并发准备",
-    "type": "bool",
-    "default": false,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
-  "prepare_concurrency": {
-    "description": "推文准备并发数",
-    "type": "int",
-    "default": 2,
-    "hint": "旧版兼容字段。新配置请在并发与限流中维护。",
-    "invisible": true
-  },
   "merge_tweet_threshold": {
-    "description": "QQ 合并推送触发条数",
+    "description": "QQ 合并转发条数",
     "type": "int",
     "default": 2,
-    "hint": "QQ/aiocqhttp 目标在本次发送的新推文总数达到该值时启用 OneBot v11 Node/Nodes 合并转发；0 表示关闭，1 表示有新推文就合并，默认 2 表示 2 条及以上才合并。飞书/Lark、Telegram、微信 OC 和其他平台不受该阈值影响，始终使用普通逐订阅源发送。范围 0-20。",
+    "hint": "仅 OneBot：达到此条数时合并转发。0 表示关闭，1 表示始终合并。范围 0–20，其他平台不受影响。",
     "invisible": true
   },
   "send_target_interval": {
-    "description": "多目标发送间隔秒数",
+    "description": "目标之间的发送间隔（秒）",
     "type": "float",
     "default": 1.5,
-    "hint": "同一订阅源的新推文发送到多个目标时，目标之间的等待时间，范围 0-60。",
+    "hint": "向多个目标推送时，每个目标之间的等待时间。范围 0–60。",
     "invisible": true
   },
   "send_user_interval": {
-    "description": "多订阅源发送间隔秒数",
+    "description": "订阅源之间的发送间隔（秒）",
     "type": "float",
     "default": 2.0,
-    "hint": "多个订阅源都有新推文时，订阅源之间的等待时间，范围 0-60。",
+    "hint": "处理多个订阅源时的等待时间。范围 0–60，也用于标签和 List 的逐源抓取。",
     "invisible": true
   },
   "manual_send_interval": {
-    "description": "手动命令逐条发送间隔秒数",
+    "description": "手动查询发送间隔（秒）",
     "type": "float",
     "default": 0.0,
-    "invisible": true
+    "invisible": true,
+    "hint": "手动查询逐条发送时的间隔，0 表示不等待。范围 0–60，合并转发时不使用。"
   },
   "watch_users": {
     "description": "旧版关注账号列表",
@@ -1051,17 +996,17 @@
     "invisible": true
   },
   "target_blocked_users": {
-    "description": "推送目标作者黑名单",
+    "description": "目标作者黑名单",
     "type": "list",
     "default": [],
-    "hint": "旧版兼容字段；新配置请在推送设置中通过命令或 Dashboard 维护。",
+    "hint": "通过命令或 Pages 管理。同一推送目标的黑名单在所有分组间共用。",
     "invisible": true
   },
   "tweet_groups": {
-    "description": "旧版用户分组",
+    "description": "推送分组",
     "type": "list",
     "default": [],
-    "hint": "Legacy compatibility field; hidden in UI and migrated into push.tweet_groups on first startup.",
+    "hint": "按博主、标签或 List 添加分组，填写订阅源和推送目标。首次检查只记录当前推文，不推送历史。",
     "invisible": true
   }
 }

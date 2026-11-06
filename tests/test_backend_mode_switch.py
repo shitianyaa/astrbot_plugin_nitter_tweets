@@ -87,13 +87,44 @@ def _blogger_group(users: list[str], filter_reposts: bool = True):
                 "group_type": "blogger",
                 "watch_users": users,
                 "filter_reposts_enabled": filter_reposts,
-                "concurrent_fetch_enabled": False,
                 "send_user_interval": 0.0,
             }
         ]
     }
     reader = SchedulerConfigReader(config, context=None)
     return reader.schedule_groups()[0]
+
+
+@pytest.mark.asyncio
+async def test_fx_fetch_keeps_fixed_three_request_limit():
+    import threading
+    import time
+
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def fetch(username, **kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.03)
+            return [_make_tweet(username, "100")], None
+        finally:
+            with lock:
+                active -= 1
+
+    fx = MagicMock()
+    fx.fetch_user_timeline.side_effect = fetch
+    nitter = MagicMock()
+    users = [f"author{i}" for i in range(8)]
+    runner = DummyRunner({"fetch_backend": "fx", "fetch_concurrency": 8}, nitter, fx)
+    results = await runner._fetch_group_users(_blogger_group(users), 20, False, {})
+    assert 1 < peak <= 3
+    assert [result.username for result in results] == users
+    assert fx.fetch_user_timeline.call_count == len(users)
 
 
 def _tag_group(queries: list[str]):
@@ -694,7 +725,6 @@ async def test_single_blogger_fetch_user_mix_fallback():
         10,
         skip_plain_text=False,
         scan_watermark=None,
-        concurrent=False,
     )
 
     mock_fx.fetch_user_timeline.assert_called_once()

@@ -164,7 +164,9 @@ def split_lark_text(text: str) -> list[str]:
     return [chunk for chunk in chunks if chunk]
 
 
-def _lark_post_title(title: str) -> str:
+def _lark_post_title(title: str | None) -> str:
+    if title is None:
+        return ""
     title = (title or "Nitter 推文").strip()
     return title[:120]
 
@@ -234,7 +236,7 @@ async def _upload_lark_image(client, image_path: Path, label: str) -> str:
 
 async def send_lark_post(
     client,
-    title: str,
+    title: str | None,
     components: list,
     label: str,
     *,

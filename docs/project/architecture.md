@@ -96,7 +96,7 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 5. 下载到普通缓存
 6. 普通媒体发送后清理
 
-定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。`transient_failure` 与 `no_candidate` 不写 seen 且不推进扫描基准，下轮重试；`policy_skipped` 允许基准推进。手动命令和历史重推始终使用完整内容。
+定时分组可开启 `media_only_enabled`：RSS 先过滤没有当前作者媒体的推文，媒体准备结果区分 `ready`、`transient_failure`、`policy_skipped` 和 `no_candidate`。`transient_failure` 与 `no_candidate` 清理本轮媒体缓存，不写 seen 且不推进扫描基准，下轮重试；`policy_skipped` 写 seen 并允许基准推进。两种仅媒体模式使用相同重试规则。手动命令和历史重推始终使用完整内容。
 
 升级到发送后删除策略时会自动执行一次普通缓存清理。
 
@@ -122,5 +122,7 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 - `rendering/`: 推文文本、平台安全 Markdown、MessageChain、OneBot raw nodes 渲染。
 - `config/`: 配置读取、分组迁移和旧字段兼容。
 - `shared/`: 推文数据模型、group id 和通用工具。
-- `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数。
+- `shared/observability.py`: 脱敏日志字段、结构化任务摘要和安全日志辅助函数；现成多行块通过 `safe_block_log` 输出，原始异常堆栈不进入诊断环。
+- `shared/log_buffer.py`: 主环与 DEBUG 过程独立的有界内存缓冲，各保留 200 条；通过 `web/logs` 按档位与全局 seq 增量读取，重载即清。
+- `media_support/html_backend/logging_util.py`: HTML 重要诊断与 DEBUG 过程分流，单字符串回调兼容，始终抑制 session load。
 - `shared/arbiter.py`: 被动链接跨 Bot 表情仲裁（EmojiLikeArbiter 协议，表情 289 占坑 / 124 胜出确认）。

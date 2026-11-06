@@ -1324,6 +1324,16 @@ input[type="number"] { -moz-appearance: textfield; }
   font-weight: 500;
   color: var(--text-muted);
 }
+.terminal-levels { display: flex; gap: 3px; margin-inline: 8px; flex: none; }
+.terminal-level-btn { padding: 4px 7px; min-height: 28px; font-size: 11px; }
+.terminal-level-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-invert); border-color: var(--accent); }
+.terminal-level-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .mirror-terminal .mac-terminal-bar { flex-wrap: wrap; gap: 6px; }
+  .mirror-terminal .mac-dots { width: auto; }
+  .mirror-terminal .mac-terminal-title { min-width: 140px; text-align: start; }
+  .mirror-terminal .terminal-levels { order: 4; width: 100%; margin: 0; }
+}
 .mac-terminal-status {
   width: 72px;
   display: flex;

@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = "astrbot_plugin_nitter_tweets"
@@ -317,14 +318,16 @@ def _verify_asset(remote: GitHub, release: dict, archive: Path, workdir: Path) -
     if len(assets) != 1:
         raise ValueError("Release attachment is missing or ambiguous")
     workdir.mkdir(parents=True, exist_ok=True)
-    downloaded = remote.download_asset(
-        release["tag_name"], archive.name, workdir / f"remote-{archive.name}"
-    )
-    if (
-        hashlib.sha256(downloaded.read_bytes()).digest()
-        != hashlib.sha256(archive.read_bytes()).digest()
-    ):
-        raise ValueError("Release attachment differs; refusing to overwrite")
+    # Each verification must fetch fresh bytes without overwriting a prior download.
+    with TemporaryDirectory(prefix="verify-", dir=workdir) as download_dir:
+        downloaded = remote.download_asset(
+            release["tag_name"], archive.name, Path(download_dir) / archive.name
+        )
+        if (
+            hashlib.sha256(downloaded.read_bytes()).digest()
+            != hashlib.sha256(archive.read_bytes()).digest()
+        ):
+            raise ValueError("Release attachment differs; refusing to overwrite")
 
 
 def _verify_release(

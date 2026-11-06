@@ -81,7 +81,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 内容被目标平台拒收（`Timeout: NTEvent ... sendMsg` 无回执、`res_id` 拒绝）标记 `SendAttempt.rejected`：传输梯度和组件级重试据此停手，因为重发同样的字节结果不变。**`retryable` 必须保持 `True`**——`sender_forward` / `sender_merged` 里的 `if not attempt.retryable: return` 同时把守着有损降级链，压低它会让去视频、拆分、降级直发和纯文本兜底一起被跳过，而那些换的是内容不是字节。该判定排在「不确定送达」之前——拒收错误文本含 `timeout` 字样，顺序反了会被误判成可能已送达而跳过降级。
 - 图片全部发送失败且非「仅媒体」时补发一条提示，链接是否附带遵循 `omit_status_url`；下载失败则写进正文，两侧措辞不同以便区分。
 - 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
-- `media_only_enabled` 有效时每个推文节点只保留作者和图片附件；视频附件节点不重复输出正文或链接，失败降级也不能泄漏完整内容。
+- `media_only_enabled` 有效时，保留作者模式的推文节点包含作者和图片，不含文字模式只包含媒体。视频仍使用独立节点，失败降级不能带回正文、译文或链接；QQ 客户端仍可能显示节点昵称和时间。
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
@@ -136,7 +136,7 @@ sender._should_use_merge_for_count(tweet_count)
 - post 可同框发送正文和本地图片。
 - post 失败时降级为文本和普通媒体附件。
 - 视频走普通媒体发送或按默认降级。
-- 仅媒体模式的 post 标题只保留作者，图片随 post 发送，视频继续走独立媒体路径。
+- 保留作者的仅媒体模式使用作者作为 post 标题，不含文字模式不设置标题。图片随 post 发送，视频继续走独立媒体路径。
 - 客户端解析在 `delivery/lark_support.py`，不要在业务层直接猜 client 字段。
 
 测试入口：
@@ -161,7 +161,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 不使用 OneBot 合并转发。
 - 媒体是否成功取决于 AstrBot 平台适配器能力。
 - 发送失败时回退到纯文本内容。
-- 仅媒体模式的纯文本回退只允许作者标记，不允许正文、翻译或原帖链接。
+- 保留作者的仅媒体模式，纯文本回退只允许作者标记；不含文字模式不发送纯文本回退。两者均不允许带回正文、译文或原帖链接。
 
 ## 渲染边界
 

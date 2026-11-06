@@ -24,6 +24,7 @@ try:
         load_instances,
         normalize_external_links,
         redact_instance_urls,
+        safe_block_log,
     )
 except ImportError:
     from config import config_get, parse_config_bool
@@ -35,6 +36,7 @@ except ImportError:
         load_instances,
         normalize_external_links,
         redact_instance_urls,
+        safe_block_log,
     )
 
 try:
@@ -262,9 +264,6 @@ class NitterClient:
         )
         self.filter_reposts_enabled = parse_config_bool(
             config_get(config, "filter_reposts_enabled", True), True
-        )
-        self.brief_log_enabled = parse_config_bool(
-            config_get(config, "brief_log_enabled", True), True
         )
         # In-memory instance scores; NitterService shares this book with HTML.
         self.host_scores = HostScoreBook()
@@ -1144,12 +1143,12 @@ class NitterClient:
                 last_error = exc
                 if attempt >= attempts:
                     break
-                if not self.brief_log_enabled:
-                    logger.warning(
-                        "[NitterTweets] RSS 抓取失败，准备重试: "
-                        f"username={username}, "
-                        f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}"
-                    )
+                safe_block_log(
+                    "debug",
+                    "[NitterTweets] RSS 抓取失败，准备重试: "
+                    f"username={username}, "
+                    f"attempt={attempt}/{attempts}, delay={delay:g}s, error={exc}",
+                )
                 if delay > 0:
                     time.sleep(delay)
 

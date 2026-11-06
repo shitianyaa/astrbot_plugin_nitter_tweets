@@ -28,6 +28,87 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
 
 
+def test_media_content_modes_preserve_legacy_values_and_survive_repeat_migration():
+    modes = compat.MEDIA_ONLY_MODES
+    for old, expected in (
+        (False, modes[0]),
+        (True, modes[1]),
+        (modes[2], modes[2]),
+        (f" \t{modes[1]}\n", modes[1]),
+        (f" \t{modes[2]}\n", modes[2]),
+    ):
+        config = {
+            "tweet_groups": [{"group_id": "media", "media_only_enabled": old}],
+            LEGACY_CONFIG_MIGRATION_KEY: True,
+        }
+        migrate_legacy_grouped_config(config)
+        assert config["tweet_groups"][0]["media_only_enabled"] == expected
+        assert migrate_legacy_grouped_config(config) is False
+        group = SchedulerConfigReader(config, None).schedule_groups()[0]
+        assert group.media_only_mode == expected
+        assert group.media_only_enabled == (expected != modes[0])
+        assert group.hide_media_text == (expected == modes[2])
+
+
+def test_media_content_mode_dropdown_matches_all_group_templates():
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    templates = schema["push"]["items"]["tweet_groups"]["templates"]
+    for template in templates.values():
+        field = template["items"]["media_only_enabled"]
+        assert field["type"] == "string"
+        assert field["options"] == list(compat.MEDIA_ONLY_MODES)
+        assert field["default"] == compat.MEDIA_ONLY_MODES[0]
+
+
+def test_legacy_media_bool_survives_host_schema_upgrade(tmp_path):
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from config import config_get
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "push": {
+                    "tweet_groups": [{"group_id": "media", "media_only_enabled": True}]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = AstrBotConfig(
+        str(path), schema=json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    assert config_get(config, "tweet_groups")[0]["media_only_enabled"] is True
+    migrate_legacy_grouped_config(config)
+    assert (
+        config_get(config, "tweet_groups")[0]["media_only_enabled"]
+        == compat.MEDIA_ONLY_MODES[1]
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8-sig"))["push"]["tweet_groups"][0][
+            "media_only_enabled"
+        ]
+        == compat.MEDIA_ONLY_MODES[1]
+    )
+
+
+def test_pure_media_never_falls_back_to_full_content_when_media_disabled():
+    from scheduler.runner_prepare import SchedulerPrepareMixin
+
+    group = SchedulerConfigReader(
+        {
+            "send_image_attachments": False,
+            "send_video_attachments": False,
+            "tweet_groups": [
+                {"group_id": "pure", "media_only_enabled": compat.MEDIA_ONLY_MODES[2]}
+            ],
+        },
+        None,
+    ).schedule_groups()[0]
+    assert SchedulerPrepareMixin._media_only_effective(None, group) is True
+
+
 def _migration_keys() -> set[str]:
     return {
         value
@@ -92,6 +173,35 @@ def test_every_schema_group_item_key_is_mapped():
         "以下键的 CONFIG_GROUP_BY_KEY 分组与 schema 声明分组不一致，"
         f"单键更新会写错分组: {mismatched}"
     )
+
+
+def test_retired_configuration_is_removed_without_losing_other_config():
+    keys = (
+        "brief_log_enabled",
+        "concurrent_fetch_enabled",
+        "fetch_concurrency",
+        "concurrent_prepare_enabled",
+        "prepare_concurrency",
+    )
+    for migrated in (False, True):
+        old = dict(zip(keys, (False, True, 8, True, 8)))
+        config = {
+            **old,
+            "performance": {
+                key: value for key, value in old.items() if key != "brief_log_enabled"
+            },
+            "logging": {"brief_log_enabled": False},
+            "basic": {"instances": ["http://nitter:8080"]},
+            "tweet_groups": [{"group_id": "kept", "watch_users": ["NASA"], **old}],
+            LEGACY_CONFIG_MIGRATION_KEY: migrated,
+        }
+        assert migrate_legacy_grouped_config(config)
+        assert not (set(keys) & config.keys())
+        assert config["performance"] == {}
+        assert config["logging"] == {}
+        assert config["basic"]["instances"] == ["http://nitter:8080"]
+        assert config["tweet_groups"] == [{"group_id": "kept", "watch_users": ["NASA"]}]
+        assert config[LEGACY_CONFIG_MIGRATION_KEY] is True
 
 
 def test_code_defaults_are_empty_for_self_hosted_only():
@@ -169,7 +279,6 @@ def test_unified_service_uses_instances_for_rss_and_html():
         {
             "instances": ["http://nitter:8080"],
             "filter_reposts_enabled": "off",
-            "brief_log_enabled": "no",
             "html_max_pages": "4",
         }
     )
@@ -178,7 +287,7 @@ def test_unified_service_uses_instances_for_rss_and_html():
     assert service.html.config.instances == service.instances
     assert service.html.config.filter_reposts is False
     assert service.html.config.max_pages == 4
-    assert service.html.log.brief is False
+    assert callable(service.html.log.debug_emit)
 
 
 def test_legacy_instances_are_diagnostic_only():

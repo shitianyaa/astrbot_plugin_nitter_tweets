@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.8.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.9.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -143,7 +143,7 @@ QQ Official 群主动推送需要 AstrBot `>=4.26.0`。正文 Markdown 主动发
 curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/nitter.sh -o nitter.sh && chmod +x nitter.sh && ./nitter.sh
 ```
 
-部署完成后，将 Nitter 地址填入本插件的 `instances`。同一列表同时用于用户 RSS、用户 HTML、搜索、List 和后台并发抓取。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
+部署完成后，将 Nitter 地址填入本插件的 `instances`。同一列表同时用于用户 RSS、用户 HTML、搜索、List 和后台抓取。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
 
 如果需要关注较多账号，建议在 Nitter 中建立 List，再使用插件的 List 分组订阅。List 时间线通常比逐个轮询用户页产生更少请求，更不容易触发实例的 429。RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds`，无需分别调整两套参数。
 
@@ -179,7 +179,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 
 | 配置 | 说明 |
 | --- | --- |
-| `instances` | 唯一 Nitter 实例列表，同时用于用户 RSS/HTML、搜索、List 和后台并发抓取 |
+| `instances` | 唯一 Nitter 实例列表，同时用于用户 RSS/HTML、搜索、List 和后台抓取 |
 | `fetch_backend` | 推文抓取后端策略：`mix`（优先 FxTwitter，故障增量回退自建 Nitter，默认）、`nitter`（纯自建 Nitter）、`fx`（纯 FxTwitter；List 仍锁定 Nitter） |
 | `default_limit` | 手动命令默认条数 |
 | `search_sort` | 搜索排序方式：`latest`（按时间序，默认）或 `top`（推特综合热门算法流）；手动搜索带「热门」可单次覆盖 |
@@ -189,8 +189,8 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `tweet_groups` | 订阅与推送分组 |
 | `filter_reposts_enabled` | 后台与手动（/推文、/推图）转发过滤总开关（分组另设子开关；/镜像测试始终保留转发；/推文搜索固定过滤纯转推） |
 | `auto_parse_tweet_links_enabled` | 被动解析推文链接，默认关；开启后 OneBot 群聊默认带跨 Bot 仲裁（`link_preview_arbiter_enabled` 可关） |
-| `brief_log_enabled` | 后台日志简略模式；开启时输出结构化检查摘要和关键失败信息 |
 | `omit_status_url`（`tweet_groups` 分组字段） | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
+| `media_only_enabled`（`tweet_groups` 分组字段） | 推送内容：完整推文 / 仅媒体（保留作者）/ 仅媒体（不含文字）；不含文字只发送图片、视频或 GIF，不附加概括或提示，QQ 合并转发仍按原设置执行 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
 | `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8；默认值已把绝大多数视频排除在外 |
 | `translate_enabled` | 是否翻译 |
@@ -198,6 +198,8 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `forward_reject_plain_fallback_enabled` | 合并转发被风控拒收时是否降级纯文本；默认 `false`（略过违规推文并标记已读）；`true` 允许纯文本链接保底 |
 
 实例架构与容错：[实例配置指南](./docs/instances-guide.md)。
+
+1.9.0 起，旧日志简略开关和并发配置组已退役。Nitter 多账号请求与翻译/媒体准备串行，FxTwitter 博主抓取仍最多三并发，实例故障切换不变。日志在实例诊断页切换「摘要与告警 / DEBUG 过程」，调度、RSS 重试和 HTML 请求过程保留于独立 DEBUG 缓冲；两档各 200 条，重载即清。
 
 ## 常见问题
 

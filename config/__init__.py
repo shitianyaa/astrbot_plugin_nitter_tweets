@@ -1,4 +1,5 @@
 from .compat import (
+    MEDIA_ONLY_MODES,
     CONFIG_GROUP_BY_KEY,
     DEFAULT_GROUP_CONFIG_MIGRATION_KEY,
     DEFAULT_GROUP_MIGRATION_KEYS,
@@ -20,6 +21,7 @@ from .compat import (
     migrate_default_group_config,
     migrate_legacy_grouped_config,
     parse_config_bool,
+    resolve_media_only_mode,
     resolve_hide_original_when_translated,
     resolve_manual_send_interval,
     resolve_media_transport_base64_max_mb,
@@ -31,6 +33,8 @@ from .compat import (
 )
 
 __all__ = [
+    "MEDIA_ONLY_MODES",
+    "resolve_media_only_mode",
     "CONFIG_GROUP_BY_KEY",
     "DEFAULT_GROUP_CONFIG_MIGRATION_KEY",
     "DEFAULT_GROUP_MIGRATION_KEYS",

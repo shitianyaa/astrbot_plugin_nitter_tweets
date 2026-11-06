@@ -586,10 +586,10 @@ class QQOfficialDeliveryAdapter(DefaultDeliveryAdapter):
             if attempt.error:
                 errors.append(attempt.error)
 
-        text_attempt = await send_chain(
-            text_components,
-            f"{label_prefix} text",
-            True,
+        text_attempt = (
+            await send_chain(text_components, f"{label_prefix} text", True)
+            if text_components
+            else SendAttempt(success=True)
         )
         collect(text_attempt)
         if text_attempt.success or text_attempt.uncertain:

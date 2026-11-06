@@ -50,8 +50,6 @@ def test_schema_renders_groups_only_with_values():
         "ai_translation",
         "schedule",
         "push",
-        "logging",
-        "performance",
     ]
     basic = result["groups"][0]
     by_key = {i["key"]: i for i in basic["items"]}

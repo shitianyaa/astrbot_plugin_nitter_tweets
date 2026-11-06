@@ -24,7 +24,9 @@ function snapshotGroup(group) {
       snap[f] = Array.isArray(group[f]) ? [...group[f]] : [];
     } else if (f === "watch_queries") {
       snap[f] = Array.isArray(group[f]) ? group[f].map(q => typeof q === "string" ? { query: q, type: "tag" } : { query: q.query, type: q.type || "tag" }) : [];
-    } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","media_only_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
+    } else if (f === "media_only_enabled") {
+      snap[f] = typeof group[f] === "string" ? group[f] : (group[f] ? "仅媒体（保留作者）" : "完整推文");
+    } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
       snap[f] = !!group[f];
     } else { snap[f] = group[f] || ""; }
   }
@@ -333,6 +335,12 @@ function openGroupSheet(gid) {
   state.selectedGroupId = gid;
   const d = state.groupDrafts[gid] || snapshotGroup(g);
 
+  const contentSelect = createSelect({
+    value: d.media_only_enabled,
+    options: ["完整推文", "仅媒体（保留作者）", "仅媒体（不含文字）"].map(value => ({ value, text: value })),
+  });
+  contentSelect.onChange(value => updateDraft(gid, "media_only_enabled", value));
+
   const body = h("div", { class: "vstack" }, [
     // 名称 + 启停
     h("label", { class: "field" }, [
@@ -345,16 +353,20 @@ function openGroupSheet(gid) {
     ]),
     h("div", { class: "editor-grid" }, [
       toggleRow(d.enabled, "启用此分组", v => updateDraft(gid, "enabled", v)),
-      toggleRow(d.interval_check_enabled, "开启定时循环间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
-      toggleRow(d.filter_reposts_enabled, "过滤转发（需同时开启全局转发过滤总开关）", v => updateDraft(gid, "filter_reposts_enabled", v)),
-      toggleRow(d.filter_plain_text_enabled, "过滤纯文本（仅有媒体推文才推送）", v => updateDraft(gid, "filter_plain_text_enabled", v)),
-      toggleRow(d.media_only_enabled, "仅保留含媒体推文（图片/视频）", v => updateDraft(gid, "media_only_enabled", v)),
-      toggleRow(d.omit_status_url, "省略原推链接", v => updateDraft(gid, "omit_status_url", v)),
-      toggleRow(d.hide_original_when_translated, "翻译后隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
+      toggleRow(d.interval_check_enabled, "启用间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
+      toggleRow(d.filter_reposts_enabled, "过滤转发（需开启全局转发过滤）", v => updateDraft(gid, "filter_reposts_enabled", v)),
+      toggleRow(d.filter_plain_text_enabled, "过滤纯文本推文", v => updateDraft(gid, "filter_plain_text_enabled", v)),
+      h("label", { class: "field" }, [
+        h("span", { text: "推送内容" }),
+        contentSelect,
+        h("span", { class: "hint-line", text: "两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效，节点昵称和时间由客户端显示。" }),
+      ]),
+      toggleRow(d.omit_status_url, "去除推文链接", v => updateDraft(gid, "omit_status_url", v)),
+      toggleRow(d.hide_original_when_translated, "有译文时隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
     ]),
-    h("span", { class: "hint-line", text: `间隔检查使用全局检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
+    h("span", { class: "hint-line", text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
     h("label", { class: "field" }, [
-      h("span", { text: "每日定时触发时间（逗号或换行分隔，如 08:00, 20:00）" }),
+      h("span", { text: "每日检查时间（如 08:00, 20:00）" }),
       h("input", {
         type: "text",
         value: (d.daily_check_times || []).join(", "),
@@ -366,7 +378,7 @@ function openGroupSheet(gid) {
           const hint = document.getElementById("dailyTimesHint");
           if (hint) {
             const dropped = tokens.length !== valid.length;
-            hint.textContent = dropped ? "存在无效时间（格式 HH:MM），已忽略" : "";
+            hint.textContent = dropped ? "已忽略无效时间，请按 HH:MM 填写" : "";
             hint.style.display = dropped ? "" : "none";
           }
           updateDraft(gid, "daily_check_times", valid);
@@ -542,7 +554,7 @@ function renderEntities(group, draft) {
   const isTag = group.group_type === "tag";
   const isList = group.group_type === "list";
   const icon = isTag ? "hash" : isList ? "rss" : "user";
-  const label = isTag ? "搜索查询词" : isList ? "Twitter List ID" : "博主用户名";
+  const label = isTag ? "标签或关键词" : isList ? "Twitter List ID" : "博主用户名";
 
   const field = isTag ? "watch_queries" : isList ? "watch_lists" : "watch_users";
   const chipList = h("div", { class: "chip-list", "data-entity-chips": "true" });
@@ -812,7 +824,7 @@ function renderTargetBlacklist(group, draft) {
   const box = h("div", { class: "subsection" }, [
     h("div", { class: "section-head" }, [
       iconEl("ban", 16), "目标作者黑名单",
-      h("span", { class: "hint", text: "跨分组共享，仅影响后台推送；改动随「保存」落库" }),
+      h("span", { class: "hint", text: "同一目标在所有分组中共用，仅影响后台推送。保存后生效。" }),
     ]),
   ]);
   if (!targets.length) {

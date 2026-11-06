@@ -130,10 +130,10 @@ filter_plain_text_enabled: true  # 适合关注摄影、设计等媒体内容创
 
 ### `media_only_enabled`
 
-开启后只发送媒体，不附带推文文字、链接、翻译。
+「推送内容」下拉支持「完整推文」「仅媒体（保留作者）」「仅媒体（不含文字）」。旧布尔 false/true 自动对应前两项。不含文字只发送图片、视频或 GIF，不附加作者、正文、翻译、链接、概括或提示；媒体不可用时不发送。QQ 合并转发仍按原设置执行，节点昵称和时间由客户端显示。Pages 分组抽屉也可选择，点击页脚保存后生效。
 
 ```yaml
-media_only_enabled: true  # 打造纯图片/视频推送频道
+media_only_enabled: "仅媒体（不含文字）"  # 打造纯图片/视频推送频道
 ```
 
 ## 检查调度
@@ -314,7 +314,7 @@ daily_check_times: []  # 不使用定点检查
 打造纯图片/视频推送频道：
 
 ```yaml
-media_only_enabled: true
+media_only_enabled: "仅媒体（不含文字）"
 filter_plain_text_enabled: true
 max_tweets_per_check: 20
 ```
@@ -355,7 +355,7 @@ tweet_groups:
     # 内容过滤
     filter_reposts_enabled: true
     filter_plain_text_enabled: false
-    media_only_enabled: false
+    media_only_enabled: "完整推文"
 
     # 推送控制
     max_tweets_per_check: 10

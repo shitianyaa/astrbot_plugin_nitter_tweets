@@ -37,7 +37,7 @@ const state = {
   statusNotice: null, statusNoticeClosed: false,
   // 诊断终端：插件日志环缓冲（web/logs），只在 mirror 视图可见时轮询。
   // logsSession 是后端进程的会话标识：重启后 seq 从头计数，靠它判定游标失效
-  logs: [], logsAfterSeq: 0, logsMax: 0, logsTimer: 0, logsSession: "",
+  logs: [], logsAfterSeq: 0, logsMax: 0, logsTimer: 0, logsSession: "", logsLevel: "main",
   // 右侧抽屉 / ⌘K 面板 / 新建弹窗的焦点恢复锚点
   sheetReturnFocus: null, cmdkReturnFocus: null, createGroupReturnFocus: null,
 };

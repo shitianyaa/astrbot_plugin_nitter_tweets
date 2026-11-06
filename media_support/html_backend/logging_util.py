@@ -1,70 +1,47 @@
-"""HTML backend log filtering to avoid AstrBot info spam."""
+"""HTML 日志分级：重要诊断与 DEBUG 过程分流，始终抑制会话加载。"""
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 
-_SESSION_LOAD_RE = re.compile(r"^session load\s+(\S+)", re.IGNORECASE)
-_COOLING_RE = re.compile(r"^(?:skip|defer)\s+cooling\s+(\S+)", re.IGNORECASE)
-
-# Brief mode: drop routine per-attempt chatter; keep failures / summaries.
-_BRIEF_DROP_PREFIXES = (
+_PROCESS_PREFIXES = (
     "search try ",
     "user try ",
     "list try ",
     "search empty host=",
     "user empty host=",
     "list empty host=",
+    "search empty, rotate",
+    "user empty, rotate",
+    "list empty, rotate",
+    "search global retry ",
+    "user global retry ",
+    "list global retry ",
+    "skip cooling ",
+    "defer cooling ",
 )
 
 
 class QuietHtmlLog:
-    """Callable log sink: ``log(msg)`` with optional brief filtering.
-
-    Always suppress ``session load`` entirely (cookie reload noise).
-
-    When ``brief=True`` (default, follows ``brief_log_enabled``):
-    - drop per-attempt try/empty chatter
-    - drop cooling skip/defer lines
-    - keep punish / fail / ok-after-rotate / empty-after-rotate errors
-    """
+    """保留单字符串回调；未提供 debug sink 时回落原 sink，不静默丢事件。"""
 
     def __init__(
         self,
         emit: Callable[[str], None] | None = None,
         *,
-        brief: bool = True,
+        debug_emit: Callable[[str], None] | None = None,
     ) -> None:
         self.emit = emit or (lambda _m: None)
-        self.brief = brief
-        self._cooling_hosts: set[str] = set()
+        self.debug_emit = debug_emit or self.emit
 
     def __call__(self, msg: str) -> None:
         text = str(msg or "").strip()
-        if not text:
+        if not text or text.lower().startswith("session load "):
             return
-        if self._should_drop(text):
-            return
-        self.emit(text)
-
-    def _should_drop(self, text: str) -> bool:
-        if _SESSION_LOAD_RE.match(text):
-            # Cookie reload can fire on every request; never useful at info.
-            return True
-
-        m = _COOLING_RE.match(text)
-        if m:
-            if self.brief:
-                return True
-            host = m.group(1).lower()
-            if host in self._cooling_hosts:
-                return True
-            self._cooling_hosts.add(host)
-            return False
-
-        # Keep punish, rotation summaries and hard response errors.
-        return bool(self.brief and text.startswith(_BRIEF_DROP_PREFIXES))
+        if text.startswith(_PROCESS_PREFIXES):
+            self.debug_emit(text)
+        else:
+            self.emit(text)
 
 
 __all__ = ["QuietHtmlLog"]

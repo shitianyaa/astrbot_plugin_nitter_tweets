@@ -31,7 +31,7 @@ try:
     )
     from ..delivery import MergedSendOutcome
     from ..rendering import TweetMessageRenderer
-    from ..shared import format_subscription_source
+    from ..shared import format_subscription_source, safe_block_log
     from ..shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
     from .config import ScheduleGroup
     from .formatting import _format_limited_values as scheduler_format_limited_values
@@ -60,7 +60,7 @@ except ImportError:
         ScheduledCheckResult,
         ScheduledPushResult,
     )
-    from shared import format_subscription_source
+    from shared import format_subscription_source, safe_block_log
     from shared.group_ids import DEFAULT_GROUP_NAME, is_default_group
 
 
@@ -112,7 +112,7 @@ class SchedulerSendMixin:
             result.target_blocked_filtered += filtered_count
             self._log_verbose_info(
                 "[NitterTweets] 按推送目标过滤作者: "
-                f"target={target_umo}, source={batch.username}, "
+                f"source={batch.username}, "
                 f"filtered={filtered_count}"
             )
         return allowed_tweets, filtered_count
@@ -321,7 +321,12 @@ class SchedulerSendMixin:
                         getattr(batch, "hide_original_when_translated", False)
                     )
                     send_attempted = True
-                    outcome = await self.sender.send_to_umo_with_outcome(
+                    sender = (
+                        self.sender.without_media_text()
+                        if batch.hide_media_text
+                        else self.sender
+                    )
+                    outcome = await sender.send_to_umo_with_outcome(
                         self.context,
                         umo,
                         batch.username,
@@ -519,17 +524,18 @@ class SchedulerSendMixin:
     ) -> None:
         total = progress_total or len(tweets)
         start = progress_index or 1
-        if self.brief_log_enabled or not getattr(self.translator, "enabled", True):
+        if not getattr(self.translator, "enabled", True):
             return
         for offset, tweet in enumerate(tweets):
-            logger.info(
+            safe_block_log(
+                "debug",
                 format_ai_tweet_summary(
                     username,
                     tweet,
                     translation_report,
                     start + offset,
                     total,
-                )
+                ),
             )
 
     def _record_scheduled_push(
@@ -676,7 +682,12 @@ class SchedulerSendMixin:
                 if any(batch.media_only for batch in target_batch_objects):
                     merge_kwargs["media_only"] = True
                 send_attempted = True
-                outcome = await self.sender.send_merged_to_umo(
+                sender = (
+                    self.sender.without_media_text()
+                    if all(batch.hide_media_text for batch in target_batch_objects)
+                    else self.sender
+                )
+                outcome = await sender.send_merged_to_umo(
                     self.context,
                     umo,
                     [

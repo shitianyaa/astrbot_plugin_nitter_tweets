@@ -607,7 +607,7 @@ def test_dashboard_source_contains_list_editor_and_probe_all_payload():
         in source
     )
     assert '"filter_reposts_enabled"' in source
-    assert "全局转发过滤总开关" in source
+    assert "过滤转发（需开启全局转发过滤）" in source
     assert "List ID 必须是 1-20 位正整数" in source
     assert "List ID 已存在" in source
     assert "list_id: els.mirrorListId.value.trim()" in source
@@ -633,15 +633,13 @@ def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
     assert "function saveTargetBlacklist" not in source
     assert "function flushPendingBlacklists(gid)" in source
     assert "hasPendingBlacklist(groupId)" in source
-    assert "跨分组共享，仅影响后台推送；改动随「保存」落库" in source
+    assert "同一目标在所有分组中共用，仅影响后台推送。保存后生效。" in source
     assert "web/subscriptions/import" not in source
     assert "web/subscriptions/delete" not in source
     assert "批量导入 / 移除" in source
-    assert "间隔检查使用全局检查间隔" in source
+    assert 'text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟`' in source
     assert "ban: '<circle" in source
-    assert (
-        "每行一个地址，不要用逗号分隔" in schema["basic"]["items"]["instances"]["hint"]
-    )
+    assert "每行一个可信的自建地址" in schema["basic"]["items"]["instances"]["hint"]
     assert "`omit_status_url`（`tweet_groups` 分组字段）" in readme
 
 
@@ -948,7 +946,7 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
     assert "res.next_seq && res.next_seq <= state.logsAfterSeq" in source
     # 跳过的一轮不能算成功，否则「请求比 3s 间隔还慢 + 一直失败」时失败计数
     # 会在 0/1 之间振荡，永远到不了停止阀值
-    assert 'if (result !== "skipped") logPollFailures = 0;' in source
+    assert 'generation === logsGeneration && result !== "skipped"' in source
 
 
 def test_dashboard_terminal_preserves_scroll_and_node():
@@ -1097,6 +1095,8 @@ def test_dashboard_redesign_architecture_guards():
     assert "function openCmdk(" in source
     assert "function renderTerminal(" in source
     assert 'class: "mac-terminal-bar"' in source
+    assert '"data-logs-level": level' in source
+    assert "level: myLevel" in source
     assert 'class: "mac-dots"' in source
     # 抽屉/面板/弹窗的焦点圈与焦点恢复：打开时记录锚点，关闭时归还
     assert "state.sheetReturnFocus = document.activeElement;" in source

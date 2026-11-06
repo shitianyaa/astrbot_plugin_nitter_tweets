@@ -1,13 +1,10 @@
-"""准备阶段：翻译/媒体准备的串并调度与 media_only 判定。
+"""准备阶段：串行翻译/媒体准备与 media_only 判定。
 
 `NitterTweetScheduler` 的 mixin：只通过 `self` 协作，不 import 宿主类。
 准备完成后经 `self._send_or_buffer_immediate_batch` 交给发送路径（见 runner_send）。
 """
 
 from __future__ import annotations
-
-import asyncio
-from collections.abc import Awaitable, Callable
 
 from astrbot.api import logger
 
@@ -16,6 +13,7 @@ try:
     from ..shared import (
         TweetItem,
         format_subscription_source,
+        safe_block_log,
         sanitize_diagnostic,
     )
     from ..shared.media_status import (
@@ -44,6 +42,7 @@ except ImportError:
     from shared import (
         TweetItem,
         format_subscription_source,
+        safe_block_log,
         sanitize_diagnostic,
     )
     from shared.media_status import (
@@ -55,10 +54,6 @@ except ImportError:
 
 class SchedulerPrepareMixin:
     """准备批次与 media_only 策略。"""
-
-    @staticmethod
-    def _should_use_concurrent_prepare(group: ScheduleGroup) -> bool:
-        return bool(group.concurrent_prepare_enabled) and group.prepare_concurrency > 1
 
     @staticmethod
     def _set_discovered_batch_progress(
@@ -156,138 +151,6 @@ class SchedulerPrepareMixin:
             raise
         return pending_batches, immediate_batches_sent
 
-    async def _prepare_batches_concurrently(
-        self,
-        batches: list[PendingTweetBatch],
-        concurrency: int,
-        prepare_one: Callable[[PendingTweetBatch], Awaitable[PreparedBatchResult]],
-        on_result: Callable[[PreparedBatchResult], Awaitable[None]] | None = None,
-    ) -> list[PreparedBatchResult]:
-        semaphore = asyncio.Semaphore(concurrency)
-
-        async def prepare(batch: PendingTweetBatch) -> PreparedBatchResult:
-            async with semaphore:
-                try:
-                    return await prepare_one(batch)
-                except Exception as exc:
-                    return PreparedBatchResult(
-                        batch=batch,
-                        error=SchedulerTaskError.from_exception(exc),
-                    )
-
-        tasks = [asyncio.create_task(prepare(batch)) for batch in batches]
-        results: list[PreparedBatchResult] = []
-        try:
-            for task in asyncio.as_completed(tasks):
-                prepared = await task
-                results.append(prepared)
-                if on_result is not None:
-                    await on_result(prepared)
-        except BaseException:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
-        return results
-
-    async def _prepare_immediate_batches_concurrently(
-        self,
-        group: ScheduleGroup,
-        discovered_batches: list[PendingTweetBatch],
-        result: ScheduledCheckResult,
-        target_umo: str,
-        seen_map: dict[str, list[str]],
-        immediate_targets: list[str],
-        buffered_targets: list[str],
-        target_interval: float,
-        user_interval: float,
-        group_label: str,
-        immediate_batch_summary_tracker: BatchSummaryTracker,
-        immediate_batches_sent: int,
-    ) -> tuple[list[PendingTweetBatch], int]:
-        single_batches: list[PendingTweetBatch] = []
-        for discovered_batch in discovered_batches:
-            for tweet_index, tweet in enumerate(discovered_batch.tweets, 1):
-                single_batches.append(
-                    self._single_tweet_batch(
-                        discovered_batch,
-                        tweet,
-                        tweet_index,
-                        seen_map,
-                    )
-                )
-
-        pending_batches: list[PendingTweetBatch] = []
-        prepared_count_by_user: dict[str, int] = {}
-        total_by_user: dict[str, int] = {}
-        for batch in discovered_batches:
-            total_by_user[batch.username] = total_by_user.get(batch.username, 0) + len(
-                batch.tweets
-            )
-
-        async def consume(prepared: PreparedBatchResult) -> None:
-            nonlocal pending_batches, immediate_batches_sent
-            batch = prepared.batch
-            tweet_index = batch.tweet_index
-            if prepared.error:
-                await self._record_prepare_failure(result, batch, prepared.error)
-                return
-            if prepared.media_status != MEDIA_STATUS_READY:
-                await self._handle_media_prepare_status(
-                    result,
-                    batch,
-                    prepared.media_status,
-                    prepared.media_error,
-                    seen_map,
-                    group.group_id,
-                )
-                return
-
-            await self._handle_immediate_prepare_success(group, prepared, seen_map)
-            prepared_count_by_user[batch.username] = (
-                prepared_count_by_user.get(batch.username, 0) + 1
-            )
-            (
-                pending_batches,
-                immediate_batches_sent,
-            ) = await self._send_or_buffer_immediate_batch(
-                batch,
-                group,
-                pending_batches,
-                result,
-                immediate_targets,
-                buffered_targets,
-                target_interval,
-                user_interval,
-                group_label,
-                immediate_batch_summary_tracker,
-                immediate_batches_sent,
-                seen_map,
-                batch_progress=(tweet_index, batch.tweet_total),
-            )
-
-        try:
-            await self._prepare_batches_concurrently(
-                single_batches,
-                group.prepare_concurrency,
-                lambda batch: self._prepare_immediate_batch(batch, target_umo),
-                on_result=consume,
-            )
-        except BaseException:
-            await self._cleanup_batch_media_many([*single_batches, *pending_batches])
-            raise
-
-        for discovered_batch in discovered_batches:
-            prepared_count = prepared_count_by_user.get(discovered_batch.username, 0)
-            self._log_prepare_progress(
-                discovered_batch.username,
-                prepared_count,
-                total_by_user.get(discovered_batch.username, 0),
-                group.group_type,
-            )
-        return pending_batches, immediate_batches_sent
-
     async def _prepare_immediate_batch(
         self,
         batch: PendingTweetBatch,
@@ -344,6 +207,7 @@ class SchedulerPrepareMixin:
             tweet_index=tweet_index,
             tweet_total=len(discovered_batch.tweets),
             media_only=discovered_batch.media_only,
+            hide_media_text=discovered_batch.hide_media_text,
             omit_status_url=bool(getattr(discovered_batch, "omit_status_url", True)),
             hide_original_when_translated=bool(
                 getattr(discovered_batch, "hide_original_when_translated", False)
@@ -406,7 +270,11 @@ class SchedulerPrepareMixin:
 
     def _media_only_effective(self, group: ScheduleGroup) -> bool:
         return bool(
-            group.media_only_enabled and not self._media_only_unavailable_reason(group)
+            group.hide_media_text
+            or (
+                group.media_only_enabled
+                and not self._media_only_unavailable_reason(group)
+            )
         )
 
     async def _handle_media_prepare_status(
@@ -437,21 +305,13 @@ class SchedulerPrepareMixin:
             )
             return
 
-        result.media_only_skipped += 1
-        if status_id:
-            await self._store_incremental_seen_ids(
-                group_id,
-                batch.username,
-                [status_id],
-                seen_map,
-            )
+        result.media_only_retrying += 1
         safe_error = sanitize_diagnostic(error) if error else "no media"
-        logger.warning(
-            "[NitterTweets] 仅媒体推文准备失败，已标记已读跳过以避免死循环重推: "
+        safe_block_log(
+            "warning",
+            "[NitterTweets] 仅媒体推文准备失败，保留未读，下轮重试: "
             f"source={source_label}, status={status_id}, "
-            f"status={status}, error={safe_error}。"
-            "（若因视频过大或下载超时，建议在配置中将「媒体画质偏好」(media_quality) 设为 medium/low，"
-            "或调小「单个媒体大小上限 MB」(media_max_size_mb)）"
+            f"media_status={status}, error={safe_error}",
         )
 
     @staticmethod

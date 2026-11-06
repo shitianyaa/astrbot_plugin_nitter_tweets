@@ -132,7 +132,7 @@ class NitterWebAPI(
             after_seq = self._parse_int(
                 request.args.get("after_seq"), 0, minimum=0, maximum=10_000_000
             )
-            return await self.build_logs(after_seq)
+            return await self.build_logs(after_seq, request.args.get("level", "main"))
 
         return await self._json_response(action)
 
@@ -410,12 +410,6 @@ class NitterWebAPI(
             "merge_tweet_threshold": configured_merge_tweet_threshold(self.config),
             "send_target_interval": self._group_value(
                 effective_group, "send_target_interval", 1.5
-            ),
-            "concurrent_fetch_enabled": bool(
-                self._group_value(effective_group, "concurrent_fetch_enabled", False)
-            ),
-            "concurrent_prepare_enabled": bool(
-                self._group_value(effective_group, "concurrent_prepare_enabled", False)
             ),
             "filter_reposts_enabled": self._global_filter_reposts_enabled(),
         }
