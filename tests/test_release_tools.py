@@ -112,7 +112,7 @@ def test_packaged_tree_uses_ref_not_dirty_working_bytes(tmp_path):
         ) == subprocess.check_output(["git", "-C", str(ROOT), "show", f"{ref}:main.py"])
 
 
-class FakeGitHub:
+class FakeGitHub(GitHub):
     repository = "example/plugin"
     prefix = "repos/example/plugin"
 
@@ -123,7 +123,13 @@ class FakeGitHub:
         self.release = (
             None
             if draft is None
-            else {"tag_name": "v1.8.0", "draft": draft, "body": notes, "assets": []}
+            else {
+                "id": 41,
+                "tag_name": "v1.8.0",
+                "draft": draft,
+                "body": notes,
+                "assets": [],
+            }
         )
         self.data = archive.read_bytes()
         self.archive = archive
@@ -138,6 +144,16 @@ class FakeGitHub:
         return self.tag
 
     def api(self, path, **kwargs):
+        if path == "releases/tags/v1.8.0":
+            if self.release and not self.release["draft"]:
+                return self.release
+            if kwargs.get("missing"):
+                return None
+            raise RuntimeError("GitHub operation failed: HTTP 404")
+        if path == "releases?per_page=100&page=1":
+            return [self.release] if self.release else []
+        assert path == "releases/41", path
+        assert self.release is not None
         return self.release
 
     def download_asset(self, tag, name, destination):
@@ -151,8 +167,10 @@ class FakeGitHub:
         if args[0] == "api":
             self.tag = SHA
         elif args[1] == "create":
+            assert self.release is None, "An existing draft must be resumed"
             assert "--draft" in args and "--verify-tag" in args
             self.release = {
+                "id": 41,
                 "tag_name": "v1.8.0",
                 "draft": True,
                 "body": self.notes,
@@ -278,6 +296,59 @@ def test_only_http_404_is_absent(monkeypatch):
         ),
     )
     assert GitHub("example/plugin").api("releases/tags/v1.8.0", missing=True) is None
+
+
+def test_draft_lookup_paginates_and_reads_by_id(monkeypatch):
+    remote = GitHub("example/plugin")
+    paths = []
+    draft = {"id": 41, "tag_name": "v1.8.0", "draft": True}
+
+    def api(path, **kwargs):
+        paths.append(path)
+        if path == "releases/tags/v1.8.0":
+            assert kwargs == {"missing": True}
+            return None
+        if path == "releases?per_page=100&page=1":
+            return [{"id": n, "tag_name": f"other-{n}"} for n in range(100)]
+        if path == "releases?per_page=100&page=2":
+            return [draft]
+        assert path == "releases/41"
+        return draft
+
+    monkeypatch.setattr(remote, "api", api)
+    assert remote.find_release("v1.8.0") == draft
+    assert paths[-2:] == ["releases?per_page=100&page=2", "releases/41"]
+
+
+def test_ambiguous_draft_lookup_stops(monkeypatch):
+    remote = GitHub("example/plugin")
+    monkeypatch.setattr(
+        remote,
+        "api",
+        lambda path, **kwargs: (
+            None
+            if path.startswith("releases/tags/")
+            else [{"id": n, "tag_name": "v1.8.0"} for n in (41, 42)]
+        ),
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        remote.find_release("v1.8.0")
+
+
+@pytest.mark.parametrize("status", [403, 429, 500])
+def test_draft_list_failure_never_creates_release(publication, monkeypatch, status):
+    info, archive, notes = publication
+    remote = FakeGitHub(archive, info.notes, tag=SHA, draft=True)
+
+    def api(path, **kwargs):
+        if path.startswith("releases/tags/"):
+            return None
+        raise RuntimeError(f"GitHub operation failed: HTTP {status}")
+
+    monkeypatch.setattr(remote, "api", api)
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        publish(remote, info, archive, SHA, notes, archive.parent / "work")
+    assert remote.writes == []
 
 
 def test_annotated_tag_resolves_commit(monkeypatch):

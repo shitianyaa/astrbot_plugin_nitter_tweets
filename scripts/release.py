@@ -279,6 +279,23 @@ class GitHub:
     def api(self, path: str, *, missing: bool = False):
         return self.call("api", f"{self.prefix}/{path}", missing=missing)
 
+    def find_release(self, tag: str) -> dict | None:
+        """Find published releases by tag, or drafts through the paginated list."""
+        release = self.api(f"releases/tags/{tag}", missing=True)
+        if release is not None:
+            return release
+        matches = []
+        page = 1
+        while True:
+            releases = self.api(f"releases?per_page=100&page={page}")
+            matches.extend(item for item in releases if item["tag_name"] == tag)
+            if len(releases) < 100:
+                break
+            page += 1
+        if len(matches) > 1:
+            raise ValueError("Release tag is ambiguous")
+        return self.api(f"releases/{matches[0]['id']}") if matches else None
+
     def tag_commit(self, tag: str) -> str | None:
         ref = self.api(f"git/ref/tags/{tag}", missing=True)
         if ref is None:
@@ -352,7 +369,7 @@ def publish(
         raise ValueError("Candidate must be a full commit SHA")
     notes = notes_file.read_text(encoding="utf-8")
     tag_sha = remote.tag_commit(info.tag)
-    release = remote.api(f"releases/tags/{info.tag}", missing=True)
+    release = remote.find_release(info.tag)
     if tag_sha is not None and tag_sha != sha:
         raise ValueError("Existing tag points to a different commit")
     if release and tag_sha is None:
@@ -390,9 +407,10 @@ def publish(
             "--verify-tag",
             binary=True,
         )
-        release = remote.api(f"releases/tags/{info.tag}")
+        release = remote.find_release(info.tag)
     if not release or not release.get("draft"):
         raise ValueError("Expected a draft release")
+    release_id = release["id"]
     if remote.tag_commit(info.tag) != sha:
         raise ValueError("Draft tag differs from candidate commit")
     assets = [
@@ -424,7 +442,7 @@ def publish(
         binary=True,
     )
     _verify_release(
-        remote, remote.api(f"releases/tags/{info.tag}"), archive, notes, workdir
+        remote, remote.api(f"releases/{release_id}"), archive, notes, workdir
     )
     remote.call(
         "release",
@@ -437,7 +455,7 @@ def publish(
     )
     if remote.tag_commit(info.tag) != sha:
         raise ValueError("Published tag differs from candidate commit")
-    final = remote.api(f"releases/tags/{info.tag}")
+    final = remote.api(f"releases/{release_id}")
     if final.get("draft"):
         raise ValueError("Release remained draft")
     _verify_release(remote, final, archive, notes, workdir)
