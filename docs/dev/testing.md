@@ -25,7 +25,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 - 测试直接使用 `requirements-dev.txt` 中的真实 AstrBot SDK，不注入备用 SDK 桩。抓取、发送、存储等外部边界仍按用例模拟。
 - 同一行为优先保留在对应专题文件；按功能归并小文件，不按 PR 编号或单次修复另开文件。跨层测试只验证接线和组合行为，不重复完整输入矩阵。相同准备代码用参数化或 `subTest` 合并，保留必要边界。
 - 翻译显隐由 `test_tweet_layout.py` 覆盖，搜索去重由 `test_search_session_buffer.py` 覆盖，作者解析由 `test_search_display_username.py` 覆盖。
-- 历史分页通过真实路由、适配器和 SQLite 验证四档条数，以及 150 条下的状态筛选分支；各状态与重推最新结果语义由同文件的存储/序列化测试覆盖。
+- 历史分页在 Quart 请求上下文中直接调用 `handle_history()`，再经 StorageAdapter 和 SQLite 验证四档条数及 150 条下的状态筛选分支；不覆盖路由注册或请求分发。各状态与重推最新结果语义由同文件的存储/序列化测试覆盖。
 - Dashboard 日志增量去重、切档和重启由 Node 行为测试覆盖；静态断言保留行为测试尚未覆盖的安全、接线和布局约束，不锁定纯展示文案或无行为意义的函数名。
 - 重试测试模拟等待并断言次数与延迟参数；并发、取消和仲裁测试需要真实任务交错时不全局替换 sleep。
 
@@ -36,7 +36,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 调度、seen、私人号 OneBot 合并、QQ Official、Telegram flood | `python -m pytest -q tests/test_delivery_platforms.py tests/test_scheduler_delivery.py tests/test_qq_official_delivery.py` | 独立扫描基准、发送调用失败跳过、准备失败不推进基准、合并顺序、官方 Markdown/纯文本切换、媒体部分成功、限流重试 |
 | 发布版本与工具 | `python -m pytest -q tests/test_release_version.py tests/test_release_tools.py tests/test_workflow_contract.py` | 四处版本一致、首标题/日期/有效说明、tag/SHA、公开版本不可覆盖、草稿续跑与API失败、ZIP内容与包内导入、CI依赖和权限 |
 | 结构化日志、双环与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_log_buffer.py tests/test_web_logs_api.py tests/test_html_quiet_log.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、主环/DEBUG 独立容量与读取、HTML 过程分流、时间线/空页/登录维护/异常页分类 |
-| WebUI 历史分页与状态筛选 | `python -m pytest -q tests/test_web_history_api.py` | 真实 Quart 路由 → StorageAdapter → SQLite 的五组分页场景；四档条数、带状态筛选的分页、双目标合并、总页数、下一页探测与末页完整性；独立验证各状态筛选及最新投递语义 |
+| WebUI 历史分页与状态筛选 | `python -m pytest -q tests/test_web_history_api.py` | 在 Quart 请求上下文中直接调用 `handle_history()` → StorageAdapter → SQLite，验证五组分页场景；不覆盖路由注册或请求分发。保留四档条数、带状态筛选的分页、双目标合并、总页数、下一页探测与末页完整性，以及独立的各状态筛选和最新投递语义测试 |
 | Dashboard 历史表格与主题 | `python -m pytest -q tests/test_dashboard_history.py` | 需要 Node；来源中文、状态标签、表头、跨页序号、空列表、宿主主题同步与首帧主题。浏览器另检查浅暗配色、表内吸顶、分页/选择/详情和响应式列对齐 |
 | Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_list_support.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_search_display_username.py tests/test_subscription_display.py` | 来源链接清理、正文布局与翻译显隐、搜索作者、分组/实例显示 |
