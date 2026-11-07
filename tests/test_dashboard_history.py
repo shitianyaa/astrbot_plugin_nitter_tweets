@@ -14,7 +14,12 @@ def run_node(script):
     if not node:
         pytest.skip("Node is required for dashboard behavior checks")
     result = subprocess.run(
-        [node], input=script, text=True, capture_output=True, timeout=15
+        [node],
+        input=script,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -50,7 +55,7 @@ for (const [delivery_status, label, color] of [
 ]) {
   const row = historyRow({ id: 7, username: 'author', source: 'scheduled', delivery_status });
   const status = find(row, n => n.props?.text === label);
-  assert.ok(status.props.class.includes(color));
+  assert.ok(status.props.class.split(/\s+/).includes(color));
   assert.ok(find(row, n => n.props?.text === '定时轮询'));
 }
 """
@@ -76,7 +81,9 @@ for (const offset of [0, 20, 50, 150]) {
   renderHistory();
   const table = els.historyContent.tree;
   assert.equal(table.props.role, 'table');
-  assert.equal(table.children[0].children.length, 7);
+  assert.deepEqual(table.children[0].children.map(n => n.props.text), [
+    '选择', '序号', '推文内容', '状态', '投递信息', '来源', '操作',
+  ]);
   assert.ok(table.children[0].children.every(n => n.props.role === 'columnheader'));
   const rows = table.children[1].children;
   assert.deepEqual(rows.map(r => r.children[1].props.text), [offset + 1, offset + 2]);
