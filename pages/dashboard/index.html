@@ -7,10 +7,11 @@
     <link rel="stylesheet" href="./style.css" />
     <script>
       // 首帧即落主题类：深色用户不闪亮色首帧，boot 失败（无 bridge）时页面也保持主题。
-      // 只能跟随系统偏好：AstrBot Pages iframe 无 allow-same-origin，浏览器存储不可用；
-      // 宿主主题由 core.js 的 initTheme 在 bridge 就绪后接管。
+      // 首帧使用宿主 URL 的 theme 参数，独立预览回退系统偏好；不访问浏览器存储。
+      // bridge 就绪后由 ui.js 的 initTheme 持续接收宿主主题。
       (function () {
-        var dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var theme = new URLSearchParams(window.location.search).get("theme");
+        var dark = theme === "dark" || (theme !== "light" && !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches));
         var root = document.documentElement;
         root.classList.toggle("dark-theme", dark);
         root.classList.toggle("light-theme", !dark);
@@ -43,7 +44,7 @@
         </div>
 
         <div class="nav-actions">
-          <button id="themeToggleBtn" class="nav-btn" type="button" title="切换暗色 / 亮色">
+          <button id="themeToggleBtn" hidden class="nav-btn" type="button" title="切换暗色 / 亮色">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8"/></svg>
             <span id="themeLabel">暗色模式</span>
           </button>

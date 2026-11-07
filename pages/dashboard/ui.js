@@ -555,27 +555,22 @@ function stopLogPolling() {
    opaque origin 下浏览器存储任何访问都抛 SecurityError，曾拖垮整页启动
    （529ee81，见 Progress/2026-09-04.md）。跨会话主题由宿主 WebUI 负责，
    onContext 会把宿主的主题推送下来。故页面内禁止访问浏览器存储。 */
-let themePinned = false; // 用户手动切换后不再接受宿主主题推送
-
 function initTheme() {
   const context = bridge?.getContext?.() || {};
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-  // 优先级：宿主主题 > 系统偏好
-  applyTheme(typeof context.isDark === "boolean" ? context.isDark : prefersDark);
+  const initialDark = document.documentElement.classList.contains("dark-theme");
+  applyTheme(typeof context.isDark === "boolean" ? context.isDark : initialDark);
+  // 嵌入时主题由 AstrBot 统一管理；独立预览仍可手动切换。
+  if (els.themeToggleBtn) els.themeToggleBtn.hidden = window.parent !== window;
   bridge?.onContext?.(nextContext => {
-    if (!themePinned && typeof nextContext?.isDark === "boolean") applyTheme(nextContext.isDark);
+    if (typeof nextContext?.isDark === "boolean") applyTheme(nextContext.isDark);
   });
 }
 function applyTheme(isDark) {
-  // 主题类挂在 <html> 上：深色变量的唯一出处是 :root.dark-theme
   document.documentElement.classList.toggle("dark-theme", !!isDark);
   document.documentElement.classList.toggle("light-theme", !isDark);
-  // 顶栏按钮文案与原型一致：当前深色时提示切到亮色，反之亦然
   if (els.themeLabel) els.themeLabel.textContent = isDark ? "亮色模式" : "暗色模式";
 }
 function toggleTheme() {
-  const next = !document.documentElement.classList.contains("dark-theme");
-  themePinned = true;
-  applyTheme(next);
+  if (window.parent !== window) return;
+  applyTheme(!document.documentElement.classList.contains("dark-theme"));
 }
-

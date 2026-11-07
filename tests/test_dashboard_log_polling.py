@@ -16,9 +16,7 @@ def test_log_channels_ignore_late_success_failure_and_cleanup():
         pytest.skip("Node is required for dashboard behavior checks")
     source = (ROOT / "pages/dashboard/ui.js").read_text(encoding="utf-8")
     polling = source[
-        source.index("let logsInFlight = null;") : source.index(
-            "let themePinned = false;"
-        )
+        source.index("let logsInFlight = null;") : source.index("function initTheme()")
     ]
     harness = r"""
 const assert = require("node:assert/strict");

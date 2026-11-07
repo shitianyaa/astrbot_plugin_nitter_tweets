@@ -92,39 +92,40 @@
   color-scheme: light;
 }
 
-/* 深色主题唯一出处：applyTheme 把 dark-theme/light-theme 类写在 <html> 上 */
+/* AstrBot dashboard/src/theme/DarkTheme.ts 的 PurpleThemeDark 调色板。
+   Pages bridge 只传 isDark，不传颜色；所有页签统一在这里映射宿主参数。 */
 :root.dark-theme {
-  --accent: #ffffff;
-  --accent-invert: #000000;
+  --accent: #5ba4d4;
+  --accent-invert: #1a1a1a;
 
-  --bg: #000000;
-  --surface: #0a0a0a;
-  --surface-hover: #121212;
-  --surface-subtle: #1a1a1a;
-  --surface-elevated: #121212;
-  --border: #222222;
-  --border-strong: #333333;
-  --border-hover: #555555;
-  --backdrop: rgba(0, 0, 0, 0.7);
+  --bg: #1a1a1a;
+  --surface: #242424;
+  --surface-hover: #2d2e30;
+  --surface-subtle: #2a2a2a;
+  --surface-elevated: #242424;
+  --border: #333333ee;
+  --border-strong: #3a3a3a;
+  --border-hover: #787878;
+  --backdrop: #111111aa;
 
-  --text: #ededed;
-  --text-muted: #a1a1a1;
-  --text-subtle: #666666;
+  --text: #e8eaed;
+  --text-muted: #ffffffdd;
+  --text-subtle: #cccccccc;
 
-  --blue: #4493f8;
-  --blue-hover: #58a6ff;
-  --blue-soft: rgba(56, 139, 253, 0.1);
-  --blue-border: rgba(56, 139, 253, 0.25);
-  --green: #10b981;
-  --green-soft: rgba(16, 185, 129, 0.12);
-  --green-border: rgba(16, 185, 129, 0.3);
-  --yellow: #f5a623;
-  --yellow-soft: rgba(245, 166, 35, 0.12);
-  --yellow-border: rgba(245, 166, 35, 0.3);
-  --yellow-ink: #fbbf24;
-  --red: #f33;
-  --red-soft: rgba(255, 51, 51, 0.12);
-  --red-border: rgba(255, 51, 51, 0.3);
+  --blue: #5ba4d4;
+  --blue-hover: #84c9ea;
+  --blue-soft: #1a2e3d;
+  --blue-border: #3a8ab8;
+  --green: #52c41a;
+  --green-soft: #1a3a1a;
+  --green-border: rgba(82, 196, 26, 0.3);
+  --yellow: #faad14;
+  --yellow-soft: #3d351a;
+  --yellow-border: rgba(250, 173, 20, 0.3);
+  --yellow-ink: #faad14;
+  --red: #ff4d4f;
+  --red-soft: #3d1a1a;
+  --red-border: rgba(255, 77, 79, 0.3);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--border);
@@ -265,9 +266,9 @@ a:hover { text-decoration: underline; }
   color: #ffffff;
 }
 .dark-theme .nav-btn.btn-primary:hover:not(:disabled) {
-  background: #eaeaea;
-  border-color: #eaeaea;
-  color: #000000;
+  background: var(--blue-hover);
+  border-color: var(--blue-hover);
+  color: var(--accent-invert);
 }
 .nav-btn.btn-danger { background: var(--red-soft); color: var(--red); border-color: var(--red-border); }
 .nav-btn.btn-danger:hover:not(:disabled) { background: var(--red); color: #fff; border-color: var(--red); }
@@ -459,9 +460,9 @@ a:hover { text-decoration: underline; }
   color: #ffffff;
 }
 .dark-theme .btn-primary:hover:not(:disabled) {
-  background: #eaeaea;
-  border-color: #eaeaea;
-  color: #000000;
+  background: var(--blue-hover);
+  border-color: var(--blue-hover);
+  color: var(--accent-invert);
 }
 .btn-danger { background: transparent; color: var(--red); border-color: var(--red-border); }
 .btn-danger:hover:not(:disabled) { background: var(--red-soft); border-color: var(--red); }
@@ -597,8 +598,8 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 1px 3px rgba(0,0,0,0.18);
 }
 .toggle input:checked + .toggle-track { background: var(--accent); }
-:root.dark-theme .toggle input:checked + .toggle-track { background: #ededed; }
-:root.dark-theme .toggle input:checked + .toggle-track::after { background: #121212; }
+:root.dark-theme .toggle input:checked + .toggle-track { background: var(--accent); }
+:root.dark-theme .toggle input:checked + .toggle-track::after { background: var(--accent-invert); }
 .toggle input:checked + .toggle-track::after { transform: translateX(14px); }
 
 /* Custom Dropdown (createSelect) · 现代工程级自绘下拉 */
@@ -622,8 +623,8 @@ a:hover { text-decoration: underline; }
   transition: background var(--transition), border-color var(--transition);
 }
 .dark-theme .dd-trigger {
-  background-color: #121214;
-  border-color: #26262a;
+  background-color: var(--surface-elevated);
+  border-color: var(--border);
 }
 .light-theme .dd-trigger {
   background-color: #ffffff;
@@ -639,8 +640,8 @@ a:hover { text-decoration: underline; }
 }
 .dark-theme .dd-trigger:focus,
 .dark-theme .dd.open .dd-trigger {
-  border-color: #ededed;
-  box-shadow: 0 0 0 1px #ededed;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .dd-label {
   flex: 1;
@@ -683,8 +684,8 @@ a:hover { text-decoration: underline; }
   display: none !important;
 }
 .dark-theme .dd-list {
-  background: #121214;
-  border-color: #26262a;
+  background: var(--surface-elevated);
+  border-color: var(--border);
 }
 .light-theme .dd-list {
   background: #ffffff;
@@ -1256,8 +1257,8 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:f
 .dark-theme input:not([type="checkbox"]):not([type="radio"]):focus,
 .dark-theme select:focus,
 .dark-theme textarea:focus {
-  border-color: #ededed;
-  box-shadow: 0 0 0 1px #ededed;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 /* select 用内联 SVG 箭头替换系统原生粗箭头；文本输入框不加背景图 */
@@ -2537,3 +2538,5 @@ input[type="number"] { -moz-appearance: textfield; }
   .history-mobile-time { display: inline; }
   .history-table-head { top: var(--topheader-height); }
 }
+
+#themeToggleBtn[hidden] { display: none; }
