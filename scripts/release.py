@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import date
@@ -407,7 +408,13 @@ def publish(
             "--verify-tag",
             binary=True,
         )
-        release = remote.find_release(info.tag)
+        # Newly created drafts may not be visible in the release list immediately.
+        for attempt in range(3):
+            release = remote.find_release(info.tag)
+            if release is not None:
+                break
+            if attempt < 2:
+                time.sleep(2)
     if not release or not release.get("draft"):
         raise ValueError("Expected a draft release")
     release_id = release["id"]

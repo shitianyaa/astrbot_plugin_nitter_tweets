@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 import zipfile
 from datetime import date
 from pathlib import Path
@@ -214,6 +215,52 @@ def test_new_publication_verifies_draft_before_visibility(publication):
     ]
     assert remote.release["draft"] is False
     assert len(remote.download_paths) == len(set(remote.download_paths)) == 2
+
+
+@pytest.mark.parametrize("outcome", ["delayed", "absent", "error", "non-draft"])
+def test_created_draft_lookup_is_bounded_and_fail_closed(
+    publication, monkeypatch, outcome
+):
+    """Retry only invisible new drafts; never recreate or upload on lookup failure."""
+    info, archive, notes = publication
+    remote = FakeGitHub(archive, info.notes)
+    find_release = remote.find_release
+    lookups = []
+    sleeps = []
+
+    def lookup(tag):
+        if remote.release is None:
+            return find_release(tag)
+        lookups.append(tag)
+        if len(lookups) == 1 or outcome == "absent":
+            return None
+        if outcome == "error":
+            raise RuntimeError("GitHub operation failed: HTTP 403")
+        if outcome == "non-draft":
+            return {**remote.release, "draft": False}
+        return find_release(tag)
+
+    monkeypatch.setattr(remote, "find_release", lookup)
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    if outcome == "delayed":
+        assert (
+            publish(remote, info, archive, SHA, notes, archive.parent / "work")
+            == "published"
+        )
+    else:
+        error = RuntimeError if outcome == "error" else ValueError
+        message = "HTTP 403" if outcome == "error" else "Expected a draft release"
+        with pytest.raises(error, match=message):
+            publish(remote, info, archive, SHA, notes, archive.parent / "work")
+        assert [args[:2] for args in remote.writes] == [
+            ("api", "repos/example/plugin/git/refs"),
+            ("release", "create"),
+        ]
+    expected_lookups = 3 if outcome == "absent" else 2
+    assert len(lookups) == expected_lookups
+    assert sleeps == [2] * (expected_lookups - 1)
+    assert sum(args[1] == "create" for args in remote.writes) == 1
+    assert remote.tag == SHA
 
 
 def test_tag_mismatch_never_writes(publication):
