@@ -16,9 +16,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+import pytest
+from quart import Quart
+
 from plugin_api.api_history import WebAPIHistoryMixin
 from shared.utils import TweetItem, TweetMedia
-from storage import SQLiteStorage
+from storage import SQLiteStorage, StorageAdapter
 from storage.records import PushHistoryRecord
 
 GROUP = "default"
@@ -331,3 +334,99 @@ class WebHistoryRouteLimitTest(unittest.TestCase):
             asyncio.run(api.handle_history())
 
         assert captured["limit"] == 100
+
+
+@pytest.mark.parametrize("limit", [20, 50, 100, 150])
+@pytest.mark.parametrize("status", ["", "success", "partial_failed", "failed"])
+def test_history_page_size_through_route_and_sqlite(limit, status):
+    """Keep page sizes, grouping and lookahead intact through the real query path."""
+    from plugin_api.api import NitterWebAPI
+
+    async def run():
+        sqlite = SQLiteStorage(Path(":memory:"))
+        await sqlite.connect()
+        try:
+            targets = ["aiocqhttp:GroupMessage:1", "telegram:GroupMessage:2"]
+            for index in range(180):
+                tweet = TweetItem(
+                    text=f"history fixture {index}",
+                    link=f"https://x.com/nasa/status/{1000 + index}",
+                    published="",
+                )
+                for target_index, target in enumerate(targets):
+                    delivery_status = status or "success"
+                    if status == "partial_failed":
+                        delivery_status = "failed" if target_index else "success"
+                    sqlite.record_push_history(
+                        GROUP,
+                        USER,
+                        tweet,
+                        target,
+                        "scheduled",
+                        pushed_at=1_700_000_000 + index,
+                        delivery_status=delivery_status,
+                    )
+            # Supply only the fixture database, without initializing plugin data paths.
+            adapter = StorageAdapter.__new__(StorageAdapter)
+            adapter.sqlite = sqlite
+            adapter._legacy_global_aliases_default = False
+            group = types.SimpleNamespace(
+                group_id=GROUP, name="默认分组", group_type="blogger", targets=targets
+            )
+            reader = types.SimpleNamespace(
+                schedule_groups=lambda **kwargs: [group],
+                schedule_group=lambda group_id, **kwargs: (
+                    group if group_id == GROUP else None
+                ),
+            )
+            api = NitterWebAPI(
+                types.SimpleNamespace(
+                    scheduler=types.SimpleNamespace(
+                        storage=adapter, config_reader=reader
+                    )
+                )
+            )
+            app = Quart(__name__)
+            offsets = []
+            status_ids = []
+            offset = 0
+            while True:
+                offsets.append(offset)
+                async with app.test_request_context(
+                    "/web/history",
+                    query_string={
+                        "group_id": GROUP,
+                        "username": USER,
+                        "status": status,
+                        "limit": str(limit),
+                        "offset": str(offset),
+                    },
+                ):
+                    response = await api.handle_history()
+                    data = await response.get_json()
+                assert data["success"] is True, data
+                assert data["limit"] == limit
+                assert data["offset"] == offset
+                assert data["page"] == offset // limit + 1
+                assert data["total_count"] == 180
+                assert data["total_pages"] == (180 + limit - 1) // limit
+                assert len(data["records"]) == min(limit, 180 - offset)
+                assert data["has_prev"] is (offset > 0)
+                assert data["prev_offset"] == max(0, offset - limit)
+                has_next = offset + limit < 180
+                assert data["has_next"] is has_next
+                assert data["next_offset"] == (offset + limit if has_next else offset)
+                for record in data["records"]:
+                    assert record["target_count"] == 2
+                    assert set(record["target_umos"]) == set(targets)
+                    assert record["delivery_status"] == (status or "success")
+                    status_ids.append(record["status_id"])
+                if not has_next:
+                    break
+                offset = data["next_offset"]
+            assert offsets == list(range(0, 180, limit))
+            assert status_ids == [str(1000 + index) for index in reversed(range(180))]
+        finally:
+            sqlite.close()
+
+    asyncio.run(run())

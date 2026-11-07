@@ -655,7 +655,8 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
             params
             + having_params
             + [
-                max(1, min(int(limit or 50), 51)),
+                # 每页最多 150 条，额外一条探测下一页。
+                max(1, min(int(limit or 50), 151)),
                 max(0, int(offset or 0)),
             ]
         )
