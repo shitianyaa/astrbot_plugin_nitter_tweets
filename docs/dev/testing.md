@@ -27,6 +27,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 调度、seen、私人号 OneBot 合并、QQ Official、Telegram flood | `python -m pytest -q tests/test_delivery_platforms.py tests/test_scheduler_delivery.py tests/test_qq_official_delivery.py` | 独立扫描基准、发送调用失败跳过、准备失败不推进基准、合并顺序、官方 Markdown/纯文本切换、媒体部分成功、限流重试 |
 | 发布版本与工具 | `python -m pytest -q tests/test_release_version.py tests/test_release_tools.py tests/test_workflow_contract.py` | 四处版本一致、首标题/日期/有效说明、tag/SHA、公开版本不可覆盖、草稿续跑与API失败、ZIP内容与包内导入、CI依赖和权限 |
 | 结构化日志、双环与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_log_buffer.py tests/test_web_logs_api.py tests/test_html_quiet_log.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、主环/DEBUG 独立容量与读取、HTML 过程分流、时间线/空页/登录维护/异常页分类 |
+| Dashboard 历史表格与主题 | `python -m pytest -q tests/test_dashboard_history.py tests/test_dashboard_theme.py` | 需要 Node；来源中文、状态标签、表头、跨页序号、空列表、宿主主题同步与首帧主题。浏览器另检查浅暗配色、表内吸顶、分页/选择/详情和响应式列对齐 |
 | Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_list_support.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_subscription_display.py` | 来源链接清理、正文布局、分组/实例显示 |
 | 媒体传输编码 | `python -m pytest -q tests/test_media_transport.py` | 梯度组成、base64 上限、URL 主机白名单、传输降级先于内容降级、`uncertain` 不推进、编码记忆、非 OneBot 恒 `path` |
