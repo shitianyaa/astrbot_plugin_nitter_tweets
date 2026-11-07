@@ -392,19 +392,26 @@ function renderHistory() {
   if (els.historyNextBtn && data) els.historyNextBtn.disabled = !data.has_next;
 
   const content = els.historyContent;
-  if (!recs.length) {
-    content.replaceChildren(h("div", { class: "deploy-table empty-note", text: "暂无推送历史记录" }));
-    renderHistoryBatchBar();
-    return;
-  }
-
-  content.replaceChildren(h("div", { class: "deploy-table" }, recs.map(r => historyRow(r))));
+  const header = h("div", { class: "history-table-head history-grid", role: "row" }, [
+    ...[
+      ["选择", ""], ["序号", ""], ["推文内容", ""], ["状态", ""],
+      ["投递信息", "history-delivery"], ["来源", "history-source"], ["操作", ""],
+    ].map(([text, cls]) => h("span", { role: "columnheader", class: cls, text })),
+  ]);
+  const rows = recs.length
+    ? recs.map((r, i) => historyRow(r, (data.offset || 0) + i + 1))
+    : [h("div", { role: "row" }, [
+      h("div", { role: "cell", "aria-colspan": "7", class: "empty-note", text: "暂无推送历史记录" }),
+    ])];
+  content.replaceChildren(h("div", {
+    class: "deploy-table history-table", role: "table", "aria-label": "推送历史",
+  }, [header, h("div", { role: "rowgroup" }, rows)]));
   renderHistoryBatchBar();
 }
 
 /* 历史行：勾选框 + 整行点选（双击/划选保护），点开走详情抽屉。
    dataset.recordId 供 syncHistoryCheckboxes 原位同步，不重建行。 */
-function historyRow(r) {
+function historyRow(r, sequence) {
   const st = r.delivery_status;
   const stLabel = st === "success" ? "已送达" : st === "partial_failed" ? "部分失败" : "发送失败";
   const glyphClass = st === "success" ? "ready" : st === "partial_failed" ? "warn" : "error";
@@ -422,7 +429,8 @@ function historyRow(r) {
   });
 
   return h("div", {
-    class: `deploy-row${state.historySelection.has(r.id) ? " selected" : ""}`,
+    class: `deploy-row history-grid${state.historySelection.has(r.id) ? " selected" : ""}`,
+    role: "row",
     title: "点击查看详情",
     dataset: { recordId: String(r.id) },
     onClick: e => {
@@ -433,8 +441,11 @@ function historyRow(r) {
     },
   }, [
     // label 包裹：点"文字前"整片区域都原生联动勾选；stopPropagation 防止行点击误开抽屉
-    h("label", { class: "deploy-check", onClick: e => e.stopPropagation() }, [checkbox]),
-    h("div", { class: "deploy-info" }, [
+    h("div", { role: "cell" }, [
+      h("label", { class: "deploy-check", onClick: e => e.stopPropagation() }, [checkbox]),
+    ]),
+    h("span", { class: "history-sequence", role: "cell", text: sequence }),
+    h("div", { class: "deploy-info", role: "cell" }, [
       // 标题兼作详情入口：行本身不做可聚焦元素（行内含勾选框与按钮，
       // 再声明 button 角色会把它们的角色与名称扁平化掉），键盘用户走这个
       // 原生按钮；鼠标点行内其它位置仍由行 onClick 处理。
@@ -454,15 +465,18 @@ function historyRow(r) {
       h("div", { class: "deploy-sub" }, [
         h("span", { text: r.username ? `@${r.username}` : "unknown" }),
         h("span", { text: relativeTime(r.pushed_at) }),
-        h("span", { class: `branch-tag ${glyphClass}`, text: stLabel }),
         r.group_name ? h("span", { class: "branch-tag", text: r.group_name }) : null,
         hasMedia ? h("span", { class: "branch-tag", text: "附件媒体" }) : null,
+        h("span", { class: "history-mobile-time", text: formatDateTime(r.pushed_at) }),
       ]),
     ]),
-    h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
-    h("span", { class: "deploy-time", text: formatDateTime(r.pushed_at) }),
-    h("span", { class: "deploy-duration", text: historySourceLabel(r.source) }),
-    h("span", { class: "deploy-row-actions" }, [
+    h("div", { role: "cell" }, [h("span", { class: `branch-tag ${glyphClass}`, text: stLabel })]),
+    h("div", { class: "history-delivery", role: "cell" }, [
+      h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
+      h("span", { class: "deploy-time", text: formatDateTime(r.pushed_at) }),
+    ]),
+    h("span", { class: "history-source", role: "cell", text: historySourceLabel(r.source) }),
+    h("span", { class: "deploy-row-actions", role: "cell" }, [
       h("button", {
         class: "btn btn-ghost btn-sm",
         type: "button",

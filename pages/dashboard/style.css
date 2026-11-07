@@ -2502,3 +2502,38 @@ input[type="number"] { -moz-appearance: textfield; }
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 历史表格独立列布局：不改变总览复用的 deploy-row。表头占用表内滚动空间。 */
+.history-table { overflow: clip; }
+#historyView .history-grid {
+  display: grid;
+  grid-template-columns: 26px 40px minmax(0, 1fr) 76px 185px 82px 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+}
+.history-table-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-elevated);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.history-sequence { color: var(--text-subtle); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.history-delivery { display: grid; gap: 3px; min-width: 0; }
+.history-delivery .deploy-time { text-align: left; white-space: nowrap; grid-column: auto; }
+.history-source { color: var(--text-muted); font-size: 11.5px; }
+.history-mobile-time { display: none; }
+@media (max-width: 1000px) {
+  #historyView .history-grid { grid-template-columns: 26px 34px minmax(0, 1fr) 76px 152px 32px; }
+  .history-source { display: none; }
+}
+@media (max-width: 680px) {
+  #historyView .history-grid { grid-template-columns: 22px 28px minmax(0, 1fr) 66px 28px; gap: 6px; padding: 10px; }
+  .history-delivery { display: none; }
+  .history-mobile-time { display: inline; }
+  .history-table-head { top: var(--topheader-height); }
+}

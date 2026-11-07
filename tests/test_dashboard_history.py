@@ -55,3 +55,35 @@ for (const [delivery_status, label, color] of [
 }
 """
     )
+
+
+def test_history_header_and_filtered_page_numbering():
+    source = (ROOT / "pages/dashboard/views.js").read_text(encoding="utf-8")
+    run_node(
+        r"""
+const assert = require('node:assert/strict');
+const state = { historySelection: new Set(), groups: [] };
+const els = { historyView: {}, historyContent: { replaceChildren(node) { this.tree = node; } } };
+function h(tag, props = {}, children = []) { return { tag, props, children: children.filter(Boolean) }; }
+function relativeTime() { return '刚刚'; }
+function formatDateTime() { return '2026-11-06 00:30:26'; }
+function svgIcon() { return ''; }
+"""
+        + source
+        + r"""
+for (const offset of [0, 20, 50, 150]) {
+  state.history = { offset, records: [1, 2].map(id => ({ id, delivery_status: 'success' })) };
+  renderHistory();
+  const table = els.historyContent.tree;
+  assert.equal(table.props.role, 'table');
+  assert.equal(table.children[0].children.length, 7);
+  assert.ok(table.children[0].children.every(n => n.props.role === 'columnheader'));
+  const rows = table.children[1].children;
+  assert.deepEqual(rows.map(r => r.children[1].props.text), [offset + 1, offset + 2]);
+  assert.ok(rows.every(r => r.children.length === 7 && r.children.every(c => c.props.role === 'cell')));
+}
+state.history = { offset: 0, records: [] };
+renderHistory();
+assert.equal(els.historyContent.tree.children[1].children[0].children[0].props.text, '暂无推送历史记录');
+"""
+    )
