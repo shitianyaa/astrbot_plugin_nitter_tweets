@@ -1031,7 +1031,7 @@ def test_dashboard_history_filters_use_shared_custom_select():
     # 状态选项仍保持四项（全部 / 成功 / 部分失败 / 失败）
     for value, text in (
         ('""', "全部状态"),
-        ('"success"', "发送成功"),
+        ('"success"', "已送达"),
         ('"partial_failed"', "部分失败"),
         ('"failed"', "发送失败"),
     ):

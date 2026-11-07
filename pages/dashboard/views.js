@@ -326,7 +326,7 @@ function badge(text) { return h("span", { class: "badge", text }); }
    自绘 .dd 并存时观感割裂；这里统一走 createSelect，els 引用改指新节点。 */
 const HISTORY_STATUS_OPTIONS = [
   { value: "", text: "全部状态" },
-  { value: "success", text: "发送成功" },
+  { value: "success", text: "已送达" },
   { value: "partial_failed", text: "部分失败" },
   { value: "failed", text: "发送失败" },
 ];
@@ -367,6 +367,12 @@ function syncHistoryGroupOptions() {
   }
   sel.replaceChildren(...options.map(o => h("option", { value: o.value, text: o.text })));
   sel.value = options.some(o => o.value === current) ? current : "";
+}
+
+function historySourceLabel(source, includeCode = false) {
+  const labels = { scheduled: "定时轮询", replay: "历史重推" };
+  const label = Object.hasOwn(labels, source) ? labels[source] : null;
+  return label ? (includeCode ? `${label} (${source})` : label) : (source || "-");
 }
 
 function renderHistory() {
@@ -455,7 +461,7 @@ function historyRow(r) {
     ]),
     h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
     h("span", { class: "deploy-time", text: formatDateTime(r.pushed_at) }),
-    h("span", { class: "deploy-duration", text: r.source || "" }),
+    h("span", { class: "deploy-duration", text: historySourceLabel(r.source) }),
     h("span", { class: "deploy-row-actions" }, [
       h("button", {
         class: "btn btn-ghost btn-sm",
@@ -536,7 +542,7 @@ function openHistoryDetail(recordId) {
         ]),
         h("div", { class: "detail-meta-item" }, [
           h("span", { class: "detail-meta-k", text: "触发来源" }),
-          h("span", { class: "detail-meta-v", text: r.source === "scheduled" ? "定时轮询 (scheduled)" : (r.source || "-") }),
+          h("span", { class: "detail-meta-v", text: historySourceLabel(r.source, true) }),
         ]),
         h("div", { class: "detail-meta-item detail-meta-full" }, [
           h("span", { class: "detail-meta-k", text: "解析节点" }),

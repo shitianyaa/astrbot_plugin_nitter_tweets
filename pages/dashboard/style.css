@@ -1801,6 +1801,9 @@ input[type="number"] { -moz-appearance: textfield; }
   color: var(--text-muted);
   flex: none;
 }
+.branch-tag.ready { background: var(--green-soft); color: var(--green); }
+.branch-tag.warn { background: var(--yellow-soft); color: var(--yellow-ink); }
+.branch-tag.error { background: var(--red-soft); color: var(--red); }
 .deploy-targets {
   font-size: 11.5px;
   color: var(--text-muted);
