@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 import json
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from config.compat import (
     TARGET_BLOCKED_USERS_LIST_MIGRATION_KEY,
     migrate_legacy_grouped_config,
 )
+from config.subscriptions import set_import_group_queries
 from main import NitterTweetsPlugin
 from media_support.client import NitterClient
 from media_support.html_backend.service import HtmlBackendConfig
@@ -20,12 +22,17 @@ from scheduler.config import (
     GROUP_TYPE_BLOGGER,
     GROUP_TYPE_LIST,
     GROUP_TYPE_TAG,
+    ScheduleGroup,
     SchedulerConfigReader,
 )
 from shared.utils import DEFAULT_INSTANCES
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
+
+
+def test_schedule_group_has_omit_field():
+    assert "omit_status_url" in {field.name for field in fields(ScheduleGroup)}
 
 
 def test_media_content_modes_preserve_legacy_values_and_survive_repeat_migration():
@@ -320,8 +327,8 @@ def test_instance_log_label_omits_path_and_query():
 
 
 class _DummyConfig(dict):
-    def get(self, key, default=None):
-        return super().get(key, default)
+    def save_config(self):
+        return None
 
 
 def test_parse_watch_queries_hash_and_phrase():
@@ -372,7 +379,7 @@ def test_parse_schedule_group_tag_ignores_users():
     assert group.is_tag_group
     assert group.users == []
     assert [q.query for q in group.queries] == ["#foo", "bar"]
-    assert group.account_keys[0].startswith("q:")
+    assert all(key.startswith("q:") for key in group.account_keys)
 
 
 def test_group_repost_filter_defaults_true_and_accepts_explicit_false():
@@ -462,3 +469,109 @@ def test_config_migration_preserves_query_only_group():
     assert raw["group_type"] == "tag"
     assert raw["__template_key"] == "tag"
     assert raw["watch_queries"] == ["#foo"]
+
+
+def test_empty_tag_group_keeps_explicit_type():
+    group = {
+        "group_id": "g1",
+        "group_type": "tag",
+        "watch_users": [],
+        "watch_queries": [],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_TAG
+    compat._ensure_tweet_group_template_key(group)
+    assert group["group_type"] == GROUP_TYPE_TAG
+    assert group[compat.TWEET_GROUP_TEMPLATE_KEY_FIELD] == GROUP_TYPE_TAG
+
+
+def test_empty_blogger_group_keeps_explicit_type():
+    group = {
+        "group_id": "g1",
+        "group_type": "blogger",
+        "watch_users": [],
+        "watch_queries": [],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_BLOGGER
+
+
+def test_explicit_tag_type_yields_to_existing_users():
+    group = {
+        "group_id": "g1",
+        "group_type": "tag",
+        "watch_users": ["nasa"],
+        "watch_queries": [],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_BLOGGER
+    compat._ensure_tweet_group_template_key(group)
+    assert group["watch_users"] == ["nasa"]
+
+
+def test_explicit_blogger_type_yields_to_existing_queries():
+    group = {
+        "group_id": "g1",
+        "group_type": "blogger",
+        "watch_users": [],
+        "watch_queries": ["#nasa"],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_TAG
+    compat._ensure_tweet_group_template_key(group)
+    assert group["watch_queries"] == ["#nasa"]
+
+
+def test_mixed_group_keeps_both_lists():
+    group = {
+        "group_id": "g1",
+        "group_type": "tag",
+        "watch_users": ["nasa"],
+        "watch_queries": ["#nasa"],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_TAG
+    compat._ensure_tweet_group_template_key(group)
+    assert group["watch_users"] == ["nasa"]
+    assert group["watch_queries"] == ["#nasa"]
+
+
+def test_missing_type_falls_back_to_template_key():
+    group = {
+        "group_id": "g1",
+        compat.TWEET_GROUP_TEMPLATE_KEY_FIELD: "tag",
+        "watch_users": [],
+        "watch_queries": [],
+    }
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_TAG
+
+
+def test_legacy_group_without_any_hint_is_blogger():
+    group = {"group_id": "g1", "watch_users": [], "watch_queries": []}
+    assert compat.resolve_tweet_group_template_key(group) == GROUP_TYPE_BLOGGER
+
+
+def test_tag_import_persists_reversible_string_queries():
+    config = _DummyConfig(
+        {
+            "tweet_groups": [
+                {
+                    "name": "t",
+                    "group_id": "t1",
+                    "group_type": "tag",
+                    "watch_queries": [],
+                    "enabled": True,
+                }
+            ]
+        }
+    )
+    reader = SchedulerConfigReader(config, None)
+    group = reader.schedule_groups(False)[0]
+    set_import_group_queries(
+        config,
+        reader,
+        group,
+        [{"query": "#foo", "type": "tag"}, {"query": "#literal", "type": "phrase"}],
+    )
+    stored = config["tweet_groups"][0]["watch_queries"]
+    assert stored == ["#foo", "nitter-query:phrase:#literal"]
+    parsed = reader.parse_watch_queries(stored)
+    assert [(item.query, item.type) for item in parsed.queries] == [
+        ("#foo", "tag"),
+        ("#literal", "phrase"),
+    ]

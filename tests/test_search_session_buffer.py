@@ -42,7 +42,9 @@ def test_known_ids_skip_refetch_duplicates():
     buf = SessionSearchBuffer()
     buf.add_tweets([_t("1"), _t("2")])
     buf.take(2)
-    # first page again should not re-queue
+    # A repeated page stays empty; a mixed page queues only new IDs.
+    assert buf.add_tweets([_t("1"), _t("2")]) == 0
+    assert len(buf) == 0
     assert buf.add_tweets([_t("1"), _t("2"), _t("3")]) == 1
     assert [x.status_id for x in buf.take(10)] == ["3"]
 

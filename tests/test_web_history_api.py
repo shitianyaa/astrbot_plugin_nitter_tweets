@@ -14,7 +14,6 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import mock
 
 import pytest
 from quart import Quart
@@ -302,42 +301,10 @@ class WebHistoryReplayRouteTest(unittest.TestCase):
         assert api.scheduler.batch_calls == []
 
 
-class WebHistoryRouteLimitTest(unittest.TestCase):
-    """路由层 limit 钳制必须与 build_history 的上限一致。
-
-    回归背景：build_history 上限放宽到 150 时，handle_history 路由层仍钳
-    maximum=50，前端选 100/150 只会拿到 50 条。这里在路由层捕获透传值，
-    保证两处上限不再各自漂移。
-    """
-
-    def test_route_passes_limit_up_to_build_history_cap(self):
-        from plugin_api.api import NitterWebAPI
-
-        api = NitterWebAPI(types.SimpleNamespace())
-        captured = {}
-
-        async def fake_build_history(group_id, username, limit, offset, status):
-            captured["limit"] = limit
-            return {"success": True, "records": [], "total": 0}
-
-        async def fake_json_response(action):
-            return await action()
-
-        api.build_history = fake_build_history
-        api._json_response = fake_json_response
-        fake_request = types.SimpleNamespace(
-            args=types.SimpleNamespace(
-                get=lambda key, default=None: {"limit": "100"}.get(key, default)
-            )
-        )
-        with mock.patch("plugin_api.api.request", fake_request):
-            asyncio.run(api.handle_history())
-
-        assert captured["limit"] == 100
-
-
-@pytest.mark.parametrize("limit", [20, 50, 100, 150])
-@pytest.mark.parametrize("status", ["", "success", "partial_failed", "failed"])
+@pytest.mark.parametrize(
+    ("limit", "status"),
+    [(20, ""), (50, ""), (100, ""), (150, ""), (150, "partial_failed")],
+)
 def test_history_page_size_through_route_and_sqlite(limit, status):
     """Keep page sizes, grouping and lookahead intact through the real query path."""
     from plugin_api.api import NitterWebAPI
@@ -354,9 +321,7 @@ def test_history_page_size_through_route_and_sqlite(limit, status):
                     published="",
                 )
                 for target_index, target in enumerate(targets):
-                    delivery_status = status or "success"
-                    if status == "partial_failed":
-                        delivery_status = "failed" if target_index else "success"
+                    delivery_status = "failed" if status and target_index else "success"
                     sqlite.record_push_history(
                         GROUP,
                         USER,

@@ -1,4 +1,4 @@
-"""HTML search/user multi-mirror rotation retry."""
+"""HTML search ordering, user timelines, and multi-mirror rotation retry."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 from shared.utils import TweetItem
 
 
-def _pool(hosts: list[str]) -> HtmlNitterPool:
+def _pool(hosts: list[str], *, search_sort: str = "latest") -> HtmlNitterPool:
     from media_support.host_score import HostScoreBook
 
     pool = HtmlNitterPool.__new__(HtmlNitterPool)
-    pool.config = PoolConfig(instances=hosts, max_pages=1)
+    pool.config = PoolConfig(instances=hosts, max_pages=1, search_sort=search_sort)
     pool.instances = [pool._norm(h) for h in hosts]
     pool.scores = HostScoreBook()
     pool.log = MagicMock()
@@ -24,6 +24,26 @@ def _pool(hosts: list[str]) -> HtmlNitterPool:
     pool.limiter.is_cooling = MagicMock(return_value=False)
     pool.limiter.cooldown_remaining = MagicMock(return_value=0.0)
     return pool
+
+
+@pytest.mark.parametrize(
+    ("sort", "feed"), [("latest", "tweets"), ("top", "top"), ("bogus", "tweets")]
+)
+def test_search_sort_selects_nitter_feed(sort, feed):
+    """Configured sort chooses the search feed; invalid values use latest."""
+    pool = _pool(["http://nitter:8080"], search_sort=sort)
+    captured_paths = []
+
+    def get_html(base, path):
+        captured_paths.append(path)
+        return b"<html></html>"
+
+    pool._get_html = get_html
+    pool._paginate_search("http://nitter:8080", "test", 5, kind="phrase")
+    assert captured_paths
+    assert all(f"f={feed}" in path for path in captured_paths)
+    other_feed = "tweets" if feed == "top" else "top"
+    assert all(f"f={other_feed}" not in path for path in captured_paths)
 
 
 def _tweet(status_id: str) -> TweetItem:
@@ -190,15 +210,21 @@ def test_search_empty_then_hit_uses_later_host():
     assert [t.status_id for t in tweets] == ["42"]
 
 
-def test_search_all_hosts_error_still_raises():
+def test_search_all_hosts_error_still_raises(monkeypatch):
     pool = _pool(["https://a.example", "https://b.example"])
+    sleeps = []
+    tried = []
+    monkeypatch.setattr("media_support.html_backend.pool.time.sleep", sleeps.append)
 
     def paginate(base, query, limit, *, kind, max_pages=None, **kwargs):
+        tried.append(base)
         raise RuntimeError(f"down {base}")
 
     pool._paginate_search = paginate  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="HTML search failed"):
         pool.search("q", 1, kind="phrase")
+    assert len(tried) == len(pool.instances) * pool.config.max_global_retries
+    assert sleeps == [pool.config.retry_delay_base]
 
 
 def test_fetch_user_all_hosts_empty_returns_empty_not_raise():

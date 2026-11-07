@@ -131,8 +131,8 @@ ruff format --check .
 - 链接解析：`tests/test_status_link_preview.py`
 - 合并 RSS 管道：`tests/test_merged_rss.py`
 - List：`tests/test_list_rss.py`、`tests/test_list_support.py`、`tests/test_scheduler_list_delivery.py`
-- 标签调度与搜索排序：`tests/test_scheduler_tag_delivery.py`、`tests/test_search_sort.py`
-- HTML/搜索：`tests/test_html_backend_query.py`、`tests/test_watch_queries_config.py`
+- 标签调度与搜索排序：`tests/test_scheduler_tag_delivery.py`、`tests/test_html_search_rotate.py`
+- HTML/搜索：`tests/test_html_backend_query.py`；配置、类型解析与订阅导入：`tests/test_config_contracts.py`
 - 日志与 HTML 页面分类：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
 - 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
 - 媒体传输编码：`tests/test_media_transport.py`
@@ -141,7 +141,7 @@ ruff format --check .
 - 媒体缓存文件名后缀：`tests/test_media_file_name.py`
 - 配置迁移标记 schema 声明：`tests/test_conf_schema_migration_keys.py`
 - xdown token 直链与重试兜底：`tests/test_xdown_token_direct_url.py`
-- 视频大小预检降级：`tests/test_video_size_preflight.py`
+- 视频大小预检降级：`tests/test_media_quality.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。
 
 完整矩阵：`docs/dev/testing.md`。

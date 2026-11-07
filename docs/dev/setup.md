@@ -14,7 +14,7 @@ python scripts/check.py
 
 默认使用系统临时目录；需要固定产物位置时加 `--temp-root <目录>`。不要全局安装或升级依赖，建议在独立虚拟环境运行。插件的 `requirements.txt` 仍为空白占位，开发依赖不进入插件运行安装或发布包。
 
-`requirements-dev.txt` 里的 AstrBot SDK 是经过验证的基线，升级它应当作为独立改动并重跑门禁，而不是随手跟随最新版。`pytest.ini` 已设置 `pythonpath = .`，因此从仓库根目录直接跑 `pytest` 或 `python -m pytest` 都可导入插件模块；不需要修改 `PYTHONPATH`。
+`requirements-dev.txt` 里的 AstrBot SDK 是经过验证的基线，测试直接依赖它，不再注入备用 SDK 桩；缺少 SDK 时安装开发依赖，不把假接口通过视为兼容验证。升级 SDK 应当作为独立改动并重跑门禁，而不是随手跟随最新版。`pytest.ini` 已设置 `pythonpath = .`，因此从仓库根目录直接跑 `pytest` 或 `python -m pytest` 都可导入插件模块；不需要修改 `PYTHONPATH`。
 
 1.9.0 已移除 pre-commit 配置。若以前执行过 `pre-commit install`，请在该仓库运行 `pre-commit uninstall` 移除旧 hook，否则提交时会因缺少配置文件而失败。直接在原开发环境运行，无需重新安装；后续检查使用 `python scripts/check.py`。
 

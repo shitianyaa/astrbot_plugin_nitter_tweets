@@ -69,12 +69,16 @@ def test_omit_false_keeps_inline_urls_and_footer_link():
     out = R.format_tweet(
         0,
         "nasa",
-        _tw(),
+        _tw(
+            text="Hello https://x.com/a/status/1 world",
+            translation="hello https://t.co/x",
+        ),
         omit_status_url=False,
         link_style="plain",
     )
-    assert "https://t.co/abc" in out
-    assert "Hello #space https://t.co/abc world" in out
+    assert "https://x.com/a/status/1" in out
+    assert "https://t.co/x" in out
+    assert "Hello https://x.com/a/status/1 world" in out
     assert "🔗" in out
     assert "https://x.com/nasa/status/1" in out
 
@@ -160,12 +164,13 @@ def test_plain_r1_hide_original_only_translation_body():
     assert "Hello #space" not in out
 
 
-def test_plain_r1_no_translation_no_original_label():
+def test_hide_original_without_translation_keeps_body():
     out = R.format_tweet(
         0,
         "nasa",
         _tw(),
         omit_status_url=True,
+        hide_original_when_translated=True,
         link_style="plain",
     )
     assert "原文" not in out
@@ -508,6 +513,20 @@ def test_merged_nodes_media_only_single_node_with_author():
     kinds = [_kind(c) for c in node.content]
     assert kinds == ["plain", "image"]
     assert (node.uin, node.name) == ("@nasa", "@nasa")
+
+
+def test_default_omit_strips_original_and_translation_urls():
+    out = R.format_tweet(
+        1,
+        "nasa",
+        _tw(
+            text="Hello https://x.com/a/status/1 world",
+            translation="hello https://t.co/x",
+        ),
+    )
+    assert "https://" not in out
+    assert "原文链接" not in out
+    assert "Hello world" in out
 
 
 def test_normalize_external_links_rewrites_nitter_quote_urls():

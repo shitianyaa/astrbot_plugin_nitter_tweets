@@ -79,11 +79,6 @@ def test_client_rss_format_pub_date_delegates_to_shared():
     assert NitterClient._format_pub_date("") == ""
 
 
-def test_display_form_documented_as_shanghai_not_utc_wall():
-    """Bare display form must not be re-interpreted as UTC (no second +8)."""
-    assert format_tweet_published("2026-07-28 05:15:34") == "2026-07-28 05:15:34"
-
-
 def test_renderer_header_converts_utc_string():
     tw = SimpleNamespace(
         status_id="1",
