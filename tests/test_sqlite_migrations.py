@@ -2,33 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import sys
 import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-
-if "astrbot.api" not in sys.modules:
-    astrbot_module = types.ModuleType("astrbot")
-    astrbot_api_module = types.ModuleType("astrbot.api")
-
-    class _Logger:
-        def debug(self, *args, **kwargs):
-            pass
-
-        def info(self, *args, **kwargs):
-            pass
-
-        def warning(self, *args, **kwargs):
-            pass
-
-        def error(self, *args, **kwargs):
-            pass
-
-    astrbot_api_module.logger = _Logger()
-    sys.modules["astrbot"] = astrbot_module
-    sys.modules["astrbot.api"] = astrbot_api_module
-
 
 from shared.utils import TweetItem
 from storage import SQLiteStorage

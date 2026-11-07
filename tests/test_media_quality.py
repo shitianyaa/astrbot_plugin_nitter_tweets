@@ -1,4 +1,4 @@
-"""media_quality contracts across HTML, status, and xdown media routes."""
+"""Image quality tiers and video selection by resolution, size and duration."""
 
 from __future__ import annotations
 
@@ -106,31 +106,36 @@ def test_non_pbs_image_untouched():
 
 
 TWEET = TweetItem(text="", link="https://x.com/u/status/1", published="")
+MB = 1024 * 1024
 
 
-def _service(media_quality: str) -> MediaService:
+def _service(media_quality: str, max_bytes: int = 0) -> MediaService:
     service = object.__new__(MediaService)
     service.media_quality = media_quality
     service.max_video_duration_seconds = 480
+    service.max_bytes = max_bytes
     # 候选都带时长，不会触发真实探测；兜底返回 None 表示探测不到。
     service._probe_remote_media = lambda _url, *, need_duration=True: None  # type: ignore[method-assign]
     return service
 
 
-def _candidate(resolution: int, duration: float = 60.0) -> XdownMediaCandidate:
+def _candidate(
+    resolution: int, duration: float = 60.0, *, size_bytes: int | None = None
+) -> XdownMediaCandidate:
     return XdownMediaCandidate(
         kind="video",
         url=f"https://x.com/u/status/1/vid/{resolution}",
         label=f"下载 MP4 ({resolution}p)",
         resolution=resolution,
         duration_seconds=duration,
+        size_bytes=size_bytes,
     )
 
 
 def _select(
-    media_quality: str, candidates: list[XdownMediaCandidate]
+    media_quality: str, candidates: list[XdownMediaCandidate], *, max_bytes: int = 0
 ) -> XdownMediaCandidate | None:
-    service = _service(media_quality)
+    service = _service(media_quality, max_bytes)
     allowed = service._filter_video_duration_candidates(TWEET, candidates)
     return service._select_video_candidate(TWEET, allowed)
 
@@ -188,3 +193,100 @@ def test_unrecognized_quality_falls_back_to_highest():
     selected = _select("garbage", [_candidate(360), _candidate(2160)])
     assert selected is not None
     assert selected.resolution == 2160
+
+
+def test_high_downgrades_when_highest_exceeds_size_limit():
+    candidates = [
+        _candidate(720, size_bytes=int(8.6 * MB)),
+        _candidate(1080, size_bytes=int(31.1 * MB)),
+        _candidate(2160, size_bytes=int(94.9 * MB)),
+    ]
+    selected = _select("high", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 720
+
+
+def test_high_keeps_highest_when_under_limit():
+    candidates = [
+        _candidate(720, size_bytes=int(8.6 * MB)),
+        _candidate(2160, size_bytes=15 * MB),
+    ]
+    selected = _select("high", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 2160
+
+
+def test_all_exceed_returns_smallest():
+    candidates = [
+        _candidate(720, size_bytes=30 * MB),
+        _candidate(2160, size_bytes=int(94.9 * MB)),
+    ]
+    selected = _select("high", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 720  # 下载阶段仍负责拒绝超限文件。
+
+
+def test_unknown_size_does_not_downgrade():
+    selected = _select("high", [_candidate(720), _candidate(2160)], max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 2160
+
+
+def test_medium_keeps_median_when_under_limit():
+    candidates = [
+        _candidate(360, size_bytes=2 * MB),
+        _candidate(720, size_bytes=int(8.6 * MB)),
+        _candidate(2160, size_bytes=int(94.9 * MB)),
+    ]
+    selected = _select("medium", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 720
+
+
+def test_medium_downgrades_when_median_exceeds_size_limit():
+    candidates = [
+        _candidate(360, size_bytes=2 * MB),
+        _candidate(720, size_bytes=30 * MB),
+        _candidate(2160, size_bytes=int(94.9 * MB)),
+    ]
+    selected = _select("medium", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 360
+
+
+def test_fxtwitter_candidates_downgrades_from_4k_to_1080p():
+    """Estimated bitrate size can force a lower resolution before downloading."""
+    candidates = [
+        XdownMediaCandidate(
+            kind="video",
+            url=f"https://video.twimg.com/vid/{resolution}.mp4",
+            resolution=resolution,
+            duration_seconds=18.0,
+            bitrate=bitrate,
+        )
+        for resolution, bitrate in [
+            (720, 2_176_000),
+            (1080, 10_368_000),
+            (2160, 25_128_000),
+        ]
+    ]
+    selected = _select("high", candidates, max_bytes=25 * MB)
+    assert selected is not None
+    assert selected.resolution == 1080
+    assert "1080.mp4" in selected.url
+
+
+def test_fxtwitter_candidates_filters_oversized_duration():
+    candidates = [
+        XdownMediaCandidate(
+            kind="video",
+            url="https://video.twimg.com/vid/720.mp4",
+            resolution=720,
+            duration_seconds=600.0,
+            bitrate=1_000_000,
+        )
+    ]
+    assert (
+        _service("high", 25 * MB)._filter_video_duration_candidates(TWEET, candidates)
+        == []
+    )

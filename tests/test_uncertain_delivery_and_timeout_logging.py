@@ -104,23 +104,26 @@ async def test_media_download_image_timeout_does_not_log_video_advice():
 
 
 def test_download_with_retries_video_timeout_warning():
-    service = MediaService(
-        {"download_retry_attempts": 2, "download_retry_delay_seconds": 0}
-    )
+    service = MediaService({})
     video_media = TweetMedia(kind="video", url="https://video.twimg.com/vid.mp4")
 
-    with patch.object(
-        service,
-        "_download",
-        side_effect=TimeoutError("The read operation timed out"),
+    with (
+        patch.object(
+            service,
+            "_download",
+            side_effect=TimeoutError("The read operation timed out"),
+        ) as download,
+        patch("media_support.service.time.sleep") as sleep,
+        patch("media_support.service.logger.warning") as mock_warn,
     ):
-        with patch("media_support.service.logger.warning") as mock_warn:
-            with pytest.raises(TimeoutError):
-                service._download_with_retries(video_media)
-            assert mock_warn.called
-            warn_calls = [call[0][0] for call in mock_warn.call_args_list]
-            found = any(
-                "若因视频过大或下载超时" in msg and "media_quality" in msg
-                for msg in warn_calls
-            )
-            assert found, f"Expected tuning advice in retry warnings, got: {warn_calls}"
+        with pytest.raises(TimeoutError):
+            service._download_with_retries(video_media)
+        assert download.call_count == service.download_retry_attempts
+        assert [call.args for call in sleep.call_args_list] == [
+            (service.download_retry_delay_seconds,)
+        ] * (service.download_retry_attempts - 1)
+        warn_calls = [call.args[0] for call in mock_warn.call_args_list]
+        assert any(
+            "若因视频过大或下载超时" in msg and "media_quality" in msg
+            for msg in warn_calls
+        ), warn_calls

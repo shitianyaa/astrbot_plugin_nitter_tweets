@@ -1075,165 +1075,65 @@ async def test_manual_cmd_tweet_pic_search_passes_is_media():
     assert call_kwargs.get("feed") == "latest"
 
 
+@pytest.mark.parametrize(
+    ("config", "query", "sort"),
+    [
+        pytest.param({}, "#news 2 -top", "top", id="explicit-top"),
+        pytest.param({"search_sort": "top"}, "#news 2", "top", id="inherited-top"),
+        pytest.param({}, "#news 2", "latest", id="default-latest"),
+        pytest.param(
+            {"search_sort": "top"}, "#news 2 -last", "latest", id="explicit-last"
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_passes_top_feed():
+async def test_manual_search_sort_reaches_fx(config, query, sort):
+    """Explicit flags override configured sort; absent flags use the default."""
     mock_nitter = MagicMock()
     mock_fx = MagicMock()
     mock_fx.base_url = "https://api.fxtwitter.com"
-    tw = _make_tweet("pic", "8888")
-    mock_fx.search_tweets = MagicMock(return_value=([tw], None))
-
-    host = DummyManualHost({"fetch_backend": "mix"}, mock_nitter, mock_fx)
+    mock_fx.search_tweets.return_value = ([_make_tweet("author", "8888")], None)
+    host = DummyManualHost({"fetch_backend": "mix", **config}, mock_nitter, mock_fx)
     event = MagicMock()
-    event.unified_msg_origin = "session:test_top_search"
+    event.unified_msg_origin = "session:sort-test"
     event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
+    event.plain_result.side_effect = lambda value: value
 
-    await host._cmd_tweet_search_impl(event, "#news 2 -top")
+    await host._cmd_tweet_search_impl(event, query)
 
     mock_fx.search_tweets.assert_called_once()
-    call_kwargs = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs.get("feed") == "top"
+    assert mock_fx.search_tweets.call_args.kwargs["feed"] == sort
+    mock_nitter.search.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("query", "sort"),
+    [
+        pytest.param("#test 2", "top", id="inherited-top"),
+        pytest.param("#test 2 -last", "latest", id="explicit-last"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_inherits_config_search_sort_top():
-    """Unspecified sort on CLI automatically inherits search_sort='top' from config."""
+async def test_manual_search_sort_survives_nitter_fallback(query, sort):
+    """Nitter fallback retains the effective sort sent to FX."""
     mock_nitter = MagicMock()
+    mock_nitter.search.return_value = ("http://nitter.test", [_make_tweet("t", "9002")])
     mock_fx = MagicMock()
-    mock_fx.base_url = "https://api.fxtwitter.com"
-    tw = _make_tweet("topuser", "6666")
-    mock_fx.search_tweets = MagicMock(return_value=([tw], None))
-
+    mock_fx.search_tweets.side_effect = FxTwitterNotFoundError("Search 404 SafeSearch")
     host = DummyManualHost(
         {"fetch_backend": "mix", "search_sort": "top"}, mock_nitter, mock_fx
     )
     event = MagicMock()
-    event.unified_msg_origin = "session:test_inherit_top"
+    event.unified_msg_origin = "session:sort-fallback-test"
     event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
+    event.plain_result.side_effect = lambda value: value
 
-    await host._cmd_tweet_search_impl(event, "#news 2")
+    await host._cmd_tweet_search_impl(event, query)
 
     mock_fx.search_tweets.assert_called_once()
-    call_kwargs = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs.get("feed") == "top"
-
-
-@pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_inherits_config_search_sort_top_nitter_fallback():
-    """Inherited top sort is preserved when FX fails and falls back to Nitter."""
-    mock_nitter = MagicMock()
-    mock_nitter.search = MagicMock(
-        return_value=("http://nitter.test", [_make_tweet("t", "9002")])
-    )
-
-    mock_fx = MagicMock()
-    mock_fx.search_tweets = MagicMock(
-        side_effect=FxTwitterNotFoundError("Search 404 SafeSearch")
-    )
-
-    host = DummyManualHost(
-        {"fetch_backend": "mix", "search_sort": "top"}, mock_nitter, mock_fx
-    )
-    event = MagicMock()
-    event.unified_msg_origin = "session:test_inherit_top_fallback"
-    event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
-
-    await host._cmd_tweet_search_impl(event, "#test 2")
-
-    mock_fx.search_tweets.assert_called_once()
-    call_kwargs_fx = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs_fx.get("feed") == "top"
-
     mock_nitter.search.assert_called_once()
-    call_kwargs_nitter = mock_nitter.search.call_args[1]
-    assert call_kwargs_nitter.get("sort") == "top"
-
-
-@pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_default_inherits_latest():
-    """Default search_sort='latest' passes feed='latest' to FX."""
-    mock_nitter = MagicMock()
-    mock_fx = MagicMock()
-    mock_fx.base_url = "https://api.fxtwitter.com"
-    tw = _make_tweet("latestuser", "5555")
-    mock_fx.search_tweets = MagicMock(return_value=([tw], None))
-
-    host = DummyManualHost({"fetch_backend": "mix"}, mock_nitter, mock_fx)
-    event = MagicMock()
-    event.unified_msg_origin = "session:test_default_latest"
-    event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
-
-    await host._cmd_tweet_search_impl(event, "#news 2")
-
-    mock_fx.search_tweets.assert_called_once()
-    call_kwargs = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs.get("feed") == "latest"
-
-
-@pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_explicit_last_overrides_config_search_sort_top():
-    """Explicit -last on CLI overrides config search_sort='top'."""
-    mock_nitter = MagicMock()
-    mock_fx = MagicMock()
-    mock_fx.base_url = "https://api.fxtwitter.com"
-    tw = _make_tweet("latestuser", "7777")
-    mock_fx.search_tweets = MagicMock(return_value=([tw], None))
-
-    host = DummyManualHost(
-        {"fetch_backend": "mix", "search_sort": "top"}, mock_nitter, mock_fx
-    )
-    event = MagicMock()
-    event.unified_msg_origin = "session:test_override_last"
-    event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
-
-    await host._cmd_tweet_search_impl(event, "#news 2 -last")
-
-    mock_fx.search_tweets.assert_called_once()
-    call_kwargs = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs.get("feed") == "latest"
-
-
-@pytest.mark.asyncio
-async def test_manual_cmd_tweet_search_explicit_last_overrides_config_search_sort_top_nitter_fallback():
-    """Explicit -last on CLI overrides config search_sort='top' on Nitter fallback."""
-    mock_nitter = MagicMock()
-    mock_nitter.search = MagicMock(
-        return_value=("http://nitter.test", [_make_tweet("t", "9003")])
-    )
-
-    mock_fx = MagicMock()
-    mock_fx.search_tweets = MagicMock(
-        side_effect=FxTwitterNotFoundError("Search 404 SafeSearch")
-    )
-
-    host = DummyManualHost(
-        {"fetch_backend": "mix", "search_sort": "top"}, mock_nitter, mock_fx
-    )
-    event = MagicMock()
-    event.unified_msg_origin = "session:test_override_last_fallback"
-    event.send = AsyncMock()
-    event.stop_event = MagicMock()
-    event.plain_result.side_effect = lambda v: v
-
-    await host._cmd_tweet_search_impl(event, "#test 2 -last")
-
-    mock_fx.search_tweets.assert_called_once()
-    call_kwargs_fx = mock_fx.search_tweets.call_args[1]
-    assert call_kwargs_fx.get("feed") == "latest"
-
-    mock_nitter.search.assert_called_once()
-    call_kwargs_nitter = mock_nitter.search.call_args[1]
-    assert call_kwargs_nitter.get("sort") == "latest"
+    assert mock_fx.search_tweets.call_args.kwargs["feed"] == sort
+    assert mock_nitter.search.call_args.kwargs["sort"] == sort
 
 
 def test_scheduler_log_fxtwitter_instance_and_fallback_trace():

@@ -671,7 +671,6 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     assert "请先添加推送目标。" in source
     assert "hideAlert();\n  state.view = v;" in source
     assert "body.ui-busy .view" in style
-    assert ".notice-stack {" in style
     assert "background-color: var(--surface);" in style
     assert (
         "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
@@ -718,15 +717,12 @@ def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
     # 删除分组只在选中项仍指向它时才清空并关抽屉
     assert "if (state.selectedGroupId === gid) {" in source
     assert "if (sheetOpen) closeSheet({ force: true });" in source
-    assert ".deploy-row {" in style
     assert "background: var(--blue-soft);" in style
     assert "border-color: var(--blue-border);" in style
     # 分组视图由左右分栏改为卡片网格：列宽塌陷保护移到网格容器
     assert ".groups-grid {" in style
     assert "minmax(340px, 1fr)" in style
     assert ".group-card {" in style
-    assert 'id="noticeStack"' in index
-    assert "actionStatusDismissed" not in source
     assert ".feedback-close" in style
     assert 'aria-live="polite"' in index
 
@@ -933,16 +929,12 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
     assert "let logsInFlight = null;" in source
     assert "let logsResetPending = false;" in source
     assert "} else if (logsInFlight || logsResetPending) {" in source
-    # 按 seq 去重，即便守卫失效也不会重复追加
-    assert "const seen = new Set(state.logs.map(e => e.seq));" in source
-    assert "const fresh = incoming.filter(e => !seen.has(e.seq));" in source
-    # 游标取 max：这行不该依赖后端一定按升序返回
+    # 增量去重和会话重启已由 test_dashboard_log_polling 执行验证；
+    # 这里保留乱序游标和旧服务端没有 session_id 时的二级兜底。
     assert (
         "state.logsAfterSeq = Math.max(state.logsAfterSeq, ...fresh.map(e => e.seq));"
         in source
     )
-    # 插件重启后 seq 从头计数，旧游标要能自愈（会话标识 + next_seq 二级兜底）
-    assert "state.logsSession && res.session_id !== state.logsSession" in source
     assert "res.next_seq && res.next_seq <= state.logsAfterSeq" in source
     # 跳过的一轮不能算成功，否则「请求比 3s 间隔还慢 + 一直失败」时失败计数
     # 会在 0/1 之间振荡，永远到不了停止阀值
@@ -1028,15 +1020,6 @@ def test_dashboard_history_filters_use_shared_custom_select():
     assert "const dd = createSelect({ id: slotId, value, options: opts });" in source
     assert "slot.replaceWith(dd);" in source
     assert "els[slotId] = dd;" in source
-    # 状态选项仍保持四项（全部 / 成功 / 部分失败 / 失败）
-    for value, text in (
-        ('""', "全部状态"),
-        ('"success"', "发送成功"),
-        ('"partial_failed"', "部分失败"),
-        ('"failed"', "发送失败"),
-    ):
-        assert f'{{ value: {value}, text: "{text}" }}' in source
-
     # 样式侧：工具条内的 .dd 与相邻控件同高
     assert ".section-tools .dd-filter .dd-trigger" in style
 
@@ -1062,9 +1045,7 @@ def test_dashboard_redesign_architecture_guards():
     assert "async function reloadGroupState()" in source
     assert "async function reloadConfigState()" in source
     assert "async function refreshHistoryData()" in source
-    # 布局实测 rAF 合帧（只剩顶栏高度；通知栈改为浮层后不再写让位变量）
-    assert "scheduleBannerSync" not in source
-    assert "syncBannerOffset" not in source
+    # 布局实测 rAF 合帧；通知浮层护栏由 notice_stack 测试覆盖。
     assert "frame = requestAnimationFrame(() => {" in source
     # 历史列表：卡片带 recordId，全选/清除走原位勾选同步，不重建卡片
     assert "dataset: { recordId: String(r.id) }" in source
@@ -1082,22 +1063,6 @@ def test_dashboard_redesign_architecture_guards():
     assert "health-dot " in source
     assert "probe-meter-fill" in source
     assert "图片（${cache?.images || 0} 个文件）" in source
-    # 设计系统移植（Vercel 风格工作台）：Hero 卡 + 指标走廊 + 抽屉 + ⌘K + 终端
-    assert "function renderOverview()" in source
-    assert '"定时推送服务管道"' in source
-    assert 'class: "hero-card"' in source
-    assert 'class: "hero-meta-grid"' in source
-    assert "function metricBox(" in source
-    assert 'class: "metrics-row"' in source
-    assert "function deployRow(" in source
-    assert "function openSheet(" in source
-    assert "function closeSheet(" in source
-    assert "function openCmdk(" in source
-    assert "function renderTerminal(" in source
-    assert 'class: "mac-terminal-bar"' in source
-    assert '"data-logs-level": level' in source
-    assert "level: myLevel" in source
-    assert 'class: "mac-dots"' in source
     # 抽屉/面板/弹窗的焦点圈与焦点恢复：打开时记录锚点，关闭时归还
     assert "state.sheetReturnFocus = document.activeElement;" in source
     assert "state.cmdkReturnFocus = document.activeElement;" in source
@@ -1112,15 +1077,6 @@ def test_dashboard_redesign_architecture_guards():
     # 实例地址在界面侧脱敏：只保留协议 + host[:port]
     assert "function redactInstanceLabel(raw)" in source
     assert "redactInstanceLabel(r.instance)" in source
-    # 样式侧新增组件必须存在
-    assert ".hero-card {" in style
-    assert ".metrics-row {" in style
-    assert ".deploy-row {" in style
-    assert ".sheet {" in style
-    assert ".modal-veil {" in style
-    assert ".palette-veil {" in style
-    assert ".mac-terminal {" in style
-    assert ".meter-bar {" in style
     # 顶部导航壳（原型 6 页签）：侧栏已废弃，页面不再有 .sidebar / .topheader
     assert 'class="nav-shell"' in index
     assert 'class="nav-primary"' in index

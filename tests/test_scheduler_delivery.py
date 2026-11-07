@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import sys
 import types
 import unittest
 from pathlib import Path
@@ -10,207 +8,16 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 
-def _ensure_astrbot_module(name: str) -> tuple[types.ModuleType, bool]:
-    """Import the real astrbot module when importable, otherwise install a stub.
+from astrbot.api.all import MessageChain, Plain
 
-    Returns ``(module, is_stub)``. Fake classes are only assigned to stubs:
-    patching a real AstrBot installation leaks into every later test module
-    (e.g. ``command_handlers.manual`` binding the fake ``MessageChain``
-    depending on collection order).
-    """
-    try:
-        return importlib.import_module(name), False
-    except Exception:
-        stub = types.ModuleType(name)
-        sys.modules[name] = stub
-        return stub, True
-
-
-astrbot_module, astrbot_is_stub = _ensure_astrbot_module("astrbot")
-astrbot_api_module, astrbot_api_is_stub = _ensure_astrbot_module("astrbot.api")
-astrbot_api_all_module, astrbot_api_all_is_stub = _ensure_astrbot_module(
-    "astrbot.api.all"
-)
-astrbot_api_event_module, astrbot_api_event_is_stub = _ensure_astrbot_module(
-    "astrbot.api.event"
-)
-astrbot_api_message_components_module, astrbot_api_message_components_is_stub = (
-    _ensure_astrbot_module("astrbot.api.message_components")
-)
-
-
-class _Logger:
-    def debug(self, *args, **kwargs):
-        pass
-
-    def info(self, *args, **kwargs):
-        pass
-
-    def warning(self, *args, **kwargs):
-        pass
-
-    def error(self, *args, **kwargs):
-        pass
-
-
-class _MessageChain:
-    def __init__(self, components=None):
-        self.components = components or []
-
-
-class _Plain:
-    def __init__(self, text=""):
-        self.text = text
-
-
-class _Image:
-    @classmethod
-    def fromFileSystem(cls, path):
-        return cls()
-
-
-class _Video:
-    @classmethod
-    def fromFileSystem(cls, path):
-        return cls()
-
-
-class _Node:
-    def __init__(self, *args, **kwargs):
-        self.args = args
-        self.uin = kwargs.get("uin")
-        self.name = kwargs.get("name")
-        self.content = kwargs.get("content", [])
-
-
-class _Nodes:
-    def __init__(self, *args, **kwargs):
-        self.nodes = []
-
-
-class _At:
-    pass
-
-
-class _Star:
-    def __init__(self, context=None):
-        self.context = context
-
-
-class _Filter:
-    class PermissionType:
-        ADMIN = "admin"
-
-    @staticmethod
-    def command(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
-
-    @staticmethod
-    def command_group(*args, **kwargs):
-        def decorator(func):
-            func.command = _Filter.command
-            return func
-
-        return decorator
-
-    @staticmethod
-    def permission_type(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
-
-    @staticmethod
-    def on_astrbot_loaded():
-        def decorator(func):
-            return func
-
-        return decorator
-
-    @staticmethod
-    def regex(*args, **kwargs):
-        def decorator(func):
-            return func
-
-        return decorator
-
-
-def _register(*args, **kwargs):
-    def decorator(cls):
-        return cls
-
-    return decorator
-
-
-astrbot_api_star_module, astrbot_api_star_is_stub = _ensure_astrbot_module(
-    "astrbot.api.star"
-)
-astrbot_core_command_module, astrbot_core_command_is_stub = _ensure_astrbot_module(
-    "astrbot.core.star.filter.command"
-)
-astrbot_core_module, astrbot_core_is_stub = _ensure_astrbot_module("astrbot.core")
-astrbot_core_message_module, astrbot_core_message_is_stub = _ensure_astrbot_module(
-    "astrbot.core.message"
-)
-astrbot_core_message_components_module, astrbot_core_message_components_is_stub = (
-    _ensure_astrbot_module("astrbot.core.message.components")
-)
-
-
-if astrbot_api_is_stub:
-    astrbot_api_module.logger = _Logger()
-if astrbot_api_all_is_stub:
-    astrbot_api_all_module.At = _At
-    astrbot_api_all_module.AstrBotConfig = dict
-    astrbot_api_all_module.Context = object
-    astrbot_api_all_module.MessageChain = _MessageChain
-    astrbot_api_all_module.Plain = _Plain
-    astrbot_api_all_module.Star = _Star
-    astrbot_api_all_module.logger = getattr(astrbot_api_module, "logger", _Logger())
-if astrbot_api_event_is_stub:
-    astrbot_api_event_module.MessageChain = _MessageChain
-    astrbot_api_event_module.AstrMessageEvent = object
-    astrbot_api_event_module.filter = _Filter
-if astrbot_api_message_components_is_stub:
-    astrbot_api_message_components_module.Plain = _Plain
-    astrbot_api_message_components_module.Image = _Image
-    astrbot_api_message_components_module.Video = _Video
-    astrbot_api_message_components_module.Node = _Node
-    astrbot_api_message_components_module.Nodes = _Nodes
-if astrbot_api_star_is_stub:
-    astrbot_api_star_module.register = _register
-if astrbot_core_command_is_stub:
-    astrbot_core_command_module.GreedyStr = str
-if astrbot_core_message_components_is_stub:
-    astrbot_core_message_components_module.Image = _Image
-    astrbot_core_message_components_module.Video = _Video
-    astrbot_core_message_components_module.Node = _Node
-    astrbot_core_message_components_module.Nodes = _Nodes
-    astrbot_core_message_components_module.Plain = _Plain
-
-if astrbot_api_message_components_is_stub and "rendering.tweets" in sys.modules:
-    tweet_rendering_module = sys.modules["rendering.tweets"]
-    tweet_rendering_module.Plain = _Plain
-    tweet_rendering_module.Image = _Image
-    tweet_rendering_module.Video = _Video
-    tweet_rendering_module.Node = _Node
-    tweet_rendering_module.Nodes = _Nodes
-
-
-import delivery.telegram as telegram_delivery_module  # noqa: E402
-import scheduler as scheduler_module  # noqa: E402
-from delivery import DefaultDeliveryAdapter, TweetSender  # noqa: E402
-from delivery.outcomes import SendAttempt, SendOutcome  # noqa: E402
-from rendering import TweetMessageRenderer  # noqa: E402
-from scheduler import NitterTweetScheduler  # noqa: E402
-from shared import TweetItem, TweetMedia  # noqa: E402
-from storage import (  # noqa: E402
-    SQLiteStorage,
-    StorageAdapter,
-)
+import delivery.telegram as telegram_delivery_module
+import scheduler as scheduler_module
+from delivery import DefaultDeliveryAdapter, TweetSender
+from delivery.outcomes import SendAttempt, SendOutcome
+from rendering import TweetMessageRenderer
+from scheduler import NitterTweetScheduler
+from shared import TweetItem, TweetMedia
+from storage import SQLiteStorage, StorageAdapter
 
 
 class _Owner:
@@ -2207,129 +2014,53 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(target, batch.delivered_targets)
         self.assertEqual(sender.sent, [])
 
-    async def test_send_ordinary_batches_summary_enabled_calls_send_summary_to_umo(
-        self,
-    ):
+    async def test_per_user_updates_respects_summary_switch(self):
         target = "telegram:FriendMessage:1"
-        sender = _Sender()
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "push": {"send_batch_summary_enabled": True},
-            },
-            sender=sender,
-        )
-        self.assertTrue(scheduler.send_batch_summary_enabled)
-        batch = scheduler_module.PendingTweetBatch(
-            username="NASA",
-            instance="https://nitter.test",
-            tweets=[self._make_tweet("NASA", "203")],
-            fetched_ids=["203"],
-            seen_ids=["100"],
-        )
-        result = scheduler_module.ScheduledCheckResult(
-            reason="summary_enabled",
-            group_id="global",
-            group_type="blogger",
-            targets=[target],
-        )
+        summary = "📬 默认分组 · 1 位博主 · 1 条新推文"
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                sender = _Sender()
+                scheduler = self._create_scheduler(
+                    {
+                        "schedule_enabled": True,
+                        "push": {"send_batch_summary_enabled": enabled},
+                    },
+                    sender=sender,
+                )
+                self.assertIs(scheduler.send_batch_summary_enabled, enabled)
+                batch = scheduler_module.PendingTweetBatch(
+                    username="NASA",
+                    instance="https://nitter.test",
+                    tweets=[self._make_tweet("NASA", "203")],
+                    fetched_ids=["203"],
+                    seen_ids=["100"],
+                )
+                result = scheduler_module.ScheduledCheckResult(
+                    reason="summary_switch",
+                    group_id="global",
+                    group_type="blogger",
+                    targets=[target],
+                )
+                await scheduler._send_per_user_updates(
+                    [batch],
+                    result,
+                    [target],
+                    target_interval=0,
+                    user_interval=0,
+                    batch_summary=summary,
+                    history_group_id="global",
+                    history_source="scheduled",
+                )
+                self.assertEqual(
+                    sender.summary_sends, [(target, summary)] if enabled else []
+                )
+                self.assertEqual(len(sender.sent), 1)
 
-        await scheduler._send_per_user_updates(
-            [batch],
-            result,
-            [target],
-            target_interval=0,
-            user_interval=0,
-            batch_summary="📬 默认分组 · 1 位博主 · 1 条新推文",
-            history_group_id="global",
-            history_source="scheduled",
+    def test_ordinary_batches_alias_uses_per_user_updates(self):
+        self.assertIs(
+            NitterTweetScheduler._send_ordinary_batches,
+            NitterTweetScheduler._send_per_user_updates,
         )
-
-        self.assertEqual(len(sender.summary_sends), 1)
-        self.assertEqual(
-            sender.summary_sends[0],
-            (target, "📬 默认分组 · 1 位博主 · 1 条新推文"),
-        )
-        self.assertEqual(len(sender.sent), 1)
-
-    async def test_send_ordinary_batches_summary_disabled_suppresses_send_summary_to_umo(
-        self,
-    ):
-        target = "telegram:FriendMessage:1"
-        sender = _Sender()
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "push": {"send_batch_summary_enabled": False},
-            },
-            sender=sender,
-        )
-        self.assertFalse(scheduler.send_batch_summary_enabled)
-        batch = scheduler_module.PendingTweetBatch(
-            username="NASA",
-            instance="https://nitter.test",
-            tweets=[self._make_tweet("NASA", "203")],
-            fetched_ids=["203"],
-            seen_ids=["100"],
-        )
-        result = scheduler_module.ScheduledCheckResult(
-            reason="summary_disabled",
-            group_id="global",
-            group_type="blogger",
-            targets=[target],
-        )
-
-        await scheduler._send_per_user_updates(
-            [batch],
-            result,
-            [target],
-            target_interval=0,
-            user_interval=0,
-            batch_summary="📬 默认分组 · 1 位博主 · 1 条新推文",
-            history_group_id="global",
-            history_source="scheduled",
-        )
-
-        self.assertEqual(sender.summary_sends, [])
-        self.assertEqual(len(sender.sent), 1)
-
-    async def test_send_ordinary_batches_alias_summary_suppressed_when_disabled(self):
-        target = "telegram:FriendMessage:1"
-        sender = _Sender()
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "push": {"send_batch_summary_enabled": False},
-            },
-            sender=sender,
-        )
-        batch = scheduler_module.PendingTweetBatch(
-            username="NASA",
-            instance="https://nitter.test",
-            tweets=[self._make_tweet("NASA", "203")],
-            fetched_ids=["203"],
-            seen_ids=["100"],
-        )
-        result = scheduler_module.ScheduledCheckResult(
-            reason="summary_alias",
-            group_id="global",
-            group_type="blogger",
-            targets=[target],
-        )
-
-        await scheduler._send_ordinary_batches(
-            [batch],
-            result,
-            [target],
-            target_interval=0,
-            user_interval=0,
-            batch_summary="📬 默认分组 · 1 位博主 · 1 条新推文",
-            history_group_id="global",
-            history_source="scheduled",
-        )
-
-        self.assertEqual(sender.summary_sends, [])
-        self.assertEqual(len(sender.sent), 1)
 
     def test_send_batch_summary_enabled_property_parsing(self):
         cases = [
@@ -2348,99 +2079,54 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 scheduler = self._create_scheduler(cfg)
                 self.assertIs(scheduler.send_batch_summary_enabled, expected)
 
-    async def test_run_check_ordinary_batches_summary_enabled_calls_send_summary(self):
+    async def test_run_check_respects_summary_switch(self):
         target = "telegram:FriendMessage:1"
-        nitter = _SchedulerNitter(
-            {
-                "NASA": [
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                nitter = _SchedulerNitter(
                     {
-                        "tweets": [self._make_tweet("NASA", "101")],
-                        "scanned_status_ids": ["101", "100"],
-                        "anchor_status_ids": ["101", "100"],
+                        "NASA": [
+                            {
+                                "tweets": [self._make_tweet("NASA", "101")],
+                                "scanned_status_ids": ["101", "100"],
+                                "anchor_status_ids": ["101", "100"],
+                            }
+                        ]
                     }
-                ]
-            }
-        )
-        sender = _Sender()
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "push": {"send_batch_summary_enabled": True},
-                "tweet_groups": [
+                )
+                sender = _Sender()
+                scheduler = self._create_scheduler(
                     {
-                        "group_id": "default",
-                        "name": "默认分组",
-                        "enabled": True,
-                        "watch_users": ["NASA"],
-                        "push_targets": [target],
-                    }
-                ],
-            },
-            nitter=nitter,
-            sender=sender,
-        )
-        await scheduler.storage.migrate_and_sync(
-            scheduler._schedule_groups(log_invalid_targets=False)
-        )
-        await scheduler.storage.add_seen_ids("default", "NASA", ["100"])
-        await scheduler.storage.set_scan_watermark("default", "NASA", ["100"])
-
-        result = await scheduler.run_check(
-            reason="test_summary_enabled_run_check", group_name="default"
-        )
-
-        self.assertEqual(result.new_tweet_count, 1)
-        self.assertEqual(len(sender.summary_sends), 1)
-        self.assertEqual(sender.summary_sends[0][0], target)
-        self.assertIn("1 位博主", sender.summary_sends[0][1])
-        self.assertEqual(len(sender.sent), 1)
-
-    async def test_run_check_ordinary_batches_summary_disabled_suppresses_send_summary(
-        self,
-    ):
-        target = "telegram:FriendMessage:1"
-        nitter = _SchedulerNitter(
-            {
-                "NASA": [
-                    {
-                        "tweets": [self._make_tweet("NASA", "101")],
-                        "scanned_status_ids": ["101", "100"],
-                        "anchor_status_ids": ["101", "100"],
-                    }
-                ]
-            }
-        )
-        sender = _Sender()
-        scheduler = self._create_scheduler(
-            {
-                "schedule_enabled": True,
-                "push": {"send_batch_summary_enabled": False},
-                "tweet_groups": [
-                    {
-                        "group_id": "default",
-                        "name": "默认分组",
-                        "enabled": True,
-                        "watch_users": ["NASA"],
-                        "push_targets": [target],
-                    }
-                ],
-            },
-            nitter=nitter,
-            sender=sender,
-        )
-        await scheduler.storage.migrate_and_sync(
-            scheduler._schedule_groups(log_invalid_targets=False)
-        )
-        await scheduler.storage.add_seen_ids("default", "NASA", ["100"])
-        await scheduler.storage.set_scan_watermark("default", "NASA", ["100"])
-
-        result = await scheduler.run_check(
-            reason="test_summary_disabled_run_check", group_name="default"
-        )
-
-        self.assertEqual(result.new_tweet_count, 1)
-        self.assertEqual(sender.summary_sends, [])
-        self.assertEqual(len(sender.sent), 1)
+                        "schedule_enabled": True,
+                        "push": {"send_batch_summary_enabled": enabled},
+                        "tweet_groups": [
+                            {
+                                "group_id": "default",
+                                "name": "默认分组",
+                                "enabled": True,
+                                "watch_users": ["NASA"],
+                                "push_targets": [target],
+                            }
+                        ],
+                    },
+                    nitter=nitter,
+                    sender=sender,
+                )
+                await scheduler.storage.migrate_and_sync(
+                    scheduler._schedule_groups(log_invalid_targets=False)
+                )
+                await scheduler.storage.clear_seen_records("default")
+                await scheduler.storage.add_seen_ids("default", "NASA", ["100"])
+                await scheduler.storage.set_scan_watermark("default", "NASA", ["100"])
+                result = await scheduler.run_check(
+                    reason="test_summary_switch_run_check", group_name="default"
+                )
+                self.assertEqual(result.new_tweet_count, 1)
+                self.assertEqual(len(sender.sent), 1)
+                self.assertEqual(len(sender.summary_sends), int(enabled))
+                if enabled:
+                    self.assertEqual(sender.summary_sends[0][0], target)
+                    self.assertIn("1 位博主", sender.summary_sends[0][1])
 
     async def test_post_send_bookkeeping_exception_does_not_add_failed_history(self):
         target = "telegram:FriendMessage:1"
@@ -3587,7 +3273,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             attempt = await sender._send_context_message(
                 _Context(),
                 "telegram:GroupMessage:-1001",
-                _MessageChain([_Plain("hello")]),
+                MessageChain([Plain("hello")]),
                 "direct scheduled tweets",
             )
 

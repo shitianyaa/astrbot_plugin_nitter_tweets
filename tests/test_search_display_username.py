@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from media_support.html_backend.parser import parse_timeline_html
 from rendering.tweets import TweetMessageRenderer
 from shared.utils import TweetItem
@@ -12,6 +14,11 @@ def test_display_username_prefers_link_author_for_query_keys():
     assert TweetMessageRenderer.display_username("#tagquery", tweet) == "AuthorName"
     assert TweetMessageRenderer.display_username("q:#tagquery", tweet) == "AuthorName"
     assert TweetMessageRenderer.display_username("AuthorName", tweet) == "AuthorName"
+    explicit_author = SimpleNamespace(username="realuser")
+    assert TweetMessageRenderer.display_username("#标签", explicit_author) == "realuser"
+    assert (
+        TweetMessageRenderer.display_username("q:#tag", explicit_author) == "realuser"
+    )
 
 
 def test_format_tweet_search_query_not_as_author():

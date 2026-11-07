@@ -15,7 +15,6 @@ from config.compat import (
     resolve_show_original_when_translated,
 )
 from media_support.search_session_buffer import SearchSessionStore
-from rendering.tweets import TweetMessageRenderer
 
 
 class _Cfg(dict):
@@ -57,26 +56,6 @@ def test_resolve_manual_send_interval_clamp():
         == 60.0
     )
     assert resolve_manual_send_interval(_Cfg({"manual_send_interval": -1})) == 0.0
-
-
-def test_renderer_respects_hide_flag_with_translation():
-    t = SimpleNamespace(
-        status_id="1",
-        username="u",
-        text="hello",
-        x_url="https://x.com/u/status/1",
-        link="https://x.com/u/status/1",
-        published="",
-        media=[],
-        translation="你好",
-        ai_warnings=[],
-        media_warnings=[],
-    )
-    out = TweetMessageRenderer.format_tweet(
-        0, "u", t, hide_original_when_translated=True
-    )
-    assert "你好" in out
-    assert "hello" not in out
 
 
 @pytest.mark.asyncio

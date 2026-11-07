@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from media_support.client import NitterClient
 from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
 from scheduler.runner_fetch import SchedulerFetchMixin
-from shared.utils import TweetItem
+from shared.utils import TweetItem, TweetMedia
 
 
 def test_is_pure_retweet_chunk_detects_header():
@@ -199,3 +199,20 @@ def test_retweet_header_inside_tweet_body_not_killed_by_icon():
     assert is_pure_retweet_chunk(orig) is False
     page = parse_timeline_html(rt + orig, "https://nitter.example")
     assert [t.is_retweet for t in page.tweets] == [True, False]
+
+
+def test_filter_html_plain_text_keeps_media():
+    tweets = [
+        TweetItem(text="a", link="https://x.com/a/status/1", published=""),
+        TweetItem(
+            text="b",
+            link="https://x.com/b/status/2",
+            published="",
+            media=[TweetMedia(kind="image", url="https://pbs.twimg.com/media/x")],
+        ),
+    ]
+    kept, filtered = SchedulerFetchMixin._filter_html_tweets_plain_text(
+        tweets, skip_plain_text=True
+    )
+    assert filtered == 1
+    assert [tweet.status_id for tweet in kept] == ["2"]
