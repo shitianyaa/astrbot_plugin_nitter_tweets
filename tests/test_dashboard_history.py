@@ -89,7 +89,9 @@ for (const offset of [0, 20, 50, 150]) {
     '选择', '序号', '推文内容', '状态', '投递信息', '来源', '操作',
   ]);
   assert.ok(table.children[0].children.every(n => n.props.role === 'columnheader'));
+  assert.equal(table.children[0].children[3].props.class, 'history-status');
   const rows = table.children[1].children;
+  assert.ok(rows.every(r => r.children[3].props.class === 'history-status'));
   assert.deepEqual(rows.map(r => r.children[1].props.text), [offset + 1, offset + 2]);
   assert.ok(rows.every(r => r.children.length === 7 && r.children.every(c => c.props.role === 'cell')));
 }

@@ -2533,8 +2533,8 @@ input[type="number"] { -moz-appearance: textfield; }
   .history-source { display: none; }
 }
 @media (max-width: 680px) {
-  #historyView .history-grid { grid-template-columns: 22px 28px minmax(0, 1fr) 66px 28px; gap: 6px; padding: 10px; }
-  .history-delivery { display: none; }
+  #historyView .history-grid { grid-template-columns: 22px 28px minmax(0, 1fr) 28px; gap: 6px; padding: 10px; }
+  .history-delivery, .history-status { display: none; }
   .history-mobile-time { display: inline; }
   .history-table-head { top: var(--topheader-height); }
 }

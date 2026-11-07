@@ -394,7 +394,7 @@ function renderHistory() {
   const content = els.historyContent;
   const header = h("div", { class: "history-table-head history-grid", role: "row" }, [
     ...[
-      ["选择", ""], ["序号", ""], ["推文内容", ""], ["状态", ""],
+      ["选择", ""], ["序号", ""], ["推文内容", ""], ["状态", "history-status"],
       ["投递信息", "history-delivery"], ["来源", "history-source"], ["操作", ""],
     ].map(([text, cls]) => h("span", { role: "columnheader", class: cls, text })),
   ]);
@@ -470,7 +470,7 @@ function historyRow(r, sequence) {
         h("span", { class: "history-mobile-time", text: formatDateTime(r.pushed_at) }),
       ]),
     ]),
-    h("div", { role: "cell" }, [h("span", { class: `branch-tag ${glyphClass}`, text: stLabel })]),
+    h("div", { class: "history-status", role: "cell" }, [h("span", { class: `branch-tag ${glyphClass}`, text: stLabel })]),
     h("div", { class: "history-delivery", role: "cell" }, [
       h("span", { class: "deploy-targets", text: replayTargetShortLabel(r.target_umo) }),
       h("span", { class: "deploy-time", text: formatDateTime(r.pushed_at) }),
