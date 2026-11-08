@@ -289,7 +289,11 @@ class _RecordingCallAction:
         self.files: list[str] = []
 
     async def __call__(self, action, **payload):
-        file_value = payload["message"][0]["data"]["file"]
+        file_value = next(
+            segment["data"]["file"]
+            for segment in payload["message"]
+            if segment["type"] in {"image", "video"}
+        )
         self.files.append(file_value)
         if file_value.startswith(tuple(self.fail_prefixes)):
             raise self.error
@@ -481,7 +485,9 @@ async def test_adapter_without_raw_channel_keeps_component_path(tmp_path):
     outcome = await _send_media_only(sender, adapter, _image(tmp_path))
 
     assert outcome.success is True
-    assert sender._send_context_message.await_count >= 2
+    assert sender._send_context_message.await_count == 1
+    components = sender._send_context_message.call_args.args[2].chain
+    assert any(type(component).__name__ == "Image" for component in components)
 
 
 # ---------------------------------------------------------------------------
