@@ -131,8 +131,8 @@ function renderConfig() {
       }),
       h("button", {
         class: "btn btn-sm btn-primary", "data-config-save": "true",
-        text: state.configSaving ? "保存并重载中…" : "保存并重载",
-        disabled: !configDirtyKeys.size || state.configSaving,
+        text: wizardActive() ? "预览中 · 暂不保存" : state.configSaving ? "保存并重载中…" : "保存并重载",
+        disabled: wizardActive() || !configDirtyKeys.size || state.configSaving,
         onClick: saveConfigDraft,
       }),
     ]),
@@ -165,9 +165,9 @@ function renderConfigBarState() {
   const save = root.querySelector("[data-config-save]");
   if (discard) discard.disabled = !total || state.configSaving;
   if (save) {
-    save.disabled = !total || state.configSaving;
+    save.disabled = wizardActive() || !total || state.configSaving;
     // 与上面徽标同一条件：保存后的展示窗口内又有新编辑时，按钮不能还说「已保存」
-    save.textContent = state.configSaving ? "保存并重载中…" : state.configJustSaved && total === 0 ? "已保存 ✓" : "保存并重载";
+    save.textContent = wizardActive() ? "预览中 · 暂不保存" : state.configSaving ? "保存并重载中…" : state.configJustSaved && total === 0 ? "已保存 ✓" : "保存并重载";
   }
 }
 
@@ -209,6 +209,10 @@ function configNavItem(g) {
     // 草稿跨组平铺、切组不丢弃任何东西,无需拦截确认；搜索词也保留，
     // 但只做局部刷新，避免整树重建把导航滚动位置和输入焦点一起丢掉
     onClick: () => {
+      if (wizardActive()) {
+        const index = WIZARD_STEPS.findIndex(step => step.config === g.key);
+        if (index >= 0) { goWizardStep(index); return; }
+      }
       if (state.configActive === g.key) return;
       state.configActive = g.key;
       state.configSearchPinned = true;   // 手动选组后不再被搜索自动跳走
@@ -284,6 +288,7 @@ function maybeLeaveConfigGroup(action) {
 }
 
 async function saveConfigDraft() {
+  if (wizardActive()) return;
   const changed = [];
   for (const [key, val] of Object.entries(state.configDraft)) {
     const item = findConfigItem(key);

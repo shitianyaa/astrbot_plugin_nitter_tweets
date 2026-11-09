@@ -237,6 +237,7 @@ function groupCard(g) {
             class: "btn btn-sm btn-danger gc-del-btn",
             type: "button",
             text: "删除分组",
+            disabled: wizardActive(),
             title: `删除分组 [${g.name || g.group_id}]`,
             onClick: e => { e.stopPropagation(); confirmDeleteGroup(g.group_id); },
           })
@@ -271,6 +272,7 @@ function groupCard(g) {
    订阅条目整段抹掉（update_group 对缺省字段保留原值）。 */
 async function toggleGroupEnabled(gid, enabled, input) {
   if (!state.groups.some(g => g.group_id === gid)) return;
+  if (wizardActive()) { updateDraft(gid, "enabled", enabled); return; }
   const res = await withAction(async () => {
     const updated = await apiPost("web/groups/update", { group_id: gid, enabled });
     // 草稿走 updateDraft：rev 缓存必须失效，否则脏检查会读到旧 JSON
@@ -304,7 +306,7 @@ async function toggleGroupEnabled(gid, enabled, input) {
 
 function selectGroup(gid, { force = false } = {}) {
   const prev = state.groups.find(g => g.group_id === state.selectedGroupId);
-  if (!force && prev && isGroupDirty(state.selectedGroupId) && sheetOpen) {
+  if (!wizardActive() && !force && prev && isGroupDirty(state.selectedGroupId) && sheetOpen) {
     openConfirm({
       title: "丢弃未保存的更改？",
       desc: "当前分组的修改尚未保存，切换后将丢失。",
@@ -396,7 +398,7 @@ function openGroupSheet(gid) {
   const footer = [
     h("span", { class: "badge sheet-gid mono", text: g.group_id }),
     g.group_id !== "default"
-      ? h("button", { class: "btn btn-danger", type: "button", text: "删除分组", onClick: () => confirmDeleteGroup(gid) })
+      ? h("button", { class: "btn btn-danger", type: "button", text: "删除分组", disabled: wizardActive(), onClick: () => confirmDeleteGroup(gid) })
       : null,
     h("button", { class: "btn", type: "button", text: "关闭", onClick: () => closeSheet() }),
     h("button", {
@@ -435,7 +437,7 @@ function refreshSheetSaveState() {
   if (!btn) return;
   const dirty = sheetHasDraftChanges();
   btn.disabled = !dirty || state.actionBusy;
-  btn.textContent = dirty ? "保存" : "已保存";
+  btn.textContent = wizardActive() ? "保留草稿并返回" : dirty ? "保存" : "已保存";
   const gid = state.selectedGroupId;
   const g = state.groups.find(x => x.group_id === gid);
   const d = state.groupDrafts[gid];
@@ -683,9 +685,10 @@ function renderTargets(group, draft) {
           title: `平台在线 ${probe.summary.platform_found}/${probe.summary.total}，支持合并转发 ${probe.summary.supports_merged_forward}/${probe.summary.total}`,
           text: `连通性 ${probe.summary.valid}/${probe.summary.total}`,
         }) : null,
-        h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: !targets.length && !invalidTargets.length, onClick: () => probeTargets(group.group_id) }),
+        h("button", { class: "btn btn-sm btn-ghost", html: svgIcon("probe", 14), text: "测试连通性", disabled: wizardActive() || (!targets.length && !invalidTargets.length), onClick: () => probeTargets(group.group_id) }),
       ]),
     ]),
+    wizardActive() ? h("span", { class: "hint-line", text: "UMO 可以不填，稍后补齐即可；本轮只保留草稿，不执行发送测试。" }) : null,
     renderTargetChips(group, draft, probe),
     renderInvalidTargets(group, draft, probe),
     h("div", { class: "input-action-row" }, [
@@ -965,6 +968,7 @@ async function submitCreateGroup() {
   const gType = sel?.value || "blogger";
   const name = (els.createGroupName?.value || "").trim() || "新订阅分组";
   closeCreateGroupModal();
+  if (wizardActive()) { wizardCreateGroup(name, gType); return; }
   await withAction(async () => {
     const res = await apiPost("web/groups/create", { name, group_type: gType });
     if (res?.group) state.selectedGroupId = res.group.group_id;
@@ -972,6 +976,7 @@ async function submitCreateGroup() {
 }
 
 async function saveGroup(gid, successText = "分组已保存") {
+  if (wizardActive()) { closeSheet({ force: true }); renderGroupCards(); return; }
   const d = state.groupDrafts[gid]; if (!d) return;
   await withAction(async () => {
     const res = await apiPost("web/groups/update", buildGroupPayload(d));

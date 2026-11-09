@@ -1,5 +1,5 @@
 /* Dashboard 脚本入口分片。原为单文件 app.js，现按分节拆为经典 script 多文件，
-   加载顺序（必须保持）：core -> ui -> data -> groups -> views -> config -> boot。
+   加载顺序（必须保持）：core -> ui -> data -> groups -> views -> config -> wizard -> boot。
    顶层 let/const/function 在 classic script 间共享全局词法环境，
    每个分片各自 'use strict'；boot 必须最后加载（RENDERERS 引用各视图渲染函数）。 */
 
@@ -85,7 +85,7 @@ function renderTabCounts() {
 
 function initEls() {
   const ids = [
-    "refreshBtn","themeToggleBtn","themeLabel",
+    "refreshBtn","themeToggleBtn","themeLabel","wizardStartBtn","wizardBar","wizardReview",
     "railSchedulerStatus","noticeStack",
     "overviewView","groupsView","historyView","mirrorView","storageView","configView",
     "tabCountGroups","tabCountHistory","tabCountInstances","tabCountStorage","tabCountConfig",
@@ -212,6 +212,7 @@ async function apiGet(endpoint, params) {
   return apiResult(await bridge.apiGet(endpoint, Object.keys(q).length ? q : undefined));
 }
 async function apiPost(endpoint, body) {
+  if (wizardActive()) throw new Error("向导 Demo 不写入配置，也不执行测试发送或运维操作。请先退出预览。");
   return apiResult(await bridge.apiPost(endpoint, body || {}));
 }
 

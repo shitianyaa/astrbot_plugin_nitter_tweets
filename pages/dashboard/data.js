@@ -18,6 +18,7 @@ async function reloadGroupState() {
   const [groups, blacklists, overview] = await Promise.all([
     apiGet("web/groups"), apiGet("web/target-blacklists"), apiGet("web/overview"),
   ]);
+  if (wizardActive()) return;
   // 「干净」草稿（用户没编辑过，只是 syncGroupDrafts 的全量快照）必须跟随服务器
   // 重建：不然服务器侧的变更被旧快照锁死——草稿与新数据永久对不上，假 dirty
   // 常驻，分组页自动刷新失效，保存还会把旧值写回。编辑过的草稿原样保留。
@@ -38,6 +39,7 @@ async function reloadGroupState() {
 
 async function reloadConfigState() {
   const cf = await apiGet("web/config/schema");
+  if (wizardActive()) return;
   state.config = cf;
   state.configError = false;
   try {
@@ -151,6 +153,7 @@ function drainPendingHistoryApply() {
 }
 
 async function reloadAll(options = {}) {
+  if (wizardActive()) return false;
   const ownBusyLabel = !state.actionBusy && !state.busyLabel;
   if (ownBusyLabel) state.busyLabel = "正在加载…";
   setBusy(true); hideAlert();
