@@ -74,7 +74,6 @@ function switchView(v) {
   els.tabs.forEach(t => t.classList.toggle("active", t.dataset.view === v));
   els.views.forEach(s => s.classList.toggle("active", s.id === `${v}View`));
   updateHeader();
-  if (wizardActive()) renderWizard();
   // 诊断终端先开轮询再渲染：否则首轮标题按 timer=0 画成「已暂停」，
   // 首次 markData 后才跳回「实时」，进页时肉眼可见地闪一下
   if (v === "mirror") startLogPolling();
@@ -98,7 +97,6 @@ const VIEW_ENTER_TTL = 15_000;
 const viewEnteredAt = new Map();
 
 function refreshOnEnter(view) {
-  if (wizardActive()) return;
   if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;
   const now = Date.now();
   if (now - (viewEnteredAt.get(view) || 0) < VIEW_ENTER_TTL) return;
@@ -122,9 +120,7 @@ async function applyHistoryFilters() {
 
 function bindEvents() {
   els.tabs.forEach(tab => tab.addEventListener("click", () => switchView(tab.dataset.view)));
-  els.wizardStartBtn?.addEventListener("click", startWizard);
   els.refreshBtn?.addEventListener("click", () => {
-    if (wizardActive()) { showAlert("预览期间不刷新数据，请先退出向导", "warn"); return; }
     const groupsDirty = state.groups.some(g => isGroupDirty(g.group_id));
     const configDirty = configDraftDirty();
     if (!groupsDirty && !configDirty) return reloadAll({ preserveDrafts: false });
@@ -218,11 +214,6 @@ function bindEvents() {
     if (els.createGroupModal?.classList.contains("open")) { trapFocus(els.createGroupModal, e); return; }
     if (cmdkOpen) { trapFocus(els.cmdkOverlay, e); return; }
     if (sheetOpen) trapFocus(els.detailSheet, e);
-  });
-  window.addEventListener("beforeunload", e => {
-    if (!wizardActive()) return;
-    e.preventDefault();
-    e.returnValue = "";
   });
 }
 

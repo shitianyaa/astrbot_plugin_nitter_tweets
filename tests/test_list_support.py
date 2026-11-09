@@ -34,7 +34,6 @@ DASHBOARD_JS_FILES = (
     "groups.js",
     "views.js",
     "config.js",
-    "wizard.js",
     "boot.js",
 )
 

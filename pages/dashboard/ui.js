@@ -165,7 +165,7 @@ function openSheet({ title, body, footer = [], onClose = null, kind = "" }) {
    确认后丢弃草稿，取消则留在原地继续编辑。 */
 function closeSheet({ restoreFocus = true, force = false } = {}) {
   if (!els.detailSheet || !sheetOpen) return;
-  if (!wizardActive() && !force && sheetKind === "group" && sheetHasDraftChanges()) {
+  if (!force && sheetKind === "group" && sheetHasDraftChanges()) {
     openConfirm({
       title: "放弃未保存的修改？",
       desc: "当前分组有未保存的改动，关闭后这些修改将丢失。",

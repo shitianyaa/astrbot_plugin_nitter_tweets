@@ -197,7 +197,7 @@ function renderOverview() {
       : h("div", { class: "deploy-table empty-note", text: "暂无推送记录" }),
   ]);
 
-  root.replaceChildren(...[wizardEntry(), attention, hero, metrics, recentSection].filter(Boolean));
+  root.replaceChildren(...[attention, hero, metrics, recentSection].filter(Boolean));
   renderTabCounts();
 }
 
