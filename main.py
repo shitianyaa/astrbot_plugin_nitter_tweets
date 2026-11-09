@@ -205,6 +205,20 @@ class NitterTweetsPlugin(
         """被动解析聊天中的公开 X/Twitter 推文链接（需开启配置开关）。"""
         return await self._cmd_link_preview_impl(event)
 
+    @filter.command("推文帮助")
+    async def cmd_tweets_help(self, event: AstrMessageEvent):
+        """发送完整推文指令帮助图。用法：/推文帮助"""
+        event.stop_event()
+        image_path = (
+            Path(__file__).resolve().parent / "rendering" / "assets" / "tweet_help.png"
+        )
+        if not image_path.is_file():
+            await event.send(
+                event.plain_result("推文帮助图片缺失，请联系管理员重新安装插件。")
+            )
+            return
+        await event.send(event.image_result(str(image_path)))
+
     @filter.command("推文")
     async def cmd_tweets(
         self,
