@@ -60,8 +60,8 @@ except ImportError:
 @register(
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
-    "Fetch recent public tweets from Nitter and send them as chat records.",
-    "1.10.0",
+    "Fetch public tweets via FxTwitter or trusted self-hosted Nitter and send them to chats.",
+    "2.0.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(

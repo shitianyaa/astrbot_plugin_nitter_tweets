@@ -41,6 +41,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_list_support.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_search_display_username.py tests/test_subscription_display.py` | 来源链接清理、正文布局与翻译显隐、搜索作者、分组/实例显示 |
 | 媒体传输编码 | `python -m pytest -q tests/test_media_transport.py` | 梯度组成、base64 上限、URL 主机白名单、传输降级先于内容降级、`uncertain` 不推进、编码记忆、非 OneBot 恒 `path` |
+| OneBot 普通直发图文 | `python -m pytest -q tests/test_onebot_direct_images.py` | Event/UMO 图文同消息、多图编码、视频独立发送、传输重试与拆分降级、可能已送达保护、拒收兜底及仅媒体行为 |
 | 发送失败分类与提示 | `python -m pytest -q tests/test_image_send_rejected_notice.py` | 拒收签名识别、ENOENT 不误判、`rejected` 保持 retryable 以免跳过有损降级链、拒收判定排在 uncertain 之前、提示链接遵循 `omit_status_url`、仅媒体不补提示 |
 | 媒体画质与视频大小预检 | `python -m pytest -q tests/test_media_quality.py` | 图片三档、视频分辨率中位选择、大小预检降档、未知大小及 FxTwitter bitrate/时长估算 |
 | 媒体缓存文件名 | `python -m pytest -q tests/test_media_utilities.py` | 百分号编码尾巴、query `format` 脏值、无扩展名回落 |

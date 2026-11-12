@@ -7,7 +7,7 @@
 AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）、**标签分组**（`tag`）或 **列表分组**（`list`）。
 旧版单一模板 `group`（用户分组）启动时迁移为 `blogger`。
 
-- `basic`: 自建 Nitter 实例、默认数量、冷却和基础平台字段。
+- `basic`: 抓取后端、自建 Nitter 实例、默认数量、冷却和链接解析。
 - `media`: 图片、视频、传输编码、xdown、缓存。
 - `ai_translation`: 翻译。
 - `schedule`: 后台检查总开关和全局频率。
@@ -116,7 +116,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `scheduler.config.ScheduleGroup`
 - `SchedulerConfigReader.parse_schedule_group()`
 - README 或 `docs/advanced.md`
-- `tests/test_subscription_import.py`
+- `tests/test_config_contracts.py`
 
 如果字段只属于某个 `tweet_groups` 项，不要加入全局 `CONFIG_GROUP_BY_KEY`，除非还需要旧顶层字段迁移。
 
