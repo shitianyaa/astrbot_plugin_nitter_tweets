@@ -48,6 +48,18 @@ List/HTML 探测脚本、代理测试和临时输出放在 `testignore/`。需�
 python scripts/test_video_download.py https://x.com/user/status/123
 ```
 
+## 推文帮助图源码
+
+`scripts/render_tweet_help.py` 保存 `/推文帮助` 的指令内容、HTML 和最终暖色样式，复用 `pages/dashboard/fonts/` 的 MiSans 字体并内联到 HTML。开发环境需要 Pillow、Playwright 和对应的 Chromium；这些只用于维护静态帮助图，不加入插件运行依赖。
+
+指定输出目录运行：
+
+```text
+python scripts/render_tweet_help.py --output-dir <输出目录>
+```
+
+脚本生成 `tweet_help.html` 和 256 色 PNG `tweet_help.png`。画布宽 1440，高度随内容自适应；渲染时阻止外部请求，并检查字体、21 个指令条目、横向溢出和空白图。确认输出后，将 PNG 复制到 `rendering/assets/tweet_help.png`；脚本不会自动覆盖随包资源。HTML、检查报告及试渲图片不入库，发布包只需要现有静态 PNG。
+
 ## 运行数据
 
 不要依赖源码目录下的 `data/` 作为正式运行目录。AstrBot 运行期数据应通过插件数据目录获取。
