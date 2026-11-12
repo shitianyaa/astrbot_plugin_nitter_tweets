@@ -9,6 +9,7 @@ from delivery.onebot import OneBotDeliveryAdapter
 from delivery.outcomes import SendAttempt
 from delivery.platforms import PlatformProfile
 from delivery.sender import TweetSender
+from scheduler.runner_send import SchedulerSendMixin
 from shared import TweetItem, TweetMedia
 
 
@@ -267,3 +268,59 @@ async def test_image_attachment_switch_still_hides_images(tmp_path):
         for call in action.call_args_list
         for segment in call.kwargs["message"]
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_success", [False, True])
+async def test_rejected_image_and_failed_text_preserve_history_errors_and_ids(
+    tmp_path, prior_success
+):
+    adapter, sender, action, _event = _adapter()
+    rejection = (
+        "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
+        "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate"
+    )
+    action.side_effect = ([None] if prior_success else []) + [RuntimeError(rejection)]
+    sender._send_context_message.return_value = SendAttempt(
+        success=False, error="text fallback failed"
+    )
+    tweets = [_tweet(tmp_path, n) for n in range(1, 3 if prior_success else 2)]
+    outcome = await adapter.send_to_umo(
+        object(), "bot:GroupMessage:123", "group", "https://nitter.example", tweets
+    )
+    assert not outcome.success
+    assert outcome.error.startswith("text fallback failed")
+    assert rejection in outcome.error
+    assert outcome.delivery_error == outcome.error
+    assert SchedulerSendMixin._delivery_history_error(outcome) == outcome.error
+    expected_status = "partial_failed" if prior_success else "failed"
+    assert outcome.delivery_status == expected_status
+    assert SchedulerSendMixin._delivery_history_status(outcome) == expected_status
+    assert outcome.delivered_status_ids == (("1",) if prior_success else ())
+    assert action.await_count == len(tweets)
+    if prior_success:
+        assert SchedulerSendMixin._delivery_history_status_ids(outcome, tweets) == (
+            "1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_body_failure_retains_previously_delivered_ids(tmp_path):
+    adapter, _sender, _action, _event = _adapter()
+    adapter._send_direct_image_body = AsyncMock(
+        side_effect=[
+            SendAttempt(success=True),
+            SendAttempt(success=False, error="fatal"),
+        ]
+    )
+    outcome = await adapter.send_to_umo(
+        object(),
+        "bot:GroupMessage:123",
+        "group",
+        "https://nitter.example",
+        [_tweet(tmp_path, 1), _tweet(tmp_path, 2)],
+    )
+    assert not outcome.success
+    assert outcome.delivery_status == "partial_failed"
+    assert outcome.delivered_status_ids == ("1",)
+    assert outcome.delivery_error == "fatal"

@@ -375,6 +375,7 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
     ) -> SendOutcome:
         renderer = self.sender.renderer
         result = SendOutcome(success=True)
+        delivered_ids: list[str] = []
         media_only = options.get("media_only", False)
         for offset, tweet in enumerate(tweets):
             kwargs = dict(options)
@@ -415,7 +416,12 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
                             await send_chain(
                                 notice, "OneBot direct image rejected notice"
                             )
-                    outcome.error = outcome.delivery_error = body.error
+                    fallback_error = outcome.delivery_error or outcome.error
+                    outcome.error = outcome.delivery_error = (
+                        f"{fallback_error}; image rejected: {body.error}"
+                        if not outcome.success and fallback_error
+                        else body.error
+                    )
                     outcome.delivery_status = (
                         "partial_failed" if outcome.success else "failed"
                     )
@@ -466,6 +472,14 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
             if outcome.delivery_status != "success":
                 result.delivery_status = outcome.delivery_status
             if not outcome.success:
+                result.error = outcome.error or result.error
+                result.delivery_error = outcome.delivery_error or result.delivery_error
+                if delivered_ids:
+                    result.delivery_status = "partial_failed"
+                    result.delivered_status_ids = tuple(dict.fromkeys(delivered_ids))
                 result.success = False
                 return result
+            status_id = str(getattr(tweet, "status_id", "") or "")
+            if status_id:
+                delivered_ids.append(status_id)
         return result
