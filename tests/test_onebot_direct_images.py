@@ -324,3 +324,50 @@ async def test_terminal_body_failure_retains_previously_delivered_ids(tmp_path):
     assert outcome.delivery_status == "partial_failed"
     assert outcome.delivered_status_ids == ("1",)
     assert outcome.delivery_error == "fatal"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("image_rejected", [True, False])
+async def test_video_error_survives_fallback_and_later_tweet_failure(
+    tmp_path, image_rejected
+):
+    adapter, _sender, action, _event = _adapter()
+    adapter._send_umo_media_item = AsyncMock(
+        return_value=SimpleNamespace(
+            attempt=SendAttempt(success=False, error="video failed")
+        )
+    )
+    tweets = [_tweet(tmp_path, 1, video=True)]
+    if image_rejected:
+        action.side_effect = RuntimeError(
+            "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg "
+            "ListenerName:NodeIKernelMsgListener/onMsgInfoListUpdate"
+        )
+    else:
+        tweets.append(_tweet(tmp_path, 2))
+        adapter._send_direct_image_body = AsyncMock(
+            side_effect=[
+                SendAttempt(success=True),
+                SendAttempt(success=False, error="later tweet failed"),
+            ]
+        )
+    outcome = await adapter.send_to_umo(
+        object(), "bot:GroupMessage:123", "group", "https://nitter.example", tweets
+    )
+    assert outcome.success is image_rejected
+    assert outcome.delivery_status == "partial_failed"
+    assert "video failed" in outcome.error
+    assert (
+        "NodeIKernelMsgService/sendMsg" if image_rejected else "later tweet failed"
+    ) in outcome.error
+    assert outcome.delivery_error == outcome.error
+    assert SchedulerSendMixin._delivery_history_error(outcome) == outcome.error
+    if image_rejected:
+        action.assert_awaited_once()
+    else:
+        assert outcome.delivered_status_ids == ("1",)
+        for number, call in enumerate(
+            adapter._send_direct_image_body.call_args_list, 1
+        ):
+            text = "".join(component.text for component in call.args[0])
+            assert f"body {number}" in text

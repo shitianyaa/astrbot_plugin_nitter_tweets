@@ -419,7 +419,7 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
                     fallback_error = outcome.delivery_error or outcome.error
                     outcome.error = outcome.delivery_error = (
                         f"{fallback_error}; image rejected: {body.error}"
-                        if not outcome.success and fallback_error
+                        if fallback_error
                         else body.error
                     )
                     outcome.delivery_status = (
@@ -466,14 +466,13 @@ class OneBotDeliveryAdapter(DefaultDeliveryAdapter):
                                     notice_attempt.success or notice_attempt.uncertain
                                 )
                     break
-            result.error = result.error or outcome.error
+            for field in ("error", "delivery_error"):
+                errors = (getattr(outcome, field), getattr(result, field))
+                setattr(result, field, "; ".join(dict.fromkeys(filter(None, errors))))
             result.warning = result.warning or outcome.warning
-            result.delivery_error = result.delivery_error or outcome.delivery_error
             if outcome.delivery_status != "success":
                 result.delivery_status = outcome.delivery_status
             if not outcome.success:
-                result.error = outcome.error or result.error
-                result.delivery_error = outcome.delivery_error or result.delivery_error
                 if delivered_ids:
                     result.delivery_status = "partial_failed"
                     result.delivered_status_ids = tuple(dict.fromkeys(delivered_ids))
