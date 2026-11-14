@@ -1,10 +1,10 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-1.10.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-2.0.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
   <br />
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge&color=gold" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/shitianyaa/astrbot_plugin_nitter_tweets?style=for-the-badge" /></a>
@@ -15,7 +15,7 @@
   <img src="https://count.getloli.com/@astrbot-plugin-nitter-tweets?name=astrbot-plugin-nitter-tweets&theme=booru-jaypee&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto" alt="README 浏览量计数" />
 </p>
 
-通过 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。兼容 AstrBot `>=4.26.0`。
+通过 FxTwitter 或可信自建 Nitter 获取公开 X/Twitter 推文：手动查询与搜索、可选链接解析、按分组定时推送、图片/视频与翻译。默认优先 FxTwitter，失败后回退自建 Nitter；Public List 始终使用自建 Nitter。兼容 AstrBot `>=4.26.0`，需要 Python `3.12+`。
 
 > 欢迎加入 QQ 群「Bot 测试群」**209949919**  一起玩
 
@@ -41,7 +41,7 @@
 <p align="center">
   <img src="./docs/assets/readme/dashboard-overview.png" alt="Nitter 推文控制台总览" />
   <br/>
-  <sub>全新 1.8.0 规范 WebUI 运维面板（总览 · 极简单色体系）</sub>
+  <sub>WebUI 运维面板（总览 · 分组 · 历史 · 实例诊断 · 配置）</sub>
 </p>
 
 <div align="center">
@@ -71,10 +71,10 @@
 
 | 场景 | 能力 |
 | --- | --- |
-| 手动 | `/推文`、`/推图`、`/推文搜索`、`/推文搜图`、`/推特热搜`、`/镜像测试` |
+| 手动 | `/推文帮助`、`/推文`、`/推图`、`/推文搜索`、`/推文搜图`、`/推特热搜`、`/镜像测试` |
 | 链接 | 可选被动解析聊天中的 status 链接（默认关） |
 | 定时 | `tweet_groups`：`blogger` / `tag` / `list` 分组推送 |
-| 发送 | 私人号 OneBot 合并转发；QQ Official 正文使用官方 Markdown API，媒体独立发送；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
+| 发送 | 私人号 OneBot 直发时正文与图片同消息，达到阈值时合并转发，视频/GIF 独立发送；QQ Official 正文使用官方 Markdown API，媒体独立发送；Telegram / Lark / 微信 OC 等普通发送；Telegram 推文链接保留但不展开网页预览 |
 | 媒体与 AI | 图片；可选视频/GIF、翻译 |
 | 运维 | WebUI 面板、失败历史与手动/多选批量重推、缓存与推送记录清理 |
 
@@ -83,6 +83,7 @@
 ### 1. 先试命令
 
 ```text
+/推文帮助
 /推文 nasa
 /推图 nasa
 /推文搜索 #标签
@@ -145,6 +146,18 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 部署完成后，将 Nitter 地址填入本插件的 `instances`。同一列表同时用于用户 RSS、用户 HTML、搜索、List 和后台抓取。脚本会修改服务器上的 Docker、Nginx 和配置文件；执行远程脚本前请先阅读其源码，并按需限制 VPS 安全组的入站端口。
 
+如果实例设置了**路径形式的访问密钥**，请把密钥路径一起填入 `instances`，保留大小写：
+
+| 访问方式 | `instances` 填写示例 |
+| --- | --- |
+| 未设置访问密钥 | `http://nitter.example.com:8080` |
+| 密钥为 `my-access-key` | `http://nitter.example.com:8080/my-access-key` |
+| 通过 HTTPS 域名访问并带密钥 | `https://nitter.example.com/my-access-key` |
+
+只填实例基础地址和密钥路径，不要附加用户名、`/rss` 或 `/search`；插件会在其后自动拼接请求路径。例如，上述带密钥地址查询 `nasa` 时，RSS 请求为 `http://nitter.example.com:8080/my-access-key/nasa/rss`。WebUI「实例节点」的测试 URL 也按同样格式填写；下方「已配置」原样显示完整实例地址，点击可填入测试框。测试框仅用于临时探测，长期使用仍需保存到 `instances`。
+
+这里的访问密钥与部署脚本中录入的 Twitter 账号凭证不同；`auth_token`、`ct0` 等账号凭证只配置在 Nitter 服务端，不填入插件的实例地址。
+
 如果需要关注较多账号，建议在 Nitter 中建立 List，再使用插件的 List 分组订阅。List 时间线通常比逐个轮询用户页产生更少请求，更不容易触发实例的 429。RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds`，无需分别调整两套参数。
 
 实例地址按部署拓扑填写：AstrBot 与 Nitter 同一 Docker network 使用 `http://nitter:8080`；AstrBot 在容器、Nitter 在宿主机时使用宿主机可达地址（如 `http://host.docker.internal:8080`）；两者都在宿主机进程时可使用 `http://127.0.0.1:8080`；跨机器使用 Nitter 服务器的公网 IP 或域名。AstrBot 容器内的 `127.0.0.1` 只指向 AstrBot 容器本身。
@@ -157,9 +170,10 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 | 命令 | 权限 | 说明 |
 | --- | --- | --- |
+| `/推文帮助` | 普通 | 查看全部指令的用法、示例与作用（帮助图） |
 | `/推文 用户名 [数量]` | 普通 | 查公开用户最近推文 |
 | `/推图 用户名 [数量]` | 普通 | 查公开用户最近相册媒体推文（直连相册专线） |
-| `/推文搜索 关键词 [数量] [热门]` | 普通 | HTML 搜索；标签请带 `#`；`-3` `-top` `-last` 精准控制 |
+| `/推文搜索 关键词 [数量] [热门]` | 普通 | 按 `fetch_backend` 选择 FxTwitter / Nitter 搜索；标签请带 `#`；`-3` `-top` `-last` 精准控制 |
 | `/推文搜图 关键词 [数量] [热门]` | 普通 | 只搜带图片/视频的推文（`filter:media`）；正文照常显示 |
 | `/推特热搜` | 普通 | 查看 Twitter/X 实时趋势榜单（别名 `/twitter热搜`、`/推文热搜`、`/推特趋势`） |
 | `/镜像测试 … 实例URL` | 管理员 | 临时测试一个自建 Nitter 实例（RSS 优先，HTML 自动后备） |

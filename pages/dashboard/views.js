@@ -32,7 +32,7 @@ function renderRailStatus() {
    ========================================================================== */
 
 /* 实例地址脱敏：只保留协议 + host[:port]，不带 path。
-   总览与诊断页展示一律走这里，避免私有实例的路径片段出现在界面上。 */
+   用于总览、历史与探测结果摘要；诊断页的已配置按钮显示完整地址。 */
 function redactInstanceLabel(raw) {
   const text = String(raw || "").trim();
   if (!text) return "";
@@ -873,7 +873,7 @@ function renderMirrorBase() {
     els.instanceList.replaceChildren(...inst.map(u => h("button", {
       type: "button",
       class: "chip chip-action",
-      text: redactInstanceLabel(u),
+      text: u,
       title: u,
       onClick: () => { if (els.mirrorInstance) els.mirrorInstance.value = u; },
     })));

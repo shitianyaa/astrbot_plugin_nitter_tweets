@@ -19,7 +19,7 @@
         "description": "自建 Nitter 地址",
         "type": "list",
         "default": [],
-        "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。"
+        "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。如设有路径形式的访问密钥，填完整地址（如 http://nitter:8080/my-access-key），无需附加用户名或 /rss。"
       },
       "request_timeout": {
         "description": "Nitter 请求超时（秒）",
@@ -779,7 +779,7 @@
     "description": "自建 Nitter 地址",
     "type": "list",
     "default": [],
-    "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。",
+    "hint": "每行一个可信的自建地址，不支持公共实例。同一 Docker 网络可填 http://nitter:8080；容器内的 127.0.0.1 指向容器自身。如设有路径形式的访问密钥，填完整地址（如 http://nitter:8080/my-access-key），无需附加用户名或 /rss。",
     "invisible": true
   },
   "default_limit": {

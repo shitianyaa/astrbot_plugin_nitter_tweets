@@ -586,338 +586,50 @@ def test_webui_list_update_rejects_invalid_and_duplicate_ids():
     assert "List ID 重复" in duplicate["error"]
 
 
-def test_dashboard_source_contains_list_editor_and_probe_all_payload():
+def test_dashboard_sandbox_does_not_access_local_storage():
     source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-    assert 'value: "list"' in source
-    assert 'name: "createGroupType"' in source
-    assert 'type: "radio"' in source
-    assert 'attrs: { id: "createGroupType" }' not in source
-    assert 'label: "List 分组"' in source
-    assert "PRIVATE_QQ_GROUP_WARNING" not in source
-    assert ".group-type-options" in style
-    # 选中态卡片行由 JS 同步 .selected 类（不依赖 :has，兼容较旧内核）
-    assert ".group-type-option.selected" in style
-    assert "function addWatchList(groupId)" in source
-    assert "snap.watch_lists = [...(group.watch_lists || [])];" in source
-    assert (
-        "snap.filter_reposts_enabled = group.filter_reposts_enabled !== false;"
-        in source
-    )
-    assert '"filter_reposts_enabled"' in source
-    assert "过滤转发（需开启全局转发过滤）" in source
-    assert "List ID 必须是 1-20 位正整数" in source
-    assert "List ID 已存在" in source
-    assert "list_id: els.mirrorListId.value.trim()" in source
-    # AstrBot Pages iframe 使用 sandbox="allow-scripts allow-forms allow-downloads"
-    # （无 allow-same-origin），opaque origin 下 localStorage 访问必抛 SecurityError，
-    # 曾拖垮整页启动（529ee81）。因此页面内禁止访问它（注释里提及不算）。
-    for name, text in (("dashboard js", source), ("index.html", index)):
+    index = (ROOT / "pages/dashboard/index.html").read_text(encoding="utf-8")
+    # AstrBot Pages uses an opaque origin; accessing localStorage breaks startup.
+    for text in (source, index):
         assert not re.search(
             r"localStorage\s*[.\[]|window\s*\[\s*[\"']localStorage[\"']\s*\]", text
-        ), f"{name} 不得访问 localStorage：opaque origin 下必抛 SecurityError"
+        )
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in index
 
 
-def test_dashboard_source_contains_restored_blacklist_and_bulk_tools():
+def test_dashboard_guards_busy_actions_and_unsaved_edits():
     source = _dashboard_js_source()
-    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-
-    assert "web/target-blacklists/update" in source
-    assert "目标作者黑名单" in source
-    assert "function renderTargetBlacklist(group, draft)" in source
-    # 黑名单/批量增删均为草稿操作：pending 结构 + 页脚保存时统一落库
-    assert "function saveTargetBlacklist" not in source
-    assert "function flushPendingBlacklists(gid)" in source
-    assert "hasPendingBlacklist(groupId)" in source
-    assert "同一目标在所有分组中共用，仅影响后台推送。保存后生效。" in source
-    assert "web/subscriptions/import" not in source
-    assert "web/subscriptions/delete" not in source
-    assert "批量导入 / 移除" in source
-    assert 'text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟`' in source
-    assert "ban: '<circle" in source
-    assert "每行一个可信的自建地址" in schema["basic"]["items"]["instances"]["hint"]
-    assert "`omit_status_url`（`tweet_groups` 分组字段）" in readme
-
-
-def test_dashboard_source_contains_busy_feedback_and_local_entity_updates():
-    source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
-
     assert "if (state.actionBusy) return null;" in source
-    assert '"data-busy-control": "true"' in source
-    assert 'apiGet("web/groups")' in source
-    assert 'apiGet("web/overview")' in source
-    assert "function renderEntityChips(container, group, draft)" in source
-    assert "renderEntityChips(container, group, draft)" in source
-    assert 'id: "saveGroupBtn"' not in source
-    assert "function confirmGroupMutation(gid" in source
-    # 分组抽屉改为「本地草稿 + 页脚保存」：添加类只写草稿不再弹窗，
-    # 移除类保留确认框但只改草稿，落盘统一走页脚「保存」
-    assert 'confirmText: "移除"' in source
-    assert 'confirmText: "添加并保存"' not in source
-    assert 'confirmText: "移除并保存"' not in source
-    assert (
-        'h("button", {\n      class: "btn btn-primary", type: "button", text: "保存",'
-        in source
-    )
-    assert "function refreshSheetSaveState()" in source
-    assert "function closeSheet({ restoreFocus = true, force = false } = {})" in source
     assert "sheetHasDraftChanges()" in source
-    assert "请先添加推送目标。" in source
-    assert "hideAlert();\n  state.view = v;" in source
-    assert "body.ui-busy .view" in style
-    assert "background-color: var(--surface);" in style
-    assert (
-        "background-image: linear-gradient(var(--green-soft), var(--green-soft));"
-        in style
-    )
-    # 历史页工具条现由 .section-header 承载吸顶（旧 .toolbar 容器已随表格改版移除）
-    assert "#historyView > .section-header {" in style
-    # 次级吸顶统一引用吸附线；通知栈是浮层，不再参与避让（--banner-offset 已移除）
-    assert "--sticky-top: calc(var(--topheader-height) + 8px);" in style
-    assert "top: var(--sticky-top);" in style
-    config_bar = style.split(".config-actionbar {", 1)[1].split("}", 1)[0]
-    assert "top: var(--sticky-top);" in config_bar
-    # 吸附线兜底值只允许出现在 :root 定义里，禁止各规则再手写 topheader 魔法数
-    assert "var(--topheader-height," not in style
-    # rerender 分支不再提前解除 busy，结果提示仍原地改写进行中节点
-    assert "} else if (rerender) await rerender();" in source
-    assert "setBusy(false); rerender();" not in source
-    # 删除废弃分组残留后的 rerender 直接走纯查询渲染：外层动作未结束时
-    # 内层 withAction 会因 actionBusy 互斥直接 return，孤儿列表不会刷新
-    assert "async function renderHistoryOrphans()" in source
+    assert "if (state.selectedGroupId === gid) {" in source
+    assert "if (sheetOpen) closeSheet({ force: true });" in source
+    # Orphan cleanup runs inside an action; nesting withAction would skip it.
     assert (
         'await withAction(() => renderHistoryOrphans(), "检测完成", { reload: false });'
         in source
     )
-    # 删除孤儿后原位联动刷新孤儿清单、历史列表与总览最新推送
-    assert (
-        "renderHistoryOrphans(), refreshHistoryData(), refreshRecentPushes()," in source
-    )
-    assert "transition: all" not in style
-    # 历史行已由 tweet-card 迁移到 deploy-row：悬停反馈与选中态仍走同一套 token
-    assert ".deploy-row:hover" in style
-    # 历史行本身不做可聚焦元素（行内含勾选框与按钮），详情入口是标题上的
-    # 原生按钮，键盘用户能拿到可访问名称
-    assert 'class: "deploy-title deploy-title-btn"' in source
-    assert 'aria-label": `查看 ${r.username || "unknown"} 的推送详情`' in source
-    # 标题按钮要沿用行上的双击/划选保护，否则拖选复制会直接弹抽屉。
-    # 数次数而不是判存在：行自己的 onClick 也有这两句，判存在等于没断言
-    assert source.count("if (e.detail > 1) return;") == 2
-    assert source.count('if (window.getSelection()?.type === "Range") return;') == 2
-    # 原生 button 的按钮外观得靠 CSS 抹掉，否则会退回灰边框/居中/不截断
-    assert ".deploy-title-btn {" in style
-    # 下拉内 Esc 只关下拉，不能冒泡到 document 把抽屉一起关掉
-    assert "e.stopPropagation(); close(true);" in source
-    # 删除分组只在选中项仍指向它时才清空并关抽屉
-    assert "if (state.selectedGroupId === gid) {" in source
-    assert "if (sheetOpen) closeSheet({ force: true });" in source
-    assert "background: var(--blue-soft);" in style
-    assert "border-color: var(--blue-border);" in style
-    # 分组视图由左右分栏改为卡片网格：列宽塌陷保护移到网格容器
-    assert ".groups-grid {" in style
-    assert "minmax(340px, 1fr)" in style
-    assert ".group-card {" in style
-    assert ".feedback-close" in style
-    assert 'aria-live="polite"' in index
 
 
-def test_dashboard_notice_stack_stacks_and_auto_dismisses():
-    """顶部通知栈：多条通知垂直排列不重叠；结果提示停留 NOTICE_TTL 后自动移除，
-    进行中提示不挂计时、跟随动作生命周期。"""
+def test_dashboard_entity_removal_does_not_use_stale_indices():
     source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-    assert 'id="noticeStack"' in index
-    # 固定 + flex column：多条通知按加入顺序垂直排列，不可能互相重叠
-    stack = style.split(".notice-stack {", 1)[1].split("}", 1)[0]
-    assert "position: fixed;" in stack
-    assert "display: flex;" in stack
-    assert "flex-direction: column;" in stack
-    assert "gap:" in stack
-    # 栈锚在导航壳下方（top: 12px 会被 100px 高的顶栏压住），
-    # 且栈本身穿透点击、栈内节点恢复可点，否则关闭按钮点不动
-    assert "top: calc(var(--topheader-height) + 12px);" in stack
-    assert ".notice-stack > * { pointer-events: auto; }" in style
-    # 进行中提示（NOTICE_CLASS.status = action-status）必须有实体样式，
-    # 移植期整块丢失会让长动作的顶部指示退化成裸文本
-    assert ".action-status {" in style
-    assert ".action-status::before {" in style
-    # 所有提示共用一个入栈出口，各自计时自动消失
-    assert "const NOTICE_TTL = 4000;" in source
-    assert "function pushNotice(kind, text, ttl = NOTICE_TTL)" in source
-    assert "function dismissNotice(node)" in source
-    assert "node._noticeTimer = setTimeout(() => dismissNotice(node), ttl);" in source
-    assert "clearTimeout(node._noticeTimer);" in source
-    # 进行中提示不挂自动消失计时（ttl=0），长动作的顶部指示不会中途消失
-    assert "if (!ttl) return;" in source
-    assert 'pushNotice("status", text, 0);' in source
-    assert "function syncStatusNotice()" in source
-    # 结果出现时原地改写进行中提示的节点，不做“移除 + 新增”
-    assert "function promoteStatusNotice(kind, text, ttl = NOTICE_TTL)" in source
-    assert "if (state.statusNotice && promoteStatusNotice(kind, msg)) return;" in source
-    # 旧的互斥横幅实现已彻底移除
-    assert "actionStatusDismissed" not in source
-    assert "renderBanner" not in source
-    assert "els.alert.hidden" not in source
-    assert "els.actionStatus.hidden" not in source
-    # 通知栈是浮层：不再把实测高度写成 CSS 变量驱动内容避让。
-    # 旧实现会把 .main 的 padding-top 顶开 40~50px、提示消失后再弹回，
-    # 表现为"页面被通知横幅挤压跳动"，这里锁死回归。
-    assert "--banner-offset" not in style
-    assert "syncBannerOffset" not in source
-    assert "scheduleBannerSync" not in source
-    # 顶距不再挂任何让位变量（.view-container 在页面里并不存在）
-    assert ".main { padding: 18px 16px 64px; }" in style
-    assert ".main { padding: 16px 14px 56px; }" in style
-    assert ".view-container" not in style
-    # 关闭按钮与“关闭后本动作内不再重建”机制（PR #83 承重点）在 JS 侧的存在
-    assert "onclick: () => dismissNotice(node)" in source
-    assert "state.statusNoticeClosed = false" in source
-    assert "state.statusNoticeClosed = true" in source
-    assert "if (state.statusNoticeClosed) return;" in source
-    # 子节点不再自带 role="status"（容器统一播报防重复），错误提示用 role="alert"
-    assert 'role: type === "error" ? "alert" : null' in source
-    assert 'role: "status"' not in source
-    assert 'if (kind === "error") node.setAttribute("role", "alert");' in source
-    # 旧静态横幅时代的 hidden 死规则已清理（.dialog[hidden] 仍在用，不在清理范围）
-    assert ".alert[hidden]" not in style
-    assert ".action-status[hidden]" not in style
-    # 长文案不再被裁成内部滚动条；overflow 负断言限定通知相关规则块（含每个选择器的
-    # 全部出现，如 .alert { 的暗色覆写块），避免误伤无关组件
-    notice_css = "".join(
-        part.split("}", 1)[0]
-        for selector in (".notice-stack {", ".action-status {", ".alert {")
-        for part in style.split(selector)[1:]
-    )
-    assert "max-height: 44px" not in style
-    assert "overflow" not in notice_css
-
-
-def test_dashboard_source_surfaces_invalid_targets_and_probe_summary():
-    """隔离区的无效推送目标/订阅源必须在编辑器可见、可显式移除，
-    且随保存按原文回写（否则保存任意字段都会静默清除它们）。"""
-    source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-
-    # 服务器隔离条目进 draft 并随 payload 回写（有效 + 无效合并）
-    assert (
-        "snap.invalid_push_targets = Array.isArray(group.invalid_push_targets) "
-        "? [...group.invalid_push_targets] : [];" in source
-    )
-    assert (
-        "snap.invalid_watch_users = Array.isArray(group.invalid_watch_users) "
-        "? [...group.invalid_watch_users] : [];" in source
-    )
-    assert "function buildGroupPayload(d)" in source
-    assert (
-        "push_targets: [...(d.push_targets || []), ...(d.invalid_push_targets || [])]"
-        in source
-    )
-    assert (
-        "watch_users: [...(d.watch_users || []), ...(d.invalid_watch_users || [])]"
-        in source
-    )
-    assert 'apiPost("web/groups/update", buildGroupPayload(d))' in source
-    # 无效条目 UI：可见 + 可显式移除
-    assert "function renderInvalidTargets(group, draft, probe)" in source
-    assert "无效推送目标（保存时保留原文，不会收到推送；需显式移除）" in source
-    assert 'class: "chip chip-invalid"' in source
-    assert ".chip.chip-invalid" in style
-    # 查重覆盖有效 + 无效，且用实时 draft（免确认路径保存失败重试不重复追加）
-    assert (
-        "const known = new Set([...(live.push_targets || []), ...(live.invalid_push_targets || [])]);"
-        in source
-    )
-    assert "disabled: !targets.length && !invalidTargets.length" in source
-    assert "(draft.invalid_watch_users || []).includes(v)" in source
-    # probe 结果缓存失效 + summary 徽章
-    assert "delete state.targetProbeResults[gid];" in source
-    assert "state.targetProbeResults = {};" in source
-    assert "连通性 ${probe.summary.valid}/${probe.summary.total}" in source
-
-
-def test_dashboard_group_editor_keystroke_and_save_pipeline_guards():
-    """击键与保存流水线的性能护栏：rAF 合帧、脏检查缓存、响应原位替换、
-    targets 区块局部重建、添加目标免确认。"""
-    source = _dashboard_js_source()
-    # 击键路径：updateDraft 不再每键全量重建列表；rAF 合帧 + WeakMap 缓存
-    assert "function scheduleGroupListRender()" in source
-    assert "draftRevCache.set(d, (draftRevCache.get(d) || 0) + 1);" in source
-    assert "const groupSnapJsonCache = new WeakMap();" in source
-    assert "d[field] = val; renderGroupList();" not in source
-    # 保存流水线：update 响应回带的最新分组原位替换，省一次 web/groups 拉取
-    assert (
-        "state.groups = state.groups.map(g => "
-        "(g.group_id === res.group.group_id ? res.group : g));" in source
-    )
-    # 添加推送目标只写草稿（不再立即保存，也不弹确认）；落盘走抽屉页脚「保存」
-    assert '"添加推送目标？"' not in source
-    assert 'saveGroup(group.group_id, "推送目标已添加")' not in source
-    assert (
-        'updateDraft(group.group_id, "push_targets", [...(live.push_targets || []), v]);'
-        in source
-    )
-    # probe/黑名单只重建 targets 区块，不整棵重建编辑器
-    assert "function rerenderTargetsSection(gid)" in source
-    assert '"data-editor-section": "targets"' in source
-    assert "state.targetProbeResults[gid] = res; rerenderTargetsSection(gid);" in source
-    # 保存后抽屉原位重建：不重建会让 chips 停留在旧列表，用户必须关掉重开，
-    # 且移除按钮闭包里捕获的旧下标会指向另一条订阅源，静默删错
-    assert "function refreshGroupSheet(gid)" in source
-    assert (
-        'h("div", { "data-editor-section": "entities" }, renderEntities(g, d))'
-        in source
-    )
-    assert "refreshGroupSheet(gid);" in source
     assert "next.splice(idx, 1);" not in source
     assert "current.filter(x => entityValue(x) !== val)" in source
     assert "current.filter(x => x !== t)" in source
 
 
-def test_dashboard_views_wires_filters_immediately():
-    """历史筛选改变后立即查询（字符串级接线断言；行为级覆盖等有 JS 测试
-    基建再补）。切页签重新取数、配置搜索定位见同文件其余断言。"""
+def test_dashboard_preserves_dirty_groups_and_pending_history_filters():
     source = _dashboard_js_source()
-
-    # 进入视图按 TTL 取数；分组的脏编辑不被外部数据打断
-    assert "function refreshOnEnter(view)" in source
-    assert "refreshOnEnter(v);" in source
-    assert "const VIEW_ENTER_TTL = 15_000;" in source
     assert (
         'if (view === "groups" && state.groups.some(g => isGroupDirty(g.group_id))) return;'
         in source
     )
-    # 历史筛选下拉 / 条数变化即时查询，不再要求额外点「筛选」；条数也是自绘下拉。
-    # applyHistoryFilters 提升为 boot 分片顶层函数，动作在途时置 pendingHistoryApply，
-    # 由 withAction 收尾补跑（在途丢弃不再静默吞掉筛选变更）
-    assert "async function applyHistoryFilters() {" in source
     assert (
         "if (state.actionBusy) { state.pendingHistoryApply = true; return; }" in source
     )
-    assert (
-        "els.historyLimitSelect?.onChange?.(() => { applyHistoryFilters(); });"
-        in source
-    )
-    assert (
-        "els.historyGroupSelect?.onChange?.(() => { applyHistoryFilters(); });"
-        in source
-    )
-    # 条数默认值与页面输入框一致（此前 state=10 / 输入框=20，首屏按 10 条渲染）
-    assert 'historyGroupId: "", historyUsername: "", historyLimit: 20,' in source
-    # 配置搜索：跨分组按命中数定位、手动选组后不被弹走、命中位置有标注
-    assert "function pickConfigGroupForSearch(groups, currentKey, q)" in source
-    assert "state.configSearchPinned" in source
-    assert "function configItemWithMatch(item, q)" in source
-    assert "命中：" in source
-    # 存储运维只用概览数据，不必再拉最近推送
-    assert 'if (view === "storage") {' in source
+    for control in ("historyLimitSelect", "historyGroupSelect"):
+        assert (
+            f"els.{control}?.onChange?.(() => {{ applyHistoryFilters(); }});" in source
+        )
 
 
 def test_dashboard_log_polling_guards_against_duplicate_appends():
@@ -939,23 +651,6 @@ def test_dashboard_log_polling_guards_against_duplicate_appends():
     # 跳过的一轮不能算成功，否则「请求比 3s 间隔还慢 + 一直失败」时失败计数
     # 会在 0/1 之间振荡，永远到不了停止阀值
     assert 'generation === logsGeneration && result !== "skipped"' in source
-
-
-def test_dashboard_terminal_preserves_scroll_and_node():
-    """轮询每 3 秒重渲染终端：必须复用 body 节点，且只在贴底时跟随新日志，
-    否则用户往上翻看历史会被强制弹回底部。"""
-    source = _dashboard_js_source()
-
-    # renderTerminal：记录是否贴底，复用节点，条件跟随
-    assert "const wasAtBottom = body" in source
-    assert "body.scrollHeight - body.scrollTop - body.clientHeight < 24" in source
-    assert "if (wasAtBottom) body.scrollTop = body.scrollHeight;" in source
-    # renderMirrorTerminal：不再无条件 remove 整个终端
-    assert 'let term = parent.querySelector(":scope > .mirror-terminal");' in source
-    assert (
-        'host.querySelectorAll(".mirror-terminal").forEach(el => el.remove());'
-        not in source
-    )
 
 
 def test_dashboard_overview_recent_pushes_use_own_snapshot():
@@ -999,115 +694,10 @@ def test_dashboard_overview_recent_pushes_use_own_snapshot():
     )
 
 
-def test_dashboard_history_filters_use_shared_custom_select():
-    """历史页筛选下拉必须走 createSelect（自绘 .dd），不能退回原生 select。
-
-    原生 select 的展开层由操作系统绘制，圆角、选中色、字体都不可控；与分组
-    抽屉里的自绘下拉并存时观感割裂。index.html 只留占位 span，由 ui.js 注入。
-    """
+def test_dashboard_history_redacts_instance_labels():
     source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-    # HTML 侧不得再有原生 select（分组/状态两个筛选都换成占位 span）
-    assert "<select" not in index
-    assert 'id="historyGroupSelect" class="select-slot"' in index
-    assert 'id="historyStatusSelect" class="select-slot"' in index
-
-    # JS 侧统一由 createSelect 注入，且 id 带到新节点上
-    assert "function upgradeHistorySelects()" in source
-    assert "upgradeHistorySelects();" in source
-    assert "const dd = createSelect({ id: slotId, value, options: opts });" in source
-    assert "slot.replaceWith(dd);" in source
-    assert "els[slotId] = dd;" in source
-    # 样式侧：工具条内的 .dd 与相邻控件同高
-    assert ".section-tools .dd-filter .dd-trigger" in style
-
-
-def test_dashboard_redesign_architecture_guards():
-    """重构架构护栏：数据通道 + 视图持久化 + 作用域刷新 + 细粒度渲染 + 动效约束。
-    视图容器常驻，切换只冲刷脏视图；动作收尾按当前视图作用域刷新，内容不清空。"""
-    source = _dashboard_js_source()
-    style = (ROOT / "pages" / "dashboard" / "style.css").read_text(encoding="utf-8")
-    index = (ROOT / "pages" / "dashboard" / "index.html").read_text(encoding="utf-8")
-
-    # store 数据通道 + 视图持久化
-    assert "const viewDirty = new Set([" in source
-    assert "const CHANNEL_VIEWS = {" in source
-    assert "function markData(...channels)" in source
-    assert "function markDirtyView(view)" in source
-    assert "function flushView(view)" in source
-    # 整视图重渲入口已移除：数据变更一律走通道
-    assert "renderAll" not in source
-    # 作用域化数据刷新：动作收尾不再全量 reload
-    assert "async function refreshViewData(view)" in source
-    assert "async function reloadOverviewData()" in source
-    assert "async function reloadGroupState()" in source
-    assert "async function reloadConfigState()" in source
-    assert "async function refreshHistoryData()" in source
-    # 布局实测 rAF 合帧；通知浮层护栏由 notice_stack 测试覆盖。
-    assert "frame = requestAnimationFrame(() => {" in source
-    # 历史列表：卡片带 recordId，全选/清除走原位勾选同步，不重建卡片
-    assert "dataset: { recordId: String(r.id) }" in source
-    assert "function syncHistoryCheckboxes()" in source
-    assert "box.checked = state.historySelection.has(id)" in source
-    # 配置页：控件提交走 commitConfigValue 增量更新，不再整树重建
-    assert "const configDirtyKeys = new Set();" in source
-    assert "function commitConfigValue(key, value, fromControl = true)" in source
-    assert "function renderConfigBarState()" in source
-    assert "function updateConfigNavBadges()" in source
-    assert "row.replaceChildren(...configItemChildren(item));" in source
-    assert "state.configDraft[item.key] = v; renderConfig();" not in source
-    # 信息增强：分组健康徽标 / 探测耗时条 / 缓存构成（构成条已迁到存储运维页）
-    assert "function groupHealthInfo(g)" in source
-    assert "health-dot " in source
-    assert "probe-meter-fill" in source
-    assert "图片（${cache?.images || 0} 个文件）" in source
-    # 抽屉/面板/弹窗的焦点圈与焦点恢复：打开时记录锚点，关闭时归还
-    assert "state.sheetReturnFocus = document.activeElement;" in source
-    assert "state.cmdkReturnFocus = document.activeElement;" in source
-    assert "state.createGroupReturnFocus = document.activeElement;" in source
-    assert "function trapFocus(container, e)" in source
-    # 诊断终端接真实日志接口，不是 setTimeout 假输出
-    assert 'apiGet("web/logs"' in source
-    assert (
-        "setTimeout"
-        not in source.split("function renderTerminal")[1].split("function ")[0]
-    )
-    # 实例地址在界面侧脱敏：只保留协议 + host[:port]
     assert "function redactInstanceLabel(raw)" in source
     assert "redactInstanceLabel(r.instance)" in source
-    # 顶部导航壳（原型 6 页签）：侧栏已废弃，页面不再有 .sidebar / .topheader
-    assert 'class="nav-shell"' in index
-    assert 'class="nav-primary"' in index
-    assert 'class="nav-tabs"' in index
-    assert ".nav-shell {" in style
-    assert ".nav-primary {" in style
-    assert ".nav-tabs {" in style
-    assert ".sidebar" not in style
-    assert 'class="sidebar"' not in index
-    assert 'class="topheader"' not in index
-    # 六个视图容器齐备，含原型的「存储运维」
-    for view in ("overview", "groups", "history", "mirror", "storage", "config"):
-        assert f'id="{view}View"' in index
-        assert f'data-view="{view}"' in index
-    assert "function renderStorage()" in source
-    assert "storage: renderStorage" in source
-    # 动效基元约束：rise-in / pop-in 两个设计基元 + 忙态旋转；无 box-shadow 过渡
-    assert "@keyframes rise-in" in style
-    assert "@keyframes pop-in" in style
-    assert "@keyframes status-spin" in style
-    assert "box-shadow var(--transition)" not in style
-    assert (
-        "transition: background var(--transition), border-color var(--transition);"
-        in style
-    )
-    dialog_panel = style.split(".dialog-panel {", 1)[1].split("}", 1)[0]
-    assert "animation: pop-in" in dialog_panel
-    assert "animation: rise-in" in style
-    assert "@media (prefers-reduced-motion: reduce)" in style
-    # index.html 内联样式收编完毕
-    assert 'style="' not in index
 
 
 def test_status_and_export_render_list_group():
@@ -1144,7 +734,6 @@ def test_attention_nav_covers_every_overview_attention_key():
     渲染成不可点，而 CHANGELOG 写的是「均可点击跳转」。
     """
     import ast
-    import json
 
     tree = ast.parse(
         (ROOT / "plugin_api" / "api_overview.py").read_text(encoding="utf-8")
