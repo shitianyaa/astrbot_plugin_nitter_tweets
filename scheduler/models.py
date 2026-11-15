@@ -394,6 +394,8 @@ class ScheduledCheckResult:
                 for item in attempts:
                     inst, separator, status = str(item).partition("=")
                     if separator and status == "成功":
+                        if inst in ("合并RSS", "单账号RSS", "HTML"):
+                            inst = "Nitter"
                         if inst not in successful_instances:
                             successful_instances.append(inst)
                 if len(attempts) > 1:

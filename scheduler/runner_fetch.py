@@ -20,6 +20,7 @@ try:
         redact_instance_urls,
         sanitize_sensitive_text,
     )
+    from ..shared.observability import safe_block_log, sanitize_diagnostic
     from .config import ScheduleGroup
     from .models import SchedulerTaskError, SourceStatus, UserFetchResult
 except ImportError:
@@ -34,6 +35,7 @@ except ImportError:
         redact_instance_urls,
         sanitize_sensitive_text,
     )
+    from shared.observability import safe_block_log, sanitize_diagnostic
 
 
 def _classify_html_fetch(
@@ -66,6 +68,10 @@ def _classify_html_fetch(
 
 
 FX_FETCH_CONCURRENCY = 3
+
+
+def _failed_fetch_attempt(stage: str, error: Exception) -> str:
+    return f"{stage}=失败: {sanitize_diagnostic(redact_instance_urls(str(error)))}"
 
 
 class SchedulerFetchMixin:
@@ -232,14 +238,19 @@ class SchedulerFetchMixin:
             failed_preview = ", ".join(f"@{u}" for u in failed_accounts[:5])
             if len(failed_accounts) > 5:
                 failed_preview += f" 等 {len(failed_accounts)} 位博主"
-            logger.warning(
+            use_merged = len(failed_accounts) > 1 and self._effective_filter_reposts(
+                group
+            )
+            fallback_path = "合并 RSS" if use_merged else "单账号 RSS"
+            safe_block_log(
+                "warning",
                 f"[NitterTweets] FxTwitter 抓取异常平滑回退自建 Nitter: "
                 f"group={group.group_id}, 失败博主数={len(failed_accounts)} "
-                f"({sanitize_sensitive_text(failed_preview)})"
+                f"({sanitize_sensitive_text(failed_preview)}), 回退路径={fallback_path}",
             )
 
             # Incremental takeover: only failed_accounts handed to Nitter pipeline
-            if len(failed_accounts) > 1 and self._effective_filter_reposts(group):
+            if use_merged:
                 nitter_batches = await self._fetch_group_users_merged(
                     group,
                     failed_accounts,
@@ -318,6 +329,11 @@ class SchedulerFetchMixin:
         batches = NitterClient.batch_usernames_by_path_length(accounts)
         results: list[UserFetchResult] = []
         global_index = 0
+        safe_block_log(
+            "info",
+            f"[NitterTweets] 合并 RSS 批量抓取: group={group.group_id}, "
+            f"博主数={len(accounts)}, 批次数={len(batches)}",
+        )
 
         for batch_i, batch in enumerate(batches):
             if batch_i > 0 and group.send_user_interval > 0:
@@ -342,26 +358,29 @@ class SchedulerFetchMixin:
                 )
             except Exception as exc:
                 error_label = sanitize_sensitive_text(redact_instance_urls(str(exc)))
-                logger.warning(
+                safe_block_log(
+                    "warning",
                     f"[NitterTweets] 合并 RSS 抓取失败，回退逐个请求: "
                     f"group={group.group_id}, batch={batch_i + 1}/{len(batches)}, "
-                    f"error={type(exc).__name__}: {error_label}"
+                    f"error={type(exc).__name__}: {error_label}",
                 )
                 # Fall back to per-user for the entire batch
                 for username in batch:
                     if global_index > 0 and group.send_user_interval > 0:
                         await asyncio.sleep(group.send_user_interval)
-                    results.append(
-                        await self._fetch_group_user(
-                            group,
-                            global_index,
-                            username,
-                            fetch_limit,
-                            skip_plain_text,
-                            scan_watermarks.get(username),
-                            force_nitter=True,
-                        )
+                    user_result = await self._fetch_group_user(
+                        group,
+                        global_index,
+                        username,
+                        fetch_limit,
+                        skip_plain_text,
+                        scan_watermarks.get(username),
+                        force_nitter=True,
                     )
+                    user_result.host_attempts.insert(
+                        0, _failed_fetch_attempt("合并RSS", exc)
+                    )
+                    results.append(user_result)
                     global_index += 1
                 continue
 
@@ -387,23 +406,29 @@ class SchedulerFetchMixin:
                             plain_text_filtered=int(
                                 scan_result.plain_text_filtered or 0
                             ),
-                            host_attempts=["Nitter=成功"],
+                            host_attempts=["合并RSS=成功"],
                         )
                     )
                 else:
                     # No tweets for this user in merged feed; try per-user
                     # RSS/HTML to catch anything the merged scan missed.
-                    results.append(
-                        await self._fetch_group_user(
-                            group,
-                            global_index,
-                            username,
-                            fetch_limit,
-                            skip_plain_text,
-                            scan_watermarks.get(username),
-                            force_nitter=True,
-                        )
+                    safe_block_log(
+                        "info",
+                        f"[NitterTweets] 合并 RSS 无该账号推文，补查单账号 RSS/HTML: "
+                        f"group={group.group_id}, user=@{username}, "
+                        f"batch={batch_i + 1}/{len(batches)}",
                     )
+                    user_result = await self._fetch_group_user(
+                        group,
+                        global_index,
+                        username,
+                        fetch_limit,
+                        skip_plain_text,
+                        scan_watermarks.get(username),
+                        force_nitter=True,
+                    )
+                    user_result.host_attempts.insert(0, "合并RSS=无该账号结果")
+                    results.append(user_result)
                 global_index += 1
 
         return results
@@ -490,12 +515,14 @@ class SchedulerFetchMixin:
                 )
                 fx_failed_attempt = "FxTwitter=失败"
 
+        nitter_attempts: list[str] = []
+
         def _with_fx_fallback(res: UserFetchResult) -> UserFetchResult:
+            res.host_attempts = list(nitter_attempts) or ["单账号RSS=成功"]
             if fx_failed_attempt:
-                nitter_attempt = "Nitter=成功" if not res.error else "Nitter=失败"
                 res.host_attempts = [
                     fx_failed_attempt,
-                    *(res.host_attempts or [nitter_attempt]),
+                    *res.host_attempts,
                 ]
             return res
 
@@ -526,12 +553,14 @@ class SchedulerFetchMixin:
                 )
                 tweets = list(scan_result.tweets)
                 if not tweets:
+                    nitter_attempts.append("单账号RSS=无推文")
                     html_result = await self._fetch_user_html_after_rss(
                         index,
                         username,
                         fetch_limit,
                         skip_plain_text=skip_plain_text,
                         filter_reposts=filter_reposts,
+                        attempts=nitter_attempts,
                     )
                     if html_result is not None:
                         return _with_fx_fallback(html_result)
@@ -560,22 +589,26 @@ class SchedulerFetchMixin:
                 filter_reposts=filter_reposts,
             )
             if not tweets:
+                nitter_attempts.append("单账号RSS=无推文")
                 html_result = await self._fetch_user_html_after_rss(
                     index,
                     username,
                     fetch_limit,
                     skip_plain_text=skip_plain_text,
                     filter_reposts=filter_reposts,
+                    attempts=nitter_attempts,
                 )
                 if html_result is not None:
                     return _with_fx_fallback(html_result)
         except Exception as exc:
+            nitter_attempts.append(_failed_fetch_attempt("单账号RSS", exc))
             html_result = await self._fetch_user_html_after_rss(
                 index,
                 username,
                 fetch_limit,
                 skip_plain_text=skip_plain_text,
                 filter_reposts=filter_reposts,
+                attempts=nitter_attempts,
             )
             if html_result is not None:
                 return _with_fx_fallback(html_result)
@@ -618,6 +651,7 @@ class SchedulerFetchMixin:
         *,
         skip_plain_text: bool = False,
         filter_reposts: bool = True,
+        attempts: list[str],
     ) -> UserFetchResult | None:
         try:
             instance, tweets = await asyncio.to_thread(
@@ -628,13 +662,17 @@ class SchedulerFetchMixin:
                 )
             )
         except Exception as exc:
-            logger.warning(
+            attempts.append(_failed_fetch_attempt("HTML", exc))
+            safe_block_log(
+                "warning",
                 f"[NitterTweets] HTML 用户页回退失败: @{username}, "
-                f"error={sanitize_sensitive_text(redact_instance_urls(str(exc)))}"
+                f"error={sanitize_sensitive_text(redact_instance_urls(str(exc)))}",
             )
             return None
         if not tweets:
+            attempts.append("HTML=无推文")
             return None
+        attempts.append("HTML=成功")
         tweets, plain_text_filtered = self._filter_html_tweets_plain_text(
             list(tweets), skip_plain_text=skip_plain_text
         )

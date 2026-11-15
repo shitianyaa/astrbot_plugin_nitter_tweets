@@ -220,7 +220,9 @@ def test_fetch_group_users_merged_rss_error_sanitizes_log():
     runner = SchedulerFetchMixin()
     runner._log_verbose_info = MagicMock()
     runner._effective_filter_reposts = MagicMock(return_value=True)
-    runner._fetch_group_user = AsyncMock()
+    runner._fetch_group_user = AsyncMock(
+        side_effect=lambda *args, **kwargs: SimpleNamespace(host_attempts=[])
+    )
 
     runner.nitter = MagicMock()
     runner.nitter.fetch_merged_for_scheduler = AsyncMock(
