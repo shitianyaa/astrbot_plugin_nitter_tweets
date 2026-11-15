@@ -5,6 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 
 _PROCESS_PREFIXES = (
+    "user fail",
+    "search fail",
+    "list fail",
+    "user empty (",
+    "search empty (",
+    "list empty (",
     "search try ",
     "user try ",
     "list try ",

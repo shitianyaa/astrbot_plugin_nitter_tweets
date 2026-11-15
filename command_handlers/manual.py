@@ -27,7 +27,7 @@ try:
     )
     from ..rendering.tweets import format_twitter_trends
     from ..shared import normalize_username, safe_call, sanitize_sensitive_text
-    from ..shared.observability import safe_task_log
+    from ..shared.observability import safe_block_log, safe_task_log
 except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
@@ -46,7 +46,7 @@ except ImportError:
     )
     from rendering.tweets import format_twitter_trends
     from shared import normalize_username, safe_call, sanitize_sensitive_text
-    from shared.observability import safe_task_log
+    from shared.observability import safe_block_log, safe_task_log
 
 
 class ManualCommandMixin:
@@ -274,8 +274,9 @@ class ManualCommandMixin:
             except Exception as exc:
                 fx_error = exc
                 if backend == "fx":
-                    logger.warning(
-                        f"[NitterTweets] FxTwitter 手动获取 @{username} 推文失败 (fx模式): {sanitize_sensitive_text(str(exc))}"
+                    safe_block_log(
+                        "debug",
+                        f"[NitterTweets] FxTwitter 手动获取 @{username} 推文失败 (fx模式): {sanitize_sensitive_text(str(exc))}",
                     )
                     self._log_manual_no_send_task(
                         "推文查询失败",
@@ -291,8 +292,9 @@ class ManualCommandMixin:
                         event.plain_result(f"获取 @{username} 推文失败，请稍后重试。")
                     )
                     return
-                logger.warning(
-                    f"[NitterTweets] FxTwitter 手动获取 @{username} 异常，平滑回退自建 Nitter: {sanitize_sensitive_text(str(exc))}"
+                safe_block_log(
+                    "warning",
+                    f"[NitterTweets] FxTwitter 手动获取 @{username} 异常，平滑回退自建 Nitter: {sanitize_sensitive_text(str(exc))}",
                 )
 
         if backend == "nitter" or (
@@ -325,8 +327,9 @@ class ManualCommandMixin:
                 elif media_filter == "image" and tweets:
                     tweets = [t for t in tweets if any(m.is_image for m in t.media)]
             except Exception as exc:
-                logger.warning(
-                    f"[NitterTweets] 手动获取 @{sanitize_sensitive_text(username)} 推文失败: {sanitize_sensitive_text(str(exc))}"
+                safe_block_log(
+                    "debug",
+                    f"[NitterTweets] 手动获取 @{sanitize_sensitive_text(username)} 推文失败: {sanitize_sensitive_text(str(exc))}",
                 )
                 self._log_manual_no_send_task(
                     "推文查询失败",
@@ -533,8 +536,9 @@ class ManualCommandMixin:
             except Exception as exc:
                 fx_error = exc
                 if backend == "fx":
-                    logger.warning(
-                        f"[NitterTweets] FxTwitter 搜索失败 (fx模式) query={query!r}: {sanitize_sensitive_text(str(exc))}"
+                    safe_block_log(
+                        "debug",
+                        f"[NitterTweets] FxTwitter 搜索失败 (fx模式) query={query!r}: {sanitize_sensitive_text(str(exc))}",
                     )
                     self._log_manual_no_send_task(
                         "推文搜索失败",
@@ -548,8 +552,9 @@ class ManualCommandMixin:
                     )
                     await event.send(event.plain_result("搜索失败，请稍后重试"))
                     return
-                logger.warning(
-                    f"[NitterTweets] FxTwitter 搜索「{sanitize_sensitive_text(query)}」异常，平滑回退自建 Nitter: {sanitize_sensitive_text(str(exc))}"
+                safe_block_log(
+                    "warning",
+                    f"[NitterTweets] FxTwitter 搜索「{sanitize_sensitive_text(query)}」异常，平滑回退自建 Nitter: {sanitize_sensitive_text(str(exc))}",
                 )
 
         if backend == "nitter" or (
@@ -574,8 +579,9 @@ class ManualCommandMixin:
                     )
                     instance = "Nitter"
                 except Exception as exc:
-                    logger.warning(
-                        f"[NitterTweets] 搜索失败 query={sanitize_sensitive_text(query)!r}: {sanitize_sensitive_text(str(exc))}"
+                    safe_block_log(
+                        "debug",
+                        f"[NitterTweets] 搜索失败 query={sanitize_sensitive_text(query)!r}: {sanitize_sensitive_text(str(exc))}",
                     )
                     self._log_manual_no_send_task(
                         "推文搜索失败",
@@ -592,8 +598,9 @@ class ManualCommandMixin:
                     )
                     return
             except Exception as exc:
-                logger.warning(
-                    f"[NitterTweets] 搜索失败 query={sanitize_sensitive_text(query)!r}: {sanitize_sensitive_text(str(exc))}"
+                safe_block_log(
+                    "debug",
+                    f"[NitterTweets] 搜索失败 query={sanitize_sensitive_text(query)!r}: {sanitize_sensitive_text(str(exc))}",
                 )
                 self._log_manual_no_send_task(
                     "推文搜索失败",

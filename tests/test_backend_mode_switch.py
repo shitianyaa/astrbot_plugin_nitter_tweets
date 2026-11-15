@@ -255,12 +255,12 @@ async def test_multi_blogger_partial_success_incremental_nitter_fallback():
     assert results_by_user["alice"].host_attempts == ["FxTwitter=成功"]
     assert results_by_user["bob"].instance == "http://nitter.test"
     assert results_by_user["bob"].host_attempts == [
-        "FxTwitter=失败",
+        "FxTwitter=失败: HTTP 429 rate limit for bob",
         "合并RSS=成功",
     ]
     assert results_by_user["carol"].instance == "http://nitter.test"
     assert results_by_user["carol"].host_attempts == [
-        "FxTwitter=失败",
+        "FxTwitter=失败: HTTP 429 rate limit for carol",
         "合并RSS=成功",
     ]
 
@@ -304,7 +304,7 @@ async def test_blogger_fallback_trace_preserves_stages_and_redacts_errors(
         assert isinstance(result, UserFetchResult)
         attempts = result.host_attempts
         if backend == "mix":
-            assert attempts[0] == "FxTwitter=失败"
+            assert attempts[0] == "FxTwitter=失败: HTTP 503"
             attempts = attempts[1:]
         assert attempts[0] == (
             "合并RSS=失败: HTTP 429 实例地址"
@@ -322,7 +322,9 @@ async def test_blogger_fallback_trace_preserves_stages_and_redacts_errors(
         users=[r.username for r in results],
         source_attempts={r.username: r.host_attempts for r in results},
     ).format_structured_task_log()
-    assert "单账号RSS[失败: HTTP 404] ➔ HTML[" in message
+    assert "单账号RSS[失败/原因" in message
+    assert "单账号RSS: HTTP 404" in message
+    assert " ➔ HTML[" in message
     assert "access-secret" not in message
     assert "private.test" not in message
     if not html_failed:
@@ -438,7 +440,10 @@ async def test_multi_blogger_first_failure_preserves_order_and_indices_single_ni
     assert [r.index for r in results] == [0, 1, 2]
     # First blogger fell back to Nitter
     assert results[0].instance == "http://nitter.test"
-    assert results[0].host_attempts == ["FxTwitter=失败", "单账号RSS=成功"]
+    assert results[0].host_attempts == [
+        "FxTwitter=失败: 500 Server Error",
+        "单账号RSS=成功",
+    ]
     # Subsequent bloggers succeeded on FX
     assert results[1].instance == "FxTwitter"
     assert results[1].host_attempts == ["FxTwitter=成功"]
@@ -490,9 +495,15 @@ async def test_multi_blogger_first_failures_preserves_order_and_indices_merged_n
     assert [r.username for r in results] == ["alice", "bob", "carol"]
     assert [r.index for r in results] == [0, 1, 2]
     assert results[0].instance == "http://nitter.test"
-    assert results[0].host_attempts == ["FxTwitter=失败", "合并RSS=成功"]
+    assert results[0].host_attempts == [
+        "FxTwitter=失败: 500 Server Error",
+        "合并RSS=成功",
+    ]
     assert results[1].instance == "http://nitter.test"
-    assert results[1].host_attempts == ["FxTwitter=失败", "合并RSS=成功"]
+    assert results[1].host_attempts == [
+        "FxTwitter=失败: 500 Server Error",
+        "合并RSS=成功",
+    ]
     assert results[2].instance == "FxTwitter"
     assert results[2].host_attempts == ["FxTwitter=成功"]
 
@@ -536,7 +547,10 @@ async def test_multi_blogger_middle_failure_preserves_order_and_indices_single_n
     assert results[0].instance == "FxTwitter"
     assert results[0].host_attempts == ["FxTwitter=成功"]
     assert results[1].instance == "http://nitter.test"
-    assert results[1].host_attempts == ["FxTwitter=失败", "单账号RSS=成功"]
+    assert results[1].host_attempts == [
+        "FxTwitter=失败: 500 Server Error",
+        "单账号RSS=成功",
+    ]
     assert results[2].instance == "FxTwitter"
     assert results[2].host_attempts == ["FxTwitter=成功"]
 
@@ -830,6 +844,8 @@ async def test_single_blogger_fetch_user_mix_fallback():
 # ==============================================================================
 # 9. Manual command /推文 routing and fallback
 # ==============================================================================
+
+
 @pytest.mark.asyncio
 async def test_manual_cmd_tweets_mix_fx_success():
     mock_nitter = MagicMock()
