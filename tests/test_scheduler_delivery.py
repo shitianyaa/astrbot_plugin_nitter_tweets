@@ -746,6 +746,62 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             published="",
         )
 
+    async def test_reset_progress_reinitializes_without_replaying_history(self):
+        sender = _Sender()
+        nitter = _SchedulerNitter(
+            {
+                "NASA": [
+                    {
+                        "tweets": [self._make_tweet("NASA", status_id)],
+                        "scanned_status_ids": [status_id],
+                        "anchor_status_ids": [status_id],
+                    }
+                    for status_id in ("100", "101", "102", "103")
+                ]
+            }
+        )
+        scheduler = self._create_scheduler(
+            {
+                "schedule_enabled": True,
+                "basic": {"fetch_backend": "nitter"},
+                "tweet_groups": [
+                    {
+                        "group_id": "science",
+                        "name": "科技",
+                        "watch_users": ["NASA"],
+                        "push_targets": ["telegram:FriendMessage:1"],
+                        "enabled": True,
+                    }
+                ],
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        first = await scheduler.run_check(reason="test_init", group_name="science")
+        self.assertEqual(first.initialized_users, {"NASA": 1})
+        self.assertFalse(sender.sent)
+        await scheduler.run_check(reason="test_new", group_name="science")
+        self.assertEqual(len(sender.sent), 1)
+        history_count = await scheduler.storage.count_push_history()
+
+        await scheduler.storage.clear_seen_records("science")
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("science"), {}
+        )
+        reset = await scheduler.run_check(reason="test_reset", group_name="science")
+        self.assertEqual(reset.initialized_users, {"NASA": 1})
+        self.assertEqual(reset.new_tweet_count, 0)
+        self.assertEqual(len(sender.sent), 1)
+        self.assertEqual(await scheduler.storage.count_push_history(), history_count)
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("science", "NASA"), ["102"]
+        )
+
+        resumed = await scheduler.run_check(reason="test_resume", group_name="science")
+        self.assertEqual(resumed.new_tweet_count, 1)
+        self.assertEqual(len(sender.sent), 2)
+        self.assertEqual(sender.sent[-1][3], ["103"])
+
     async def test_blogger_repost_filter_override_reaches_rss_and_html_fetch(
         self,
     ):
