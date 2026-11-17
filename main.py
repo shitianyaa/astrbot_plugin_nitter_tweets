@@ -290,7 +290,7 @@ class NitterTweetsPlugin(
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("推文记录清理")
     async def cmd_tweets_clear_seen(self, event: AstrMessageEvent, args=GreedyStr):
-        """清理已推送记录，可按分组清理。用法：/推文记录清理 [分组名] 确认"""
+        """重置推送进度，不填分组名时重置全部分组。用法：/推文记录清理 [分组名]"""
         return await self._cmd_tweets_clear_seen_impl(event, args)
 
     @filter.permission_type(filter.PermissionType.ADMIN)

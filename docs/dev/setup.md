@@ -50,7 +50,7 @@ python scripts/test_video_download.py https://x.com/user/status/123
 
 ## 推文帮助图源码
 
-`scripts/render_tweet_help.py` 保存 `/推文帮助` 的指令内容、HTML 和最终暖色样式，复用 `pages/dashboard/fonts/` 的 MiSans 字体并内联到 HTML。开发环境需要 Pillow、Playwright 和对应的 Chromium；这些只用于维护静态帮助图，不加入插件运行依赖。
+`scripts/render_tweet_help.py` 的 `POSTER`、`GROUPS` 集中保存 `/推文帮助` 的文案；HTML 和暖色样式负责布局，复用 `pages/dashboard/fonts/` 的 MiSans 字体并内联到 HTML。用 `<参数>` 表示必填、`[参数]` 表示可选，不添加命令示例行；修改参数前核对 `main.py` 和对应 handler。开发环境需要 Pillow、Playwright 和对应的 Chromium；也可用 `--browser-executable <浏览器路径>` 指定已安装的 Chromium 或 Edge。这些只用于维护静态帮助图，不加入插件运行依赖。
 
 指定输出目录运行：
 
@@ -58,7 +58,7 @@ python scripts/test_video_download.py https://x.com/user/status/123
 python scripts/render_tweet_help.py --output-dir <输出目录>
 ```
 
-脚本生成 `tweet_help.html` 和 256 色 PNG `tweet_help.png`。画布宽 1440，高度随内容自适应；渲染时阻止外部请求，并检查字体、21 个指令条目、横向溢出和空白图。确认输出后，将 PNG 复制到 `rendering/assets/tweet_help.png`；脚本不会自动覆盖随包资源。HTML、检查报告及试渲图片不入库，发布包只需要现有静态 PNG。
+脚本生成 `tweet_help.html`、256 色 PNG `tweet_help.png` 和 `evidence.json`。画布宽 1440，高度随内容自适应；渲染时阻止外部请求，并检查字体、指令条目唯一性与顺序、横向溢出、空白图和 PNG 调色板。`tests/test_tweet_help.py` 另校验全部 21 个入口与真实命令注册一致、参数契约及尖括号转义。确认实际图片后，将 PNG 复制到 `rendering/assets/tweet_help.png`；脚本不会自动覆盖随包资源。HTML、检查报告及试渲图片不入库，发布包只需要现有静态 PNG。
 
 ## 运行数据
 
