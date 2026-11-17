@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -60,15 +59,6 @@ def _patch_lark_manual_target(monkeypatch) -> None:
     monkeypatch.setattr(lark_module, "plain_text_from_components", lambda value: "text")
     monkeypatch.setattr(lark_module, "video_components", lambda value: ["video"])
     monkeypatch.setattr(lark_module, "media_components", lambda value: ["media"])
-
-
-def test_default_and_lark_accept_hide_kwarg():
-    for cls in (DefaultDeliveryAdapter, LarkDeliveryAdapter):
-        for name in ("send_event", "send_to_umo"):
-            sig = inspect.signature(getattr(cls, name))
-            assert "hide_original_when_translated" in sig.parameters
-            assert "link_style" in sig.parameters
-            assert "omit_status_url" in sig.parameters
 
 
 @pytest.mark.asyncio

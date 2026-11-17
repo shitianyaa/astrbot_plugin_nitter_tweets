@@ -45,4 +45,4 @@
 2. `_conf_schema.json`
 3. `config/compat.py`
 4. `scheduler/config.py`
-5. `tests/test_subscription_import.py`
+5. `tests/test_config_contracts.py`

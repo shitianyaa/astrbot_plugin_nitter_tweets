@@ -38,7 +38,10 @@ function updateDraft(groupId, key, value) { assert.equal(groupId, "group"); writ
 const gid = "group";
 """
     scenarios = r"""
-const d = snapshotGroup({ group_id: gid, media_only_enabled: true });
+const d = snapshotGroup({ group_id: gid, media_only_enabled: true,
+  push_targets: ['bot:GroupMessage:1'], invalid_push_targets: ['broken target'],
+  watch_users: ['nasa'], invalid_watch_users: ['broken author'],
+});
 assert.equal(d.media_only_enabled, "仅媒体（保留作者）");
 assert.equal(snapshotGroup({ media_only_enabled: false }).media_only_enabled, "完整推文");
 SELECTOR
@@ -49,6 +52,12 @@ callback("仅媒体（不含文字）");
 assert.equal(writes, 1);
 assert.equal(buildGroupPayload(d).media_only_enabled, "仅媒体（不含文字）");
 assert.equal(snapshotGroup(buildGroupPayload(d)).media_only_enabled, "仅媒体（不含文字）");
+assert.deepEqual(buildGroupPayload(d).push_targets, ['bot:GroupMessage:1', 'broken target']);
+assert.deepEqual(buildGroupPayload(d).watch_users, ['nasa', 'broken author']);
+d.invalid_push_targets = [];
+d.invalid_watch_users = [];
+assert.deepEqual(buildGroupPayload(d).push_targets, ['bot:GroupMessage:1']);
+assert.deepEqual(buildGroupPayload(d).watch_users, ['nasa']);
 """.replace("SELECTOR", selector)
     result = subprocess.run(
         [node],

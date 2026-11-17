@@ -19,7 +19,6 @@ try:
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
-        sanitize_sensitive_text,
     )
     from ..shared.group_ids import GLOBAL_GROUP_ID
     from ..storage import PushHistoryRecord, StorageAdapter
@@ -76,7 +75,6 @@ except ImportError:
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
-        sanitize_sensitive_text,
     )
     from shared.group_ids import GLOBAL_GROUP_ID
     from storage import PushHistoryRecord, StorageAdapter
@@ -289,6 +287,25 @@ class NitterTweetScheduler(
     def _log_check_result(
         self, result: ScheduledCheckResult, duration_ms: float | None = None
     ) -> None:
+        recovered_sources = 0
+        for source, attempts in result.source_attempts.items():
+            if len(attempts) > 1:
+                if any(
+                    item.partition("=")[2].startswith(("失败", "跳过"))
+                    for item in attempts
+                ) and any(item.endswith("=成功") for item in attempts):
+                    recovered_sources += 1
+                safe_block_log(
+                    "debug",
+                    f"[NitterTweets] 抓取完整轨迹: group={result.group_id}, "
+                    f"source={source}, attempts={' ➔ '.join(attempts)}",
+                )
+        if recovered_sources and not result.needs_attention:
+            safe_block_log(
+                "warning",
+                f"[NitterTweets] 抓取来源异常，后备已恢复: group={result.group_id}, "
+                f"恢复源数={recovered_sources}，原因见本轮任务摘要",
+            )
         safe_block_log(
             "warning" if result.needs_attention else "info",
             result.format_structured_task_log(duration_ms=duration_ms),
@@ -1187,9 +1204,10 @@ class NitterTweetScheduler(
                     result.failed_users[username] = redact_instance_urls(
                         fetch_result.error.message
                     )
-                    logger.warning(
+                    safe_block_log(
+                        "debug",
                         f"[NitterTweets] 定时抓取 {source_label} 失败: "
-                        f"{sanitize_sensitive_text(fetch_result.error.message)}"
+                        f"group={group.group_id}, {fetch_result.error.message}",
                     )
                     continue
 

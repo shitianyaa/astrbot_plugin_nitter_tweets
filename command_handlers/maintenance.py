@@ -73,20 +73,10 @@ class MaintenanceCommandMixin:
     async def _cmd_tweets_clear_seen_impl(
         self, event: AstrMessageEvent, args=GreedyStr
     ):
-        """清理定时检查推送记录，并移除旧版 KV 推送记录。"""
+        """重置指定或全部分组的推送进度，保留推送历史和订阅。"""
         event.stop_event()
-        tokens = self._command_tokens(event, args)
-        if not tokens or tokens[-1] != "确认":
-            await event.send(
-                event.plain_result(
-                    "用法：/推文记录清理 确认\n"
-                    "指定分组：/推文记录清理 分组名 确认\n"
-                    "会清理定时检查的防重复推送记录，不会删除订阅或媒体文件。"
-                )
-            )
-            return
-
-        group_name = " ".join(tokens[:-1]).strip()
+        tokens = self._command_tokens(event, args if isinstance(args, str) else "")
+        group_name = " ".join(tokens).strip()
         group = None
         if group_name and group_name.lower() not in {"all", "全部"}:
             group = self.scheduler.config_reader.schedule_group(
@@ -99,6 +89,7 @@ class MaintenanceCommandMixin:
                         "未找到分组："
                         f"{group_name}\n可用分组: "
                         + self._format_limited_values(self._available_group_labels())
+                        + "\n用法：/推文记录清理 [分组名]；不填分组名时重置全部分组。"
                     )
                 )
                 return
@@ -110,10 +101,11 @@ class MaintenanceCommandMixin:
         scope = self._check_group_label(group) if group else "全部分组"
         await event.send(
             event.plain_result(
-                "Nitter 推送记录清理完成\n"
+                "Nitter 推送进度已重置\n"
                 f"范围: {scope}\n"
-                f"SQLite 推送记录删除: {deleted} 条\n"
-                f"旧版 KV 推送记录清理: {'已执行' if legacy_deleted else '无记录或不支持'}\n"
-                "订阅配置和媒体文件未删除。"
+                f"已清除已处理推文记录: {deleted} 条\n"
+                f"旧版记录清理: {'已执行' if legacy_deleted else '无记录或不支持'}\n"
+                "下次检查只记录当前推文，不发送；之后继续推送新内容。\n"
+                "面板推送历史、订阅和媒体文件保留。"
             )
         )

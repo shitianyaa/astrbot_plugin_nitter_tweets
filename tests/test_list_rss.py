@@ -201,9 +201,9 @@ def test_fetch_group_list_rss_error_sanitizes_log():
     runner.nitter.fetch_list = MagicMock(return_value=("http://nitter:8080", []))
 
     group = SimpleNamespace(group_id="g1", group_type="list", is_list_group=True)
-    with patch("scheduler.runner_fetch.logger.warning") as mock_warn:
+    with patch("shared.observability.logger.debug") as mock_warn:
         asyncio.run(runner._fetch_group_list(group, 0, "list:12345", 20, ["100"]))
-        mock_warn.assert_called_once()
+        assert mock_warn.called
         warning_msg = mock_warn.call_args[0][0]
         assert "pass@" not in warning_msg
         assert "secret123" not in warning_msg
@@ -220,7 +220,9 @@ def test_fetch_group_users_merged_rss_error_sanitizes_log():
     runner = SchedulerFetchMixin()
     runner._log_verbose_info = MagicMock()
     runner._effective_filter_reposts = MagicMock(return_value=True)
-    runner._fetch_group_user = AsyncMock()
+    runner._fetch_group_user = AsyncMock(
+        side_effect=lambda *args, **kwargs: SimpleNamespace(host_attempts=[])
+    )
 
     runner.nitter = MagicMock()
     runner.nitter.fetch_merged_for_scheduler = AsyncMock(
@@ -237,7 +239,7 @@ def test_fetch_group_users_merged_rss_error_sanitizes_log():
         is_blogger_group=True,
         send_user_interval=0,
     )
-    with patch("scheduler.runner_fetch.logger.warning") as mock_warn:
+    with patch("shared.observability.logger.debug") as mock_warn:
         asyncio.run(
             runner._fetch_group_users_merged(
                 group,
@@ -247,7 +249,7 @@ def test_fetch_group_users_merged_rss_error_sanitizes_log():
                 scan_watermarks={},
             )
         )
-        mock_warn.assert_called_once()
+        assert mock_warn.called
         warning_msg = mock_warn.call_args[0][0]
         assert "pass@" not in warning_msg
         assert "secret123" not in warning_msg

@@ -287,7 +287,7 @@ class ScheduledCheckResult:
 
     def _watermark_message(self) -> str:
         labels = {
-            "advanced": "已推进",
+            "advanced": "已确认",
             "rebuilt": "已重建",
             "initialized": "已初始化",
             "unchanged": "未更新",
@@ -384,9 +384,17 @@ class ScheduledCheckResult:
                 f"无效 {len(self.invalid_targets)} 个"
             )
 
-        # Instance & Failover
+        if not self.skipped_reason:
+            lines.append(
+                f"  执行状态: {'需关注' if self.needs_attention else '正常完成'}"
+            )
+            if self.users:
+                lines.append(f"  抓取状态: {self._source_status_message()}")
+
+        # 相同路径和原因只在摘要出现一次；完整逐源记录由 runner 写 DEBUG。
         successful_instances: list[str] = []
-        failover_traces: list[str] = []
+        routes: dict[str, list[str]] = {}
+        failures: dict[str, str] = {}
         if self.source_attempts:
             for source_name, attempts in self.source_attempts.items():
                 if not attempts:
@@ -394,6 +402,13 @@ class ScheduledCheckResult:
                 for item in attempts:
                     inst, separator, status = str(item).partition("=")
                     if separator and status == "成功":
+                        if inst in (
+                            "合并RSS",
+                            "单账号RSS",
+                            "ListRSS",
+                            "HTML",
+                        ) or inst.startswith("#"):
+                            inst = "Nitter"
                         if inst not in successful_instances:
                             successful_instances.append(inst)
                 if len(attempts) > 1:
@@ -401,24 +416,54 @@ class ScheduledCheckResult:
                     trace_parts: list[str] = []
                     for item in attempts:
                         host, separator, status = str(item).partition("=")
+                        outcome, _, reason = status.partition(":")
+                        if separator and outcome in {"失败", "跳过"} and reason:
+                            failure = sanitize_diagnostic(
+                                redact_instance_urls(f"{host}: {reason.strip()}")
+                            )
+                            ref = failures.setdefault(
+                                failure,
+                                f"原因{len(failures) + 1}"
+                                if len(failures) < 5
+                                else "详情见 DEBUG",
+                            )
+                            status = f"{outcome}/{ref}"
                         trace_parts.append(
                             f"{sanitize_diagnostic(host)}[{sanitize_diagnostic(status)}]"
                             if separator
                             else sanitize_diagnostic(item)
                         )
                     trace_str = " ➔ ".join(trace_parts)
-                    failover_traces.append(f"{label}: {trace_str}")
+                    routes.setdefault(trace_str, []).append(label)
 
         if successful_instances:
             lines.append(
                 "  生效实例: "
-                + ", ".join(sanitize_diagnostic(x) for x in successful_instances)
+                + ", ".join(
+                    sanitize_diagnostic(x) for x in sorted(successful_instances)
+                )
             )
-        if failover_traces:
-            lines.append(f"  轮换轨迹: {'; '.join(failover_traces)}")
+        if routes:
+            route_lines = [
+                f"{_format_limited_values(labels, limit=3)}"
+                f"（共 {len(labels)} 个源）: {trace}"
+                for trace, labels in routes.items()
+            ]
+            lines.append(
+                "  轮换轨迹: "
+                + _format_limited_values(route_lines, limit=5, separator="; ")
+            )
+        if failures:
+            lines.append(
+                "  回退原因: "
+                + _format_limited_values(
+                    [f"{ref}: {error}" for error, ref in failures.items()],
+                    limit=5,
+                    separator="; ",
+                )
+            )
 
         if self.users:
-            lines.append(f"  抓取状态: {self._source_status_message()}")
             lines.append(f"  水位状态: {self._watermark_message()}")
 
         stats = [

@@ -23,7 +23,7 @@ def test_process_goes_to_debug_and_session_load_is_suppressed():
     assert debug == processes
 
 
-def test_important_failures_and_rotation_summaries_stay_visible():
+def test_attempt_failures_go_to_debug_and_rotation_summaries_stay_visible():
     main, debug = [], []
     log = QuietHtmlLog(main.append, debug_emit=debug.append)
     messages = [
@@ -35,8 +35,8 @@ def test_important_failures_and_rotation_summaries_stay_visible():
     ]
     for text in messages:
         log(text)
-    assert main == messages
-    assert debug == []
+    assert main == messages[1:4]
+    assert debug == [messages[0], messages[4]]
 
 
 def test_custom_single_callback_keeps_process_without_new_protocol():
@@ -94,6 +94,6 @@ def test_production_service_records_debug_even_with_default_config(monkeypatch):
     service = NitterService({})
     service.html.log("search try 1/1 query='q' kind=phrase")
     service.html.log("search fail, rotate next: timeout")
-    assert len(log_buffer.snapshot(ring="debug")) == 1
-    assert len(log_buffer.snapshot()) == 1
+    assert len(log_buffer.snapshot(ring="debug")) == 2
+    assert log_buffer.snapshot() == []
     log_buffer.clear()

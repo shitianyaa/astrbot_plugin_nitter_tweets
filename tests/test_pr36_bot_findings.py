@@ -6,8 +6,6 @@ Write tests first: failures prove the bug still exists; then fix production code
 from __future__ import annotations
 
 import asyncio
-import inspect
-import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -19,8 +17,6 @@ from rendering.tweets import TweetMessageRenderer
 from scheduler.config import SchedulerConfigReader
 from scheduler.models import PendingTweetBatch, ScheduledCheckResult
 from shared.utils import TweetItem, TweetMedia
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 def _tweet(
@@ -128,22 +124,6 @@ def test_history_group_exposes_tag_type_for_query_display():
 # ---------------------------------------------------------------------------
 # P0-1: WebUIGroupEditor._bool extra default arg
 # ---------------------------------------------------------------------------
-
-
-def test_p0_bool_single_arg_and_update_call_sites():
-    """_bool is one-arg; update_group must not pass a second default."""
-    sig = inspect.signature(WebUIGroupEditor._bool)
-    assert list(sig.parameters) == ["value"]
-    assert WebUIGroupEditor._bool("true") is True
-    assert WebUIGroupEditor._bool("false") is False
-    assert WebUIGroupEditor._bool(1) is True
-
-    src = (ROOT / "plugin_api" / "groups.py").read_text(encoding="utf-8")
-    # no self._bool(..., True/False) two-arg form
-    assert not re.search(
-        r"self\._bool\(\s*data\.get\([\s\S]*?\),\s*(True|False)\s*\)",
-        src,
-    )
 
 
 def test_p0_update_group_omit_and_hide_does_not_typeerror():

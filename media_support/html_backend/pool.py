@@ -357,12 +357,18 @@ class HtmlNitterPool:
                 # Alive empty timeline: soft success (aligned with RSS empty feed).
                 self.scores.record_success(host, soft=True)
                 errors.append(redact_instance_urls(f"#{index}: empty"))
-                self.log(f"user empty, rotate next ({index}/{total})")
+                self.log(
+                    f"user empty ({index}/{total}) user={user}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}"
+                )
             except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
                 safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
-                self.log(f"user fail, rotate next (#{index}/{total}): {safe_err}")
+                self.log(
+                    f"user fail (#{index}/{total}) user={user}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}: {safe_err}"
+                )
         if empty_success_base is not None:
             self.log(f"user empty after rotate hosts={total}")
             return empty_success_base, []
@@ -511,13 +517,19 @@ class HtmlNitterPool:
                 # Empty after RT filter: soft success, not an outage.
                 self.scores.record_success(host, soft=True)
                 errors.append(redact_instance_urls(f"#{index}: empty"))
-                self.log(f"search empty, rotate next ({index}/{total})")
+                self.log(
+                    f"search empty ({index}/{total}) query_chars={len(q)} kind={resolved}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}"
+                )
             except Exception as exc:
                 # Failures scored inside _get_html (including transport errors).
                 safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
                 attempts.append(f"#{index}={_format_host_failure(exc)}")
-                self.log(f"search fail, rotate next (#{index}/{total}): {safe_err}")
+                self.log(
+                    f"search fail (#{index}/{total}) query_chars={len(q)} kind={resolved}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}: {safe_err}"
+                )
         if empty_success_base is not None:
             empty_success_result.host_attempts = attempts
             self.log(
@@ -652,12 +664,18 @@ class HtmlNitterPool:
                 # Empty list: soft success (valid but no content)
                 self.scores.record_success(host, soft=True)
                 errors.append(redact_instance_urls(f"#{index}: empty"))
-                self.log(f"list empty, rotate next ({index}/{total})")
+                self.log(
+                    f"list empty ({index}/{total}) list_id={list_id_str}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}"
+                )
             except Exception as exc:
                 safe_err = redact_instance_urls(sanitize_sensitive_text(str(exc)))
                 errors.append(redact_instance_urls(f"#{index}: {exc}"))
                 attempts.append(f"#{index}={_format_host_failure(exc)}")
-                self.log(f"list fail, rotate next (#{index}/{total}): {safe_err}")
+                self.log(
+                    f"list fail (#{index}/{total}) list_id={list_id_str}, "
+                    f"action={'rotate next' if index < total else 'exhausted'}: {safe_err}"
+                )
 
         if empty_success_base is not None:
             empty_success_result.host_attempts = attempts

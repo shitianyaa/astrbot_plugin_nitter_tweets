@@ -21,7 +21,7 @@ try:
         resolve_status_tweet_async,
     )
     from ..shared.arbiter import ArbiterContext, EmojiLikeArbiter
-    from ..shared.observability import safe_task_log
+    from ..shared.observability import safe_block_log, safe_task_log
 except ImportError:
     from config import (
         config_get,
@@ -35,7 +35,7 @@ except ImportError:
         resolve_status_tweet_async,
     )
     from shared.arbiter import ArbiterContext, EmojiLikeArbiter
-    from shared.observability import safe_task_log
+    from shared.observability import safe_block_log, safe_task_log
 
 LINK_PREVIEW_MAX_LINKS = 3
 LINK_PREVIEW_DEBOUNCE_SECONDS = 60.0
@@ -182,11 +182,10 @@ class LinkPreviewMixin:
                         ),
                     )
                 except StatusResolveError as exc:
-                    logger.warning(
+                    safe_block_log(
+                        "debug",
                         "[NitterTweets] link preview resolve failed: "
-                        "status_id=%s error=%s",
-                        link.status_id,
-                        exc,
+                        f"status_id={link.status_id} error={exc}",
                     )
                     safe_task_log(
                         "warning",
@@ -213,11 +212,10 @@ class LinkPreviewMixin:
                         )
                     continue
                 except Exception as exc:
-                    logger.warning(
+                    safe_block_log(
+                        "debug",
                         "[NitterTweets] link preview resolve error: "
-                        "status_id=%s error=%s",
-                        link.status_id,
-                        exc,
+                        f"status_id={link.status_id} error={exc}",
                         exc_info=True,
                     )
                     safe_task_log(

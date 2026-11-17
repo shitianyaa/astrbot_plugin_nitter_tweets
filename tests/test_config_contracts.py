@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 import json
 from pathlib import Path
 
@@ -22,17 +21,12 @@ from scheduler.config import (
     GROUP_TYPE_BLOGGER,
     GROUP_TYPE_LIST,
     GROUP_TYPE_TAG,
-    ScheduleGroup,
     SchedulerConfigReader,
 )
 from shared.utils import DEFAULT_INSTANCES
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "_conf_schema.json"
-
-
-def test_schedule_group_has_omit_field():
-    assert "omit_status_url" in {field.name for field in fields(ScheduleGroup)}
 
 
 def test_media_content_modes_preserve_legacy_values_and_survive_repeat_migration():

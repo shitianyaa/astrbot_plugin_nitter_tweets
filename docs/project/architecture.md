@@ -78,7 +78,7 @@ HTML 只分类真实时间线、空页、登录/维护/错误页和异常页面�
 
 - Event 路径：手动命令当前会话。
 - UMO 路径：后台推送目标。
-- 私人号 OneBot：按阈值使用合并转发；QQ Official 走 `QQOfficialDeliveryAdapter`，正文 Event/UMO 使用官方 Markdown，媒体独立发送并在 Markdown 被拒时降级为纯文本，不使用 OneBot 合并转发。
+- 私人号 OneBot：普通直发将同条推文的正文与图片放在同一条消息中，视频独立发送；按阈值使用合并转发。QQ Official 走 `QQOfficialDeliveryAdapter`，正文 Event/UMO 使用官方 Markdown，媒体独立发送并在 Markdown 被拒时降级为纯文本，不使用 OneBot 合并转发。
 - Lark/Feishu：优先 native post。
 - Telegram：处理 flood control。
 - 其他平台：默认 MessageChain。

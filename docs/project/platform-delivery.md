@@ -42,7 +42,7 @@ weixin_oc:FriendMessage:wxid_xxx
 
 | 平台 | 适配器 | 文件 | 行为 |
 | --- | --- | --- | --- |
-| 私人号 OneBot | `OneBotDeliveryAdapter` | `delivery/onebot.py` | `aiocqhttp`、`onebot`、`onebot_v11`、`napcat` 支持 Node/Nodes 合并转发、raw forward、图片拆分、视频降级 |
+| 私人号 OneBot | `OneBotDeliveryAdapter` | `delivery/onebot.py` | `aiocqhttp`、`onebot`、`onebot_v11`、`napcat` 支持直发图文同消息、Node/Nodes 合并转发、raw forward、视频独立发送与降级 |
 | QQ Official | `QQOfficialDeliveryAdapter` | `delivery/qq_official.py` | 正文 Event/UMO 使用安全转义的官方 Markdown；媒体独立发送，Markdown 被拒时 UMO 降级为纯文本，不使用 OneBot 合并转发 |
 | Lark/Feishu | `LarkDeliveryAdapter` | `delivery/lark.py` | 优先 native post，同框发送正文和图片，失败降级 |
 | Telegram | `TelegramDeliveryAdapter` | `delivery/telegram.py` | 使用专用发送链路关闭文本中的网页预览，保留可点击链接；额外处理 flood control retry |
@@ -52,7 +52,7 @@ weixin_oc:FriendMessage:wxid_xxx
 - `PRIVATE_QQ_PLATFORM_TYPES`: 私人号 OneBot 类型（`aiocqhttp`、`onebot`、`onebot_v11`、`napcat`）。
 - `QQ_OFFICIAL_PLATFORM_TYPES`: 官方 Bot 类型及窄义兼容别名（`qq_official`、`qq_official_webhook`、`qqofficial`、`qqofficial_webhook`）。
 - `LEGACY_QQ_MEDIA_PLATFORM_TYPES`: 历史通用 `qq` 实例 ID，只保留直发媒体拆分，不作为 QQ Official 判定依据。
-- `QQ_DIRECT_MEDIA_SPLIT_TYPES`: 私人号 OneBot、QQ Official 和历史 `qq` 实例都需要直发媒体拆分。
+- `QQ_DIRECT_MEDIA_SPLIT_TYPES`: 私人号 OneBot、QQ Official 和历史 `qq` 实例走直发媒体专用路径；OneBot 在此路径内将正文与图片组合发送、视频独立发送，QQ Official 仍拆分正文与媒体。
 - `NON_ONEBOT_PLATFORM_TYPES`: 明确不是 OneBot 的平台。
 - `LARK_PLATFORM_TYPES`: Lark/Feishu。
 - `TELEGRAM_PLATFORM_TYPES`: Telegram。
@@ -72,7 +72,8 @@ sender._should_use_merge_for_count(tweet_count)
 - `merge_tweet_threshold=0` 关闭合并。
 - 达到阈值且目标支持 merged forward 时使用合并。
 - 单次合并过大时按 chunk 分批。
-- 图片附件从正文中拆出；普通直发先发正文再逐张发图，合并转发中图片并入推文正文节点、视频/GIF 保持独立节点，节点昵称与 uin 显示该条推文的实际作者（取不到时回退分组标识）。
+- 普通直发将同条推文的正文与全部图片放在同一条消息中，视频/GIF 独立发送。图文传输失败先更换编码重建整条消息，仍失败再按规则拆分降级；可能已送达时不重发，图片被明确拒收时不重发相同图片，非仅媒体模式保留文字兜底与提示。
+- 合并转发中图片并入推文正文节点、视频/GIF 保持独立节点，节点昵称与 uin 显示该条推文的实际作者（取不到时回退分组标识）。
 - 合并中有视频时优先 raw OneBot 节点。
 - raw 合并转发因非 payload 拒绝的原因失败时，先换传输编码重建整份节点数组重试，再考虑拆分或去视频。
 - NapCat 因读不到本地媒体文件而回的 1200（ENOENT copyfile）属于传输问题而非 payload 体积拒绝，会先走无损编码重试；只有纯体积/`res_id` 拒绝才直接拆分。
@@ -80,12 +81,13 @@ sender._should_use_merge_for_count(tweet_count)
 - 不确定送达错误按可能已送达处理，避免重复推送。
 - 内容被目标平台拒收（`Timeout: NTEvent ... sendMsg` 无回执、`res_id` 拒绝）标记 `SendAttempt.rejected`：传输梯度和组件级重试据此停手，因为重发同样的字节结果不变。**`retryable` 必须保持 `True`**——`sender_forward` / `sender_merged` 里的 `if not attempt.retryable: return` 同时把守着有损降级链，压低它会让去视频、拆分、降级直发和纯文本兜底一起被跳过，而那些换的是内容不是字节。该判定排在「不确定送达」之前——拒收错误文本含 `timeout` 字样，顺序反了会被误判成可能已送达而跳过降级。
 - 图片全部发送失败且非「仅媒体」时补发一条提示，链接是否附带遵循 `omit_status_url`；下载失败则写进正文，两侧措辞不同以便区分。
-- 直发媒体在梯度不止一档时改走 `call_action` 原始消息段，以取得 `file` 字段的控制权；取不到 `call_action` 时回落到原有组件链。
+- 直发图文优先使用 `call_action` 原始消息段，以控制整条消息中的图片编码；取不到 `call_action` 时回落到混合 Plain/Image 组件链。独立视频在梯度不止一档时也使用原始消息段。
 - `media_only_enabled` 有效时，保留作者模式的推文节点包含作者和图片，不含文字模式只包含媒体。视频仍使用独立节点，失败降级不能带回正文、译文或链接；QQ 客户端仍可能显示节点昵称和时间。
 
 测试入口：
 - `tests/test_scheduler_delivery.py::test_ordinary_targets_send_per_account_but_qq_merges_at_end`
 - `tests/test_media_transport.py`
+- `tests/test_onebot_direct_images.py`
 - `tests/test_image_send_rejected_notice.py`
 
 ## 媒体传输编码
@@ -140,7 +142,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 客户端解析在 `delivery/lark_support.py`，不要在业务层直接猜 client 字段。
 
 测试入口：
-- `tests/test_subscription_import.py::test_lark_title_uses_manual_header_override`
+- `tests/test_delivery_kwargs_wiring.py`（Lark post 与媒体发送参数、部分失败和仅媒体路径）
 
 ## Telegram
 
@@ -180,7 +182,7 @@ sender._should_use_merge_for_count(tweet_count)
 - 是否通过 `PlatformResolver` 获取平台能力。
 - 是否保留 Event 和 UMO 两条发送路径。
 - 是否保留不确定送达保护。
-- 是否保留私人号 OneBot 直发图片独立消息行为、合并转发图片并入正文节点与视频独立节点、节点身份为推文实际作者。
+- 是否保留私人号 OneBot 直发图文同消息、传输失败后的整条编码重试与拆分降级、视频独立发送，以及合并转发的图文节点与实际作者身份。
 - 是否保留视频失败后的去视频重试或文本 fallback。
 - **是否保留传输降级排在内容降级之前的顺序**，以及 `uncertain` 不推进梯度。
 - 是否保留 Lark post 降级，且 Lark 仍拿到文件系统路径而不是 base64。
