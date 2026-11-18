@@ -61,7 +61,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch public tweets via FxTwitter or trusted self-hosted Nitter and send them to chats.",
-    "2.0.0",
+    "2.0.1",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(

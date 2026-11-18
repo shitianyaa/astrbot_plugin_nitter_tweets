@@ -51,7 +51,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | Twitter List RSS 优先与增量游标 | `python -m pytest -q tests/test_list_rss.py tests/test_list_support.py` | List RSS 优先拉取、Min-Id 增量游标、Redis 缓存、失败自动回退 HTML 翻页 |
 | 搜索排序与热门流 | `python -m pytest -q tests/test_html_search_rotate.py tests/test_html_backend_query.py tests/test_backend_mode_switch.py tests/test_search_session_buffer.py` | latest 时间序、top 热门度排序、Tag 后台强制时间序、手动 session 缓存隔离 |
 | 配置契约、类型解析与订阅导入 | `python -m pytest -q tests/test_config_contracts.py` | schema、迁移、空分组与旧混合订阅保留、标签查询可逆存储 |
-| WebUI 分组回写契约 | `python -m pytest -q tests/test_webui_group_push_targets.py` | `update_group` 对 `push_targets` / `watch_users` 原样落盘：含无效条目 = 显式保留，缺失 = 显式删除；批量导入/移除保留隔离条目 |
+| WebUI 分组回写契约 | `python -m pytest -q tests/test_webui_group_push_targets.py` | 提交的 `push_targets` / `watch_users` 列表保留无效条目，列表内移除的条目删除；部分更新缺省字段保留原值，批量导入/移除保留隔离条目。真实 `NitterWebAPI` 保存三类分组后返回与查询接口一致的完整对象且不误报序列化警告；配置保存失败恢复原配置并跳过同步，数据库同步失败保留已保存配置并返回单独提示 |
 
 ## 高风险改动
 

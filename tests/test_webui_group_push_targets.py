@@ -12,10 +12,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from config.compat import config_get
 from config.subscriptions import set_import_group_users
+from plugin_api.api import NitterWebAPI
 from plugin_api.groups import WebUIGroupEditor
 from scheduler.config import SchedulerConfigReader
 
@@ -347,47 +351,83 @@ def test_update_group_partial_enabled_survives_dirty_stored_name():
     assert [g["enabled"] for g in groups] == [False, False]
 
 
-def test_update_group_response_carries_serialized_group():
-    """update 响应带回与 web/groups 同一序列化的分组，供前端原位替换。
-
-    契约背景：卡片启停走部分更新，前端用响应里的 group 原位替换状态并保留
-    attention_items；响应缺对象时前端虽有整组重拉兜底，但快路径省请求。
-    序列化桩与 NitterWebAPI._schedule_groups / _serialize_group 同构。
-    """
-
-    class _SerializingEditor(WebUIGroupEditor):
-        def _schedule_groups(self):
-            return self.scheduler.config_reader.schedule_groups(
-                log_invalid_targets=False
-            )
-
-        def _serialize_group(self, group):
-            return {
-                "group_id": group.group_id,
-                "name": group.name,
-                "enabled": group.enabled,
-                "attention_items": [],
-            }
-
+def _make_group_api(group_type: str = "blogger"):
     config = _FakeConfig(
-        {
-            "tweet_groups": [
-                {
-                    "name": "G",
-                    "group_id": "g",
-                    "group_type": "blogger",
-                    "watch_users": ["nasa"],
-                }
-            ]
-        }
+        tweet_groups=[
+            {
+                "name": "G",
+                "group_id": "g",
+                "enabled": True,
+                "group_type": group_type,
+                "watch_users": ["nasa"] if group_type == "blogger" else [],
+                "watch_queries": ["#space"] if group_type == "tag" else [],
+                "watch_lists": ["12345"] if group_type == "list" else [],
+            }
+        ]
     )
-    plugin = MagicMock()
-    plugin.config = config
-    plugin.scheduler.config_reader = SchedulerConfigReader(config, context=None)
-    editor = _SerializingEditor(plugin)
+    storage = SimpleNamespace(migrate_and_sync=AsyncMock())
+    plugin = SimpleNamespace(
+        config=config,
+        scheduler=SimpleNamespace(
+            config_reader=SchedulerConfigReader(config, context=None), storage=storage
+        ),
+    )
+    return NitterWebAPI(plugin), config, storage
 
-    result = editor.update_group({"group_id": "g", "enabled": False})
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_type", ["blogger", "tag", "list"])
+async def test_update_group_response_carries_serialized_group_without_warning(
+    group_type,
+):
+    """真实 API 保存后返回查询接口的完整分组，不给编辑器补序列化桩。"""
+    api, config, storage = _make_group_api(group_type)
+    with (
+        patch.object(config, "save_config", wraps=config.save_config) as save,
+        patch("plugin_api.groups.logger.warning") as warning,
+    ):
+        result = await api.update_group({"group_id": "g", "enabled": False})
 
     assert result["success"] is True
+    assert result["group"] == (await api.build_groups())["groups"][0]
     assert result["group"]["group_id"] == "g"
     assert result["group"]["enabled"] is False
+    assert "attention_items" in result["group"]
+    assert _group_raw(config)["enabled"] is False
+    save.assert_called_once_with()
+    storage.migrate_and_sync.assert_awaited_once()
+    assert storage.migrate_and_sync.await_args.args[0][0].enabled is False
+    warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_update_group_save_failure_preserves_config_and_skips_sync():
+    api, config, storage = _make_group_api()
+    previous = config_get(config, "tweet_groups")
+    with (
+        patch.object(config, "save_config", side_effect=OSError("write failed")),
+        patch("plugin_api.groups.logger.warning"),
+    ):
+        result = await api.update_group({"group_id": "g", "enabled": False})
+
+    assert result["success"] is False
+    assert "write failed" in result["error"]
+    assert config_get(config, "tweet_groups") == previous
+    storage.migrate_and_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_group_sync_failure_keeps_saved_group_and_reports_error():
+    api, config, storage = _make_group_api()
+    storage.migrate_and_sync.side_effect = RuntimeError("database unavailable")
+    with patch("plugin_api.api.logger.warning") as warning:
+        result = await api.update_group({"group_id": "g", "enabled": False})
+
+    assert result["success"] is True
+    assert result["sync_error"] == "database unavailable"
+    assert "数据库同步失败" in result["message"]
+    assert result["group"] == (await api.build_groups())["groups"][0]
+    assert _group_raw(config)["enabled"] is False
+    storage.migrate_and_sync.assert_awaited_once()
+    warning.assert_called_once()
+    assert "WebUI 分组同步失败" in warning.call_args.args[0]
