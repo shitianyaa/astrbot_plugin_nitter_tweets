@@ -103,7 +103,7 @@ def test_fetch_merged_splits_by_author(monkeypatch):
 
     captured_urls: list[str] = []
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         captured_urls.append(request.full_url)
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}
@@ -149,7 +149,7 @@ def test_fetch_merged_with_watermark(monkeypatch):
     ]
     xml = _rss_xml(tweets_data)
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}
         resp.read = MagicMock(return_value=xml)
@@ -181,7 +181,7 @@ def test_fetch_merged_empty_feed(monkeypatch):
     client = _client()
     xml = _rss_xml([])
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}
         resp.read = MagicMock(return_value=xml)
@@ -222,7 +222,7 @@ def test_fetch_merged_boundary_collision(monkeypatch):
     ]
     xml = _rss_xml(tweets_data)
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}
         resp.read = MagicMock(return_value=xml)
@@ -257,7 +257,7 @@ def test_fetch_merged_media_flag_appends_media_path(monkeypatch):
 
     captured_urls: list[str] = []
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         captured_urls.append(request.full_url)
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}

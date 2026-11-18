@@ -58,7 +58,7 @@ def test_safe_urlopen_enforces_builtin_headers(monkeypatch):
             captured.append(outgoing)
             return _Response(url=outgoing.full_url)
 
-    monkeypatch.setattr(network, "_safe_opener", lambda: _Opener())
+    monkeypatch.setattr(network, "build_http_opener", lambda **_: _Opener())
 
     network.safe_urlopen(
         Request("https://example.com/path", headers={"User-Agent": "custom"}),
@@ -80,7 +80,7 @@ def test_safe_urlopen_allows_private_self_hosted_url(monkeypatch):
             captured.append(outgoing)
             return _Response(url=outgoing.full_url)
 
-    monkeypatch.setattr(network, "_safe_opener", lambda: _Opener())
+    monkeypatch.setattr(network, "build_http_opener", lambda **_: _Opener())
     request = Request("http://127.0.0.1:8080/NASA/rss")
 
     response = network.safe_urlopen(request, 1.0)
@@ -92,7 +92,7 @@ def test_safe_urlopen_allows_private_self_hosted_url(monkeypatch):
 def test_rss_request_uses_builtin_headers(monkeypatch):
     captured: list[Request] = []
 
-    def fake_open(request: Request, _timeout: float):
+    def fake_open(request: Request, _timeout: float, *, proxy_url=None):
         captured.append(request)
         raise AssertionError("request captured")
 
@@ -142,7 +142,7 @@ def test_html_request_uses_builtin_headers():
 def test_status_json_request_uses_builtin_headers(monkeypatch):
     captured: list[Request] = []
 
-    def fake_open(request: Request, *, timeout: float):
+    def fake_open(request: Request, *, timeout: float, proxy_url=None):
         captured.append(request)
         return _Response(json.dumps({"ok": True}).encode())
 
@@ -157,12 +157,13 @@ def test_status_json_request_uses_builtin_headers(monkeypatch):
 def test_xdown_and_media_requests_use_builtin_headers(monkeypatch):
     captured: list[Request] = []
 
-    def fake_open(request: Request, _timeout: float):
+    def fake_open(request: Request, _timeout: float, *, proxy_url=None):
         captured.append(request)
         return _Response(json.dumps({"status": "empty"}).encode())
 
     monkeypatch.setattr(service_module, "compat_urlopen", fake_open)
     service = object.__new__(MediaService)
+    service.media_proxy_url = None
     service.xdown_url = "https://xdown.app/api/ajaxSearch"
     service.timeout = 1.0
 

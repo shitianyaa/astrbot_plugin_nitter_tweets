@@ -29,7 +29,7 @@ class NitterService(NitterClient):
         self.html = HtmlNitterService(
             HtmlBackendConfig(
                 instances=list(self.instances),
-                proxy=None,
+                proxy=self.proxy_url,
                 session_dir=session_dir,
                 timeout=self.timeout,
                 min_interval=clamp_float(

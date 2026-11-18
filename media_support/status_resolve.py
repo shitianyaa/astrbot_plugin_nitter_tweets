@@ -10,7 +10,7 @@ from urllib.request import Request
 try:
     from ..shared.utils import TweetItem, TweetMedia, format_tweet_published
     from .html_backend.parser import prefer_pbs_quality
-    from .network import build_request_headers, safe_urlopen
+    from .network import HttpProxyConfigError, build_request_headers, safe_urlopen
     from .status_link import StatusLink
     from .video_probe import (
         coerce_duration_seconds,
@@ -20,7 +20,11 @@ try:
     from .xdown import XdownMediaCandidate
 except ImportError:
     from media_support.html_backend.parser import prefer_pbs_quality
-    from media_support.network import build_request_headers, safe_urlopen
+    from media_support.network import (
+        HttpProxyConfigError,
+        build_request_headers,
+        safe_urlopen,
+    )
     from media_support.status_link import StatusLink
     from media_support.video_probe import (
         coerce_duration_seconds,
@@ -465,13 +469,15 @@ def _candidates_from_syndication(
     return result
 
 
-def _fetch_json(url: str, *, timeout: float) -> dict[str, Any]:
+def _fetch_json(
+    url: str, *, timeout: float, proxy_url: str | None = None
+) -> dict[str, Any]:
     request = Request(
         url,
         headers=build_request_headers(accept="application/json,text/plain,*/*"),
         method="GET",
     )
-    with safe_urlopen(request, timeout=timeout) as response:
+    with safe_urlopen(request, timeout=timeout, proxy_url=proxy_url) as response:
         status = int(getattr(response, "status", 0) or 0)
         if status and status >= 400:
             raise StatusResolveError(f"http {status}")
@@ -598,6 +604,7 @@ def resolve_status_tweet(
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     media_quality: str = "high",
+    proxy_url: str | None = None,
 ) -> TweetItem:
     """Resolve one status link; raise StatusResolveError on total failure."""
     user = link.username or "i"
@@ -623,7 +630,7 @@ def resolve_status_tweet(
     for name, url, builder in sources:
         started = time.perf_counter()
         try:
-            payload = _fetch_json(url, timeout=timeout)
+            payload = _fetch_json(url, timeout=timeout, proxy_url=proxy_url)
             tweet = builder(link, payload)
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             if tweet is None:
@@ -640,6 +647,8 @@ def resolve_status_tweet(
                 f"media={len(tweet.media)}, quality={media_quality}"
             )
             return tweet
+        except HttpProxyConfigError as exc:
+            raise StatusResolveError(str(exc.reason)) from exc
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             errors.append(f"{name}: {type(exc).__name__}")
@@ -656,9 +665,14 @@ async def resolve_status_tweet_async(
     *,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     media_quality: str = "high",
+    proxy_url: str | None = None,
 ) -> TweetItem:
     import asyncio
 
     return await asyncio.to_thread(
-        resolve_status_tweet, link, timeout=timeout, media_quality=media_quality
+        resolve_status_tweet,
+        link,
+        timeout=timeout,
+        media_quality=media_quality,
+        proxy_url=proxy_url,
     )

@@ -71,7 +71,7 @@ def test_fetch_list_for_scheduler_initial_scan(monkeypatch):
     ]
     xml = _rss_xml(tweets_data)
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}
         resp.read = MagicMock(return_value=xml)
@@ -96,7 +96,7 @@ def test_fetch_list_for_scheduler_disables_repost_filter(monkeypatch):
 
     captured: dict = {}
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, *, proxy_url=None):
         captured["url"] = request.full_url
         resp = MagicMock()
         resp.headers = {"Min-Id": ""}

@@ -110,6 +110,7 @@ def test_download_registers_lease_before_return_and_cleanup_releases_it(
     tmp_path, monkeypatch
 ):
     service = object.__new__(MediaService)
+    service.media_proxy_url = None
     service.cache_dir = tmp_path / "cache"
     service.cache_dir.mkdir()
     service.max_bytes = 1024
@@ -130,7 +131,9 @@ def test_download_registers_lease_before_return_and_cleanup_releases_it(
             self.done = True
             return b"payload"
 
-    monkeypatch.setattr(service_module, "compat_urlopen", lambda *_args: _Response())
+    monkeypatch.setattr(
+        service_module, "compat_urlopen", lambda *_args, **_kwargs: _Response()
+    )
     media = TweetMedia("image", "https://example.test/a.jpg")
     path = service._download(media)
 
@@ -148,6 +151,7 @@ def test_download_registers_lease_before_return_and_cleanup_releases_it(
 
 def test_concurrent_same_url_downloads_share_one_final_file(tmp_path, monkeypatch):
     service = object.__new__(MediaService)
+    service.media_proxy_url = None
     service.cache_dir = tmp_path / "cache"
     service.cache_dir.mkdir()
     service.max_bytes = 1024
@@ -170,7 +174,9 @@ def test_concurrent_same_url_downloads_share_one_final_file(tmp_path, monkeypatc
             barrier.wait(timeout=10)
             return b"payload"
 
-    monkeypatch.setattr(service_module, "compat_urlopen", lambda *_args: _Response())
+    monkeypatch.setattr(
+        service_module, "compat_urlopen", lambda *_args, **_kwargs: _Response()
+    )
 
     def download():
         return service._download(TweetMedia("image", "https://example.test/same.jpg"))

@@ -17,6 +17,7 @@ try:
     from ..config import (
         DEFAULT_MAX_VIDEO_DURATION_MINUTES,
         config_get,
+        fetch_proxy_url,
         resolve_send_image_attachments,
         resolve_send_video_attachments,
     )
@@ -39,6 +40,7 @@ except ImportError:
     from config import (
         DEFAULT_MAX_VIDEO_DURATION_MINUTES,
         config_get,
+        fetch_proxy_url,
         resolve_send_image_attachments,
         resolve_send_video_attachments,
     )
@@ -140,6 +142,8 @@ def _plugin_data_dir() -> Path:
 
 class MediaService(MediaCacheMixin):
     def __init__(self, config):
+        self.api_proxy_url = fetch_proxy_url(config, "api")
+        self.media_proxy_url = fetch_proxy_url(config, "media")
         self.send_image_attachments = resolve_send_image_attachments(config)
         self.send_video_attachments = resolve_send_video_attachments(config)
         self.max_per_tweet = clamp_int(
@@ -467,7 +471,10 @@ class MediaService(MediaCacheMixin):
                 canonical_url=getattr(tweet, "x_url", ""),
             )
             status_item = resolve_status_tweet(
-                link, timeout=min(self.timeout, 8.0), media_quality=self.media_quality
+                link,
+                timeout=min(self.timeout, 8.0),
+                media_quality=self.media_quality,
+                proxy_url=self.api_proxy_url,
             )
             if getattr(status_item, "media_candidates", None):
                 return list(status_item.media_candidates)
@@ -510,7 +517,9 @@ class MediaService(MediaCacheMixin):
             ),
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
+            with compat_urlopen(
+                request, self.timeout, proxy_url=self.media_proxy_url
+            ) as response:
                 raw = response.read(2_000_000)
         except HTTPError as exc:
             raise RuntimeError(f"xdown HTTP {exc.code}") from exc
@@ -794,7 +803,9 @@ class MediaService(MediaCacheMixin):
             read_bytes = 1
         request = Request(url, headers=headers)
         try:
-            with compat_urlopen(request, min(self.timeout, 10.0)) as response:
+            with compat_urlopen(
+                request, min(self.timeout, 10.0), proxy_url=self.media_proxy_url
+            ) as response:
                 data = response.read(read_bytes)
                 size_bytes = video_probe.content_range_total(
                     response.headers.get("Content-Range")
@@ -864,7 +875,9 @@ class MediaService(MediaCacheMixin):
             headers=self._media_request_headers(media.url),
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
+            with compat_urlopen(
+                request, self.timeout, proxy_url=self.media_proxy_url
+            ) as response:
                 content_length = response.headers.get("Content-Length")
                 if content_length and int(content_length) > self.max_bytes:
                     raise RuntimeError(MEDIA_SIZE_LIMIT_ERROR)

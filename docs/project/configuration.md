@@ -107,21 +107,9 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 
 ## 新增配置项清单
 
-新增字段必须同步：
+新增字段时同步 `_conf_schema.json`、实际读取方、使用说明与测试。全局分组字段在 `CONFIG_GROUP_BY_KEY` 登记，例如 `basic` 的 `http_proxy_scope` 和 `http_proxy_url`。这两项只由抓取客户端读取，默认保留原有网络行为。
 
-- `_conf_schema.json`
-- `config.compat.CONFIG_GROUP_BY_KEY`
-- `config.compat.MIGRATABLE_CONFIG_KEYS`
-- `config.compat.DEFAULT_GROUP_MIGRATION_KEYS`
-- `scheduler.config.ScheduleGroup`
-- `SchedulerConfigReader.parse_schedule_group()`
-- README 或 `docs/advanced.md`
-- `tests/test_config_contracts.py`
-
-如果字段只属于某个 `tweet_groups` 项，不要加入全局 `CONFIG_GROUP_BY_KEY`，除非还需要旧顶层字段迁移。
-
-全新的字段没有旧扁平形态可迁移，只需进 `CONFIG_GROUP_BY_KEY`，**不要**加入 `MIGRATABLE_CONFIG_KEYS`，
-也不必在 schema 里补 `invisible` 扁平镜像。`media_transport_*` 三项即按此处理。
+只有曾经发布的扁平字段需要加入 `MIGRATABLE_CONFIG_KEYS` 或 `DEFAULT_GROUP_MIGRATION_KEYS` 并保留对应的兼容 schema。仅属于 `tweet_groups` 的字段由 `ScheduleGroup` 和 `SchedulerConfigReader` 解析，是否加入全局映射取决于是否需要兼容旧顶层配置。
 
 ## 媒体传输编码
 

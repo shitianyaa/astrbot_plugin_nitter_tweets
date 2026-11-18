@@ -22,6 +22,7 @@ try:
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
+        fetch_proxy_url,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
         parse_config_bool,
@@ -45,6 +46,7 @@ except ImportError:
         MEDIA_CACHE_CLEANUP_MIGRATION_KEY,
         MEDIA_CACHE_SEND_DELETE_MIGRATION_KEY,
         config_get,
+        fetch_proxy_url,
         migrate_default_group_config,
         migrate_legacy_grouped_config,
         parse_config_bool,
@@ -61,7 +63,7 @@ except ImportError:
     "astrbot_plugin_nitter_tweets",
     "shitianyaa",
     "Fetch public tweets via FxTwitter or trusted self-hosted Nitter and send them to chats.",
-    "2.0.1",
+    "2.1.0",
     "https://github.com/shitianyaa/astrbot_plugin_nitter_tweets",
 )
 class NitterTweetsPlugin(
@@ -78,7 +80,7 @@ class NitterTweetsPlugin(
         migrate_legacy_grouped_config(self.config)
         migrate_default_group_config(self.config)
         self.nitter = NitterService(config, session_dir=self._html_session_dir())
-        self.fxtwitter = FxTwitterClient()
+        self.fxtwitter = FxTwitterClient(proxy_url=fetch_proxy_url(config, "api"))
         for key, values in self.nitter.ignored_legacy_instances.items():
             labels = ", ".join(self._instance_log_label(value) for value in values)
             logger.warning(

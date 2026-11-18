@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 
 try:
-    from ..config import config_get, parse_config_bool
+    from ..config import config_get, fetch_proxy_url, parse_config_bool
     from ..media_support.client import NitterClient
     from ..media_support.fxtwitter_client import FxTwitterClient
     from ..shared import (
@@ -22,7 +22,7 @@ try:
     from .config import ScheduleGroup
     from .models import SchedulerTaskError, SourceStatus, UserFetchResult
 except ImportError:
-    from config import config_get, parse_config_bool
+    from config import config_get, fetch_proxy_url, parse_config_bool
     from media_support.client import NitterClient
     from media_support.fxtwitter_client import FxTwitterClient
     from scheduler.config import ScheduleGroup
@@ -111,13 +111,17 @@ class SchedulerFetchMixin:
         client = getattr(getattr(self, "nitter", None), "fxtwitter", None)
         if client is not None:
             return client
+        config = getattr(self, "config", None)
+        proxy_url = fetch_proxy_url(config, "api")
         if self.fetch_backend == "fx":
-            return FxTwitterClient()
+            return FxTwitterClient(proxy_url=proxy_url)
         if isinstance(getattr(self, "nitter", None), NitterClient):
-            return FxTwitterClient(timeout=getattr(self.nitter, "timeout", 15.0))
-        raw_backend = config_get(getattr(self, "config", {}), "fetch_backend", None)
+            return FxTwitterClient(
+                timeout=getattr(self.nitter, "timeout", 15.0), proxy_url=proxy_url
+            )
+        raw_backend = config_get(config, "fetch_backend", None)
         if raw_backend and str(raw_backend).strip().lower() in ("mix", "fx"):
-            return FxTwitterClient()
+            return FxTwitterClient(proxy_url=proxy_url)
         return None
 
     async def _fetch_group_users(

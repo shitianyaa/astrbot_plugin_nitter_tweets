@@ -1,7 +1,7 @@
 name: astrbot_plugin_nitter_tweets
 display_name: 推文订阅
 desc: "通过 FxTwitter 或自建 Nitter 获取公开 X/Twitter 推文，支持博主、关键词和公开列表订阅，提供手动查询、搜索、分组定时推送及聊天链接解析；支持 QQ、Telegram、飞书、微信 OC 等多个平台，并提供 WebUI 管理。"
-version: 2.0.1
+version: 2.1.0
 description: "通过 FxTwitter 或自建 Nitter 获取公开 X/Twitter 推文，支持博主、关键词和公开列表订阅，提供手动查询、搜索、分组定时推送及聊天链接解析；支持 QQ、Telegram、飞书、微信 OC 等多个平台，并提供 WebUI 管理。"
 author: shitianyaa
 astrbot_version: ">=4.26.0"

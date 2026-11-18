@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from ..config import config_get, parse_config_bool
+    from ..config import config_get, fetch_proxy_url, parse_config_bool
     from ..shared import (
         TweetItem,
         clamp_float,
@@ -27,7 +27,7 @@ try:
         safe_block_log,
     )
 except ImportError:
-    from config import config_get, parse_config_bool
+    from config import config_get, fetch_proxy_url, parse_config_bool
     from shared import (
         TweetItem,
         clamp_float,
@@ -267,7 +267,10 @@ class NitterClient:
         )
         # In-memory instance scores; NitterService shares this book with HTML.
         self.host_scores = HostScoreBook()
-        self.fxtwitter = FxTwitterClient(timeout=self.timeout)
+        self.proxy_url = fetch_proxy_url(config, "nitter")
+        self.fxtwitter = FxTwitterClient(
+            timeout=self.timeout, proxy_url=fetch_proxy_url(config, "api")
+        )
         # S2=A: set only for one check/command via begin_run_host_skip().
         # Context-local state prevents overlapping manual and scheduled tasks
         # from marking one another's mirror set.  A property below preserves
@@ -1184,7 +1187,9 @@ class NitterClient:
             ),
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
+            with compat_urlopen(
+                request, self.timeout, proxy_url=self.proxy_url
+            ) as response:
                 data = response.read(self.RSS_RESPONSE_LIMIT + 1)
                 next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:

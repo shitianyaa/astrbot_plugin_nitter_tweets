@@ -13,6 +13,7 @@ try:
     from ..ai import format_ai_tweet_summary
     from ..config import (
         config_get,
+        fetch_proxy_url,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -32,6 +33,7 @@ except ImportError:
     from ai import format_ai_tweet_summary
     from config import (
         config_get,
+        fetch_proxy_url,
         resolve_hide_original_when_translated,
         resolve_manual_send_interval,
     )
@@ -79,7 +81,9 @@ class ManualCommandMixin:
             nitter = getattr(self, "nitter", None)
             client = getattr(nitter, "fxtwitter", None)
         if client is None:
-            client = FxTwitterClient()
+            client = FxTwitterClient(
+                proxy_url=fetch_proxy_url(getattr(self, "config", None), "api")
+            )
             self.fxtwitter = client
         return client
 

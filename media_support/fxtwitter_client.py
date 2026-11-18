@@ -61,9 +61,12 @@ class FxTwitterClient:
         self,
         base_url: str = DEFAULT_FXTWITTER_BASE_URL,
         timeout: float = 15.0,
+        *,
+        proxy_url: str | None = None,
     ):
         self.base_url = (base_url or DEFAULT_FXTWITTER_BASE_URL).rstrip("/")
         self.timeout = timeout
+        self.proxy_url = proxy_url
 
     def _fetch_json(self, url: str, *, timeout: float | None = None) -> dict[str, Any]:
         eff_timeout = self.timeout if timeout is None else timeout
@@ -73,7 +76,9 @@ class FxTwitterClient:
             method="GET",
         )
         try:
-            with safe_urlopen(request, timeout=eff_timeout) as response:
+            with safe_urlopen(
+                request, timeout=eff_timeout, proxy_url=self.proxy_url
+            ) as response:
                 status = int(getattr(response, "status", 0) or 0)
                 if status == 404:
                     raise FxTwitterNotFoundError(
