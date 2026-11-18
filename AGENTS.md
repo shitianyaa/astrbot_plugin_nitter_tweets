@@ -16,6 +16,7 @@
 - **先规划，用户同意后再改代码**（文档小补丁除外，若用户已明确「直接改」）。
 - 多步实现用 `Progress/YYYY-MM-DD-*.md` 记清单与验证；不擅自 commit Progress。
 - 不使用 obra/superpowers 技能套件；以本文件 + `docs/` + Progress 为准。
+- 本机环境与生产访问另见未入库的 `AGENTS.local.md`（若存在）。
 
 ## 项目定位
 
@@ -40,15 +41,15 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 - 管理命令：`@filter.permission_type(ADMIN)`，并继续做场景校验。
 - 双导入：`try: from .x import ... except ImportError: from x import ...`。
 - 不硬编码 provider、token、群号、实例、本机路径；不提交 `data/`、缓存、DB、下载物。
-- 日志只通过现有安全日志辅助函数输出；不得写入 token、Cookie、响应正文、完整私有 URL 或其他会话材料。结构化任务摘要应保留分组、类型、来源、生效实例、轮换轨迹、统计、耗时和 warning/error。
-- logger 只能从 `astrbot.api` 导入；插件运行时代码（`main.py`、`command_handlers/`、`scheduler/`、`media_support/`、`delivery/`、`plugin_api/`、`shared/` 等）**严禁 `import logging`** 或引用内置 logging 的常量/函数（2026-10-25 插件市场上架审查硬约束，违者不予上架）。分级日志直接调用 `logger.debug/info/warning/error`，或向 `safe_task_log` / `safe_log` / `safe_block_log` 传级别名字符串 `"debug"/"info"/"warning"/"error"`（分派实现见 `shared/observability.py` 的 `_emit`）；`scripts/`、`tests/` 等非运行时工具不受限。
+- 含异常详情、用户配置值或需要出现在 WebUI 的日志用 `safe_task_log` / `safe_log` / `safe_block_log`，传字符串级别名。固定文本和无敏感内容的本地调试可直接调用 logger。任何路径都不得记录 token、Cookie、响应正文、完整私有 URL 或会话材料。任务摘要保留分组、类型、来源、生效实例、轮换轨迹、统计、耗时和 warning/error。
+- 插件运行时代码的 logger 从 `astrbot.api` 导入，禁止导入标准库 `logging` 或引用其常量和函数。运行时约束由 `scripts/check.py` 验证。
 - 不改用户未要求的行为/文案；优先兼容现有测试。
 - 提交只用真实变更描述；无 AI 署名、`Co-Authored-By`、`Generated with ...`。
 - 禁止丢改动的 git 命令（`reset --hard` 等），除非用户明确要求。
 
 ## 配置与迁移
 
-新增配置必须同步：`_conf_schema.json`、`CONFIG_GROUP_BY_KEY` / `MIGRATABLE_*`（若适用）、`ScheduleGroup` 解析、README 或 advanced、相关测试。
+新增配置同步 `_conf_schema.json`、实际读取该配置的模块、用户文档和相关测试。由兼容层分组或迁移的字段同步 `CONFIG_GROUP_BY_KEY` / `MIGRATABLE_*`，仅分组字段同步 `ScheduleGroup`。
 
 分层：`basic` / `media` / `ai_translation` / `schedule` / `push`。日志分级和诊断环见 `docs/advanced.md` 的日志诊断。
 
@@ -107,17 +108,18 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 
 ## 文档同步
 
-用户可见变更同步：`README.md`、`docs/advanced.md`（及 List 专题）、`_conf_schema.json`、`CHANGELOG.md`、`metadata.yaml`（版本/能力）。
+用户可见变更同步 `CHANGELOG.md` 和受影响的使用说明。配置变化更新 schema，发布版本及插件能力变化同步相关版本和能力声明。
 
 ### CHANGELOG 与版本
 
-- **分支未合并到 `main` 前，所有改动都算未发布**：直接写进下一个版本号段（如 `## [1.7.4]`），**不写日期**；合并到 `main` 时才补上发布日期。
-- **禁止使用 `## [未发布]` / `## [Unreleased]` 标题**：未发布条目直接写进下一个版本号段，避免无日期段落被遗忘。注意 `tests/test_release_version.py` 的正则只识别 `## [数字版本号]` 形式的首个版本段并与 `metadata.yaml`、`main.py` 的 `register(...)` 第 4 个参数、README badge 比对——非数字标题会被静默跳过而不会报错，所以校验本身拦不住这种标题，靠约定保证。
-- 版本号按语义化版本自行判断（修 bug → patch，新增功能 → minor，破坏性变更 → major）；bump 时三处同步：`metadata.yaml`、`main.py`、README badge。
+- 开发期间把用户可见变更写入下一候选版本的数字标题（如 `## [1.7.4]`）。版本按语义化版本确定（修 bug → patch，新增功能 → minor，破坏性变更 → major），同步 `metadata.yaml`、`main.py` 和 README 徽章。候选版本在发版 PR 最终检查前补上实际发布日期。
+- 发布契约以 `scripts/release.py` 为准。版本校验会拒绝 `Unreleased` 和 `未发布` 标题。涉及自动发布的合并在确认时说明发布影响，见 [CI 与发布门禁](docs/dev/maintenance.md#ci-与发布门禁)。
 - 条目只写相对 `main` 的用户可见变化（修复 / 新增 / 变更），内部重构、分支内自我迭代不单独成条；用用户能看懂的行为描述，不堆 CSS 选择器、ARIA 属性名等实现细节。
 
-临时测试、代理探测和一次性脚本统一放在 `testignore/`；不要把这类文件留在仓库根目录。`testignore/` 已加入 `.gitignore`，测试脚本仍应记录使用的代理和目标，但不得包含凭据。
-正式 pytest 只收集 `tests/`（见 `pytest.ini`）；不要把需要进入持续回归的测试留在 `testignore/`。
+## 临时产物
+
+本地临时脚本、测试、探测和门禁输出统一放在 `Temp/<任务短名>/`，用 Git 的本地排除规则忽略 `/Temp/`。门禁默认写入 `Temp/quality-gate/`，可用 `--temp-root Temp/<任务短名>` 指定任务目录。探测记录目标和代理方式，省略凭据和私有地址。
+正式 pytest 只收集 `tests/`（见 `pytest.ini`）。持续回归测试放在 `tests/`。
 
 ## 测试与工具
 

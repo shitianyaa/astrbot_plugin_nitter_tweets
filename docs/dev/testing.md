@@ -2,7 +2,7 @@
 
 ## 共享完整门禁
 
-`python scripts/check.py` 与 CI 使用相同检查入口，默认在系统临时目录生成隔离产物；需要固定位置时用 `--temp-root <目录>` 指定。
+本地用 `python scripts/check.py` 运行与 CI 相同的检查，产物默认写入 `Temp/quality-gate/`，也可用 `--temp-root Temp/<任务短名>` 指定。CI 使用 runner 临时目录。
 
 门禁确认真实 AstrBot SDK、Node 和固定 Ruff 可用，检查版本/schema/运行时语法及标准库 logging 禁用，再运行全量 pytest、Ruff/format、全部 Dashboard JS、Git diff 检查和真实 ZIP 包内隔离导入。缺环境立即失败；不靠 SDK 桩或 Node 缺失 skip 视为完整通过。只导入插件，不实例化、不联网、不发送消息。
 
@@ -10,7 +10,7 @@
 
 ## 基础命令
 
-`pytest.ini` 将默认收集范围限制为 `tests/`，因此 `testignore/` 中的临时探测脚本不会被全量测试误执行。
+`pytest.ini` 将默认收集范围限制为 `tests/`。临时探测脚本放在 `Temp/<任务短名>/`。
 
 ```powershell
 python -m pytest -q
@@ -67,6 +67,6 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 配置迁移 | 老用户配置丢失 | 补 `config/compat.py` 相关测试 |
 | 合并 RSS 水位边界与转推意图 | 多博主水位碰撞导致提前截断漏推；保留转推时误入合并流导致跨博主转推被静默丢弃 | 补 `tests/test_merged_rss.py`、`tests/test_scheduler_delivery.py` |
 
-改公共模型、`scheduler/`、`delivery/sender.py`、`storage/` 或 `config/compat.py` 后，优先跑全量测试。
+改公共模型、`scheduler/`、`delivery/sender.py` 或 `config/compat.py` 后跑全量 pytest。改变存储契约时，按受影响的调用方补充集成或全量验证。
 
-网络探测属于显式集成测试，不纳入默认 pytest；临时脚本统一放在 `testignore/`，并通过 `http_proxy`/`https_proxy` 或脚本参数记录代理配置。代理、Cookie 和响应正文不得进入提交或日志。
+网络探测按需运行，临时脚本放在 `Temp/<任务短名>/`。用环境变量或参数配置代理，记录代理方式时省略凭据和私有地址。

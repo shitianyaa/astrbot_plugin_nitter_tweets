@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.check import runtime_contracts
+from scripts import reuse_pr_gate
 from scripts.release import (
     GitHub,
     ReleaseInfo,
@@ -19,9 +20,88 @@ from scripts.release import (
     publish,
     release_info,
 )
+from scripts.reuse_pr_gate import WORKFLOW, passing_pr_gate
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("matching tree", 4),
+        ("different tree", None),
+        ("expired artifact", None),
+        ("previous run attempt", None),
+        ("no merged PR", None),
+        ("failed run", None),
+        ("different head repository", None),
+    ],
+)
+def test_reuse_pr_gate_requires_matching_merge_and_passed_tree(case, expected):
+    head_sha = "b" * 40
+    tree = "c" * 40
+    record_name = f"quality-gate-12-{tree}-2"
+    urls = {
+        f"commits/{SHA}/pulls": [
+            {
+                "merged_at": None if case == "no merged PR" else "timestamp",
+                "base": {"ref": "main"},
+                "merge_commit_sha": SHA,
+                "number": 12,
+                "head": {"sha": head_sha, "ref": "fix/test", "repo": {"id": 5}},
+            }
+        ],
+        (
+            f"actions/workflows/{WORKFLOW}/runs"
+            f"?head_sha={head_sha}&event=pull_request&status=success&per_page=100"
+        ): {
+            "workflow_runs": [
+                {
+                    "id": 4,
+                    "event": "pull_request",
+                    "conclusion": "failure" if case == "failed run" else "success",
+                    "head_sha": head_sha,
+                    "head_branch": "fix/test",
+                    "head_repository": {
+                        "id": 6 if case == "different head repository" else 5
+                    },
+                    "run_attempt": 2,
+                }
+            ]
+        },
+        f"actions/runs/4/artifacts?name={record_name}": {
+            "artifacts": [
+                {
+                    "name": {
+                        "different tree": f"quality-gate-12-{'d' * 40}-2",
+                        "previous run attempt": f"quality-gate-12-{tree}-1",
+                    }.get(case, record_name),
+                    "expired": case == "expired artifact",
+                }
+            ]
+        },
+    }
+    github = GitHub("owner/repo")
+    github.api = urls.__getitem__
+    assert passing_pr_gate(github, SHA, tree) == expected
+
+
+def test_reuse_pr_gate_lookup_failure_falls_back(monkeypatch, tmp_path):
+    output = tmp_path / "github-output"
+
+    def unavailable(github, sha, tree):
+        raise RuntimeError("GitHub operation failed: HTTP 403")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SHA", SHA)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(reuse_pr_gate, "git", lambda *_: SHA.encode())
+    monkeypatch.setattr(reuse_pr_gate, "passing_pr_gate", unavailable)
+
+    reuse_pr_gate.main()
+
+    assert output.read_text(encoding="utf-8") == "reused=false\n"
 
 
 def candidate(tmp_path):

@@ -158,13 +158,14 @@ def main() -> None:
     parser.add_argument(
         "--temp-root",
         type=Path,
-        help="Optional parent for isolated artifacts; defaults to the system temp directory",
+        help="Parent for isolated artifacts; defaults to <root>/Temp/quality-gate",
     )
     args = parser.parse_args()
-    if args.temp_root:
-        args.temp_root.mkdir(parents=True, exist_ok=True)
-    artifacts = Path(tempfile.mkdtemp(prefix="quality-gate-", dir=args.temp_root))
-    run_gate(args.root.resolve(), artifacts)
+    root = args.root.resolve()
+    temp_root = args.temp_root or root / "Temp" / "quality-gate"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    artifacts = Path(tempfile.mkdtemp(prefix="quality-gate-", dir=temp_root))
+    run_gate(root, artifacts)
 
 
 if __name__ == "__main__":
