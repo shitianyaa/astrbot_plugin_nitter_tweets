@@ -24,6 +24,10 @@ jobs:
     name: Quality Gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     outputs:
       should_release: ${{ steps.candidate.outputs.should_release }}
     env:
@@ -33,18 +37,47 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Look for a passing PR gate for this tree
+        id: reuse
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: python3 scripts/reuse_pr_gate.py
       - uses: actions/setup-python@v5
+        if: steps.reuse.outputs.reused != 'true'
         with:
           python-version: '3.13'
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - uses: actions/setup-node@v4
+        if: steps.reuse.outputs.reused != 'true'
         with:
           node-version: '24'
       - name: Install development dependencies
+        if: steps.reuse.outputs.reused != 'true'
         run: python -m pip install -r requirements-dev.txt && python -m pip check
       - name: Check repository and installable package
+        if: steps.reuse.outputs.reused != 'true'
         run: python scripts/check.py --temp-root "$RUNNER_TEMP/quality-gate"
+      - name: Record the checked PR tree
+        id: checked-tree
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --quiet HEAD --
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          echo "oid=$tree" >> "$GITHUB_OUTPUT"
+          echo "$tree" > "$RUNNER_TEMP/checked-tree.txt"
+      - name: Save the PR gate record
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-gate-${{ github.event.pull_request.number }}-${{ steps.checked-tree.outputs.oid }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/checked-tree.txt
+          if-no-files-found: error
       - name: Detect publication candidate
         id: candidate
         env:

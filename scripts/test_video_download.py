@@ -96,7 +96,7 @@ def _print_media(label: str, media_items) -> None:
 
 def _default_output_dir(tweet) -> Path:
     status_id = tweet.status_id or datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _repo_root() / "tests" / "downloads" / f"video_download_{status_id}"
+    return _repo_root() / "Temp" / "video-download" / status_id
 
 
 def _copy_downloaded_media(tweet, output_dir: Path | None) -> Path:
@@ -178,7 +178,7 @@ def _parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Folder to copy downloaded media into.",
+        help="Folder to copy downloaded media into; defaults to Temp/video-download/<status_id>.",
     )
     parser.add_argument("--images", action="store_true", help="Also download images.")
     parser.add_argument(

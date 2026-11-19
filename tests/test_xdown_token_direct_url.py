@@ -55,6 +55,7 @@ def _service() -> MediaService:
     service = object.__new__(MediaService)
     service.xdown_url = "https://xdown.app/api/ajaxSearch"
     service.timeout = 25.0
+    service.media_proxy_url = None
     service.media_quality = "high"
     service._resolve_candidates_from_status = lambda _tweet: []  # type: ignore[method-assign]
     return service
@@ -68,7 +69,9 @@ def test_resolve_uses_twimg_direct_url_with_snapcdn_fallback(monkeypatch):
     body = json.dumps({"status": "ok", "data": html}).encode()
 
     monkeypatch.setattr(
-        service_module, "compat_urlopen", lambda _r, _t: _Response(body)
+        service_module,
+        "compat_urlopen",
+        lambda _r, _t, *, proxy_url=None: _Response(body),
     )
 
     tweet = TweetItem(text="", link="https://x.com/u/status/1", published="")
@@ -91,7 +94,9 @@ def test_resolve_keeps_snapcdn_when_token_has_no_url(monkeypatch):
     body_bytes = json.dumps({"status": "ok", "data": html}).encode()
 
     monkeypatch.setattr(
-        service_module, "compat_urlopen", lambda _r, _t: _Response(body_bytes)
+        service_module,
+        "compat_urlopen",
+        lambda _r, _t, *, proxy_url=None: _Response(body_bytes),
     )
 
     tweet = TweetItem(text="", link="https://x.com/u/status/1", published="")

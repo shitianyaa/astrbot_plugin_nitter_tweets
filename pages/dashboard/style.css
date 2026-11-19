@@ -568,15 +568,10 @@ a:hover { text-decoration: underline; }
   font-size: 12.5px;
 }
 .toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
-/* 原生 input 被藏起来了（且全局 input:focus-visible 去掉了描边），焦点环必须
-   由 label 用 :focus-within 代理，否则键盘 Tab 到开关时看不到焦点在哪。
-   抽屉与配置页的开关同样受益。
-   注意 :focus-within 不区分输入方式：鼠标点击开关也会显示焦点环。仓库
-   避免依赖 :has（兼容较旧内核），所以这里不做 input:focus-visible 版本。 */
-.toggle:focus-within {
+/* 把隐藏的复选框的键盘焦点提示画在可见的开关轨道上。 */
+.toggle input:focus-visible + .toggle-track {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--radius-btn, 6px);
 }
 .toggle-track {
   width: 32px;

@@ -2,7 +2,7 @@
 
 ## 共享完整门禁
 
-`python scripts/check.py` 与 CI 使用相同检查入口，默认在系统临时目录生成隔离产物；需要固定位置时用 `--temp-root <目录>` 指定。
+本地用 `python scripts/check.py` 运行与 CI 相同的检查，产物默认写入 `Temp/quality-gate/`，也可用 `--temp-root Temp/<任务短名>` 指定。CI 使用 runner 临时目录。
 
 门禁确认真实 AstrBot SDK、Node 和固定 Ruff 可用，检查版本/schema/运行时语法及标准库 logging 禁用，再运行全量 pytest、Ruff/format、全部 Dashboard JS、Git diff 检查和真实 ZIP 包内隔离导入。缺环境立即失败；不靠 SDK 桩或 Node 缺失 skip 视为完整通过。只导入插件，不实例化、不联网、不发送消息。
 
@@ -10,7 +10,7 @@
 
 ## 基础命令
 
-`pytest.ini` 将默认收集范围限制为 `tests/`，因此 `testignore/` 中的临时探测脚本不会被全量测试误执行。
+`pytest.ini` 将默认收集范围限制为 `tests/`。临时探测脚本放在 `Temp/<任务短名>/`。
 
 ```powershell
 python -m pytest -q
@@ -47,11 +47,12 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 发送失败分类与提示 | `python -m pytest -q tests/test_image_send_rejected_notice.py` | 拒收签名识别、ENOENT 不误判、`rejected` 保持 retryable 以免跳过有损降级链、拒收判定排在 uncertain 之前、提示链接遵循 `omit_status_url`、仅媒体不补提示 |
 | 媒体画质与视频大小预检 | `python -m pytest -q tests/test_media_quality.py` | 图片三档、视频分辨率中位选择、大小预检降档、未知大小及 FxTwitter bitrate/时长估算 |
 | 媒体缓存文件名 | `python -m pytest -q tests/test_media_utilities.py` | 百分号编码尾巴、query `format` 脏值、无扩展名回落 |
-| 合并 RSS 管道、多博主批量、最低水位与回退 | `python -m pytest -q tests/test_merged_rss.py tests/test_scheduler_delivery.py` | 批次字符分批、最旧水位边界不漏推、转推过滤关闭时跳过合并走逐个请求、单博主空结果回退 |
+| 合并 RSS 管道、分账号水位与补查 | `python -m pytest -q tests/test_merged_rss.py tests/test_scheduler_delivery.py` | 批次字符分批、三页预算、部分结果补查、转推不会误命中水位、补查未完整时保留旧水位 |
 | Twitter List RSS 优先与增量游标 | `python -m pytest -q tests/test_list_rss.py tests/test_list_support.py` | List RSS 优先拉取、Min-Id 增量游标、Redis 缓存、失败自动回退 HTML 翻页 |
 | 搜索排序与热门流 | `python -m pytest -q tests/test_html_search_rotate.py tests/test_html_backend_query.py tests/test_backend_mode_switch.py tests/test_search_session_buffer.py` | latest 时间序、top 热门度排序、Tag 后台强制时间序、手动 session 缓存隔离 |
 | 配置契约、类型解析与订阅导入 | `python -m pytest -q tests/test_config_contracts.py` | schema、迁移、空分组与旧混合订阅保留、标签查询可逆存储 |
-| WebUI 分组回写契约 | `python -m pytest -q tests/test_webui_group_push_targets.py` | `update_group` 对 `push_targets` / `watch_users` 原样落盘：含无效条目 = 显式保留，缺失 = 显式删除；批量导入/移除保留隔离条目 |
+| HTTP 抓取代理 | `python -m pytest -q tests/test_http_proxy.py` | 四档路由、HTTP 重定向与 CONNECT、代理拒绝连接、`NO_PROXY` 和错误配置 |
+| WebUI 分组回写契约 | `python -m pytest -q tests/test_webui_group_push_targets.py` | 提交的 `push_targets` / `watch_users` 列表保留无效条目，列表内移除的条目删除；部分更新缺省字段保留原值，批量导入/移除保留隔离条目。真实 `NitterWebAPI` 保存三类分组后返回与查询接口一致的完整对象且不误报序列化警告；配置保存失败恢复原配置并跳过同步，数据库同步失败保留已保存配置并返回单独提示 |
 
 ## 高风险改动
 
@@ -67,6 +68,6 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 配置迁移 | 老用户配置丢失 | 补 `config/compat.py` 相关测试 |
 | 合并 RSS 水位边界与转推意图 | 多博主水位碰撞导致提前截断漏推；保留转推时误入合并流导致跨博主转推被静默丢弃 | 补 `tests/test_merged_rss.py`、`tests/test_scheduler_delivery.py` |
 
-改公共模型、`scheduler/`、`delivery/sender.py`、`storage/` 或 `config/compat.py` 后，优先跑全量测试。
+改公共模型、`scheduler/`、`delivery/sender.py` 或 `config/compat.py` 后跑全量 pytest。改变存储契约时，按受影响的调用方补充集成或全量验证。
 
-网络探测属于显式集成测试，不纳入默认 pytest；临时脚本统一放在 `testignore/`，并通过 `http_proxy`/`https_proxy` 或脚本参数记录代理配置。代理、Cookie 和响应正文不得进入提交或日志。
+网络探测按需运行，临时脚本放在 `Temp/<任务短名>/`。用环境变量或参数配置代理，记录代理方式时省略凭据和私有地址。

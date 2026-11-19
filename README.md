@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-2.0.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-2.1.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -206,6 +206,7 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | --- | --- |
 | `instances` | 唯一 Nitter 实例列表，同时用于用户 RSS/HTML、搜索、List 和后台抓取 |
 | `fetch_backend` | 推文抓取后端策略：`mix`（优先 FxTwitter，故障增量回退自建 Nitter，默认）、`nitter`（纯自建 Nitter）、`fx`（纯 FxTwitter；List 仍锁定 Nitter） |
+| `http_proxy_scope` / `http_proxy_url` | [HTTP 抓取代理](./docs/advanced.md#http-抓取代理)，默认关闭。可用于全部抓取和媒体请求、仅推文解析 API 或仅 Nitter |
 | `default_limit` | 手动命令默认条数 |
 | `search_sort` | 搜索排序方式：`latest`（按时间序，默认）或 `top`（推特综合热门算法流）；手动搜索带「热门」可单次覆盖 |
 | `schedule_enabled` | 后台检查总开关 |

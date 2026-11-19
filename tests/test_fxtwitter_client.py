@@ -585,7 +585,7 @@ class TestFxTwitterClientFetchJson:
     def test_fetch_json_http_404(self, monkeypatch):
         client = FxTwitterClient()
 
-        def mock_safe_urlopen(req, timeout):
+        def mock_safe_urlopen(req, timeout, *, proxy_url=None):
             raise HTTPError(
                 req.full_url, 404, "Not Found", hdrs=None, fp=io.BytesIO(b"")
             )
@@ -603,7 +603,8 @@ class TestFxTwitterClientFetchJson:
         resp = _make_response(b'{"code": 404, "message": "Not Found"}', status=200)
 
         monkeypatch.setattr(
-            "media_support.fxtwitter_client.safe_urlopen", lambda req, timeout: resp
+            "media_support.fxtwitter_client.safe_urlopen",
+            lambda req, timeout, *, proxy_url=None: resp,
         )
 
         with pytest.raises(FxTwitterNotFoundError) as exc_info:
@@ -613,7 +614,7 @@ class TestFxTwitterClientFetchJson:
     def test_fetch_json_other_http_error(self, monkeypatch):
         client = FxTwitterClient()
 
-        def mock_safe_urlopen(req, timeout):
+        def mock_safe_urlopen(req, timeout, *, proxy_url=None):
             raise HTTPError(
                 req.full_url,
                 500,
@@ -634,7 +635,8 @@ class TestFxTwitterClientFetchJson:
         client = FxTwitterClient()
         resp = _make_response(b"not a json", status=200)
         monkeypatch.setattr(
-            "media_support.fxtwitter_client.safe_urlopen", lambda req, timeout: resp
+            "media_support.fxtwitter_client.safe_urlopen",
+            lambda req, timeout, *, proxy_url=None: resp,
         )
 
         with pytest.raises(FxTwitterError) as exc_info:

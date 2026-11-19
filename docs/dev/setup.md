@@ -12,11 +12,11 @@ python -m pip check
 python scripts/check.py
 ```
 
-默认使用系统临时目录；需要固定产物位置时加 `--temp-root <目录>`。不要全局安装或升级依赖，建议在独立虚拟环境运行。插件的 `requirements.txt` 仍为空白占位，开发依赖不进入插件运行安装或发布包。
+本地门禁默认将产物写到 `Temp/quality-gate/`。本地临时目录用 Git 的本地排除规则忽略，在 `git rev-parse --git-path info/exclude` 返回的文件中加入 `/Temp/`。开发依赖建议安装在独立虚拟环境。插件的 `requirements.txt` 仍为空白占位，开发依赖不进入插件运行安装或发布包。
 
 `requirements-dev.txt` 里的 AstrBot SDK 是经过验证的基线，测试直接依赖它，不再注入备用 SDK 桩；缺少 SDK 时安装开发依赖，不把假接口通过视为兼容验证。升级 SDK 应当作为独立改动并重跑门禁，而不是随手跟随最新版。`pytest.ini` 已设置 `pythonpath = .`，因此从仓库根目录直接跑 `pytest` 或 `python -m pytest` 都可导入插件模块；不需要修改 `PYTHONPATH`。
 
-1.9.0 已移除 pre-commit 配置。若以前执行过 `pre-commit install`，请在该仓库运行 `pre-commit uninstall` 移除旧 hook，否则提交时会因缺少配置文件而失败。直接在原开发环境运行，无需重新安装；后续检查使用 `python scripts/check.py`。
+1.9.0 已移除 pre-commit 配置。若以前执行过 `pre-commit install`，在该仓库运行 `pre-commit uninstall` 移除旧 hook。后续检查使用上面的共享门禁命令。
 
 ## 常用目录
 
@@ -26,7 +26,7 @@ delivery/            # 平台发送适配器
 media_support/       # RSS、媒体、缓存
 tests/               # 回归测试
 scripts/             # 本地诊断脚本
-testignore/          # 被 .gitignore 忽略的一次性测试和网络探测
+Temp/                # 本地排除的一次性测试、网络探测和门禁产物
 docs/                # 项目和开发文档
 ```
 
@@ -40,13 +40,15 @@ python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --incl
 python scripts/probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --skip-plain-text
 ```
 
-List/HTML 探测脚本、代理测试和临时输出放在 `testignore/`。需要本地代理时，在脚本或命令中显式使用 `http://127.0.0.1:3067` 等代理地址；不要把 Cookie、token 或完整会话响应写入文件。测试脚本应记录目标 URL、实例、代理和结果摘要，便于复现。只使用可信的自建 Nitter 实例进行探测；Nitter 的管理面应隔离在不可信网络之外，不要暴露到公网。
+List/HTML 探测脚本、代理测试和临时输出放在 `Temp/<任务短名>/`。需要本地代理时，在脚本或命令中显式使用 `http://127.0.0.1:3067` 等代理地址。记录脱敏后的目标与实例标识、代理方式和结果摘要，省略凭据、Cookie、私有地址和响应正文。只使用可信的自建 Nitter 实例进行探测；Nitter 的管理面应隔离在不可信网络之外，不要暴露到公网。
 
 视频下载：
 
 ```powershell
 python scripts/test_video_download.py https://x.com/user/status/123
 ```
+
+下载探针默认将副本写到 `Temp/video-download/<status_id>/`。
 
 ## 推文帮助图源码
 
@@ -55,7 +57,7 @@ python scripts/test_video_download.py https://x.com/user/status/123
 指定输出目录运行：
 
 ```text
-python scripts/render_tweet_help.py --output-dir <输出目录>
+python scripts/render_tweet_help.py --output-dir Temp/tweet-help
 ```
 
 脚本生成 `tweet_help.html`、256 色 PNG `tweet_help.png` 和 `evidence.json`。画布宽 1440，高度随内容自适应；渲染时阻止外部请求，并检查字体、指令条目唯一性与顺序、横向溢出、空白图和 PNG 调色板。`tests/test_tweet_help.py` 另校验全部 21 个入口与真实命令注册一致、参数契约及尖括号转义。确认实际图片后，将 PNG 复制到 `rendering/assets/tweet_help.png`；脚本不会自动覆盖随包资源。HTML、检查报告及试渲图片不入库，发布包只需要现有静态 PNG。
@@ -70,7 +72,6 @@ python scripts/render_tweet_help.py --output-dir <输出目录>
 - `*.db`
 - `*.db-wal`
 - `*.db-shm`
-- `tests/downloads/`
+- `Temp/`
 - `.pytest_cache/`
 - `.ruff_cache/`
-- 仓库根目录的一次性测试脚本（请移入 `testignore/`）

@@ -11,6 +11,7 @@ from astrbot.api.event import AstrMessageEvent
 try:
     from ..config import (
         config_get,
+        fetch_proxy_url,
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
@@ -25,6 +26,7 @@ try:
 except ImportError:
     from config import (
         config_get,
+        fetch_proxy_url,
         parse_config_bool,
         resolve_hide_original_when_translated,
     )
@@ -180,6 +182,7 @@ class LinkPreviewMixin:
                         media_quality=str(
                             config_get(self.config, "media_quality", "high") or "high"
                         ),
+                        proxy_url=fetch_proxy_url(self.config, "api"),
                     )
                 except StatusResolveError as exc:
                     safe_block_log(

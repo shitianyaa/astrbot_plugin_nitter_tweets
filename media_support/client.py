@@ -5,8 +5,12 @@ import contextvars
 import re
 import ssl
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from html.parser import HTMLParser
+from itertools import islice
+from typing import TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request
@@ -15,7 +19,7 @@ from xml.etree import ElementTree as ET
 from astrbot.api import logger
 
 try:
-    from ..config import config_get, parse_config_bool
+    from ..config import config_get, fetch_proxy_url, parse_config_bool
     from ..shared import (
         TweetItem,
         clamp_float,
@@ -27,7 +31,7 @@ try:
         safe_block_log,
     )
 except ImportError:
-    from config import config_get, parse_config_bool
+    from config import config_get, fetch_proxy_url, parse_config_bool
     from shared import (
         TweetItem,
         clamp_float,
@@ -59,6 +63,9 @@ class EmptyFeedError(RuntimeError):
     """A valid RSS response contained no items at all."""
 
 
+_ScanResult = TypeVar("_ScanResult")
+
+
 # 作者上传的媒体标记：Nitter RSS 的 <description> 是 HTML，作者上传的图片走
 # /pic/media（链接预览卡片图走 /pic/card_img，不算作者媒体）；视频/GIF 可能包成
 # <video> 标签，也可能只暴露 Nitter 的 video_thumb 封面图。引用推文里的媒体也不算
@@ -67,6 +74,7 @@ class EmptyFeedError(RuntimeError):
 # 里，属于文章卡片而非作者上传的媒体附件，不算作者媒体。
 _MEDIA_SRC_RE = re.compile(r"(?i)/pic/(?:media|[a-z0-9_]+_video_thumb)(?:/|%2f)")
 _ARTICLE_LINK_RE = re.compile(r"(?i)/i/article/")
+_RSS_REPOST_PREFIX_RE = re.compile(r"(?:RT by @[A-Za-z0-9_]+:\s*)+")
 # ElementTree blocks external entities by default but still permits DTD-defined
 # entities; reject both declarations before parsing so the plugin needs no new
 # runtime dependency just to process untrusted RSS responses.
@@ -241,6 +249,7 @@ class FetchAttemptBudget:
 
 class NitterClient:
     SCHEDULER_SCAN_LIMIT = 300
+    MERGED_RSS_MAX_PAGES = 3
     RSS_RESPONSE_LIMIT = 2_000_000
 
     def __init__(self, config):
@@ -267,7 +276,10 @@ class NitterClient:
         )
         # In-memory instance scores; NitterService shares this book with HTML.
         self.host_scores = HostScoreBook()
-        self.fxtwitter = FxTwitterClient(timeout=self.timeout)
+        self.proxy_url = fetch_proxy_url(config, "nitter")
+        self.fxtwitter = FxTwitterClient(
+            timeout=self.timeout, proxy_url=fetch_proxy_url(config, "api")
+        )
         # S2=A: set only for one check/command via begin_run_host_skip().
         # Context-local state prevents overlapping manual and scheduled tasks
         # from marking one another's mirror set.  A property below preserves
@@ -543,6 +555,35 @@ class NitterClient:
         *,
         path_override: str = "",
     ) -> tuple[str, SchedulerFetchResult]:
+        def scan(instance: str) -> SchedulerFetchResult:
+            return self._fetch_for_scheduler_from_instance(
+                instance,
+                username,
+                anchor_ids,
+                skip_plain_text,
+                1,
+                total_retry_attempts_per_instance,
+                filter_reposts,
+                path_override=path_override,
+            )
+
+        instance, result, attempt_index = await self._run_scheduler_scan(
+            username, instances, scan, retry_attempts
+        )
+        if result is None:
+            result = SchedulerFetchResult([], [], complete=True)
+        self._log_instance_fetch_success(
+            attempt_index, instance, username, len(result.tweets)
+        )
+        return instance, result
+
+    async def _run_scheduler_scan(
+        self,
+        username: str,
+        instances: list[str],
+        scan: Callable[[str], _ScanResult],
+        retry_attempts: int | None,
+    ) -> tuple[str, _ScanResult | None, int]:
         errors: list[str] = []
         empty_instances: list[str] = []
         run_instances = self._instances_for_run(instances)
@@ -567,17 +608,7 @@ class NitterClient:
             for index, instance in enumerate(run_instances):
                 attempt_label = f"轮次 {round_num + 1}/{max_rounds}"
                 try:
-                    result = await asyncio.to_thread(
-                        self._fetch_for_scheduler_from_instance,
-                        instance,
-                        username,
-                        anchor_ids,
-                        skip_plain_text,
-                        1,
-                        total_retry_attempts_per_instance,
-                        filter_reposts,
-                        path_override=path_override,
-                    )
+                    result = await asyncio.to_thread(scan, instance)
                 except EmptyFeedError as exc:
                     if instance not in empty_instances:
                         empty_instances.append(instance)
@@ -613,10 +644,7 @@ class NitterClient:
                     continue
                 self.host_scores.record_success(instance)
                 effective_index = round_num * len(run_instances) + index
-                self._log_instance_fetch_success(
-                    effective_index, instance, username, result
-                )
-                return instance, result
+                return instance, result, effective_index
 
             if round_num + 1 < max_rounds and delay > 0:
                 await asyncio.sleep(delay)
@@ -626,14 +654,7 @@ class NitterClient:
             and len(empty_instances) == len(instances)
             and len(run_instances) == len(instances)
         ):
-            instance = empty_instances[0]
-            result = SchedulerFetchResult(
-                tweets=[],
-                scanned_status_ids=[],
-                complete=True,
-            )
-            self._log_instance_fetch_success(0, instance, username, result)
-            return instance, result
+            return empty_instances[0], None, 0
         raise RuntimeError(
             self._format_fetch_errors(errors, total_count=len(run_instances))
         )
@@ -708,7 +729,7 @@ class NitterClient:
                     self.host_scores.record_success(instance)
                     effective_index = round_num * len(run_instances) + index
                     self._log_instance_fetch_success(
-                        effective_index, instance, username, result
+                        effective_index, instance, username, len(result.tweets)
                     )
                     return instance, result.tweets, result.plain_text_filtered
                 self.host_scores.record_success(instance, soft=True)
@@ -775,14 +796,14 @@ class NitterClient:
         index: int,
         instance: str,
         username: str,
-        result: InstanceFetchResult,
+        tweet_count: int,
     ) -> None:
         if index <= 0:
             return
 
         logger.info(
             "[NitterTweets] RSS 实例成功，已完成实例切换: "
-            f"instance=#{index + 1}, username={username}, tweets={len(result.tweets)}"
+            f"instance=#{index + 1}, username={username}, tweets={tweet_count}"
         )
 
     async def fetch_tweets_from_instance(
@@ -923,6 +944,50 @@ class NitterClient:
             plain_text_filtered=plain_text_filtered_total,
         )
 
+    def _iter_scheduler_pages(
+        self,
+        instance: str,
+        username: str,
+        skip_plain_text: bool,
+        retry_attempts: int | None,
+        filter_reposts: bool | None,
+        *,
+        total_retry_attempts_per_instance: bool = False,
+        path_override: str = "",
+    ) -> Iterator[RssPageResult]:
+        cursor = ""
+        seen_cursors: set[str] = set()
+        attempt_budget = FetchAttemptBudget(
+            self._retry_attempt_count(retry_attempts)
+            if total_retry_attempts_per_instance
+            else None
+        )
+        while True:
+            if attempt_budget.exhausted:
+                raise RuntimeError("后台 RSS 扫描未完成：实例请求次数已耗尽")
+            page = self._fetch_page_with_retries(
+                instance,
+                username,
+                cursor,
+                0,
+                skip_plain_text,
+                retry_attempts,
+                attempt_budget,
+                filter_reposts,
+                path_override=path_override,
+            )
+            if page.raw_item_count == 0 and page.plain_text_filtered == 0:
+                if not cursor:
+                    raise EmptyFeedError("empty feed")
+                return
+            yield page
+            if page.raw_item_count == 0 or not page.next_cursor:
+                return
+            if page.next_cursor in seen_cursors:
+                raise RuntimeError("后台 RSS 扫描未完成：分页游标重复")
+            seen_cursors.add(page.next_cursor)
+            cursor = page.next_cursor
+
     def _fetch_for_scheduler_from_instance(
         self,
         instance: str,
@@ -948,41 +1013,22 @@ class NitterClient:
         seen_tweets: set[str] = set()
         scanned_status_ids: list[str] = []
         seen_status_ids: set[str] = set()
-        seen_cursors: set[str] = set()
-        cursor = ""
         scanned_item_count = 0
         plain_text_filtered_total = 0
         reposts_filtered_total = 0
         reached_watermark = False
-        complete = False
         next_anchor_ids: list[str] = []
-        attempt_budget = FetchAttemptBudget(
-            self._retry_attempt_count(retry_attempts)
-            if total_retry_attempts_per_instance
-            else None
+        pages = self._iter_scheduler_pages(
+            instance,
+            username,
+            skip_plain_text,
+            retry_attempts,
+            filter_reposts,
+            total_retry_attempts_per_instance=total_retry_attempts_per_instance,
+            path_override=path_override,
         )
 
-        while True:
-            if attempt_budget.exhausted:
-                raise RuntimeError("后台 RSS 扫描未完成：实例请求次数已耗尽")
-            page = self._fetch_page_with_retries(
-                instance,
-                username,
-                cursor,
-                0,
-                skip_plain_text,
-                retry_attempts,
-                attempt_budget,
-                filter_reposts,
-                path_override=path_override,
-            )
-            if page.raw_item_count == 0 and page.plain_text_filtered == 0:
-                if scanned_item_count == 0:
-                    raise EmptyFeedError("empty feed")
-                if boundary_ids and not reached_watermark:
-                    raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
-                complete = True
-                break
+        for page_number, page in enumerate(pages, start=1):
             scanned_item_count += page.raw_item_count
             if scanned_item_count > self.SCHEDULER_SCAN_LIMIT:
                 raise RuntimeError(
@@ -990,7 +1036,7 @@ class NitterClient:
                 )
 
             page_status_ids = page.scanned_status_ids
-            if scanned_item_count == page.raw_item_count:
+            if page_number == 1:
                 next_anchor_ids = list(
                     dict.fromkeys(
                         str(status_id)
@@ -1045,25 +1091,12 @@ class NitterClient:
             # first page. An explicit empty/non-numeric row means the source
             # was already initialized without a usable status boundary, so a
             # complete scan to feed end is required to avoid losing page 2+.
-            if initial_scan:
-                complete = True
+            reached_watermark = watermark_index is not None
+            if initial_scan or reached_watermark:
                 break
 
-            if watermark_index is not None:
-                # Only the exact stored boundary proves that the scan reached
-                # the previous checkpoint; numeric ordering is not enough.
-                reached_watermark = True
-                complete = True
-                break
-            if page.raw_item_count == 0 or not page.next_cursor:
-                if boundary_ids and not reached_watermark:
-                    raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
-                complete = True
-                break
-            if page.next_cursor in seen_cursors:
-                raise RuntimeError("后台 RSS 扫描未完成：分页游标重复")
-            seen_cursors.add(page.next_cursor)
-            cursor = page.next_cursor
+        if boundary_ids and not reached_watermark:
+            raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
 
         return SchedulerFetchResult(
             tweets=tweets,
@@ -1072,7 +1105,7 @@ class NitterClient:
             latest_status_id=self._latest_status_id(scanned_status_ids),
             plain_text_filtered=plain_text_filtered_total,
             reposts_filtered=reposts_filtered_total,
-            complete=complete,
+            complete=True,
             reached_watermark=reached_watermark,
         )
 
@@ -1184,7 +1217,9 @@ class NitterClient:
             ),
         )
         try:
-            with compat_urlopen(request, self.timeout) as response:
+            with compat_urlopen(
+                request, self.timeout, proxy_url=self.proxy_url
+            ) as response:
                 data = response.read(self.RSS_RESPONSE_LIMIT + 1)
                 next_cursor = self._header_value(response.headers, "Min-Id")
         except HTTPError as exc:
@@ -1281,19 +1316,7 @@ class NitterClient:
         filter_reposts: bool | None = None,
         media: bool = False,
     ) -> tuple[str, dict[str, "SchedulerFetchResult"]]:
-        """Fetch multiple bloggers via one merged RSS request chain.
-
-        ``/{user1,user2,...}/rss`` returns a combined timeline (newest-first)
-        with each item's link carrying the correct author.  Results are split
-        by ``tweet.username`` so each user gets their own ``SchedulerFetchResult``
-        and the existing per-user seen/watermark logic in the runner works
-        unchanged.
-
-        Repost filtering is implicit: tweets whose author is not in the batch
-        (retweets of outside accounts) land in no user's bucket and are dropped.
-        The ``filter_reposts`` parameter is accepted for API symmetry but not
-        passed to the scan loop.
-        """
+        """Scan a bounded merged timeline and confirm each account's own watermark."""
         if not usernames:
             raise ValueError("no usernames for merged fetch")
 
@@ -1301,71 +1324,101 @@ class NitterClient:
         if media:
             merged_path = f"{merged_path}/media"
 
-        # Use the oldest user's watermark as the scan boundary.
-        #
-        # The scan loop stops at the first boundary ID it encounters in the
-        # feed (newest-first).  If we passed the union of all users'
-        # watermarks, the scan would stop at the freshest user's watermark,
-        # silently truncating new tweets belonging to users with older
-        # watermarks.  By passing only the watermark of the user whose newest
-        # (highest) status ID is the lowest, the scan continues past every
-        # other user's newer watermarks and stops at the oldest boundary —
-        # capturing all new tweets for every user in a single scan.
-        oldest_watermark: list[str] = []
-        oldest_max_val: int | None = None
-        has_watermark = False
-        for username in usernames:
-            watermark = watermarks.get(username)
-            if not watermark:
-                continue
-            has_watermark = True
-            user_max_val: int | None = None
-            for sid in watermark:
-                sid_str = str(sid or "").strip()
-                if sid_str and sid_str.isdigit():
-                    val = int(sid_str)
-                    if user_max_val is None or val > user_max_val:
-                        user_max_val = val
-            if user_max_val is not None and (
-                oldest_max_val is None or user_max_val < oldest_max_val
-            ):
-                oldest_max_val = user_max_val
-                oldest_watermark = [
-                    str(sid).strip() for sid in watermark if str(sid or "").strip()
-                ]
-
-        anchor_ids = oldest_watermark if has_watermark else None
-
-        instance, scan_result = await self._fetch_tweets_for_scheduler_from_instances(
-            merged_path,  # used only for logging
-            anchor_ids,
-            self.instances,
+        scan = partial(
+            self._scan_merged_rss_from_instance,
+            path=merged_path,
+            watermarks={username: watermarks.get(username) for username in usernames},
             skip_plain_text=skip_plain_text,
-            retry_attempts=self.retry_attempts,
-            filter_reposts=False,  # author-based splitting handles reposts
-            path_override=merged_path,
         )
-
-        # Split mixed-author tweets into per-user buckets.
-        results: dict[str, SchedulerFetchResult] = {}
-        for username in usernames:
-            key = username.lower()
-            user_tweets = [
-                t for t in scan_result.tweets if (t.username or "").lower() == key
-            ]
-            user_scanned_ids = [t.status_id for t in user_tweets if t.status_id]
-            results[username] = SchedulerFetchResult(
-                tweets=user_tweets,
-                scanned_status_ids=user_scanned_ids,
-                anchor_status_ids=user_scanned_ids[:20],
-                latest_status_id=(user_scanned_ids[0] if user_scanned_ids else ""),
-                plain_text_filtered=0,
-                reposts_filtered=0,
-                complete=scan_result.complete,
-                reached_watermark=scan_result.reached_watermark,
-            )
-
+        instance, results, attempt_index = await self._run_scheduler_scan(
+            merged_path,
+            self.instances,
+            scan,
+            self.retry_attempts,
+        )
+        if results is None:
+            return instance, {
+                username: SchedulerFetchResult([], []) for username in usernames
+            }
+        self._log_instance_fetch_success(
+            attempt_index,
+            instance,
+            merged_path,
+            sum(len(result.tweets) for result in results.values()),
+        )
         return instance, results
+
+    def _scan_merged_rss_from_instance(
+        self,
+        instance: str,
+        *,
+        path: str,
+        watermarks: dict[str, list[str] | None],
+        skip_plain_text: bool,
+    ) -> dict[str, SchedulerFetchResult]:
+        results = {username: SchedulerFetchResult([], []) for username in watermarks}
+        skipped_ids: dict[str, set[str]] = {username: set() for username in watermarks}
+        matched_anchors: dict[str, int] = {}
+        usernames_by_author = {username.lower(): username for username in watermarks}
+        initial_users = {
+            username for username, ids in watermarks.items() if ids is None
+        }
+        anchors = {
+            username: {
+                status_id
+                for value in (ids or [])
+                if (status_id := str(value).strip()).isdigit()
+            }
+            for username, ids in watermarks.items()
+        }
+        pages = self._iter_scheduler_pages(
+            instance, path, skip_plain_text, 1, False, path_override=path
+        )
+        scanned_item_count = 0
+        for page_number, page in enumerate(islice(pages, self.MERGED_RSS_MAX_PAGES), 1):
+            scanned_item_count += page.raw_item_count
+            if scanned_item_count > self.SCHEDULER_SCAN_LIMIT:
+                break
+            for tweet in page.tweets:
+                # Nitter links reposts to the original author and status ID.
+                username = usernames_by_author.get(tweet.username.lower())
+                status_id = tweet.status_id
+                if username is None or not status_id:
+                    continue
+                if tweet.is_retweet:
+                    skipped_ids[username].add(status_id)
+                    continue
+                result = results[username]
+                if username in initial_users and (
+                    page_number > 1 or len(result.scanned_status_ids) >= 20
+                ):
+                    continue
+                if status_id in result.scanned_status_ids:
+                    continue
+                result.scanned_status_ids.append(status_id)
+                result.tweets.append(tweet)
+                if status_id in anchors[username] and username not in matched_anchors:
+                    matched_anchors[username] = int(status_id)
+            if all(
+                username in matched_anchors for username, ids in anchors.items() if ids
+            ):
+                break
+
+        for username, result in results.items():
+            ids = result.scanned_status_ids
+            result.anchor_status_ids = ids[:20]
+            result.latest_status_id = ids[0] if ids else ""
+            anchor = matched_anchors.get(username)
+            result.reached_watermark = anchor is not None
+            if anchor is not None:
+                # Nitter may emit only the repost row for an otherwise unseen original.
+                result.complete = not any(
+                    int(status_id) > anchor
+                    for status_id in skipped_ids[username].difference(ids)
+                )
+            else:
+                result.complete = username in initial_users and bool(ids)
+        return results
 
     @staticmethod
     def _rotate_instances(instances: list[str], start_index: int = 0) -> list[str]:
@@ -1450,11 +1503,26 @@ class NitterClient:
             ):
                 plain_text_filtered += 1
                 continue
-            text = normalize_external_links(clean_text(description or title))
+            text = clean_text(description or title)
             if not text and not link:
                 continue
+            # Nitter prepends a marker to the title while rendering the original body.
+            repost_prefix = _RSS_REPOST_PREFIX_RE.match(title)
             tweets.append(
-                TweetItem(text=text or "(无正文)", link=link, published=published)
+                TweetItem(
+                    text=normalize_external_links(text) or "(无正文)",
+                    link=link,
+                    published=published,
+                    is_retweet=bool(
+                        repost_prefix
+                        and (
+                            not description
+                            or not " ".join(text.split()).startswith(
+                                " ".join(repost_prefix[0].split())
+                            )
+                        )
+                    ),
+                )
             )
             if limit > 0 and len(tweets) >= limit:
                 break

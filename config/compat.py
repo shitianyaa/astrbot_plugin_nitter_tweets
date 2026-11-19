@@ -106,6 +106,8 @@ CONFIG_GROUP_BY_KEY = {
     "html_max_pages": "basic",
     "html_request_timeout": "basic",
     "fetch_backend": "basic",
+    "http_proxy_scope": "basic",
+    "http_proxy_url": "basic",
     "send_image_attachments": "media",
     "send_video_attachments": "media",
     "media_quality": "media",
@@ -214,6 +216,16 @@ def config_get(config, key: str, default=None):
         if isinstance(group, dict) and key in group:
             return group.get(key, default)
     return _dict_get(config, key, default)
+
+
+def fetch_proxy_url(config, source: str) -> str | None:
+    """Return None for the existing route, or a URL to validate before fetching."""
+    scope = str(config_get(config, "http_proxy_scope", "off")).strip().lower()
+    if scope == "off" or (scope in {"api", "nitter"} and scope != source):
+        return None
+    if scope not in {"all", "api", "nitter"}:
+        return ""
+    return str(config_get(config, "http_proxy_url", "") or "")
 
 
 def parse_config_bool(value, default: bool = False) -> bool:

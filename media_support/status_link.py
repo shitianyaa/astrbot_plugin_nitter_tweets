@@ -6,18 +6,6 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-# Framework @filter.regex uses re.search; keep this intentionally loose.
-# Strict validation happens in extract_status_links().
-STATUS_LINK_REGEX = (
-    r"(?i)(?<![A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?"
-    r"(?:twitter\.com|x\.com)/\S*?status(?:es)?/\d+"
-)
-
-_STATUS_FIND_RE = re.compile(
-    r"(?i)(?<![A-Za-z0-9.-])(?:https?://)?(?:(?:www|mobile)\.)?(?:twitter\.com|x\.com)"
-    r"/\S*?status(?:es)?/\d+\S*"
-)
-
 _ALLOWED_HOSTS = frozenset(
     {
         "x.com",
@@ -25,14 +13,27 @@ _ALLOWED_HOSTS = frozenset(
         "twitter.com",
         "www.twitter.com",
         "mobile.twitter.com",
+        "fxtwitter.com",
+        "fixupx.com",
+        "twittpr.com",
     }
 )
+_HOST_PATTERN = "|".join(re.escape(host) for host in sorted(_ALLOWED_HOSTS))
+
+# AstrBot's regex filter looks for a candidate; parse_status_link validates it.
+STATUS_LINK_REGEX = (
+    r"""(?i)(?:https?://|(?<![^\s(\[{<"'=:：，|]))"""
+    rf"(?:{_HOST_PATTERN})/\S*?status(?:es)?/\d+"
+)
+# Consume other explicit authorities before looking for bare hosts in the same text.
+_STATUS_FIND_RE = re.compile(STATUS_LINK_REGEX + r"\S*|https?://[^\s/]+")
+
 _USER_RE = re.compile(r"^[A-Za-z0-9_]{1,30}$")
 _STATUS_PATH_RE = re.compile(
     r"/(?P<user>[A-Za-z0-9_]+)/(?:status|statuses)/(?P<id>\d+)(?:/|$)",
     re.IGNORECASE,
 )
-_TRAILING_PUNCT_RE = re.compile(r"[)\],.;!?'\"<>]+$")
+_TRAILING_PUNCT_RE = re.compile(r"[)\],.;!?'\"<>|：，]+$")
 
 
 @dataclass(frozen=True, slots=True)

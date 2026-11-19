@@ -9,6 +9,7 @@
    ========================================================================== */
 const configDirtyKeys = new Set();
 const configKeyGroup = new Map();
+const CONFIG_GROUP_FADE = "config-group-fade";
 
 /* 配置数据（重）加载后重建 key→分组 索引，并按新服务器值重算真脏集合 */
 function buildConfigIndex() {
@@ -212,7 +213,7 @@ function configNavItem(g) {
       if (state.configActive === g.key) return;
       state.configActive = g.key;
       state.configSearchPinned = true;   // 手动选组后不再被搜索自动跳走
-      renderConfigFields();
+      renderConfigFields({ animate: true });
     },
   }, [
     h("span", { text: g.name }),
@@ -246,12 +247,13 @@ function configFieldsChildren(active) {
 
 /* 导航高亮与右栏字段区的局部刷新：搜索输入、切组都走这里。
    不整树重建(会丢失焦点/打断输入法)，导航输入框与滚动位置原地保留。 */
-function renderConfigFields() {
+function renderConfigFields({ animate = false } = {}) {
   const root = els.configView;
   const navList = root?.querySelector(".config-nav-list");
   const head = root?.querySelector(".config-group-head");
   const scroll = root?.querySelector(".config-fields-scroll");
   if (!navList || !head || !scroll) { renderConfig(); return; }
+  scroll.getAnimations?.().find(animation => animation.id === CONFIG_GROUP_FADE)?.cancel();
   const groups = Array.isArray(state.config?.groups) ? state.config.groups : [];
   const active = groups.find(g => g.key === state.configActive);
   navList.replaceChildren(...configGroupsForNav(groups, state.configSearch.trim().toLowerCase()).map(configNavItem));
@@ -260,6 +262,11 @@ function renderConfigFields() {
   scroll.replaceChildren(...configFieldsChildren(active));
   // 切组/换搜索词后内容整体更换，滚动位置归零，避免停留在上个分组的深处
   scroll.scrollTop = 0;
+  if (animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    scroll.animate?.([{ opacity: 0.84 }, { opacity: 1 }], {
+      id: CONFIG_GROUP_FADE, duration: 140, easing: "ease-out",
+    });
+  }
 }
 
 // 搜索输入不整树重建(会丢失焦点/打断输入法):只刷新导航列表与右栏字段区。

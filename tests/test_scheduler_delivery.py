@@ -5,7 +5,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 from astrbot.api.all import MessageChain, Plain
@@ -3185,6 +3185,133 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             await scheduler.storage.get_group_scan_watermarks("global"),
             {"NASA": ["100"]},
+        )
+
+    async def _run_merged_html_check(self, *, merged_down=False, media_filter=False):
+        from media_support.client import SchedulerFetchResult
+
+        new_tweet = self._make_tweet("NASA", "102")
+        old_checkpoint = self._make_tweet("NASA", "100")
+        other_checkpoint = self._make_tweet("NASAHubble", "200")
+        html_tweets = [new_tweet]
+        if media_filter:
+            historical = self._make_tweet("NASA", "99")
+            for tweet in (new_tweet, historical):
+                tweet.media = [
+                    TweetMedia(
+                        "image",
+                        "https://example.test/media.jpg",
+                        path=Path("media.jpg"),
+                    )
+                ]
+            html_tweets.extend([old_checkpoint, historical])
+        nitter = types.SimpleNamespace(
+            fetch_merged_for_scheduler=AsyncMock(
+                return_value=(
+                    "https://nitter.test",
+                    {
+                        "NASA": SchedulerFetchResult([new_tweet], ["102"]),
+                        "NASAHubble": SchedulerFetchResult(
+                            [other_checkpoint], ["200"], complete=True
+                        ),
+                    },
+                )
+            ),
+            fetch_tweets_for_scheduler=AsyncMock(side_effect=RuntimeError("RSS down")),
+            fetch_user_html=Mock(
+                side_effect=lambda username, *args, **kwargs: (
+                    "https://nitter.test",
+                    html_tweets if username == "NASA" else [other_checkpoint],
+                )
+            ),
+        )
+        if merged_down:
+            nitter.fetch_merged_for_scheduler.side_effect = RuntimeError(
+                "Merged RSS down"
+            )
+        sender = _Sender()
+        scheduler = self._create_scheduler(
+            {
+                "basic": {"fetch_backend": "nitter"},
+                "schedule_enabled": True,
+                "filter_plain_text_enabled": media_filter,
+                "watch_users": ["NASA", "NASAHubble"],
+                "push_targets": ["telegram:FriendMessage:1"],
+                "send_target_interval": 0,
+                "send_user_interval": 0,
+            },
+            nitter=nitter,
+            sender=sender,
+        )
+        await scheduler.storage.migrate_and_sync(
+            scheduler._schedule_groups(log_invalid_targets=False)
+        )
+        for username, status_id in [("NASA", "100"), ("NASAHubble", "200")]:
+            await scheduler.storage.add_seen_ids("global", username, [status_id])
+            await scheduler.storage.set_scan_watermark("global", username, [status_id])
+
+        result = await scheduler.run_check(reason="test_merged_html")
+        return scheduler, nitter, sender, result
+
+    async def test_merged_partial_html_fallback_preserves_old_watermark(self):
+        scheduler, nitter, sender, result = await self._run_merged_html_check()
+        nitter.fetch_tweets_for_scheduler.assert_awaited_once()
+        self.assertEqual(
+            nitter.fetch_tweets_for_scheduler.await_args.args, ("NASA", ["100"])
+        )
+        nitter.fetch_user_html.assert_called_once()
+        self.assertEqual(result.source_statuses["NASA"], "incomplete")
+        self.assertEqual(sender.sent, [])
+        self.assertEqual(
+            await scheduler.storage.get_seen_ids("global", "NASA"), ["100"]
+        )
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["100"], "NASAHubble": ["200"]},
+        )
+
+    async def test_merged_failure_preserves_watermark_until_rss_recovers(self):
+        from media_support.client import SchedulerFetchResult
+
+        scheduler, nitter, sender, result = await self._run_merged_html_check(
+            merged_down=True
+        )
+        self.assertEqual(result.source_statuses["NASA"], "incomplete")
+        self.assertEqual(sender.sent, [])
+        self.assertEqual(
+            await scheduler.storage.get_group_scan_watermarks("global"),
+            {"NASA": ["100"], "NASAHubble": ["200"]},
+        )
+
+        async def recover_rss(username, watermark, **kwargs):
+            ids = ["102", "101", "100"] if username == "NASA" else ["200"]
+            self.assertEqual(watermark, ids[-1:])
+            return "https://nitter.test", SchedulerFetchResult(
+                [self._make_tweet(username, status_id) for status_id in ids],
+                ids,
+                complete=True,
+            )
+
+        nitter.fetch_tweets_for_scheduler.side_effect = recover_rss
+        result = await scheduler.run_check(reason="test_rss_recovered")
+        self.assertEqual(result.new_tweet_count, 2)
+        self.assertCountEqual(
+            [status_id for delivery in sender.sent for status_id in delivery[3]],
+            ["101", "102"],
+        )
+
+    async def test_merged_html_matches_checkpoint_before_media_filtering(self):
+        scheduler, nitter, sender, result = await self._run_merged_html_check(
+            media_filter=True
+        )
+        self.assertTrue(
+            nitter.fetch_tweets_for_scheduler.await_args.kwargs["skip_plain_text"]
+        )
+        self.assertEqual(result.new_tweet_count, 1)
+        self.assertEqual(sender.sent[-1][3], ["102"])
+        self.assertEqual(
+            (await scheduler.storage.get_group_scan_watermarks("global"))["NASA"],
+            ["102", "100", "99"],
         )
 
     async def test_ordinary_targets_send_per_account_but_qq_merges_at_end(self):

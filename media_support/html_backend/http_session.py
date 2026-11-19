@@ -18,22 +18,20 @@ from urllib.parse import urlparse
 from urllib.request import (
     HTTPCookieProcessor,
     HTTPSHandler,
-    ProxyHandler,
     Request,
-    build_opener,
 )
 
 try:
     from ..network import (
         BUILTIN_USER_AGENT,
-        SafeRedirectHandler,
+        build_http_opener,
         build_request_headers,
         validate_http_url,
     )
 except ImportError:  # pragma: no cover
     from media_support.network import (
         BUILTIN_USER_AGENT,
-        SafeRedirectHandler,
+        build_http_opener,
         build_request_headers,
         validate_http_url,
     )
@@ -146,7 +144,7 @@ class HttpSession:
         session_dir: Path | None = None,
         log: Callable[[str], None] | None = None,
     ):
-        self.proxy = (proxy or "").strip() or None
+        self.proxy = proxy
         self.timeout = timeout
         self.session_dir = Path(session_dir) if session_dir else None
         self.log = log or (lambda _m: None)
@@ -160,14 +158,11 @@ class HttpSession:
         self.opener = self._build_opener()
 
     def _build_opener(self):
-        handlers: list = [
-            SafeRedirectHandler(),
+        return build_http_opener(
             HTTPSHandler(context=ssl.create_default_context()),
             HTTPCookieProcessor(self.jar),
-        ]
-        if self.proxy:
-            handlers.insert(0, ProxyHandler({"http": self.proxy, "https": self.proxy}))
-        return build_opener(*handlers)
+            proxy_url=self.proxy,
+        )
 
     def request(
         self,

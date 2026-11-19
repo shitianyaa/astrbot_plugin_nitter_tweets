@@ -7,9 +7,17 @@ but leaves network trust to the administrator who configured the instance.
 
 from __future__ import annotations
 
+import ipaddress
 import re
+from urllib.error import URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import (
+    BaseHandler,
+    HTTPRedirectHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 
 BUILTIN_USER_AGENT = (
@@ -94,11 +102,61 @@ class SafeRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _safe_opener():
-    return build_opener(SafeRedirectHandler())
+class HttpProxyConfigError(URLError):
+    """An enabled fetch proxy is missing or invalid."""
 
 
-def safe_urlopen(request: Request | str, timeout: float):
+def _proxy_authority(url: str) -> str | None:
+    try:
+        value = validate_http_url(url)
+        parsed = urlsplit(value)
+        if parsed.scheme != "http" or parsed.path not in {"", "/"}:
+            return None
+        if "?" in value or "#" in value or parsed.netloc.endswith(":"):
+            return None
+        host = parsed.hostname
+        if host is None:
+            return None
+        if parsed.netloc.startswith("["):
+            if not re.fullmatch(r"\[[0-9a-fA-F:.]+\](?::[0-9]+)?", parsed.netloc):
+                return None
+            host = f"[{ipaddress.IPv6Address(host)}]"
+        else:
+            host = host.encode("idna").decode("ascii")
+            if not re.fullmatch(r"[a-zA-Z0-9_.-]+", host):
+                return None
+        # HTTPSConnection otherwise defaults the proxy hop to port 443.
+        return f"{host}:{parsed.port or 80}"
+    except (ValueError, UnicodeError):
+        return None
+
+
+class _ExplicitHttpProxy(ProxyHandler):
+    """Apply the configured route to every HTTP(S) hop, independent of NO_PROXY."""
+
+    def __init__(self, proxy_url: str):
+        super().__init__({})
+        self.authority = _proxy_authority(proxy_url)
+
+    def http_open(self, request: Request) -> None:
+        if self.authority is None:
+            raise HttpProxyConfigError(
+                "HTTP 代理配置无效，请检查代理范围和 http://host[:port] 地址"
+            )
+        request.set_proxy(self.authority, "http")
+
+    https_open = http_open
+
+
+def build_http_opener(*handlers: BaseHandler, proxy_url: str | None = None):
+    if proxy_url is not None:
+        handlers += (_ExplicitHttpProxy(proxy_url),)
+    return build_opener(SafeRedirectHandler(), *handlers)
+
+
+def safe_urlopen(
+    request: Request | str, timeout: float, *, proxy_url: str | None = None
+):
     """Open a syntactically valid HTTP(S) URL with redirect validation."""
     if not isinstance(request, Request):
         request = Request(str(getattr(request, "full_url", request)))
@@ -106,7 +164,7 @@ def safe_urlopen(request: Request | str, timeout: float):
         request.add_header(key, value)
 
     target = validate_http_url(request.full_url)
-    response = _safe_opener().open(request, timeout=timeout)
+    response = build_http_opener(proxy_url=proxy_url).open(request, timeout=timeout)
     get_url = getattr(response, "geturl", None)
     final_url = get_url() if callable(get_url) else target
     try:
@@ -119,6 +177,6 @@ def safe_urlopen(request: Request | str, timeout: float):
     return response
 
 
-def compat_urlopen(request, timeout):
+def compat_urlopen(request, timeout, *, proxy_url: str | None = None):
     """Compatibility entry point retained for existing monkeypatches."""
-    return safe_urlopen(request, timeout)
+    return safe_urlopen(request, timeout, proxy_url=proxy_url)

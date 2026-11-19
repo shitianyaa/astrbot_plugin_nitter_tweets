@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,6 +53,8 @@ def test_extract_dedupes_and_preserves_order():
     text = (
         "https://x.com/a/status/11 "
         "https://twitter.com/a/status/11?s=1 "
+        "https://fxtwitter.com/a/status/11 "
+        "fixupx.com/a/status/11 "
         "https://x.com/b/status/22"
     )
     links = extract_status_links(text)
@@ -59,19 +62,52 @@ def test_extract_dedupes_and_preserves_order():
 
 
 def test_extract_rejects_evil_hosts_and_bad_ids():
-    assert extract_status_links("https://evil-x.com/a/status/1") == []
-    assert extract_status_links("https://x.com.evil.test/a/status/1") == []
+    for host in (
+        "evil-x.com",
+        "x.com.evil.test",
+        "evil-fxtwitter.com",
+        "evil_fxtwitter.com",
+        "fixupx.com.evil.test",
+        "例fxtwitter.com",
+        "e\u0301fxtwitter.com",
+    ):
+        url = f"https://{host}/a/status/1"
+        assert not re.search(STATUS_LINK_REGEX, url)
+        assert extract_status_links(url) == []
+        assert parse_status_link(url) is None
     assert parse_status_link("https://x.com/a/status/not-a-number") is None
     assert parse_status_link("https://x.com/a/statuses/") is None
 
 
-def test_status_link_regex_matches_message():
-    import re
+@pytest.mark.parametrize(
+    "host", ["x.com", "fxtwitter.com", "fixupx.com", "twittpr.com"]
+)
+def test_status_link_regex_matches_message(host):
+    text = f"看这个 https://{host}/nasa/status/123/photo/1?s=20 啊"
+    assert re.search(STATUS_LINK_REGEX, text)
+    assert extract_status_links(text) == [
+        StatusLink("nasa", "123", "https://x.com/nasa/status/123")
+    ]
 
-    assert re.search(
-        STATUS_LINK_REGEX,
-        "看这个 https://x.com/ErroR_eroi/status/2081668333762687236 啊",
-    )
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "看这个 (fixupx.com/nasa/status/123)",
+        "链接：x.com/nasa/status/123",
+        "看这个，fxtwitter.com/nasa/status/123",
+        "|twittpr.com/nasa/status/123|",
+    ],
+)
+def test_bare_link_after_punctuation(text):
+    assert re.search(STATUS_LINK_REGEX, text)
+    assert extract_status_links(text) == [
+        StatusLink("nasa", "123", "https://x.com/nasa/status/123")
+    ]
+
+
+def test_extractor_does_not_treat_foreign_url_authority_as_bare_link():
+    assert extract_status_links("https://example，fxtwitter.com/nasa/status/123") == []
 
 
 def test_fx_media_only_empty_text_not_raw_dict():
@@ -272,7 +308,7 @@ def test_resolve_falls_back_across_sources(monkeypatch):
     link = StatusLink("u", "9", "https://x.com/u/status/9")
     calls: list[str] = []
 
-    def fake_fetch(url: str, *, timeout: float):
+    def fake_fetch(url: str, *, timeout: float, proxy_url=None):
         calls.append(url)
         if "fxtwitter" in url:
             raise StatusResolveError("fx down")
@@ -475,11 +511,15 @@ async def test_handler_no_valid_link_no_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handler_processes_and_sends(monkeypatch):
+@pytest.mark.parametrize("host", ["x.com", "fxtwitter.com"])
+async def test_handler_processes_and_sends(monkeypatch, host):
     plugin = _FakePlugin(enabled=True)
-    event = _make_event(text="看 https://x.com/ErroR_eroi/status/2081668333762687236")
+    event = _make_event(text=f"看 https://{host}/ErroR_eroi/status/2081668333762687236")
 
-    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
+        assert (
+            link.canonical_url == "https://x.com/ErroR_eroi/status/2081668333762687236"
+        )
         return TweetItem(
             text="#ブルアカ",
             link=link.canonical_url,
@@ -505,14 +545,16 @@ async def test_handler_processes_and_sends(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handler_forwards_media_quality_to_resolver(monkeypatch):
+async def test_handler_forwards_media_quality_and_proxy_to_resolver(monkeypatch):
     # status 渠道曾经完全绕过 media_quality，拿到的恒是 pbs 原图。
     plugin = _FakePlugin(enabled=True)
     plugin.config["media_quality"] = "low"
-    seen: list[str] = []
+    proxy = "http://proxy.example:8080"
+    plugin.config["basic"] = {"http_proxy_scope": "api", "http_proxy_url": proxy}
+    seen = []
 
-    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
-        seen.append(media_quality)
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
+        seen.append((media_quality, proxy_url))
         return TweetItem(text="t", link=link.canonical_url, published="t", media=[])
 
     monkeypatch.setattr(
@@ -520,7 +562,7 @@ async def test_handler_forwards_media_quality_to_resolver(monkeypatch):
         fake_resolve,
     )
     await plugin._cmd_link_preview_impl(_make_event(text="https://x.com/u/status/77"))
-    assert seen == ["low"]
+    assert seen == [("low", proxy)]
 
 
 @pytest.mark.asyncio
@@ -531,7 +573,7 @@ async def test_handler_caps_links_and_debounces(monkeypatch):
     event = _make_event(text=text)
     seen: list[str] = []
 
-    async def fake_resolve(link, *, timeout=20.0, media_quality="high"):
+    async def fake_resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
         seen.append(link.status_id)
         return TweetItem(text="t", link=link.canonical_url, published="t", media=[])
 
@@ -557,7 +599,7 @@ async def test_handler_deduplicates_concurrent_same_link(monkeypatch):
     release_resolve = asyncio.Event()
     calls = 0
 
-    async def resolve(link, *, timeout=20.0, media_quality="high"):
+    async def resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
         nonlocal calls
         calls += 1
         resolve_started.set()
@@ -589,7 +631,9 @@ async def test_handler_can_retry_after_resolve_failure(monkeypatch):
     link_text = "https://x.com/u/status/9"
     calls = 0
 
-    async def flaky_resolve(link, *, timeout=20.0, media_quality="high"):
+    async def flaky_resolve(
+        link, *, timeout=20.0, media_quality="high", proxy_url=None
+    ):
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -613,7 +657,7 @@ async def test_handler_can_retry_after_send_failure(monkeypatch):
     plugin.sender.send = AsyncMock(side_effect=[False, True])
     link_text = "https://x.com/u/status/9"
 
-    async def resolve(link, *, timeout=20.0, media_quality="high"):
+    async def resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
         return TweetItem(text="ok", link=link.canonical_url, published="t", media=[])
 
     monkeypatch.setattr(

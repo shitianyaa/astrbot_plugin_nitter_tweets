@@ -266,6 +266,43 @@ async def test_multi_blogger_partial_success_incremental_nitter_fallback():
 
 
 @pytest.mark.asyncio
+async def test_confirmed_rss_survives_html_without_its_watermark():
+    nitter = MagicMock()
+    nitter.fetch_tweets_for_scheduler = AsyncMock(
+        return_value=(
+            "http://nitter.test",
+            SchedulerFetchResult(
+                tweets=[],
+                scanned_status_ids=["102", "100"],
+                complete=True,
+                reached_watermark=True,
+            ),
+        )
+    )
+    nitter.fetch_user_html.return_value = (
+        "http://nitter.test",
+        [_make_tweet("alice", "103")],
+    )
+    runner = DummyRunner({"fetch_backend": "nitter"}, nitter)
+
+    result = await runner._fetch_group_user(
+        _blogger_group(["alice"]),
+        0,
+        "alice",
+        20,
+        False,
+        ["100"],
+        force_nitter=True,
+        require_html_watermark=True,
+    )
+
+    nitter.fetch_user_html.assert_called_once()
+    assert result.scan_complete
+    assert result.tweets == []
+    assert result.scanned_status_ids == ["102", "100"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["mix", "nitter"])
 @pytest.mark.parametrize("merged_failed", [False, True])
 @pytest.mark.parametrize("html_failed", [False, True])

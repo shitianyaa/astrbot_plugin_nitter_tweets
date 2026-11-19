@@ -45,6 +45,7 @@ _FORBIDDEN = {
     "__pycache__",
     "tests",
     "testignore",
+    "Temp",
     "docs",
     "scripts",
     "Progress",

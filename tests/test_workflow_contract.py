@@ -23,12 +23,30 @@ def test_release_workflow_is_fail_closed_and_pr_safe():
     assert workflow["permissions"] == {"contents": "read"}
     check = workflow["jobs"]["check"]
     release = workflow["jobs"]["release"]
+    assert check["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
     assert release["needs"] == "check"
     assert "refs/heads/main" in release["if"]
     assert "should_release" in release["if"]
     assert release["permissions"] == {"contents": "write"}
-    assert any("scripts/check.py" in step.get("run", "") for step in check["steps"])
-    assert not any("GH_TOKEN" in step.get("env", {}) for step in check["steps"])
+    gate = next(
+        step for step in check["steps"] if "scripts/check.py" in step.get("run", "")
+    )
+    assert gate["if"] == "steps.reuse.outputs.reused != 'true'"
+    (reuse,) = [step for step in check["steps"] if "GH_TOKEN" in step.get("env", {})]
+    assert reuse["id"] == "reuse"
+    assert reuse["if"] == "github.event_name == 'push'"
+    assert reuse["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert reuse["env"]["BEFORE_SHA"] == "${{ github.event.before }}"
+    record = next(
+        step
+        for step in check["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert record["if"] == "github.event_name == 'pull_request'"
     assert any(
         "scripts/release.py publish" in step.get("run", "") for step in release["steps"]
     )

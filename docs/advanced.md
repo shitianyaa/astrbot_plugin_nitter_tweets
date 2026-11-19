@@ -138,6 +138,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | --- | --- |
 | `instances` | 自建 Nitter 实例列表，同时用于 RSS、HTML 搜索和 List；默认空，必须由用户填写。 |
 | `fetch_backend` | 推文抓取后端策略，可选 `mix`（默认）、`nitter`、`fx`。控制博主与标签推文从 FxTwitter 还是自建 Nitter 拉取；详见下文[抓取后端策略](#抓取后端策略)。 |
+| `http_proxy_scope` / `http_proxy_url` | [HTTP 抓取代理](#http-抓取代理)，默认关闭。 |
 | `storage_backend` | 存储后端；运行期固定使用本地 SQLite 数据库。旧 KV 推送记录只会在启动迁移时自动导入，不再作为运行后端。 |
 | `request_timeout` | 单次 RSS 请求等待某个 Nitter 实例响应的最长秒数；同一实例初次请求失败后最多再重试 1 次，仍失败才尝试下一个实例。 |
 | `default_limit` | 手动 `/推文` 和 `/镜像测试` 未填写数量时的默认获取条数；填写数量时不额外截断。 |
@@ -147,6 +148,21 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 | `link_preview_arbiter_enabled` | 跨 Bot 仲裁，默认开启。OneBot 群聊中多个同类 Bot 只有赢的 Bot 解析回复，避免重复。通过 QQ 表情回应实现（会给消息贴永久表情标记）。单 Bot 环境可关闭以省去约 1s 延迟。协议移植自 [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser) 的 EmojiLikeArbiter。 |
 
 插件对 RSS、HTML/List、状态解析、媒体解析和下载统一使用内置浏览器请求标识；User-Agent 不再作为配置项，避免不同请求链路使用互相冲突的身份。各协议所需的 `Accept`、`Referer`、`Origin` 和 `Content-Type` 仍分别设置。
+
+#### HTTP 抓取代理
+
+在「基础设置」填写一个无认证的 `http://host[:port]` 地址，例如 `http://proxy:3128`，再选择代理范围。省略端口时使用 80，HTTPS 目标通过 CONNECT 建隧道并照常验证证书。
+
+| 范围 | 经插件代理的请求 |
+| --- | --- |
+| `off` 关闭（默认） | 沿用原有网络设置，包括系统或环境代理 |
+| `all` 全部抓取请求 | 推文解析 API、Nitter、xdown、媒体大小与时长探测、媒体下载 |
+| `api` 仅推文解析 API | FxTwitter、VxTwitter、Syndication，包括为补全媒体而发起的推文查询 |
+| `nitter` 仅 Nitter | 博主和 List RSS、HTML 时间线、搜索及实例诊断；媒体下载按媒体请求处理，包括 Nitter 的 `/pic/` |
+
+匹配范围的请求在重定向和重试时继续使用此代理，`NO_PROXY` 不会绕过它。代理失败或地址无效时，相应请求失败；既有的来源切换仍按各来源的配置路由。比如 `api` 下 FxTwitter 失败后，`mix` 模式仍可查询 Nitter。未匹配的请求沿用原有路由。
+
+只填写可信代理。把 Nitter 纳入代理范围时，代理所在的网络必须能访问你配置的实例，Docker 服务名和回环地址也从代理一侧解析和连接。平台发送、OneBot 协议端自行下载的媒体和翻译 Provider 仍由各自的网络设置处理。
 
 ### 后台检查与推送
 
@@ -272,7 +288,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 ### 推文链接自动解析
 
-- 配置 `auto_parse_tweet_links_enabled=true` 后，消息中的 `x.com` / `twitter.com` status 链接会被被动解析。
+- 配置 `auto_parse_tweet_links_enabled=true` 后，插件会自动解析消息中的 `x.com`、`twitter.com` 和 FxEmbed 分享链接（`fxtwitter.com`、`fixupx.com`、`twittpr.com`）。同一条推文的不同域名链接按推文 ID 去重。
 - 忽略 Bot 自己发送的消息；开关关闭或未识别到合法链接时不 `stop_event`。
 - 解析顺序：FxTwitter → VxTwitter → Syndication；媒体直链优先，缺失时 xdown 兜底。
 - 强制准备图片/视频（无视全局图视频开关与 `max_media_per_tweet`），仍受大小、时长、超时限制。
@@ -396,7 +412,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 ### 分组类型
 
-- `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。**多博主分组在转发过滤开启时会自动使用合并 RSS**（`/{user1,user2,...}/rss`）将多次请求压缩为按字符长度自动分批的少数几批，合并流以批次中水位最低（最旧）的博主为扫描边界，确保所有博主的新推文都被完整捕获；合并失败自动回退逐个请求。转发过滤关闭时跳过合并流改走逐个请求——合并流按作者拆分会丢弃批次外作者的转推，不支持保留转推。
+- `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。**多博主分组在转发过滤开启时自动使用合并 RSS**（`/{user1,user2,...}/rss`），按 URL 字符长度分批。每批最多扫描 3 页，逐个核对各账号上次的扫描基准。已有基准的账号命中后可直接使用合并结果，未命中的账号逐个补查；补查无法确认扫描完整时保留旧基准。合并请求失败时整批逐个补查，转发过滤关闭时直接逐个请求。
 - `group_type: tag`：只使用 `watch_queries`，通过 `instances` 的 HTML 搜索；seen 订阅源键为 `q:<casefold query>`。
 - `group_type: list`：只使用 `watch_lists`，优先走 `instances` 的 List RSS（`/i/lists/<id>/rss`，单次返回约 100 条，含 `Min-Id` 增量游标和 Redis 长缓存）；RSS 发生网络/HTTP 异常或扫描未完成时自动回退 HTML 翻页；扫描完成无新推文时不触发回退。seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。
