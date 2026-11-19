@@ -351,6 +351,64 @@ def test_merged_page_budget_only_rechecks_unconfirmed_account(
     )
 
 
+@pytest.mark.parametrize(
+    "case", ["repost only", "article headline", "original also present"]
+)
+def test_merged_rechecks_only_unrepresented_new_posts(monkeypatch, case):
+    path = "/alice,bob/rss"
+    skipped = (
+        ("bob", "1020", "Article preview", "RT by @alice: Article headline")
+        if case == "article headline"
+        else ("bob", "1020", "New post", "RT by @alice: New post")
+    )
+    original = ("bob", "1020", "New post")
+    checkpoint = ("bob", "1000", "Bob's checkpoint")
+    needs_recheck = case != "original also present"
+    requested = _mock_rss_pages(
+        monkeypatch,
+        {
+            (path, ""): (
+                [
+                    ("bob", "1100", "Newest"),
+                    skipped,
+                    *([] if needs_recheck else [original]),
+                    checkpoint,
+                    ("alice", "980", "Alice's checkpoint"),
+                    (
+                        "alice",
+                        "970",
+                        "Already historical",
+                        "RT by @bob: Already historical",
+                    ),
+                ],
+                "",
+            ),
+            ("/bob/rss", ""): ([("bob", "1100", "Newest"), original, checkpoint], ""),
+        },
+    )
+    runner = SchedulerFetchMixin()
+    runner.nitter = _client()
+    runner.config = {
+        "fetch_backend": "nitter",
+        "tweet_groups": [{"watch_users": ["alice", "bob"], "send_user_interval": 0}],
+    }
+    runner._log_verbose_info = MagicMock()
+    group = SchedulerConfigReader(runner.config, context=None).schedule_groups()[0]
+
+    alice, bob = asyncio.run(
+        runner._fetch_group_users(group, 20, False, {"alice": ["980"], "bob": ["1000"]})
+    )
+
+    assert requested == [(path, ""), *([("/bob/rss", "")] if needs_recheck else [])]
+    assert alice.host_attempts == ["合并RSS=成功"]
+    assert bob.host_attempts == (
+        ["合并RSS=该账号推文需补查", "单账号RSS=成功"]
+        if needs_recheck
+        else ["合并RSS=成功"]
+    )
+    assert bob.scan_complete and bob.scanned_status_ids == ["1100", "1020", "1000"]
+
+
 def test_fetch_merged_media_flag_appends_media_path(monkeypatch):
     """When media=True the merged URL gets a /media suffix."""
     client = _client()

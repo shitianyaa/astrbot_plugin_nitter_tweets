@@ -13,6 +13,20 @@ except ImportError:
 
 
 WORKFLOW = "release-from-changelog.yml"
+_GATE_INPUT_PATHS = (
+    ".github/",
+    "scripts/check.py",
+    "scripts/release.py",
+    "scripts/reuse_pr_gate.py",
+    "requirements-dev.txt",
+    "pytest.ini",
+    "pyproject.toml",
+    "ruff.toml",
+    ".ruff.toml",
+    "setup.cfg",
+    "tox.ini",
+    ":(glob)**/conftest.py",
+)
 
 
 def passing_pr_gate(github: GitHub, sha: str, tree: str) -> int | None:
@@ -56,19 +70,31 @@ def main() -> None:
     sha = os.environ["GITHUB_SHA"]
     if git(root, "rev-parse", "HEAD").decode().strip() != sha:
         raise ValueError("Checkout SHA differs from event SHA")
-    tree = git(root, "rev-parse", "HEAD^{tree}").decode().strip()
+    before_sha = os.environ.get("BEFORE_SHA")
+    run_id = None
     try:
-        run_id = passing_pr_gate(GitHub(os.environ["GITHUB_REPOSITORY"]), sha, tree)
+        if (
+            not before_sha
+            or before_sha == "0" * 40
+            or git(
+                root, "diff", "--name-only", before_sha, sha, "--", *_GATE_INPUT_PATHS
+            )
+        ):
+            print(
+                "PR gate inputs changed or the previous tree is unknown. Running the full gate."
+            )
+        else:
+            tree = git(root, "rev-parse", "HEAD^{tree}").decode().strip()
+            run_id = passing_pr_gate(GitHub(os.environ["GITHUB_REPOSITORY"]), sha, tree)
     except (
         KeyError,
         OSError,
         RuntimeError,
         TypeError,
         ValueError,
-        subprocess.TimeoutExpired,
+        subprocess.SubprocessError,
     ):
         print("Could not verify a passing PR gate. Running the full gate.")
-        run_id = None
     if run_id is None:
         print("No matching PR gate for this tree.")
     else:

@@ -1357,6 +1357,8 @@ class NitterClient:
         skip_plain_text: bool,
     ) -> dict[str, SchedulerFetchResult]:
         results = {username: SchedulerFetchResult([], []) for username in watermarks}
+        skipped_ids: dict[str, set[str]] = {username: set() for username in watermarks}
+        matched_anchors: dict[str, int] = {}
         usernames_by_author = {username.lower(): username for username in watermarks}
         initial_users = {
             username for username, ids in watermarks.items() if ids is None
@@ -1380,24 +1382,25 @@ class NitterClient:
             for tweet in page.tweets:
                 # Nitter links reposts to the original author and status ID.
                 username = usernames_by_author.get(tweet.username.lower())
-                if username is None or tweet.is_retweet:
+                status_id = tweet.status_id
+                if username is None or not status_id:
+                    continue
+                if tweet.is_retweet:
+                    skipped_ids[username].add(status_id)
                     continue
                 result = results[username]
                 if username in initial_users and (
                     page_number > 1 or len(result.scanned_status_ids) >= 20
                 ):
                     continue
-                status_id = tweet.status_id
-                if not status_id or status_id in result.scanned_status_ids:
+                if status_id in result.scanned_status_ids:
                     continue
                 result.scanned_status_ids.append(status_id)
                 result.tweets.append(tweet)
-                if status_id in anchors[username]:
-                    result.reached_watermark = True
+                if status_id in anchors[username] and username not in matched_anchors:
+                    matched_anchors[username] = int(status_id)
             if all(
-                results[username].reached_watermark
-                for username, ids in anchors.items()
-                if ids
+                username in matched_anchors for username, ids in anchors.items() if ids
             ):
                 break
 
@@ -1405,9 +1408,16 @@ class NitterClient:
             ids = result.scanned_status_ids
             result.anchor_status_ids = ids[:20]
             result.latest_status_id = ids[0] if ids else ""
-            result.complete = result.reached_watermark or (
-                username in initial_users and bool(ids)
-            )
+            anchor = matched_anchors.get(username)
+            result.reached_watermark = anchor is not None
+            if anchor is not None:
+                # Nitter may emit only the repost row for an otherwise unseen original.
+                result.complete = not any(
+                    int(status_id) > anchor
+                    for status_id in skipped_ids[username].difference(ids)
+                )
+            else:
+                result.complete = username in initial_users and bool(ids)
         return results
 
     @staticmethod

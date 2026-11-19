@@ -416,9 +416,14 @@ class SchedulerFetchMixin:
                         await asyncio.sleep(group.send_user_interval)
                     merged_attempt = merged_failure
                 else:
-                    fallback_reason = (
-                        "未命中该账号水位" if watermark is not None else "无该账号推文"
-                    )
+                    if scan_result and scan_result.reached_watermark:
+                        fallback_reason = "该账号推文需补查"
+                    else:
+                        fallback_reason = (
+                            "未命中该账号水位"
+                            if watermark is not None
+                            else "无该账号推文"
+                        )
                     safe_block_log(
                         "debug",
                         f"[NitterTweets] 合并 RSS {fallback_reason}，补查单账号 RSS/HTML: "
@@ -579,7 +584,10 @@ class SchedulerFetchMixin:
                         attempts=nitter_attempts,
                         required_watermark=html_watermark,
                     )
-                    if html_result is not None:
+                    if html_result is not None and (
+                        html_result.scan_complete
+                        or not (scan_result.complete and scan_result.scanned_status_ids)
+                    ):
                         return _with_fx_fallback(html_result)
                 return _with_fx_fallback(
                     UserFetchResult(

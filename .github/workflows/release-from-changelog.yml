@@ -42,6 +42,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: python3 scripts/reuse_pr_gate.py
       - uses: actions/setup-python@v5
         if: steps.reuse.outputs.reused != 'true'

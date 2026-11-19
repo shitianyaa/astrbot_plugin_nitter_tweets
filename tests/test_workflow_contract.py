@@ -40,6 +40,7 @@ def test_release_workflow_is_fail_closed_and_pr_safe():
     assert reuse["id"] == "reuse"
     assert reuse["if"] == "github.event_name == 'push'"
     assert reuse["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert reuse["env"]["BEFORE_SHA"] == "${{ github.event.before }}"
     record = next(
         step
         for step in check["steps"]

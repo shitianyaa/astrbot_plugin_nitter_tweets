@@ -90,12 +90,24 @@ def test_status_link_regex_matches_message(host):
     ]
 
 
-def test_bare_fx_link_after_punctuation():
-    text = "看这个 (fixupx.com/nasa/status/123)"
+@pytest.mark.parametrize(
+    "text",
+    [
+        "看这个 (fixupx.com/nasa/status/123)",
+        "链接：x.com/nasa/status/123",
+        "看这个，fxtwitter.com/nasa/status/123",
+        "|twittpr.com/nasa/status/123|",
+    ],
+)
+def test_bare_link_after_punctuation(text):
     assert re.search(STATUS_LINK_REGEX, text)
     assert extract_status_links(text) == [
         StatusLink("nasa", "123", "https://x.com/nasa/status/123")
     ]
+
+
+def test_extractor_does_not_treat_foreign_url_authority_as_bare_link():
+    assert extract_status_links("https://example，fxtwitter.com/nasa/status/123") == []
 
 
 def test_fx_media_only_empty_text_not_raw_dict():

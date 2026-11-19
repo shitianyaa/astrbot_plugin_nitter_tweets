@@ -95,13 +95,59 @@ def test_reuse_pr_gate_lookup_failure_falls_back(monkeypatch, tmp_path):
 
     monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
     monkeypatch.setenv("GITHUB_SHA", SHA)
+    monkeypatch.setenv("BEFORE_SHA", "b" * 40)
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr(reuse_pr_gate, "git", lambda *_: SHA.encode())
+    monkeypatch.setattr(
+        reuse_pr_gate,
+        "git",
+        lambda root, command, *_: b"" if command == "diff" else SHA.encode(),
+    )
     monkeypatch.setattr(reuse_pr_gate, "passing_pr_gate", unavailable)
 
     reuse_pr_gate.main()
 
     assert output.read_text(encoding="utf-8") == "reused=false\n"
+
+
+@pytest.mark.parametrize(
+    ("before", "changed_inputs", "expected"),
+    [
+        ("b" * 40, b"", "true"),
+        ("b" * 40, b".github/workflows/release-from-changelog.yml\n", "false"),
+        ("b" * 40, b"scripts/check.py\n", "false"),
+        ("b" * 40, b"requirements-dev.txt\n", "false"),
+        ("0" * 40, b"", "false"),
+        ("", b"", "false"),
+    ],
+)
+def test_reuse_pr_gate_requires_unchanged_inputs(
+    monkeypatch, tmp_path, before, changed_inputs, expected
+):
+    output = tmp_path / "github-output"
+    queried = []
+
+    def git(root, command, *args):
+        if command == "diff":
+            assert args[:4] == ("--name-only", before, SHA, "--")
+            assert {".github/", "scripts/check.py", "requirements-dev.txt"} <= set(args)
+            return changed_inputs
+        return SHA.encode()
+
+    def passing(github, sha, tree):
+        queried.append(sha)
+        return 4
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SHA", SHA)
+    monkeypatch.setenv("BEFORE_SHA", before)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(reuse_pr_gate, "git", git)
+    monkeypatch.setattr(reuse_pr_gate, "passing_pr_gate", passing)
+
+    reuse_pr_gate.main()
+
+    assert output.read_text(encoding="utf-8") == f"reused={expected}\n"
+    assert queried == ([SHA] if expected == "true" else [])
 
 
 def candidate(tmp_path):

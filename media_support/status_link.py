@@ -22,17 +22,18 @@ _HOST_PATTERN = "|".join(re.escape(host) for host in sorted(_ALLOWED_HOSTS))
 
 # AstrBot's regex filter looks for a candidate; parse_status_link validates it.
 STATUS_LINK_REGEX = (
-    r"""(?i)(?:https?://|(?<![^\s(\[{<"'=:]))"""
+    r"""(?i)(?:https?://|(?<![^\s(\[{<"'=:：，|]))"""
     rf"(?:{_HOST_PATTERN})/\S*?status(?:es)?/\d+"
 )
-_STATUS_FIND_RE = re.compile(STATUS_LINK_REGEX + r"\S*")
+# Consume other explicit authorities before looking for bare hosts in the same text.
+_STATUS_FIND_RE = re.compile(STATUS_LINK_REGEX + r"\S*|https?://[^\s/]+")
 
 _USER_RE = re.compile(r"^[A-Za-z0-9_]{1,30}$")
 _STATUS_PATH_RE = re.compile(
     r"/(?P<user>[A-Za-z0-9_]+)/(?:status|statuses)/(?P<id>\d+)(?:/|$)",
     re.IGNORECASE,
 )
-_TRAILING_PUNCT_RE = re.compile(r"[)\],.;!?'\"<>]+$")
+_TRAILING_PUNCT_RE = re.compile(r"[)\],.;!?'\"<>|：，]+$")
 
 
 @dataclass(frozen=True, slots=True)
