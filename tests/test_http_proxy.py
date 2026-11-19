@@ -199,6 +199,7 @@ def test_all_scope_proxies_api_xdown_range_and_download(monkeypatch, tmp_path):
                 self.reply(b"img")
 
         def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
             requests.append(("POST", self.path, self.headers.get("Content-Type")))
             self.reply(b'{"status": "empty"}')
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,6 +53,8 @@ def test_extract_dedupes_and_preserves_order():
     text = (
         "https://x.com/a/status/11 "
         "https://twitter.com/a/status/11?s=1 "
+        "https://fxtwitter.com/a/status/11 "
+        "fixupx.com/a/status/11 "
         "https://x.com/b/status/22"
     )
     links = extract_status_links(text)
@@ -59,19 +62,40 @@ def test_extract_dedupes_and_preserves_order():
 
 
 def test_extract_rejects_evil_hosts_and_bad_ids():
-    assert extract_status_links("https://evil-x.com/a/status/1") == []
-    assert extract_status_links("https://x.com.evil.test/a/status/1") == []
+    for host in (
+        "evil-x.com",
+        "x.com.evil.test",
+        "evil-fxtwitter.com",
+        "evil_fxtwitter.com",
+        "fixupx.com.evil.test",
+        "例fxtwitter.com",
+        "e\u0301fxtwitter.com",
+    ):
+        url = f"https://{host}/a/status/1"
+        assert not re.search(STATUS_LINK_REGEX, url)
+        assert extract_status_links(url) == []
+        assert parse_status_link(url) is None
     assert parse_status_link("https://x.com/a/status/not-a-number") is None
     assert parse_status_link("https://x.com/a/statuses/") is None
 
 
-def test_status_link_regex_matches_message():
-    import re
+@pytest.mark.parametrize(
+    "host", ["x.com", "fxtwitter.com", "fixupx.com", "twittpr.com"]
+)
+def test_status_link_regex_matches_message(host):
+    text = f"看这个 https://{host}/nasa/status/123/photo/1?s=20 啊"
+    assert re.search(STATUS_LINK_REGEX, text)
+    assert extract_status_links(text) == [
+        StatusLink("nasa", "123", "https://x.com/nasa/status/123")
+    ]
 
-    assert re.search(
-        STATUS_LINK_REGEX,
-        "看这个 https://x.com/ErroR_eroi/status/2081668333762687236 啊",
-    )
+
+def test_bare_fx_link_after_punctuation():
+    text = "看这个 (fixupx.com/nasa/status/123)"
+    assert re.search(STATUS_LINK_REGEX, text)
+    assert extract_status_links(text) == [
+        StatusLink("nasa", "123", "https://x.com/nasa/status/123")
+    ]
 
 
 def test_fx_media_only_empty_text_not_raw_dict():
@@ -475,11 +499,15 @@ async def test_handler_no_valid_link_no_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handler_processes_and_sends(monkeypatch):
+@pytest.mark.parametrize("host", ["x.com", "fxtwitter.com"])
+async def test_handler_processes_and_sends(monkeypatch, host):
     plugin = _FakePlugin(enabled=True)
-    event = _make_event(text="看 https://x.com/ErroR_eroi/status/2081668333762687236")
+    event = _make_event(text=f"看 https://{host}/ErroR_eroi/status/2081668333762687236")
 
     async def fake_resolve(link, *, timeout=20.0, media_quality="high", proxy_url=None):
+        assert (
+            link.canonical_url == "https://x.com/ErroR_eroi/status/2081668333762687236"
+        )
         return TweetItem(
             text="#ブルアカ",
             link=link.canonical_url,

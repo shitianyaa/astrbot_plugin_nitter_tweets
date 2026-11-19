@@ -84,7 +84,7 @@ AstrBot 插件 `astrbot_plugin_nitter_tweets`：Nitter RSS / HTML 搜索获取�
 ## RSS / HTML / 过滤（摘要）
 
 - 手动 `fetch_tweets` 默认不跳纯文本、保留转发；后台可用 `skip_plain_text` 与双层转发过滤。
-- 博主分组后台检查默认走合并 RSS 管道（`/{u1,u2,...}/rss`），按 URL 250 字符安全分批并以批次最旧水位为扫描边界；合并失败或用户想保留转推（`filter_reposts_enabled=false`）时自动回退/走逐个请求。
+- 博主分组后台检查按 URL 250 字符安全分批走合并 RSS（`/{u1,u2,...}/rss`），每批最多扫 3 页，分别确认账号水位。未确认水位的账号单独补查，合并请求失败则整批逐个补查。保留转推时直接逐个请求。
 - `filter_plain_text_enabled` 云端优化：Tag 搜索追加 `filter:media`；博主仅在转发过滤也开启时切 `/{user}/media/rss` 相册专线，否则保持主页 RSS 由本地过滤以保留转推；List 保持本地过滤。
 - 纯文本过滤只影响后台：作者上传媒体才算；`card_img`、Article 封面、**引用推媒体**不算。
 - 整页被滤但仍有 cursor 须翻页；真·空 feed 才 empty。
@@ -138,10 +138,10 @@ ruff format --check .
 - 日志与 HTML 页面分类：`tests/test_observability.py`、`tests/test_html_gate_detection.py`
 - 版式与订阅显示：`tests/test_tweet_layout.py`、`tests/test_subscription_display.py`
 - 媒体传输编码：`tests/test_media_transport.py`
-- 媒体画质三档：`tests/test_media_quality_preference.py`、`tests/test_prefer_pbs_quality.py`、`tests/test_status_media_quality.py`
+- 媒体画质三档：`tests/test_media_quality.py`；链接处理器向解析器传递画质：`tests/test_status_link_preview.py`
 - 发送拒收分类与图片失败提示：`tests/test_image_send_rejected_notice.py`
-- 媒体缓存文件名后缀：`tests/test_media_file_name.py`
-- 配置迁移标记 schema 声明：`tests/test_conf_schema_migration_keys.py`
+- 媒体缓存文件名后缀：`tests/test_media_utilities.py`
+- 配置迁移标记 schema 声明：`tests/test_config_contracts.py`
 - xdown token 直链与重试兜底：`tests/test_xdown_token_direct_url.py`
 - 视频大小预检降级：`tests/test_media_quality.py`
 - 改 `delivery/sender.py`、`scheduler/`、`config/compat.py` 或公共模型 → **全量 pytest**。

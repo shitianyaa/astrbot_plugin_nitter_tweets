@@ -288,7 +288,7 @@ AstrBot 设置界面已按“基础、媒体、AI 翻译、后台检查、推送
 
 ### 推文链接自动解析
 
-- 配置 `auto_parse_tweet_links_enabled=true` 后，消息中的 `x.com` / `twitter.com` status 链接会被被动解析。
+- 配置 `auto_parse_tweet_links_enabled=true` 后，插件会自动解析消息中的 `x.com`、`twitter.com` 和 FxEmbed 分享链接（`fxtwitter.com`、`fixupx.com`、`twittpr.com`）。同一条推文的不同域名链接按推文 ID 去重。
 - 忽略 Bot 自己发送的消息；开关关闭或未识别到合法链接时不 `stop_event`。
 - 解析顺序：FxTwitter → VxTwitter → Syndication；媒体直链优先，缺失时 xdown 兜底。
 - 强制准备图片/视频（无视全局图视频开关与 `max_media_per_tweet`），仍受大小、时长、超时限制。
@@ -412,7 +412,7 @@ python scripts\test_video_download.py https://x.com/user/status/123 --resolution
 
 ### 分组类型
 
-- `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。**多博主分组在转发过滤开启时会自动使用合并 RSS**（`/{user1,user2,...}/rss`）将多次请求压缩为按字符长度自动分批的少数几批，合并流以批次中水位最低（最旧）的博主为扫描边界，确保所有博主的新推文都被完整捕获；合并失败自动回退逐个请求。转发过滤关闭时跳过合并流改走逐个请求——合并流按作者拆分会丢弃批次外作者的转推，不支持保留转推。
+- `group_type: blogger`：只使用 `watch_users`；走 `instances` RSS，RSS 失败或无结果时自动尝试同一列表的 HTML 用户页。**多博主分组在转发过滤开启时自动使用合并 RSS**（`/{user1,user2,...}/rss`），按 URL 字符长度分批。每批最多扫描 3 页，逐个核对各账号上次的扫描基准。已有基准的账号命中后可直接使用合并结果，未命中的账号逐个补查；补查无法确认扫描完整时保留旧基准。合并请求失败时整批逐个补查，转发过滤关闭时直接逐个请求。
 - `group_type: tag`：只使用 `watch_queries`，通过 `instances` 的 HTML 搜索；seen 订阅源键为 `q:<casefold query>`。
 - `group_type: list`：只使用 `watch_lists`，优先走 `instances` 的 List RSS（`/i/lists/<id>/rss`，单次返回约 100 条，含 `Min-Id` 增量游标和 Redis 长缓存）；RSS 发生网络/HTTP 异常或扫描未完成时自动回退 HTML 翻页；扫描完成无新推文时不触发回退。seen 订阅源键为 `list:<id>`。List 不新增手动查询命令，继续使用 Dashboard 或配置管理。**创建时间较短的 List 需要过段时间才会被 Nitter 搜索到**，首轮空结果不一定是配置错误。
 - 创建后类型不可改（WebUI 锁定）；不要在同一分组混用 `watch_users`、`watch_queries` 与 `watch_lists`。

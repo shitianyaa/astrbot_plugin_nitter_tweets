@@ -47,7 +47,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 发送失败分类与提示 | `python -m pytest -q tests/test_image_send_rejected_notice.py` | 拒收签名识别、ENOENT 不误判、`rejected` 保持 retryable 以免跳过有损降级链、拒收判定排在 uncertain 之前、提示链接遵循 `omit_status_url`、仅媒体不补提示 |
 | 媒体画质与视频大小预检 | `python -m pytest -q tests/test_media_quality.py` | 图片三档、视频分辨率中位选择、大小预检降档、未知大小及 FxTwitter bitrate/时长估算 |
 | 媒体缓存文件名 | `python -m pytest -q tests/test_media_utilities.py` | 百分号编码尾巴、query `format` 脏值、无扩展名回落 |
-| 合并 RSS 管道、多博主批量、最低水位与回退 | `python -m pytest -q tests/test_merged_rss.py tests/test_scheduler_delivery.py` | 批次字符分批、最旧水位边界不漏推、转推过滤关闭时跳过合并走逐个请求、单博主空结果回退 |
+| 合并 RSS 管道、分账号水位与补查 | `python -m pytest -q tests/test_merged_rss.py tests/test_scheduler_delivery.py` | 批次字符分批、三页预算、部分结果补查、转推不会误命中水位、补查未完整时保留旧水位 |
 | Twitter List RSS 优先与增量游标 | `python -m pytest -q tests/test_list_rss.py tests/test_list_support.py` | List RSS 优先拉取、Min-Id 增量游标、Redis 缓存、失败自动回退 HTML 翻页 |
 | 搜索排序与热门流 | `python -m pytest -q tests/test_html_search_rotate.py tests/test_html_backend_query.py tests/test_backend_mode_switch.py tests/test_search_session_buffer.py` | latest 时间序、top 热门度排序、Tag 后台强制时间序、手动 session 缓存隔离 |
 | 配置契约、类型解析与订阅导入 | `python -m pytest -q tests/test_config_contracts.py` | schema、迁移、空分组与旧混合订阅保留、标签查询可逆存储 |

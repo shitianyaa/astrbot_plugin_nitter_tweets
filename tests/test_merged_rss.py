@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import asyncio
 from unittest.mock import MagicMock
+from urllib.parse import parse_qs, urlsplit
 
+import pytest
 
 from media_support.client import NitterClient
+from scheduler.config import SchedulerConfigReader
+from scheduler.runner_fetch import SchedulerFetchMixin
 
 
-def _rss_xml(tweets: list[tuple[str, str, str]]) -> bytes:
+def _rss_xml(tweets: list[tuple[str, str, str] | tuple[str, str, str, str]]) -> bytes:
     items = []
-    for author, sid, text in tweets:
+    for author, sid, text, *titles in tweets:
         link = f"https://x.com/{author}/status/{sid}"
+        title = titles[0] if titles else text
         items.append(
             "<item>"
-            f"<title>{text}</title>"
+            f"<title>{title}</title>"
             f"<description>{text}</description>"
             f"<link>{link}</link>"
             "<pubDate>Mon, 01 Jan 2026 00:00:00 GMT</pubDate>"
@@ -46,6 +51,24 @@ def _client() -> NitterClient:
         side_effect=lambda key: {"basic": {}, "performance": {}}.get(key, {})
     )
     return NitterClient(config)
+
+
+def _mock_rss_pages(monkeypatch, pages):
+    requested = []
+
+    def fake_urlopen(request, timeout, *, proxy_url=None):
+        url = urlsplit(request.full_url)
+        key = (url.path, parse_qs(url.query).get("cursor", [""])[0])
+        requested.append(key)
+        tweets, cursor = pages[key]
+        response = MagicMock()
+        response.headers = {"Min-Id": cursor}
+        response.read.return_value = _rss_xml(tweets)
+        response.__enter__.return_value = response
+        return response
+
+    monkeypatch.setattr("media_support.client.compat_urlopen", fake_urlopen)
+    return requested
 
 
 def test_merged_rss_url_construction():
@@ -139,7 +162,7 @@ def test_fetch_merged_splits_by_author(monkeypatch):
 
 
 def test_fetch_merged_with_watermark(monkeypatch):
-    """Merged scan uses the oldest user's watermark as the boundary."""
+    """A merged page can confirm both users' watermarks."""
     client = _client()
     # First page has tweets, watermark ID is in the page
     tweets_data = [
@@ -171,9 +194,8 @@ def test_fetch_merged_with_watermark(monkeypatch):
     # The scan should have found the boundary and stopped
     alice_result = results["alice"]
     bob_result = results["bob"]
-    # Both users have tweets
-    assert len(alice_result.tweets) >= 1
-    assert len(bob_result.tweets) >= 1
+    assert alice_result.complete and alice_result.reached_watermark
+    assert bob_result.complete and bob_result.reached_watermark
 
 
 def test_fetch_merged_empty_feed(monkeypatch):
@@ -200,54 +222,133 @@ def test_fetch_merged_empty_feed(monkeypatch):
 
 
 def test_fetch_merged_boundary_collision(monkeypatch):
-    """Divergent watermarks: scan must reach the OLDEST boundary, not stop
-    at the freshest, so tweets between the two watermarks are not lost.
-
-    Scenario:
-      alice watermark 1005 (active, higher)
-      bob   watermark 1003 (slightly older)
-      bob has a new tweet 1004 that sits BETWEEN the two watermarks in the
-      merged feed.
-
-    With the old union approach the scan would hit 1005 (alice's) first
-    and truncate, silently dropping bob's 1004.  The fix passes only the
-    oldest user's watermark so the scan continues past 1005 to 1003.
-    """
+    """Scan past Alice's watermark until Bob's own watermark is confirmed."""
     client = _client()
-    tweets_data = [
-        ("alice", "1006", "alice new"),
-        ("alice", "1005", "alice watermark"),
-        ("bob", "1004", "bob new between watermarks"),
-        ("bob", "1003", "bob watermark"),
-    ]
-    xml = _rss_xml(tweets_data)
-
-    def fake_urlopen(request, timeout, *, proxy_url=None):
-        resp = MagicMock()
-        resp.headers = {"Min-Id": ""}
-        resp.read = MagicMock(return_value=xml)
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-        return resp
-
-    monkeypatch.setattr("media_support.client.compat_urlopen", fake_urlopen)
+    path = "/alice,bob/rss"
+    bob_checkpoint = "RT by @alice: Bob's original text"
+    requested = _mock_rss_pages(
+        monkeypatch,
+        {
+            (path, ""): (
+                [
+                    ("alice", "1006", "alice new"),
+                    ("bob", "1003", bob_checkpoint, f"RT by @alice: {bob_checkpoint}"),
+                    ("alice", "1005", "alice watermark"),
+                ],
+                "2",
+            ),
+            (path, "2"): (
+                [("bob", "1004", "bob new"), ("bob", "1003", bob_checkpoint)],
+                "3",
+            ),
+        },
+    )
 
     watermarks = {
         "alice": ["1005"],
         "bob": ["1003"],
     }
 
-    instance, results = asyncio.run(
+    _, results = asyncio.run(
         client.fetch_merged_for_scheduler(["alice", "bob"], watermarks)
     )
 
-    # bob's tweet 1004 (between the two watermarks) must NOT be truncated
-    bob_ids = [t.status_id for t in results["bob"].tweets]
-    assert "1004" in bob_ids, f"bob's 1004 was lost: {bob_ids}"
+    assert requested == [(path, ""), (path, "2")]
+    assert results["alice"].complete
+    assert results["alice"].scanned_status_ids == ["1006", "1005"]
+    assert results["bob"].complete
+    assert results["bob"].scanned_status_ids == ["1004", "1003"]
 
-    # alice's new tweet is also captured
-    alice_ids = [t.status_id for t in results["alice"].tweets]
-    assert "1006" in alice_ids
+
+def test_merged_first_scan_and_explicit_empty_watermark(monkeypatch):
+    path = "/alice,bob,carol/rss"
+    requested = _mock_rss_pages(
+        monkeypatch,
+        {
+            (path, ""): (
+                [("bob", "1200", "first scan"), ("carol", "1100", "old source")],
+                "2",
+            ),
+            (path, "2"): (
+                [("bob", "1050", "older post"), ("alice", "1000", "alice checkpoint")],
+                "3",
+            ),
+        },
+    )
+
+    _, results = asyncio.run(
+        _client().fetch_merged_for_scheduler(
+            ["alice", "bob", "carol"], {"alice": ["1000"], "carol": []}
+        )
+    )
+
+    assert requested == [(path, ""), (path, "2")]
+    assert results["alice"].reached_watermark
+    assert results["bob"].complete and not results["bob"].reached_watermark
+    assert results["bob"].scanned_status_ids == ["1200"]
+    assert not results["carol"].complete
+
+
+@pytest.mark.parametrize("resumed_posting", [False, True])
+def test_merged_page_budget_only_rechecks_unconfirmed_account(
+    monkeypatch, resumed_posting
+):
+    path = "/alice,bob/rss"
+    bob_new = [("bob", "1100", "newer post")] if resumed_posting else []
+    bob_checkpoint = [("bob", "900", "old checkpoint")]
+    requested = _mock_rss_pages(
+        monkeypatch,
+        {
+            (path, ""): (
+                bob_new
+                + [
+                    ("alice", "1006", "RT by @bob: written by Alice"),
+                    ("bob", "900", "old checkpoint", "RT by @alice: old checkpoint"),
+                    ("alice", "1005", "alice watermark"),
+                ],
+                "2",
+            ),
+            (path, "2"): ([("alice", "1004", "alice old")], "3"),
+            (path, "3"): ([("alice", "1003", "alice older")], "4"),
+            ("/bob/rss", ""): (
+                bob_new,
+                "2",
+            )
+            if resumed_posting
+            else (bob_checkpoint, ""),
+            ("/bob/rss", "2"): (
+                [("bob", "950", "new post outside budget")] + bob_checkpoint,
+                "",
+            ),
+        },
+    )
+    runner = SchedulerFetchMixin()
+    runner.nitter = _client()
+    runner.config = {
+        "fetch_backend": "nitter",
+        "tweet_groups": [{"watch_users": ["alice", "bob"], "send_user_interval": 0}],
+    }
+    runner._log_verbose_info = MagicMock()
+    group = SchedulerConfigReader(runner.config, context=None).schedule_groups()[0]
+
+    alice, bob = asyncio.run(
+        runner._fetch_group_users(group, 20, False, {"alice": ["1005"], "bob": ["900"]})
+    )
+
+    assert requested == [
+        (path, ""),
+        (path, "2"),
+        (path, "3"),
+        ("/bob/rss", ""),
+        *([("/bob/rss", "2")] if resumed_posting else []),
+    ]
+    assert alice.scan_complete and alice.host_attempts == ["合并RSS=成功"]
+    assert alice.tweets[0].status_id == "1006"
+    assert bob.scan_complete
+    assert bob.host_attempts == ["合并RSS=未命中该账号水位", "单账号RSS=成功"]
+    assert bob.scanned_status_ids == (
+        ["1100", "950", "900"] if resumed_posting else ["900"]
+    )
 
 
 def test_fetch_merged_media_flag_appends_media_path(monkeypatch):
