@@ -409,6 +409,8 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         group_id: str,
         username: str,
         status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """添加已见推文 ID（批量）."""
         assert self.conn is not None
@@ -424,13 +426,25 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）。输入列表是
         # newest-first，因此反向写入，让同秒记录按 rowid DESC 读取时仍
         # 保持原顺序，同时保证后续调用写入的新 ID 不会被限额清理误删。
+        # 基线和配额跳过也复用此入口，重写时保留已有 handled 标记。
         self.conn.executemany(
             """
-            REPLACE INTO seen_tweets (group_id, username, status_id, seen_at)
-            VALUES (?, ?, ?, ?)
+            REPLACE INTO seen_tweets (group_id, username, status_id, seen_at, handled)
+            VALUES (?, ?, ?, ?, MAX(?, COALESCE(
+                (SELECT handled FROM seen_tweets
+                 WHERE group_id = ? AND username = ? AND status_id = ?), 0)))
             """,
             [
-                (normalized_group_id, normalized_username, sid, now)
+                (
+                    normalized_group_id,
+                    normalized_username,
+                    sid,
+                    now,
+                    int(handled),
+                    normalized_group_id,
+                    normalized_username,
+                    sid,
+                )
                 for sid in reversed(status_ids)
                 if sid
             ],
@@ -456,6 +470,19 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 SEEN_LIMIT_PER_USER,
             ),
         )
+
+    def get_group_handled_seen_map(self, group_id: str) -> dict[str, list[str]]:
+        """Return only seen IDs that reached a terminal processing outcome."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            "SELECT username, status_id FROM seen_tweets "
+            "WHERE group_id = ? AND handled = 1",
+            (normalize_stable_group_id(group_id),),
+        ).fetchall()
+        handled_map: dict[str, list[str]] = {}
+        for row in rows:
+            handled_map.setdefault(str(row[0]), []).append(str(row[1]))
+        return handled_map
 
     def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
         """获取指定分组的所有用户 seen map."""
@@ -548,9 +575,11 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         group_id: str,
         username: str,
         status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """添加已见推文 ID（批量）."""
-        self._add_seen_ids_unlocked(group_id, username, status_ids)
+        self._add_seen_ids_unlocked(group_id, username, status_ids, handled=handled)
 
     def set_scan_watermark(
         self,
@@ -1121,6 +1150,7 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "get_group_handled_seen_map",
     "get_group_scan_watermarks",
     "get_pending_baselines",
     "set_scan_watermark",

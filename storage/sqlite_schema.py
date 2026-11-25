@@ -18,7 +18,7 @@ except ImportError:
     from shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SCAN_ANCHOR_LIMIT = 20
 
 PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
@@ -135,6 +135,7 @@ class SQLiteSchemaMixin:
                     username TEXT NOT NULL,
                     status_id TEXT NOT NULL,
                     seen_at INTEGER NOT NULL,
+                    handled INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (group_id, username, status_id)
                 )
             """)
@@ -169,6 +170,8 @@ class SQLiteSchemaMixin:
             self._migrate_schema_v8(cursor)
         if stored_version < 9:
             self._migrate_schema_v9(cursor)
+        if stored_version < 10:
+            self._migrate_schema_v10(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -248,6 +251,16 @@ class SQLiteSchemaMixin:
         cursor.execute("DROP TABLE scan_watermarks_v8")
         self._create_scan_watermarks_table(cursor)
         self._backfill_scan_watermarks(cursor)
+
+    def _migrate_schema_v10(self, cursor: sqlite3.Cursor) -> None:
+        # Old seen rows also contain baseline/over-limit IDs. Keep them scoped
+        # to their source because their terminal handling cannot be inferred.
+        if self._table_exists(cursor, "seen_tweets") and "handled" not in {
+            row[1] for row in cursor.execute("PRAGMA table_info(seen_tweets)")
+        }:
+            cursor.execute(
+                "ALTER TABLE seen_tweets ADD COLUMN handled INTEGER NOT NULL DEFAULT 0"
+            )
 
     @staticmethod
     def _create_scan_watermarks_table(cursor: sqlite3.Cursor) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from itertools import product
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -594,6 +595,40 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 await scheduler.storage.get_seen_ids("lists1", "list:12345")
             )
         )
+        handled = await scheduler.storage.get_group_handled_seen_map("lists1")
+        self.assertEqual(set(handled), {"list:12345", "list:67890"})
+        self.assertEqual(set(handled["list:12345"]), {"105", "104"})
+        self.assertEqual(set(handled["list:67890"]), {"205", "204"})
+
+    async def test_over_limit_skip_is_shared_with_source_that_recovers_later(self):
+        config = self._config()
+        config["tweet_groups"][0].update(
+            watch_lists=["12345", "67890"], max_tweets_per_check=1
+        )
+        first = [self._tweet(i) for i in ("405", "305", "100")]
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                ("https://list.test", [self._tweet("200")]),
+                ("https://list.test", first),
+                RuntimeError("source unavailable"),
+                ("https://list.test", first),
+                ("https://list.test", [self._tweet(i) for i in ("305", "200")]),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, config=config, sender=sender)
+        await scheduler.run_check(group_name="lists1")
+        limited = await scheduler.run_check(group_name="lists1")
+        self.assertEqual(limited.limit_skipped_count, 1)
+        scheduler.storage.close()
+        recovered = await scheduler.run_check(group_name="lists1")
+        self.assertEqual(recovered.selected_tweet_count, 0)
+        self.assertEqual([sid for item in sender.sent for sid in item[3]], ["405"])
+        self.assertEqual(scheduler.media.attached, 1)
+        self.assertIn(
+            "305", await scheduler.storage.get_seen_ids("lists1", "list:67890")
+        )
 
     async def test_overlapping_lists_share_unique_slots_and_retry_failed_owner(self):
         for limit, fail_owner in ((0, False), (2, False), (2, True)):
@@ -714,6 +749,67 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 await scheduler.run_check(group_name="lists1")
                 self.assertEqual(sender.sent[-1][3], ["102"])
 
+    async def test_new_source_baseline_does_not_handle_existing_source_candidate(self):
+        for baseline_first, new_source_first, fail_prepare in product(
+            (False, True), repeat=3
+        ):
+            with self.subTest(
+                baseline_first=baseline_first,
+                new_source_first=new_source_first,
+                fail_prepare=fail_prepare,
+            ):
+                config = self._config()
+                config["tweet_groups"][0]["max_tweets_per_check"] = 1
+                current = [self._tweet(i) for i in ("305", "100")]
+                seed = [self._tweet("305")]
+                initial_existing = [self._tweet("100")]
+                added_round = initial_existing if baseline_first else current
+                pair = [seed, added_round] if new_source_first else [added_round, seed]
+                retry_pair = [seed, current] if new_source_first else [current, seed]
+                pages = [initial_existing, *pair]
+                if baseline_first:
+                    pages.extend(retry_pair)
+                pages.extend(retry_pair)
+                backend = _ListBackend(
+                    [("https://list.test", tweets) for tweets in pages]
+                )
+                sender = base._Sender()
+                scheduler = self._create_scheduler(
+                    backend, config=config, sender=sender
+                )
+                await scheduler.storage.clear_seen_records("lists1")
+                await scheduler.run_check(group_name="lists1")
+                config["tweet_groups"][0]["watch_lists"] = (
+                    ["67890", "12345"] if new_source_first else ["12345", "67890"]
+                )
+                if baseline_first:
+                    await scheduler.run_check(group_name="lists1")
+                    scheduler.storage.close()
+                if fail_prepare:
+                    with patch.object(
+                        scheduler,
+                        "_prepare_immediate_batch",
+                        side_effect=RuntimeError("preparation failed"),
+                    ):
+                        result = await scheduler.run_check(group_name="lists1")
+                    self.assertEqual(result.selected_tweet_count, 1)
+                    self.assertEqual(sender.sent, [])
+                    self.assertNotIn(
+                        "305",
+                        await scheduler.storage.get_seen_ids("lists1", "list:12345"),
+                    )
+                    self.assertEqual(
+                        await scheduler.storage.get_group_handled_seen_map("lists1"),
+                        {},
+                    )
+                    scheduler.storage.close()
+                result = await scheduler.run_check(group_name="lists1")
+                self.assertEqual(result.selected_tweet_count, 1)
+                self.assertEqual(
+                    [sid for item in sender.sent for sid in item[3]], ["305"]
+                )
+                self.assertEqual(scheduler.media.attached, 1)
+
     async def test_duplicate_seen_write_failure_does_not_redeliver_owner(self):
         config = self._config()
         config["tweet_groups"][0].update(
@@ -736,17 +832,34 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         await scheduler.run_check(group_name="lists1")
         store = scheduler._store_incremental_seen_ids
 
-        async def fail_duplicate(group_id, username, status_ids, seen_map):
+        async def fail_duplicate(
+            group_id, username, status_ids, seen_map, *, handled=False
+        ):
             if username == "list:67890" and "305" in status_ids:
                 raise RuntimeError("duplicate seen write failed")
-            await store(group_id, username, status_ids, seen_map)
+            await store(group_id, username, status_ids, seen_map, handled=handled)
 
-        with patch.object(
-            scheduler, "_store_incremental_seen_ids", side_effect=fail_duplicate
+        with (
+            patch.object(
+                scheduler, "_store_incremental_seen_ids", side_effect=fail_duplicate
+            ),
+            patch.object(
+                scheduler.storage,
+                "record_push_history",
+                side_effect=RuntimeError("history unavailable"),
+            ),
         ):
             with self.assertRaisesRegex(RuntimeError, "duplicate seen write failed"):
                 await scheduler.run_check(group_name="lists1")
         self.assertEqual([sid for item in sender.sent for sid in item[3]], ["305"])
+        self.assertEqual(
+            await scheduler.storage.get_group_handled_seen_map("lists1"),
+            {"list:12345": ["305"]},
+        )
+        self.assertNotIn(
+            "305", await scheduler.storage.get_seen_ids("lists1", "list:67890")
+        )
+        scheduler.storage.close()
         await scheduler.run_check(group_name="lists1")
         self.assertEqual([sid for item in sender.sent for sid in item[3]], ["305"])
         self.assertIn(

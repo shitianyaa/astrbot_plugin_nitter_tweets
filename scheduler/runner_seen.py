@@ -23,6 +23,8 @@ class SchedulerSeenMixin:
         username: str,
         status_ids: list[str],
         seen_map: dict[str, list[str]],
+        *,
+        handled: bool = False,
     ) -> None:
         ids = [str(item) for item in status_ids if item]
         if not ids:
@@ -30,8 +32,8 @@ class SchedulerSeenMixin:
         current = seen_map.get(username, [])
         if not isinstance(current, list):
             current = []
+        await self.storage.add_seen_ids(group_id, username, ids, handled=handled)
         seen_map[username] = self._merge_seen_ids(ids, current)
-        await self.storage.add_seen_ids(group_id, username, ids)
 
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID

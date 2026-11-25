@@ -419,8 +419,8 @@ def test_no_watch_queries_has_chinese_label():
         reason="manual",
         skipped_reason="no_watch_queries",
         group_id="tag1",
-        group_name="标签组",
+        group_name="group-a",
     )
     msg = result.format_message()
     assert "no_watch_queries" not in msg
-    assert "watch_queries" in msg or "搜索订阅" in msg or "标签" in msg
+    assert "检查跳过: 未配置 watch_queries" in msg.splitlines()

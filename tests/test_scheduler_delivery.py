@@ -3432,6 +3432,9 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media.attached_ids, ["102", "101"])
         self.assertEqual(media.cleaned_ids, ["102", "101"])
         self.assertEqual(
+            await scheduler.storage.get_group_handled_seen_map("global"), {}
+        )
+        self.assertEqual(
             await scheduler.storage.get_seen_ids("global", "NASA"),
             ["100"],
         )
@@ -3531,6 +3534,10 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         first = await scheduler.run_check(reason="partial_target_first")
         self.assertEqual(first.pushed_target_successes, 1)
         self.assertIn("101", await scheduler.storage.get_seen_ids("global", "NASA"))
+        self.assertEqual(
+            await scheduler.storage.get_group_handled_seen_map("global"),
+            {"NASA": ["101"]},
+        )
 
         sender.failed_targets.clear()
         second = await scheduler.run_check(reason="partial_target_retry")

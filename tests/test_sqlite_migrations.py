@@ -13,6 +13,54 @@ from storage.seen import SeenStore
 
 
 class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_v10_migration_keeps_legacy_seen_scoped_and_preserves_handled_ids(
+        self,
+    ):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.executescript("""
+                    CREATE TABLE meta (
+                        key TEXT PRIMARY KEY, value TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    INSERT INTO meta VALUES ('schema_version', '9', 1);
+                    CREATE TABLE seen_tweets (
+                        group_id TEXT NOT NULL, username TEXT NOT NULL,
+                        status_id TEXT NOT NULL, seen_at INTEGER NOT NULL,
+                        PRIMARY KEY (group_id, username, status_id)
+                    );
+                    INSERT INTO seen_tweets VALUES ('g', 'list:12345', '100', 1);
+                """)
+            finally:
+                connection.close()
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                self.assertEqual(storage.get_meta("schema_version"), "10")
+                self.assertEqual(storage.get_seen_ids("g", "list:12345"), ["100"])
+                self.assertEqual(storage.get_group_handled_seen_map("g"), {})
+                storage.add_seen_ids("g", "list:12345", ["305"], handled=True)
+                # Baseline rewrites preserve real handling evidence and the
+                # newest-first ordering, without promoting the other seed IDs.
+                storage.put_group_seen_map_and_scan_watermark(
+                    "g", "list:12345", {"list:12345": ["306", "305", "100"]}, ["306"]
+                )
+                storage.close()
+                await storage.connect()
+                self.assertEqual(
+                    storage.get_seen_ids("g", "list:12345"), ["306", "305", "100"]
+                )
+                self.assertEqual(
+                    storage.get_group_handled_seen_map("g"), {"list:12345": ["305"]}
+                )
+                self.assertEqual(storage.get_group_handled_seen_map("other"), {})
+                storage.clear_seen_tweets("g")
+                self.assertEqual(storage.get_group_handled_seen_map("g"), {})
+            finally:
+                storage.close()
+
     async def test_legacy_tag_seen_key_survives_kv_normalization(self):
         class Owner:
             async def get_kv_data(self, key, default):
@@ -195,7 +243,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 {"NASA": ["200", "99"], "OpenAI": []},
             )
             self.assertIsNotNone(watermark_table)
-            self.assertEqual(version, "9")
+            self.assertEqual(version, "10")
 
     async def test_tag_seen_key_is_active_subscription_for_orphan_cleanup(self):
         with TemporaryDirectory() as temp_dir:
@@ -257,7 +305,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
             await storage.connect()
             try:
                 self.assertIsNotNone(storage.conn)
-                self.assertEqual(storage.get_meta("schema_version"), "9")
+                self.assertEqual(storage.get_meta("schema_version"), "10")
             finally:
                 storage.close()
 
@@ -314,7 +362,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 watermarks,
                 {"NASA": ["100"], "OpenAI": []},
             )
-            self.assertEqual(version, "9")
+            self.assertEqual(version, "10")
 
 
 if __name__ == "__main__":

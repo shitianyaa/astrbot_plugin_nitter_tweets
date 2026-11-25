@@ -298,6 +298,7 @@ class SchedulerPrepareMixin:
                     batch.username,
                     [status_id],
                     seen_map,
+                    handled=True,
                 )
             self._log_verbose_info(
                 "[NitterTweets] 仅媒体推文按全局媒体策略跳过: "

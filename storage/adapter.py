@@ -137,12 +137,28 @@ class StorageAdapter:
         )
 
     async def add_seen_ids(
-        self, group_id: str, username: str, status_ids: list[str]
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """Add seen IDs for a group/user pair."""
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
-            sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
+            sqlite.add_seen_ids,
+            self._storage_group_id(group_id),
+            username,
+            status_ids,
+            handled=handled,
+        )
+
+    async def get_group_handled_seen_map(self, group_id: str) -> dict[str, list[str]]:
+        """Get terminally handled seen IDs for cross-source recovery."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_group_handled_seen_map, self._storage_group_id(group_id)
         )
 
     async def apply_baseline_reset(self, group_id: str, token: str) -> None:

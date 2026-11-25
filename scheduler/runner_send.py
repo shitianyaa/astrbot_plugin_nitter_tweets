@@ -211,6 +211,7 @@ class SchedulerSendMixin:
                         batch.username,
                         [batch.tweets[0].status_id],
                         seen_map,
+                        handled=True,
                     )
                 immediate_batches_sent += 1
         finally:

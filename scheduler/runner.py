@@ -1137,12 +1137,16 @@ class NitterTweetScheduler(
         seen_map: dict[str, list[str]],
         result: ScheduledCheckResult,
     ) -> dict[str, str]:
-        # A previous interrupted check may have committed the owner before its
-        # other sources. Repair those copies without delivering the post again.
+        # Baselines stay source-scoped. Terminal handling can repair copies
+        # left by an interrupted check without delivering the post again.
+        handled_getter = getattr(self.storage, "get_group_handled_seen_map", None)
+        handled_map = (
+            await handled_getter(group.group_id) if callable(handled_getter) else {}
+        )
         handled_ids = {
             status_id
             for username in group.account_keys
-            for status_id in seen_map.get(username, [])
+            for status_id in handled_map.get(username, [])
         }
         for batch in batches:
             handled_copies = [
@@ -1151,7 +1155,7 @@ class NitterTweetScheduler(
                 if tweet.status_id in handled_ids
             ]
             await self._store_incremental_seen_ids(
-                group.group_id, batch.username, handled_copies, seen_map
+                group.group_id, batch.username, handled_copies, seen_map, handled=True
             )
             batch.tweets = [
                 tweet for tweet in batch.tweets if tweet.status_id not in handled_ids
@@ -1180,7 +1184,7 @@ class NitterTweetScheduler(
                 if tweet.status_id not in owners
             ]
             await self._store_incremental_seen_ids(
-                group.group_id, batch.username, dropped, seen_map
+                group.group_id, batch.username, dropped, seen_map, handled=True
             )
             batch.tweets = [
                 tweet
@@ -1631,6 +1635,7 @@ class NitterTweetScheduler(
                                 batch.username,
                                 status_ids,
                                 seen_map,
+                                handled=True,
                             )
                 finally:
                     for batch in pending_batches:
@@ -1645,7 +1650,7 @@ class NitterTweetScheduler(
                     and status_id in seen_map.get(selected_owners[status_id], [])
                 ]
                 await self._store_incremental_seen_ids(
-                    group.group_id, username, handled_duplicates, seen_map
+                    group.group_id, username, handled_duplicates, seen_map, handled=True
                 )
 
             for username, rebuild in incomplete_baseline_candidates.items():
