@@ -46,12 +46,16 @@ class SchedulerSeenMixin:
         getter = getattr(self.storage, "get_group_scan_watermarks", None)
         if callable(getter):
             stored_watermarks = await getter(group_id)
+            pending_getter = getattr(self.storage, "get_pending_baselines", None)
+            pending = (
+                await pending_getter(group_id) if callable(pending_getter) else set()
+            )
             # Older databases and lightweight test adapters may contain seen
             # IDs but no dedicated anchor row yet. Infer only the missing
             # entries; an explicit empty anchor window means the source was
             # initialized with no historical status ID and must be preserved.
             for username, status_ids in seen_map.items():
-                if username in stored_watermarks:
+                if username in stored_watermarks or username in pending:
                     continue
                 if not isinstance(status_ids, list):
                     continue

@@ -496,8 +496,13 @@ class NitterTweetScheduler(
                 safe_block_log("warning", result.format_log_summary())
             else:
                 async with self._check_lock:
+                    current_group = self._schedule_group(group.group_id)
+                    if current_group is None or not current_group.enabled:
+                        result = self._new_check_result(reason, group, target_override)
+                        result.skipped_reason = "group_disabled"
+                        return result
                     result = await self._run_check_unlocked(
-                        group,
+                        current_group,
                         reason,
                         notify_no_updates,
                         target_override,
@@ -1118,6 +1123,46 @@ class NitterTweetScheduler(
         )
         return True
 
+    async def _limit_group_candidates(
+        self,
+        group: ScheduleGroup,
+        batches: list[PendingTweetBatch],
+        seen_map: dict[str, list[str]],
+        result: ScheduledCheckResult,
+    ) -> None:
+        candidates = [
+            (batch, index, tweet)
+            for batch in batches
+            for index, tweet in enumerate(batch.tweets)
+        ]
+        result.selected_tweet_count = len(candidates)
+        limit = group.max_tweets_per_check
+        if limit <= 0 or len(candidates) <= limit:
+            return
+        ranked = sorted(
+            candidates,
+            key=lambda item: self._parse_numeric_status_id(item[2].status_id) or 0,
+            reverse=True,
+        )
+        selected = {(id(batch), index) for batch, index, _ in ranked[:limit]}
+        for batch in batches:
+            dropped = [
+                tweet.status_id
+                for index, tweet in enumerate(batch.tweets)
+                if (id(batch), index) not in selected
+            ]
+            await self._store_incremental_seen_ids(
+                group.group_id, batch.username, dropped, seen_map
+            )
+            batch.tweets = [
+                tweet
+                for index, tweet in enumerate(batch.tweets)
+                if (id(batch), index) in selected
+            ]
+        batches[:] = [batch for batch in batches if batch.tweets]
+        result.selected_tweet_count = limit
+        result.limit_skipped_count = len(candidates) - limit
+
     async def _run_check_unlocked(
         self,
         group: ScheduleGroup,
@@ -1364,10 +1409,11 @@ class NitterTweetScheduler(
                             f"group={group.group_id}, source={source_label}"
                         )
                         continue
-                    seen_map[username] = self.storage.initial_seen_ids(seed_ids)
-                    await self._put_seen_map(group.group_id, seen_map)
-                    await self._set_scan_watermark(
-                        group.group_id, username, full_scanned_status_ids
+                    await self._rebuild_scan_baseline(
+                        group.group_id,
+                        username,
+                        seen_map,
+                        self._normalize_scan_baseline_ids(full_scanned_status_ids),
                     )
                     result.initialized_users[username] = len(seed_ids)
                     result.source_statuses[username] = SourceStatus.INITIALIZED
@@ -1396,28 +1442,6 @@ class NitterTweetScheduler(
                     )
 
                 if new_tweets:
-                    # max_tweets_per_check: keep the newest N; the excess is
-                    # marked seen (like pre-watermark history) so the advanced
-                    # scan watermark cannot silently drop it next round.
-                    max_tweets = group.max_tweets_per_check
-                    if max_tweets > 0 and len(new_tweets) > max_tweets:
-                        dropped_tweets = new_tweets[max_tweets:]
-                        new_tweets = new_tweets[:max_tweets]
-                        dropped_ids = [
-                            tweet.status_id
-                            for tweet in dropped_tweets
-                            if tweet.status_id
-                        ]
-                        if dropped_ids:
-                            seen_ids = self._merge_seen_ids(dropped_ids, seen_ids)
-                            seen_map[username] = seen_ids
-                            await self._put_seen_map(group.group_id, seen_map)
-                        self._log_verbose_info(
-                            "[NitterTweets] 定时检查超出单次推送上限，已跳过较旧推文: "
-                            f"group={group.group_id}, source={source_label}, "
-                            f"max={max_tweets}, skipped={len(dropped_tweets)}"
-                        )
-
                     selected_ids = {
                         tweet.status_id for tweet in new_tweets if tweet.status_id
                     }
@@ -1500,6 +1524,10 @@ class NitterTweetScheduler(
                     f"group={group.group_id}, "
                     f"filtered={group_plain_text_filtered_total}"
                 )
+
+            await self._limit_group_candidates(
+                group, discovered_batches, seen_map, result
+            )
 
             fetch_failures = dict(result.failed_users)
             check_batch_summary = self._format_push_batch_summary(

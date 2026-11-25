@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -369,7 +370,10 @@ def _make_group_api(group_type: str = "blogger"):
     plugin = SimpleNamespace(
         config=config,
         scheduler=SimpleNamespace(
-            config_reader=SchedulerConfigReader(config, context=None), storage=storage
+            config_reader=SchedulerConfigReader(config, context=None),
+            storage=storage,
+            _check_lock=asyncio.Lock(),
+            _ensure_storage_ready=AsyncMock(return_value=True),
         ),
     )
     return NitterWebAPI(plugin), config, storage
@@ -431,3 +435,58 @@ async def test_update_group_sync_failure_keeps_saved_group_and_reports_error():
     storage.migrate_and_sync.assert_awaited_once()
     warning.assert_called_once()
     assert "WebUI 分组同步失败" in warning.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, 1, 200, -1, 201, True, 1.5, "5", None])
+async def test_group_limit_validation_and_partial_save(limit):
+    api, config, _ = _make_group_api("list")
+    result = await api.update_group({"group_id": "g", "max_tweets_per_check": limit})
+    valid = type(limit) is int and 0 <= limit <= 200
+    assert result["success"] is valid
+    if valid:
+        assert result["group"]["max_tweets_per_check"] == limit
+        result = await api.update_group({"group_id": "g", "enabled": False})
+        assert result["group"]["max_tweets_per_check"] == limit
+
+
+@pytest.mark.asyncio
+async def test_group_update_waits_for_check_lock():
+    api, config, _ = _make_group_api("list")
+    async with api.scheduler._check_lock:
+        task = asyncio.create_task(
+            api.update_group({"group_id": "g", "enabled": False})
+        )
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert config_get(config, "tweet_groups")[0]["enabled"] is True
+    assert (await task)["group"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_group_sync_waits_for_storage_initialization():
+    api, config, storage = _make_group_api("list")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def initialize():
+        entered.set()
+        await release.wait()
+        return True
+
+    api.scheduler._ensure_storage_ready.side_effect = initialize
+    task = asyncio.create_task(api.update_group({"group_id": "g", "enabled": False}))
+    await entered.wait()
+    storage.migrate_and_sync.assert_not_awaited()
+    release.set()
+    assert (await task)["success"] is True
+    storage.migrate_and_sync.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_group_sync_reports_storage_initialization_failure():
+    api, config, storage = _make_group_api("list")
+    api.scheduler._ensure_storage_ready.return_value = False
+    result = await api.update_group({"group_id": "g", "enabled": False})
+    assert result["success"] is True
+    assert result["sync_error"]
+    storage.migrate_and_sync.assert_not_awaited()

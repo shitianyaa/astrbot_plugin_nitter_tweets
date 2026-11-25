@@ -65,6 +65,7 @@ class NitterWebAPI(
 
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
+        self._cache_clear_task: asyncio.Task | None = None
 
     def register(self, context) -> None:
         routes: list[tuple[str, str, list[str]]] = [
@@ -261,11 +262,12 @@ class NitterWebAPI(
         return payload
 
     async def update_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = self._group_editor().update_group(data)
-        if not result.get("success"):
-            return result
+        async with self.scheduler._check_lock:
+            result = self._group_editor().update_group(data)
+            if not result.get("success"):
+                return result
 
-        sync_error = await self._sync_groups()
+            sync_error = await self._sync_groups()
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
@@ -313,7 +315,11 @@ class NitterWebAPI(
         return payload
 
     async def clear_cache(self) -> dict[str, Any]:
-        result = await asyncio.to_thread(self.plugin.media.clear_cache)
+        if self._cache_clear_task is None or self._cache_clear_task.done():
+            self._cache_clear_task = asyncio.create_task(
+                asyncio.to_thread(self.plugin.media.clear_cache)
+            )
+        result = await asyncio.shield(self._cache_clear_task)
         return self._ok(result=self._serialize_cache_result(result))
 
     async def clear_seen(self, group_id: str = "", confirm: str = "") -> dict[str, Any]:
@@ -360,6 +366,8 @@ class NitterWebAPI(
 
     async def _sync_groups(self) -> str:
         try:
+            if not await self.scheduler._ensure_storage_ready():
+                return "调度存储初始化未完成，请稍后重试"
             await self.storage.migrate_and_sync(self._schedule_groups())
         except Exception as exc:
             error = str(exc)

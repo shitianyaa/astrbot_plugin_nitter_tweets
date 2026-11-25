@@ -100,7 +100,7 @@ List 聚合多人推文，可能在短时间内产生大量更新。**强烈建�
 超过上限的较旧推文会标记 seen，不会在下一轮重新补发；该选项用于控制消息量，不是积压队列。
 
 ```yaml
-max_tweets_per_check: 10  # 每个 List 单次检查最多推送 10 条
+max_tweets_per_check: 10  # 整个 List 分组单次检查最多推送 10 条
 ```
 
 ### `html_max_pages`
@@ -386,3 +386,9 @@ tweet_groups:
 - [Twitter List 帮助文档](https://help.twitter.com/en/using-twitter/twitter-lists)
 - [Nitter 项目](https://github.com/zedeus/nitter)
 - [插件仓库](https://github.com/shitianyaa/astrbot_plugin_nitter_tweets)
+
+## 3.0 升级行为
+
+List 分组每次重新启用后先记录当前基线，跳过停用期间的积压和媒体下载。`max_tweets_per_check` 沿用旧数值，改为组内所有 List 每轮合计上限，统一选取最新推文。超额旧帖跳过。
+
+技术参数的内置值及 Pages 缓存清理说明见 [3.0 升级行为](../README.md#30-升级行为)。

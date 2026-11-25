@@ -292,3 +292,61 @@ async def test_cancelled_later_media_keeps_all_downloaded_leases_reachable(
     service.cleanup_after_send([tweet])
     assert not first_path.exists()
     assert not second_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_web_cache_clear_shares_worker_after_cancelled_waiter(tmp_path):
+    from plugin_api.api import NitterWebAPI
+
+    cache = _Cache(tmp_path)
+    file = cache.cache_dir / "ordinary.jpg"
+    file.write_bytes(b"image")
+    entered, release = Event(), Event()
+    calls = []
+
+    def cleanup():
+        calls.append(1)
+        entered.set()
+        release.wait(5)
+        return cache.clear_cache()
+
+    api = NitterWebAPI(SimpleNamespace(media=SimpleNamespace(clear_cache=cleanup)))
+    first = asyncio.create_task(api.clear_cache())
+    await asyncio.to_thread(entered.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(api.clear_cache())
+    release.set()
+    result = await second
+    assert len(calls) == 1
+    assert result["result"]["removed"] == 1
+    assert not file.exists()
+
+
+def test_cache_clear_counts_inaccessible_subtree_and_keeps_cleaning(
+    tmp_path, monkeypatch
+):
+    from media_support import cache as cache_module
+
+    cache = _Cache(tmp_path)
+    blocked = cache.cache_dir / "blocked"
+    blocked.mkdir()
+    (blocked / "keep.jpg").write_bytes(b"image")
+    ordinary = cache.cache_dir / "ordinary.jpg"
+    ordinary.write_bytes(b"image")
+    original_scandir = cache_module.os.scandir
+
+    def scandir(path):
+        if Path(path) == blocked:
+            raise PermissionError("simulated directory denial")
+        return original_scandir(path)
+
+    monkeypatch.setattr(cache_module.os, "scandir", scandir)
+    result = cache.clear_cache()
+    assert result.failed == 1
+    assert result.removed == 1
+    assert not ordinary.exists()
+    assert (blocked / "keep.jpg").exists()
+    with pytest.raises(PermissionError):
+        cache.cache_stats()

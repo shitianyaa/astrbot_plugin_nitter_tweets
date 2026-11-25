@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-2.1.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-3.0.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -218,7 +218,6 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 | `omit_status_url`（`tweet_groups` 分组字段） | 定时推送是否省略原文链接；关闭时仍会清理当前 Nitter 镜像改写出的同站链接 |
 | `media_only_enabled`（`tweet_groups` 分组字段） | 推送内容：完整推文 / 仅媒体（保留作者）/ 仅媒体（不含文字）；不含文字只发送图片、视频或 GIF，不附加概括或提示，QQ 合并转发仍按原设置执行 |
 | `send_image_attachments` / `send_video_attachments` | 图 / 视频是否发送 |
-| `media_transport_base64_max_mb` | 允许走 base64 的单文件上限，默认 8；默认值已把绝大多数视频排除在外 |
 | `translate_enabled` | 是否翻译 |
 | `merge_tweet_threshold` | 私人号 OneBot 合并转发条数阈值；QQ Official 不使用该阈值；`0` 关 |
 | `forward_reject_plain_fallback_enabled` | 合并转发被风控拒收时是否降级纯文本；默认 `false`（略过违规推文并标记已读）；`true` 允许纯文本链接保底 |
@@ -271,6 +270,16 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 - **开源互惠与网络服务约束**：私下使用、以及未分发的修改，不产生源码公开义务。分发本插件或其修改版时，需满足 AGPL-3.0 第 4–6 节，以相同协议提供对应源代码（或按第 6 节提供获取途径），并保留原作者的版权声明与修改记录；修改后以网络服务形式向远程用户提供交互功能时，需向这些用户提供该修改版的对应源代码（第 13 节）。未修改的网络服务不附加公开义务；
 - **禁止闭源与盗用**：严禁任何未保留原作者版权的二次分发、闭源倒卖或二次封装为商业闭源软件的行为；
 - **第三方资产独立授权**：`pages/dashboard/fonts/` 下内置的字体属于独立聚合分发资产，分别遵循其各自独立许可证（MiSans 字体遵循小米官方许可；JetBrains Mono 字体遵循 SIL Open Font License 1.1），详见各字体目录下的许可文本。
+
+## 3.0 升级行为
+
+分组重新启用后的首次成功检查只记录当前基线，随后检查推送新帖。旧 seen 和推送历史继续保留。已产生积压的分组可再次停用、启用以重建基线。
+
+`max_tweets_per_check` 沿用旧数值，改为整个分组每轮合计上限。各订阅源统一按推文 ID 从新到旧选择，超额旧帖跳过。0 表示不限量，范围 0–200。Pages 分组编辑器可以维护该上限。
+
+Nitter 重试内置为 2 轮、间隔 5 秒，HTML 请求间隔内置为 3 秒，Base64 单文件上限内置为 8 MB。翻译最少 8 字，中文占比阈值为 0.2。旧自定义参数升级后采用这些数值。请求超时、翻页预算、媒体大小和时长仍可配置。
+
+Pages 缓存清理立即显示实际删除、使用中跳过和失败数量，随后刷新统计。请求等待超过 30 秒时提示结果尚未返回，后台任务继续处理；统计刷新等待上限为 10 秒。
 
 ## 免责声明
 

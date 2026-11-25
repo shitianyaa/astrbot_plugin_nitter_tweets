@@ -8,7 +8,6 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -21,7 +20,6 @@ try:
         SQLiteStorage,
     )
 except ImportError:
-    from config import config_get
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -59,16 +57,6 @@ class StorageAdapter:
         self.owner = owner
         self.config = config
         self.context = context
-
-        configured_backend = (
-            str(config_get(config, "storage_backend", "sqlite")).strip().lower()
-        )
-        if configured_backend and configured_backend != "sqlite":
-            logger.info(
-                "[NitterTweets] "
-                f"storage_backend={configured_backend} 已不再支持；"
-                "将使用 SQLite，并仅导入旧 KV seen ID"
-            )
 
         logger.info("[NitterTweets] 使用 SQLite 存储后端")
         self.sqlite: SQLiteStorage | None = self._init_sqlite()
@@ -155,6 +143,12 @@ class StorageAdapter:
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
             sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
+        )
+
+    async def get_pending_baselines(self, group_id: str) -> set[str]:
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_pending_baselines, self._storage_group_id(group_id)
         )
 
     async def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:

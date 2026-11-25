@@ -23,7 +23,6 @@ try:
     from ..shared import (
         TweetItem,
         clamp_float,
-        clamp_int,
         clean_text,
         load_instances,
         normalize_external_links,
@@ -35,7 +34,6 @@ except ImportError:
     from shared import (
         TweetItem,
         clamp_float,
-        clamp_int,
         clean_text,
         load_instances,
         normalize_external_links,
@@ -267,10 +265,8 @@ class NitterClient:
         self.timeout = clamp_float(
             config_get(config, "request_timeout", 12.0), 3.0, 60.0
         )
-        self.retry_attempts = clamp_int(config_get(config, "retry_attempts", 2), 1, 5)
-        self.retry_delay_seconds = clamp_float(
-            config_get(config, "retry_delay_seconds", 5.0), 0.0, 60.0
-        )
+        self.retry_attempts = 2
+        self.retry_delay_seconds = 5.0
         self.filter_reposts_enabled = parse_config_bool(
             config_get(config, "filter_reposts_enabled", True), True
         )

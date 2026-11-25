@@ -569,3 +569,52 @@ def test_tag_import_persists_reversible_string_queries():
         ("#foo", "tag"),
         ("#literal", "phrase"),
     ]
+
+
+def test_removed_tuning_and_group_overrides_are_cleaned_idempotently(tmp_path):
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from media_support.client import NitterClient
+    from config import config_get, migrate_default_group_config
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "basic": {
+                    "retry_attempts": 5,
+                    "retry_delay_seconds": 0,
+                    "html_min_interval": 0,
+                },
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "group_id": "g",
+                            "check_on_startup": True,
+                            "notify_no_updates": True,
+                            "check_interval_minutes": 1,
+                            "max_tweets_per_check": 7,
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = AstrBotConfig(
+        str(path), schema=json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    migrate_legacy_grouped_config(config)
+    migrate_default_group_config(config)
+    group = config_get(config, "tweet_groups")[0]
+    assert group["max_tweets_per_check"] == 7
+    assert (
+        not {"check_on_startup", "notify_no_updates", "check_interval_minutes"}
+        & group.keys()
+    )
+    before = json.loads(json.dumps(config))
+    migrate_legacy_grouped_config(config)
+    migrate_default_group_config(config)
+    assert config == before
+    client = NitterClient(config)
+    assert (client.retry_attempts, client.retry_delay_seconds) == (2, 5.0)

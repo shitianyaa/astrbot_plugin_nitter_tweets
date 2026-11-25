@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -11,10 +13,10 @@ from .extensions import MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, classify_media_path
 
 try:
     from ..shared import TweetItem, TweetMedia
-    from ..shared.observability import LOG_PREFIX
+    from ..shared.observability import LOG_PREFIX, safe_log
 except ImportError:
     from shared import TweetItem, TweetMedia
-    from shared.observability import LOG_PREFIX
+    from shared.observability import LOG_PREFIX, safe_log
 
 
 @dataclass(slots=True)
@@ -240,12 +242,35 @@ class MediaCacheMixin:
             self._stat_cache_dir(cache_dir, stats)
         return stats
 
+    @staticmethod
+    def _raise_walk_error(error: OSError) -> None:
+        raise error
+
+    @classmethod
+    def _iter_cache_paths(
+        cls, cache_dir: Path, on_error: Callable[[OSError], None] | None = None
+    ) -> Iterator[Path]:
+        directories = []
+        for current, dirs, files in os.walk(
+            cache_dir, onerror=on_error or cls._raise_walk_error
+        ):
+            if Path(current) == cache_dir:
+                dirs[:] = [
+                    name
+                    for name in dirs
+                    if name.casefold() not in cls._protected_cache_dirs
+                ]
+            directories.extend(Path(current) / name for name in dirs)
+            for name in files:
+                yield Path(current) / name
+        yield from reversed(directories)
+
     @classmethod
     def _stat_cache_dir(cls, cache_dir: Path, stats: MediaCacheStats) -> None:
         cache_dir = Path(cache_dir)
         if not cache_dir.exists():
             return
-        for path in cache_dir.rglob("*"):
+        for path in cls._iter_cache_paths(cache_dir):
             if not path.is_file():
                 continue
             try:
@@ -277,8 +302,21 @@ class MediaCacheMixin:
         if not cache_dir.exists():
             return
 
-        # Walk deepest-first so empty parent dirs can be removed after files.
-        for path in sorted(cache_dir.rglob("*"), reverse=True):
+        def record_walk_error(error: OSError) -> None:
+            result.failed += 1
+            safe_log("warning", "cache_scan_failed", error=error)
+
+        try:
+            result.skipped_dirs += sum(
+                1
+                for path in cache_dir.iterdir()
+                if path.is_dir() and path.name.casefold() in cls._protected_cache_dirs
+            )
+        except OSError as exc:
+            record_walk_error(exc)
+            return
+        # Files precede their now-empty parent directories.
+        for path in cls._iter_cache_paths(cache_dir, record_walk_error):
             try:
                 relative = path.relative_to(cache_dir)
                 if (

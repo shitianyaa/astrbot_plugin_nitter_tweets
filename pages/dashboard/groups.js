@@ -8,7 +8,7 @@
 const EDITABLE_FIELDS = [
   "name","enabled","interval_check_enabled","daily_check_times",
   "filter_reposts_enabled","filter_plain_text_enabled","media_only_enabled",
-  "omit_status_url","hide_original_when_translated",
+  "omit_status_url","hide_original_when_translated","max_tweets_per_check",
   "push_targets","watch_users","watch_queries","watch_lists",
 ];
 
@@ -24,6 +24,8 @@ function snapshotGroup(group) {
       snap[f] = Array.isArray(group[f]) ? [...group[f]] : [];
     } else if (f === "watch_queries") {
       snap[f] = Array.isArray(group[f]) ? group[f].map(q => typeof q === "string" ? { query: q, type: "tag" } : { query: q.query, type: q.type || "tag" }) : [];
+    } else if (f === "max_tweets_per_check") {
+      snap[f] = group[f] ?? 0;
     } else if (f === "media_only_enabled") {
       snap[f] = typeof group[f] === "string" ? group[f] : (group[f] ? "仅媒体（保留作者）" : "完整推文");
     } else if (["enabled","interval_check_enabled","filter_plain_text_enabled","omit_status_url","hide_original_when_translated"].includes(f)) {
@@ -363,6 +365,15 @@ function openGroupSheet(gid) {
       ]),
       toggleRow(d.omit_status_url, "去除推文链接", v => updateDraft(gid, "omit_status_url", v)),
       toggleRow(d.hide_original_when_translated, "有译文时隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
+    ]),
+    h("label", { class: "field" }, [
+      h("span", { text: "分组每轮最多推送条数" }),
+      h("input", {
+        type: "number", min: 0, max: 200, step: 1, value: d.max_tweets_per_check,
+        onInput: e => updateDraft(gid, "max_tweets_per_check",
+          e.target.value === "" ? "" : Number(e.target.value)),
+      }),
+      h("span", { class: "hint-line", text: "0 表示不限量。组内统一选择最新推文，超额旧帖跳过。" }),
     ]),
     h("span", { class: "hint-line", text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
     h("label", { class: "field" }, [

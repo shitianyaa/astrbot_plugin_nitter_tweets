@@ -167,11 +167,29 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         # 检查是否存在
         row = self.conn.execute(
-            "SELECT created_at FROM groups WHERE group_id = ?",
+            "SELECT created_at, enabled FROM groups WHERE group_id = ?",
             (normalized_group_id,),
         ).fetchone()
 
         created_at = row[0] if row else now
+        if row is not None and not bool(row[1]) and enabled:
+            self.conn.execute(
+                """
+                INSERT INTO scan_watermarks
+                    (group_id, username, initialized, status_ids, updated_at)
+                SELECT group_id, username, 0, '[]', ?
+                FROM seen_tweets WHERE group_id = ?
+                GROUP BY group_id, username
+                ON CONFLICT(group_id, username) DO UPDATE SET
+                    initialized = 0, updated_at = excluded.updated_at
+                """,
+                (now, normalized_group_id),
+            )
+            self.conn.execute(
+                "UPDATE scan_watermarks SET initialized = 0, updated_at = ? "
+                "WHERE group_id = ?",
+                (now, normalized_group_id),
+            )
 
         self.conn.execute(
             """
@@ -425,6 +443,17 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 seen_map[username].append(status_id)
 
         return seen_map
+
+    def get_pending_baselines(self, group_id: str) -> set[str]:
+        assert self.conn is not None
+        return {
+            str(row[0])
+            for row in self.conn.execute(
+                "SELECT username FROM scan_watermarks "
+                "WHERE group_id = ? AND initialized = 0",
+                (normalize_stable_group_id(group_id),),
+            ).fetchall()
+        }
 
     def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:
         """获取分组中已初始化账号的最近扫描基准组。"""
@@ -1047,6 +1076,7 @@ for _method_name in (
     "add_seen_ids",
     "get_group_seen_map",
     "get_group_scan_watermarks",
+    "get_pending_baselines",
     "set_scan_watermark",
     "put_group_seen_map_and_scan_watermark",
     "clear_seen_tweets",

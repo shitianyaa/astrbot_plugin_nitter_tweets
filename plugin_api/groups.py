@@ -152,6 +152,11 @@ class WebUIGroupEditor:
         raw_group["enabled"] = self._bool(
             data.get("enabled", raw_group.get("enabled", True))
         )
+        if "max_tweets_per_check" in data:
+            limit = data["max_tweets_per_check"]
+            if type(limit) is not int or not 0 <= limit <= 200:
+                return {"success": False, "error": "分组推送上限需要 0–200 的整数"}
+            raw_group["max_tweets_per_check"] = limit
         raw_group["group_type"] = existing_type
         raw_group["interval_check_enabled"] = self._bool(
             data.get(

@@ -8,10 +8,10 @@ from astrbot.api import logger
 
 try:
     from ..config import config_get, parse_config_bool
-    from ..shared import TweetItem, clamp_float, clamp_int, strip_external_links
+    from ..shared import TweetItem, clamp_int, strip_external_links
 except ImportError:
     from config import config_get, parse_config_bool
-    from shared import TweetItem, clamp_float, clamp_int, strip_external_links
+    from shared import TweetItem, clamp_int, strip_external_links
 
 
 LOG_PREFIX = "[NitterTweets]"
@@ -160,15 +160,11 @@ class TweetTranslator:
         self.provider_id = str(
             config_get(config, "translation_provider_id", "") or ""
         ).strip()
-        self.min_chars = clamp_int(
-            config_get(config, "translate_min_chars", 8), 0, 1000
-        )
+        self.min_chars = 8
         self.max_chars = clamp_int(
             config_get(config, "translate_max_chars", 2000), 100, 10000
         )
-        self.chinese_ratio_threshold = clamp_float(
-            config_get(config, "translate_chinese_ratio_threshold", 0.2), 0.0, 1.0
-        )
+        self.chinese_ratio_threshold = 0.2
         self.prompt_template = self._load_prompt(config)
         if "{text}" not in self.prompt_template:
             self.prompt_template = f"{self.prompt_template}\n\n{{text}}"

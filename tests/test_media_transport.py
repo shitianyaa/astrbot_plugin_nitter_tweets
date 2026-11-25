@@ -531,7 +531,7 @@ def test_direct_media_items_carry_their_media(tmp_path):
 
 
 def test_transport_config_reads_grouped_media_config():
-    """mode 与 url_fallback 现已内定，只有 base64 上限仍从配置读取。"""
+    """传输参数采用内置值，旧 Base64 上限配置忽略。"""
     config = {
         "media": {
             "media_transport_base64_max_mb": 2.0,
@@ -539,7 +539,7 @@ def test_transport_config_reads_grouped_media_config():
     }
     resolved = TransportConfig.from_config(config)
     assert resolved.mode == "auto"
-    assert resolved.base64_max_bytes == 2 * 1024 * 1024
+    assert resolved.base64_max_bytes == 8 * 1024 * 1024
     assert resolved.url_fallback is True
 
 

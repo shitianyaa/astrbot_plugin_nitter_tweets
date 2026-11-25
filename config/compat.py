@@ -50,11 +50,25 @@ TWEET_GROUP_TEMPLATE_KEYS = frozenset(
         TWEET_GROUP_TEMPLATE_KEY_LEGACY,
     }
 )
-IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset({"scheduled_fetch_limit"})
+IGNORED_TWEET_GROUP_CONFIG_KEYS = frozenset(
+    {
+        "scheduled_fetch_limit",
+        "check_interval_minutes",
+        "notify_no_updates",
+        "check_on_startup",
+    }
+)
 
 REMOVED_FEATURE_CONFIG_GROUPS = frozenset({"ai_comment", "ai_vision", "deferred"})
 REMOVED_FEATURE_CONFIG_KEYS = frozenset(
     {
+        "html_min_interval",
+        "media_transport_base64_max_mb",
+        "retry_attempts",
+        "retry_delay_seconds",
+        "storage_backend",
+        "translate_chinese_ratio_threshold",
+        "translate_min_chars",
         "brief_log_enabled",
         "concurrent_fetch_enabled",
         "fetch_concurrency",
@@ -88,12 +102,9 @@ REMOVED_FEATURE_CONFIG_NAMES = (
 )
 
 CONFIG_GROUP_BY_KEY = {
-    "storage_backend": "basic",
     "instances": "basic",
     "default_limit": "basic",
     "request_timeout": "basic",
-    "retry_attempts": "basic",
-    "retry_delay_seconds": "basic",
     "cooldown_seconds": "basic",
     "filter_reposts_enabled": "basic",
     "auto_parse_tweet_links_enabled": "basic",
@@ -102,7 +113,6 @@ CONFIG_GROUP_BY_KEY = {
     "search_default_limit": "basic",
     "search_max_limit": "basic",
     "search_sort": "basic",
-    "html_min_interval": "basic",
     "html_max_pages": "basic",
     "html_request_timeout": "basic",
     "fetch_backend": "basic",
@@ -115,12 +125,9 @@ CONFIG_GROUP_BY_KEY = {
     "max_media_per_tweet": "media",
     "media_timeout": "media",
     "media_max_size_mb": "media",
-    "media_transport_base64_max_mb": "media",
     "translate_enabled": "ai_translation",
     "translation_provider_id": "ai_translation",
-    "translate_min_chars": "ai_translation",
     "translate_max_chars": "ai_translation",
-    "translate_chinese_ratio_threshold": "ai_translation",
     "translate_prompt": "ai_translation",
     "translate_system_prompt": "ai_translation",
     "translate_prompt_template": "ai_translation",
@@ -147,12 +154,9 @@ CONFIG_GROUP_BY_KEY = {
 }
 
 MIGRATABLE_CONFIG_KEYS = {
-    "storage_backend",
     "instances",
     "default_limit",
     "request_timeout",
-    "retry_attempts",
-    "retry_delay_seconds",
     "cooldown_seconds",
     "auto_parse_tweet_links_enabled",
     "link_preview_arbiter_enabled",
@@ -160,7 +164,6 @@ MIGRATABLE_CONFIG_KEYS = {
     "search_default_limit",
     "search_max_limit",
     "search_sort",
-    "html_min_interval",
     "html_max_pages",
     "html_request_timeout",
     "send_image_attachments",
@@ -171,9 +174,7 @@ MIGRATABLE_CONFIG_KEYS = {
     "media_max_size_mb",
     "translate_enabled",
     "translation_provider_id",
-    "translate_min_chars",
     "translate_max_chars",
-    "translate_chinese_ratio_threshold",
     "translate_prompt",
     "show_original_when_translated",
     "schedule_enabled",
@@ -280,16 +281,8 @@ def resolve_send_video_attachments(config) -> bool:
 
 
 def resolve_media_transport_base64_max_mb(config) -> float:
-    """Per-file ceiling for base64 delivery, in MB.
-
-    One number governs both images and video: the 8 MB default keeps video off
-    base64, and raising it is an explicit opt-in to the memory and payload cost.
-    """
-    try:
-        value = float(config_get(config, "media_transport_base64_max_mb", 8.0) or 8.0)
-    except (TypeError, ValueError):
-        value = 8.0
-    return max(0.5, min(32.0, value))
+    """Built-in per-file ceiling for base64 delivery, in MB."""
+    return 8.0
 
 
 def resolve_show_original_when_translated(config) -> bool:

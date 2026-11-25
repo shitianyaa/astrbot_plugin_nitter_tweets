@@ -64,7 +64,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 分组「推送内容」下拉，支持「完整推文」「仅媒体（保留作者）」「仅媒体（不含文字）」。旧布尔 false/true 分别兼容前两项。两种仅媒体模式均不调用翻译，受全局媒体类型与单条媒体数量上限控制；保留作者模式在全局媒体不可用时沿用完整内容回退，不含文字模式则不发送。后者不附加作者、正文、翻译、链接、概括或无更新提示，仍遵循现有 QQ 合并转发设置，节点昵称和时间由客户端显示。Pages 分组抽屉使用相同下拉，修改草稿后点击页脚保存生效。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
-- `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
+- `max_tweets_per_check`: 整个分组单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
 
 全局 `filter_reposts_enabled` 是后台检查与手动命令的转发过滤总开关。后台检查的实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动 `/推文` 与 `/推图` 命令亦遵循此全局总开关（手动命令不读取分组子开关）。
 
@@ -116,12 +116,9 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 `media` 分组下仅 `media_transport_base64_max_mb` 可配置（传输模式恒为 `auto`，twimg 白名单主机的 URL 档自动加入梯度），只影响私人号 OneBot 的媒体投递，行为见
 [平台发送指南](./platform-delivery.md#媒体传输编码)：
 
-| 配置键 | 默认 | 说明 |
-| --- | --- | --- |
-| `media_transport_base64_max_mb` | `8.0` | clamp 到 `0.5-32`；同时约束图片和视频 |
+Base64 单文件上限固定为 8 MB，同时约束图片和视频。旧配置中的自定义上限在升级时清理。
 
-解析函数在 `config/compat.py`：`resolve_media_transport_base64_max_mb`；
-`TransportConfig.from_config()` 负责组装。
+内部解析函数为 `config/compat.py` 中的 `resolve_media_transport_base64_max_mb`，`TransportConfig.from_config()` 负责组装传输策略。
 
 ## 兼容规则
 
@@ -138,3 +135,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `docs/advanced.md` 完整配置说明。
 - 本文件。
 - 相关测试。
+
+## 3.0 升级行为
+
+分组重新启用后先重建当前基线。分组额度改为所有订阅源合计，超额旧帖跳过。六项技术参数改用内置值，升级时清理旧自定义值。完整说明见 [3.0 升级行为](../../README.md#30-升级行为)。

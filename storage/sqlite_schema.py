@@ -300,6 +300,8 @@ class SQLiteSchemaMixin:
                 """,
                 (group_id, username),
             ).fetchone()
+            if existing is not None and not bool(existing[0]):
+                continue
             if existing is not None:
                 anchors = cls._normalize_scan_anchor_ids(
                     [*cls._decode_scan_anchor_ids(existing[1]), *seen_anchors]
@@ -513,7 +515,7 @@ class SQLiteSchemaMixin:
                 WHERE group_id = ? AND username = ?
                 """,
                 (
-                    1 if bool(row[1]) or bool(target[0]) else 0,
+                    1 if bool(row[1]) and bool(target[0]) else 0,
                     json.dumps(anchors, ensure_ascii=False),
                     max(int(row[3] or 0), int(target[2] or 0)),
                     default_id,

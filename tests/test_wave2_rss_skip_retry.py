@@ -60,8 +60,8 @@ class RssRunHostSkipTest(unittest.TestCase):
                 "retry_delay_seconds": 1.5,
             }
         )
-        self.assertEqual(client.retry_attempts, 4)
-        self.assertEqual(client.retry_delay_seconds, 1.5)
+        self.assertEqual(client.retry_attempts, 2)
+        self.assertEqual(client.retry_delay_seconds, 5.0)
 
 
 class RateLimiterLockTest(unittest.TestCase):

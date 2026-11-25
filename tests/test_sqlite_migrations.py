@@ -75,6 +75,51 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([item.status_id for item in default_history], ["101"])
             self.assertEqual(legacy_count, 0)
 
+    async def test_pending_baselines_survive_reopen_and_seen_backfill(self):
+        from scheduler.config import SchedulerConfigReader
+        from scheduler.runner_seen import SchedulerSeenMixin
+        from storage import StorageAdapter
+        from unittest.mock import patch, AsyncMock
+
+        for kind, field, value, key in (
+            ("blogger", "watch_users", "nasa", "nasa"),
+            ("tag", "watch_queries", "#foo", "q:#foo"),
+            ("list", "watch_lists", "12345", "list:12345"),
+        ):
+            with self.subTest(kind=kind), TemporaryDirectory() as temp_dir:
+                db = SQLiteStorage(Path(temp_dir) / "state.db")
+                raw = {
+                    "group_id": "g",
+                    "group_type": kind,
+                    field: [value],
+                    "enabled": True,
+                }
+                reader = SchedulerConfigReader({"tweet_groups": [raw]}, None)
+                with patch.object(StorageAdapter, "_init_sqlite", return_value=db):
+                    adapter = StorageAdapter(
+                        types.SimpleNamespace(get_kv_data=AsyncMock(return_value={})),
+                        {},
+                        None,
+                    )
+                await adapter.migrate_and_sync(reader.schedule_groups(False))
+                await adapter.add_seen_ids("g", key, ["100"])
+                await adapter.set_scan_watermark("g", key, ["100"])
+                for enabled in (False, True):
+                    raw["enabled"] = enabled
+                    await adapter.migrate_and_sync(reader.schedule_groups(False))
+                adapter.close()
+                self.assertEqual(await adapter.get_pending_baselines("g"), {key})
+                db._backfill_scan_watermarks(db.conn.cursor())
+                self.assertEqual(await adapter.get_pending_baselines("g"), {key})
+                harness = types.SimpleNamespace(storage=adapter)
+                self.assertEqual(
+                    await SchedulerSeenMixin._get_scan_watermarks(
+                        harness, "g", await adapter.get_group_seen_map("g")
+                    ),
+                    {},
+                )
+                adapter.close()
+
     async def test_v7_migration_preserves_legacy_pending_tables(self):
         with TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "nitter_tweets.db"

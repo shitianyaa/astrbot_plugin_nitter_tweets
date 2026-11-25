@@ -148,6 +148,8 @@ class ScheduledCheckResult:
     # Fixed RSS first-page size used by the background scanner.
     fetch_limit: int = 0
     max_tweets_per_check: int = 0
+    selected_tweet_count: int = 0
+    limit_skipped_count: int = 0
     skipped_reason: str = ""
     initialized_users: dict[str, int] = field(default_factory=dict)
     no_new_users: list[str] = field(default_factory=list)
@@ -337,6 +339,8 @@ class ScheduledCheckResult:
             f"sources={len(self.users)}, targets={len(self.targets)}, "
             f"checked={self.checked_user_count}, initialized={len(self.initialized_users)}, "
             f"new_tweets={self.new_tweet_count}, no_new={len(self.no_new_users)}, "
+            f"group_limit={self.max_tweets_per_check}, selected={self.selected_tweet_count}, "
+            f"limit_skipped={self.limit_skipped_count}, "
             f"empty={len(self.empty_users)}, "
             f"filtered_empty={len(self.filtered_empty_users)}, "
             f"failed={len(self.failed_users)}, "
@@ -375,6 +379,9 @@ class ScheduledCheckResult:
             else self.reason
         )
         lines.append(f"  触发原因: {sanitize_diagnostic(reason_display)}")
+        lines.append(
+            f"  分组额度: {self.max_tweets_per_check or '不限'}，入选 {self.selected_tweet_count}，超额跳过 {self.limit_skipped_count}"
+        )
         if self.skipped_reason:
             lines.append(
                 f"  执行状态: 已跳过 ({sanitize_diagnostic(self.skipped_reason)})"
@@ -609,6 +616,9 @@ class ScheduledCheckResult:
             f"订阅数量: {format_subscription_count(len(self.users), self.group_type)}",
             f"推送目标: {len(self.targets)} 个",
         ]
+        lines.append(
+            f"分组推送上限: {self.max_tweets_per_check or '不限'}，入选 {self.selected_tweet_count} 条，超额跳过 {self.limit_skipped_count} 条"
+        )
         if self.fetch_limit:
             lines.append(f"后台首屏扫描: {self.fetch_limit} 条")
         if self.target_blocked_filtered:

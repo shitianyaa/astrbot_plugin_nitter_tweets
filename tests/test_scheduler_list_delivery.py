@@ -526,3 +526,71 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             await scheduler.storage.get_seen_ids("lists1", key),
             ["100"],
         )
+
+    async def test_reenabled_list_reseeds_after_restart_and_write_failure(self):
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                ("https://list.test", [self._tweet("101")]),
+                ("https://list.test", [self._tweet("101")]),
+                ("https://list.test", [self._tweet("102"), self._tweet("101")]),
+            ]
+        )
+        config = self._config()
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, config=config, sender=sender)
+        await scheduler.run_check(group_name="lists1")
+        for enabled in (False, True):
+            config["tweet_groups"][0]["enabled"] = enabled
+            await scheduler.storage.migrate_and_sync(scheduler._schedule_groups(False))
+        scheduler.storage.close()
+        self.assertEqual(
+            await scheduler.storage.get_pending_baselines("lists1"), {"list:12345"}
+        )
+        with patch.object(
+            scheduler.storage,
+            "put_group_seen_map_and_scan_watermark",
+            side_effect=RuntimeError("write failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "write failed"):
+                await scheduler.run_check(group_name="lists1")
+        self.assertEqual(
+            await scheduler.storage.get_pending_baselines("lists1"), {"list:12345"}
+        )
+        await scheduler.run_check(group_name="lists1")
+        self.assertEqual(sender.sent, [])
+        self.assertEqual(scheduler.media.attached, 0)
+        self.assertEqual(await scheduler.storage.get_pending_baselines("lists1"), set())
+        self.assertIn(
+            "100", await scheduler.storage.get_seen_ids("lists1", "list:12345")
+        )
+        await scheduler.run_check(group_name="lists1")
+        self.assertEqual(sender.sent[-1][3], ["102"])
+
+    async def test_group_limit_selects_newest_across_lists_before_media(self):
+        config = self._config()
+        config["tweet_groups"][0]["watch_lists"] = ["12345", "67890"]
+        config["tweet_groups"][0]["max_tweets_per_check"] = 2
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                ("https://list.test", [self._tweet("200")]),
+                ("https://list.test", [self._tweet(i) for i in ("105", "104", "100")]),
+                ("https://list.test", [self._tweet(i) for i in ("205", "204", "200")]),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, config=config, sender=sender)
+        await scheduler.run_check(group_name="lists1")
+        result = await scheduler.run_check(group_name="lists1")
+        self.assertEqual(result.selected_tweet_count, 2)
+        self.assertEqual(result.limit_skipped_count, 2)
+        self.assertEqual(scheduler.media.attached, 2)
+        self.assertEqual(
+            [sid for item in sender.sent for sid in item[3]], ["205", "204"]
+        )
+        self.assertTrue(
+            {"105", "104"}.issubset(
+                await scheduler.storage.get_seen_ids("lists1", "list:12345")
+            )
+        )

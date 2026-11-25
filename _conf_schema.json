@@ -25,7 +25,12 @@
         "description": "HTTP 代理范围",
         "type": "string",
         "default": "off",
-        "options": ["off", "all", "api", "nitter"],
+        "options": [
+          "off",
+          "all",
+          "api",
+          "nitter"
+        ],
         "hint": "off：关闭插件代理；all：全部抓取和媒体请求；api：仅 FxTwitter、VxTwitter 和 Syndication；nitter：仅 Nitter RSS、网页、搜索和 List。命中范围的请求失败时不会尝试直连。"
       },
       "http_proxy_url": {
@@ -39,18 +44,6 @@
         "type": "float",
         "default": 12.0,
         "hint": "每次等待单个实例响应的最长时间。"
-      },
-      "retry_attempts": {
-        "description": "Nitter 重试轮数",
-        "type": "int",
-        "default": 2,
-        "hint": "每轮依次尝试所有 Nitter 实例。"
-      },
-      "retry_delay_seconds": {
-        "description": "Nitter 重试间隔（秒）",
-        "type": "float",
-        "default": 5.0,
-        "hint": "两次重试之间的等待时间，0 表示不等待。"
       },
       "filter_reposts_enabled": {
         "description": "转发过滤总开关",
@@ -85,12 +78,6 @@
         "type": "int",
         "default": 10,
         "hint": "一次手动搜索允许获取的最多条数。"
-      },
-      "html_min_interval": {
-        "description": "HTML 请求间隔（秒）",
-        "type": "float",
-        "default": 3.0,
-        "hint": "两次 HTML 请求的最短间隔。遇到限流时会额外等待。"
       },
       "html_max_pages": {
         "description": "HTML / Fx 最多翻页数",
@@ -163,12 +150,6 @@
         "type": "float",
         "default": 25.0,
         "hint": "超出则跳过下载。视频会先尝试更低画质，所有画质都超限才跳过。"
-      },
-      "media_transport_base64_max_mb": {
-        "description": "Base64 传输上限（MB）",
-        "type": "float",
-        "default": 8.0,
-        "hint": "仅 OneBot 使用。超过此大小的文件不使用 Base64 传输。范围 0.5–32，调大会增加内存占用。"
       }
     }
   },
@@ -190,23 +171,11 @@
         "default": "",
         "hint": "留空时，手动查询使用当前聊天的模型，后台推送使用第一个推送目标的默认模型。"
       },
-      "translate_min_chars": {
-        "description": "翻译最少字数",
-        "type": "int",
-        "default": 8,
-        "hint": "去掉链接和 @提及后，少于此字数则不翻译。范围 0–1000。"
-      },
       "translate_max_chars": {
         "description": "翻译字数上限",
         "type": "int",
         "default": 2000,
         "hint": "每条推文最多发送给模型的字符数，范围 100–10000。"
-      },
-      "translate_chinese_ratio_threshold": {
-        "description": "中文占比阈值",
-        "type": "float",
-        "default": 0.2,
-        "hint": "中文占比低于此值时翻译，范围 0–1。含日文假名或韩文时也会翻译。"
       },
       "translate_prompt": {
         "description": "翻译提示词",
@@ -403,24 +372,6 @@
                 "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
                 "invisible": true
               },
-              "check_on_startup": {
-                "description": "启动后立即检查",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "notify_no_updates": {
-                "description": "无新推文时发送检查结果提示",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "check_interval_minutes": {
-                "description": "间隔检查分钟数",
-                "type": "int",
-                "default": 30,
-                "invisible": true
-              },
               "daily_check_enabled": {
                 "description": "启用每日定点检查",
                 "type": "bool",
@@ -440,10 +391,10 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "每个订阅源每次最多推送条数",
+                "description": "分组每轮最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
+                "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
               }
             }
           },
@@ -544,24 +495,6 @@
                 "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
                 "invisible": true
               },
-              "check_on_startup": {
-                "description": "启动后立即检查",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "notify_no_updates": {
-                "description": "无新推文时发送检查结果提示",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "check_interval_minutes": {
-                "description": "间隔检查分钟数",
-                "type": "int",
-                "default": 30,
-                "invisible": true
-              },
               "daily_check_enabled": {
                 "description": "启用每日定点检查",
                 "type": "bool",
@@ -581,10 +514,10 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "每个订阅源每次最多推送条数",
+                "description": "分组每轮最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
+                "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
               }
             }
           },
@@ -684,24 +617,6 @@
                 "hint": "旧版兼容字段。可继续用于 /推文检查，但不再建议在配置界面维护。",
                 "invisible": true
               },
-              "check_on_startup": {
-                "description": "启动后立即检查",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "notify_no_updates": {
-                "description": "无新推文时发送检查结果提示",
-                "type": "bool",
-                "default": false,
-                "invisible": true
-              },
-              "check_interval_minutes": {
-                "description": "间隔检查分钟数",
-                "type": "int",
-                "default": 30,
-                "invisible": true
-              },
               "daily_check_enabled": {
                 "description": "启用每日定点检查",
                 "type": "bool",
@@ -721,10 +636,10 @@
                 "invisible": true
               },
               "max_tweets_per_check": {
-                "description": "每个订阅源每次最多推送条数",
+                "description": "分组每轮最多推送条数",
                 "type": "int",
                 "default": 0,
-                "hint": "0 表示不限，范围 0–200。标签和 List 扫描不完整时，0 会跳过本轮推送并重新记录当前推文；正数则按上限推送后重新记录。"
+                "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
               }
             }
           }
@@ -780,13 +695,6 @@
     "default": false,
     "invisible": true,
     "hint": "Internal migration marker. Do not edit manually."
-  },
-  "storage_backend": {
-    "description": "存储后端",
-    "type": "string",
-    "default": "sqlite",
-    "hint": "运行期固定使用本地 SQLite 数据库存储分组配置和推送记录，支持 500+ 账号订阅；旧 KV 数据仅在启动迁移时自动导入，不再作为运行后端。",
-    "invisible": true
   },
   "instances": {
     "description": "自建 Nitter 地址",
@@ -880,25 +788,11 @@
     "hint": "留空时，手动查询使用当前聊天的模型，后台推送使用第一个推送目标的默认模型。",
     "invisible": true
   },
-  "translate_min_chars": {
-    "description": "翻译最少字数",
-    "type": "int",
-    "default": 8,
-    "hint": "去掉链接和 @提及后，少于此字数则不翻译。范围 0–1000。",
-    "invisible": true
-  },
   "translate_max_chars": {
     "description": "翻译字数上限",
     "type": "int",
     "default": 2000,
     "hint": "每条推文最多发送给模型的字符数，范围 100–10000。",
-    "invisible": true
-  },
-  "translate_chinese_ratio_threshold": {
-    "description": "中文占比阈值",
-    "type": "float",
-    "default": 0.2,
-    "hint": "中文占比低于此值时翻译，范围 0–1。含日文假名或韩文时也会翻译。",
     "invisible": true
   },
   "translate_prompt": {
