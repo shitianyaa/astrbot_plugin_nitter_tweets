@@ -34,9 +34,9 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 后台 FxTwitter 博主抓取固定最多三并发；Nitter 优先合并 RSS，逐账号回退和媒体/翻译准备均串行。旧并发配置已退役，不影响多实例故障切换。
 
-关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
+关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用内置重试策略，最多 2 轮、轮间等待 5 秒。
 
-相关：`cooldown_seconds`、`search_max_limit`、`html_min_interval`、`html_max_pages`（同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度）。`request_timeout`、`retry_attempts`、`retry_delay_seconds` 同时作用于 RSS 和 HTML。
+相关配置包括 `cooldown_seconds`、`search_max_limit`、`html_max_pages`（同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度）。`request_timeout` 同时作用于 RSS 和 HTML；HTML 请求间隔内置为 3 秒。
 
 `auto_parse_tweet_links_enabled`（`basic`，默认 `false`）：被动解析聊天中的公开 status 链接；不进 `tweet_groups` 模板。翻译与 `show_original_when_translated` 跟随全局 AI 配置。
 
@@ -51,7 +51,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `name`: 显示名，可用于命令。
 - `group_id`: 存储 ID。新建默认分组为 `default`；由插件自动分配并保持稳定，已有值（包括旧 `global`）保留。缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。
 - `group_type`: `blogger`（默认）、`tag` 或 `list`。创建后锁定；决定使用哪类订阅字段。Tag 组抓取由 `fetch_backend` 决定，`mix` 和 `fx` 模式优先走 FxTwitter（仅 `mix` 模式在失败时回退至 Nitter HTML 搜索，`fx` 模式不回退）；List 组物理隔离强制走自建 Nitter（优先走 RSS `/i/lists/<id>/rss`，失败回退 HTML 翻页）。
-- `enabled`: 是否启用。
+- `enabled`: 是否启用。Pages 重新启用时同时保存内部 `_baseline_reset_token`，用于在数据库同步失败后重试恢复基线；该字段隐藏并由插件维护。
 - `watch_users`: **Blogger 组**博主订阅源；其他类型忽略。
 - `watch_queries`: **Tag 组**搜索订阅列表。**落盘为字符串列表**（如 `#圣娅`、`蔚蓝档案`）。前导 `#` → tag，否则 phrase；phrase 禁止自动加 `#`。仍可读旧 `{query,type}` 对象，但会规范成字符串，避免 AstrBot `list` 显示 `[object Object]`。
 - `watch_lists`: **List 组**正 `uint64` List ID 列表（`1` 至 `18446744073709551615`）；其他类型忽略。List 走统一 `instances`，不新增手动命令。
@@ -64,7 +64,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 分组「推送内容」下拉，支持「完整推文」「仅媒体（保留作者）」「仅媒体（不含文字）」。旧布尔 false/true 分别兼容前两项。两种仅媒体模式均不调用翻译，受全局媒体类型与单条媒体数量上限控制；保留作者模式在全局媒体不可用时沿用完整内容回退，不含文字模式则不发送。后者不附加作者、正文、翻译、链接、概括或无更新提示，仍遵循现有 QQ 合并转发设置，节点昵称和时间由客户端显示。Pages 分组抽屉使用相同下拉，修改草稿后点击页脚保存生效。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
-- `max_tweets_per_check`: 整个分组单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
+- `max_tweets_per_check`: 整个分组单次检查最多推送的不同推文条数（`0` 不限制，范围 0-200）；同组按状态 ID 去重，只准备和发送一次；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
 
 全局 `filter_reposts_enabled` 是后台检查与手动命令的转发过滤总开关。后台检查的实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动 `/推文` 与 `/推图` 命令亦遵循此全局总开关（手动命令不读取分组子开关）。
 
@@ -113,7 +113,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 
 ## 媒体传输编码
 
-`media` 分组下仅 `media_transport_base64_max_mb` 可配置（传输模式恒为 `auto`，twimg 白名单主机的 URL 档自动加入梯度），只影响私人号 OneBot 的媒体投递，行为见
+传输模式内置为 `auto`，Base64 单文件上限固定为 8 MB，twimg 白名单主机的 URL 档自动加入梯度。这套梯度只影响私人号 OneBot 的媒体投递，行为见
 [平台发送指南](./platform-delivery.md#媒体传输编码)：
 
 Base64 单文件上限固定为 8 MB，同时约束图片和视频。旧配置中的自定义上限在升级时清理。
@@ -136,6 +136,6 @@ Base64 单文件上限固定为 8 MB，同时约束图片和视频。旧配置�
 - 本文件。
 - 相关测试。
 
-## 3.0 升级行为
+## 2.2 升级行为
 
-分组重新启用后先重建当前基线。分组额度改为所有订阅源合计，超额旧帖跳过。六项技术参数改用内置值，升级时清理旧自定义值。完整说明见 [3.0 升级行为](../../README.md#30-升级行为)。
+分组重新启用后先重建当前基线。分组额度改为所有订阅源合计，超额旧帖跳过。六项技术参数改用内置值，升级时清理旧自定义值。完整说明见 [2.2 升级行为](../../README.md#22-升级行为)。

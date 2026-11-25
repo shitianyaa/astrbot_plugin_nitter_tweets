@@ -490,3 +490,26 @@ async def test_group_sync_reports_storage_initialization_failure():
     assert result["success"] is True
     assert result["sync_error"]
     storage.migrate_and_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create", "delete"])
+async def test_group_create_delete_wait_for_check_lock(operation):
+    api, config, storage = _make_group_api("list")
+    storage.delete_group_runtime_data = AsyncMock(return_value={})
+    async with api.scheduler._check_lock:
+        if operation == "create":
+            task = asyncio.create_task(
+                api.create_group({"name": "new", "group_type": "tag"})
+            )
+        else:
+            task = asyncio.create_task(
+                api.delete_group({"group_id": "g", "force": True, "confirm": "DELETE"})
+            )
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert [g["group_id"] for g in config_get(config, "tweet_groups")] == ["g"]
+        storage.migrate_and_sync.assert_not_awaited()
+        storage.delete_group_runtime_data.assert_not_awaited()
+    assert (await task)["success"] is True
+    storage.migrate_and_sync.assert_awaited_once()

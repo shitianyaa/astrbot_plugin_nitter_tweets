@@ -594,6 +594,7 @@ def test_removed_tuning_and_group_overrides_are_cleaned_idempotently(tmp_path):
                             "notify_no_updates": True,
                             "check_interval_minutes": 1,
                             "max_tweets_per_check": 7,
+                            "_baseline_reset_token": "persisted-request",
                         }
                     ]
                 },
@@ -606,8 +607,15 @@ def test_removed_tuning_and_group_overrides_are_cleaned_idempotently(tmp_path):
     )
     migrate_legacy_grouped_config(config)
     migrate_default_group_config(config)
+    removed_basic = {"retry_attempts", "retry_delay_seconds", "html_min_interval"}
+    assert not removed_basic & config["basic"].keys()
+    assert (
+        not removed_basic
+        & json.loads(path.read_text(encoding="utf-8-sig"))["basic"].keys()
+    )
     group = config_get(config, "tweet_groups")[0]
     assert group["max_tweets_per_check"] == 7
+    assert group["_baseline_reset_token"] == "persisted-request"
     assert (
         not {"check_on_startup", "notify_no_updates", "check_interval_minutes"}
         & group.keys()

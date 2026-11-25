@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from uuid import uuid4
 from typing import Any
 
 from astrbot.api import logger
@@ -149,9 +150,12 @@ class WebUIGroupEditor:
         )
         raw_group["name"] = name
         raw_group["group_id"] = stable_group_id
+        was_enabled = self._bool(raw_group.get("enabled", True))
         raw_group["enabled"] = self._bool(
             data.get("enabled", raw_group.get("enabled", True))
         )
+        if not was_enabled and raw_group["enabled"]:
+            raw_group["_baseline_reset_token"] = uuid4().hex
         if "max_tweets_per_check" in data:
             limit = data["max_tweets_per_check"]
             if type(limit) is not int or not 0 <= limit <= 200:

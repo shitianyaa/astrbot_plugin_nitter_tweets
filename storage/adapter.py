@@ -145,6 +145,12 @@ class StorageAdapter:
             sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
         )
 
+    async def apply_baseline_reset(self, group_id: str, token: str) -> None:
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.apply_baseline_reset, self._storage_group_id(group_id), token
+        )
+
     async def get_pending_baselines(self, group_id: str) -> set[str]:
         sqlite = await self._ensure_sqlite_connected()
         return await asyncio.to_thread(

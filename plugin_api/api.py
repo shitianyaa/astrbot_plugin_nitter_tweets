@@ -245,11 +245,12 @@ class NitterWebAPI(
         return await self._json_response(action)
 
     async def create_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = self._group_editor().create_group(data)
-        if not result.get("success"):
-            return result
+        async with self.scheduler._check_lock:
+            result = self._group_editor().create_group(data)
+            if not result.get("success"):
+                return result
 
-        sync_error = await self._sync_groups()
+            sync_error = await self._sync_groups()
         group, error = self._resolve_group(result["group_id"])
         if error:
             return self._error(error)
@@ -280,23 +281,24 @@ class NitterWebAPI(
         return payload
 
     async def delete_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        result = self._group_editor().delete_group(data)
-        if not result.get("success"):
-            return result
+        async with self.scheduler._check_lock:
+            result = self._group_editor().delete_group(data)
+            if not result.get("success"):
+                return result
 
-        runtime_summary = None
-        runtime_error = ""
-        try:
-            runtime_summary = await self.storage.delete_group_runtime_data(
-                result["group_id"]
-            )
-        except Exception as exc:
-            runtime_error = str(exc)
-            logger.warning(
-                "[NitterTweets] WebUI 删除分组运行数据清理失败: "
-                f"group={result['group_id']}, error={runtime_error}"
-            )
-        sync_error = await self._sync_groups()
+            runtime_summary = None
+            runtime_error = ""
+            try:
+                runtime_summary = await self.storage.delete_group_runtime_data(
+                    result["group_id"]
+                )
+            except Exception as exc:
+                runtime_error = str(exc)
+                logger.warning(
+                    "[NitterTweets] WebUI 删除分组运行数据清理失败: "
+                    f"group={result['group_id']}, error={runtime_error}"
+                )
+            sync_error = await self._sync_groups()
         payload = self._ok(
             group_id=result["group_id"],
             group_name=result["group_name"],

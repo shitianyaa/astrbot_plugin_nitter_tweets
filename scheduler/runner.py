@@ -16,6 +16,7 @@ try:
         resolve_hide_original_when_translated,
     )
     from ..shared import (
+        TweetItem,
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
@@ -72,6 +73,7 @@ except ImportError:
     from scheduler.runner_send import SchedulerSendMixin
     from scheduler.runner_status import SchedulerStatusMixin
     from shared import (
+        TweetItem,
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
@@ -501,6 +503,11 @@ class NitterTweetScheduler(
                         result = self._new_check_result(reason, group, target_override)
                         result.skipped_reason = "group_disabled"
                         return result
+                    reset_token = getattr(current_group, "baseline_reset_token", "")
+                    if reset_token:
+                        await self.storage.apply_baseline_reset(
+                            current_group.group_id, reset_token
+                        )
                     result = await self._run_check_unlocked(
                         current_group,
                         reason,
@@ -1129,27 +1136,48 @@ class NitterTweetScheduler(
         batches: list[PendingTweetBatch],
         seen_map: dict[str, list[str]],
         result: ScheduledCheckResult,
-    ) -> None:
-        candidates = [
-            (batch, index, tweet)
-            for batch in batches
-            for index, tweet in enumerate(batch.tweets)
-        ]
-        result.selected_tweet_count = len(candidates)
-        limit = group.max_tweets_per_check
-        if limit <= 0 or len(candidates) <= limit:
-            return
+    ) -> dict[str, str]:
+        # A previous interrupted check may have committed the owner before its
+        # other sources. Repair those copies without delivering the post again.
+        handled_ids = {
+            status_id
+            for username in group.account_keys
+            for status_id in seen_map.get(username, [])
+        }
+        for batch in batches:
+            handled_copies = [
+                tweet.status_id
+                for tweet in batch.tweets
+                if tweet.status_id in handled_ids
+            ]
+            await self._store_incremental_seen_ids(
+                group.group_id, batch.username, handled_copies, seen_map
+            )
+            batch.tweets = [
+                tweet for tweet in batch.tweets if tweet.status_id not in handled_ids
+            ]
+        # The first source owns delivery. Other sources commit their copy only
+        # after the owner's selected tweet reaches a terminal send outcome.
+        candidates: dict[str, tuple[PendingTweetBatch, int, TweetItem]] = {}
+        for batch in batches:
+            for index, tweet in enumerate(batch.tweets):
+                candidates.setdefault(tweet.status_id, (batch, index, tweet))
         ranked = sorted(
-            candidates,
+            candidates.values(),
             key=lambda item: self._parse_numeric_status_id(item[2].status_id) or 0,
             reverse=True,
         )
-        selected = {(id(batch), index) for batch, index, _ in ranked[:limit]}
+        limit = group.max_tweets_per_check
+        selected_entries = ranked[:limit] if limit > 0 else ranked
+        owners = {
+            tweet.status_id: batch.username for batch, _, tweet in selected_entries
+        }
+        selected = {(id(batch), index) for batch, index, _ in selected_entries}
         for batch in batches:
             dropped = [
                 tweet.status_id
-                for index, tweet in enumerate(batch.tweets)
-                if (id(batch), index) not in selected
+                for tweet in batch.tweets
+                if tweet.status_id not in owners
             ]
             await self._store_incremental_seen_ids(
                 group.group_id, batch.username, dropped, seen_map
@@ -1160,8 +1188,9 @@ class NitterTweetScheduler(
                 if (id(batch), index) in selected
             ]
         batches[:] = [batch for batch in batches if batch.tweets]
-        result.selected_tweet_count = limit
-        result.limit_skipped_count = len(candidates) - limit
+        result.selected_tweet_count = len(owners)
+        result.limit_skipped_count = len(candidates) - len(owners)
+        return owners
 
     async def _run_check_unlocked(
         self,
@@ -1525,7 +1554,11 @@ class NitterTweetScheduler(
                     f"filtered={group_plain_text_filtered_total}"
                 )
 
-            await self._limit_group_candidates(
+            candidate_sources = {
+                batch.username: {tweet.status_id for tweet in batch.tweets}
+                for batch in discovered_batches
+            }
+            selected_owners = await self._limit_group_candidates(
                 group, discovered_batches, seen_map, result
             )
 
@@ -1602,6 +1635,18 @@ class NitterTweetScheduler(
                 finally:
                     for batch in pending_batches:
                         await self._cleanup_batch_media(batch)
+
+            for username, status_ids in candidate_sources.items():
+                handled_duplicates = [
+                    status_id
+                    for status_id in status_ids
+                    if status_id in selected_owners
+                    and selected_owners[status_id] != username
+                    and status_id in seen_map.get(selected_owners[status_id], [])
+                ]
+                await self._store_incremental_seen_ids(
+                    group.group_id, username, handled_duplicates, seen_map
+                )
 
             for username, rebuild in incomplete_baseline_candidates.items():
                 source_label = format_subscription_source(username, group.group_type)

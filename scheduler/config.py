@@ -130,6 +130,7 @@ class ScheduleGroup:
     aliases: list[str] = field(default_factory=list)
     filter_reposts_enabled: bool = True
     media_only_mode: str = MEDIA_ONLY_MODES[0]
+    baseline_reset_token: str = ""
 
     @property
     def hide_media_text(self) -> bool:
@@ -453,6 +454,7 @@ class SchedulerConfigReader:
                 log_invalid=log_invalid_targets,
                 group_id=group_id,
             ),
+            baseline_reset_token=str(raw_group.get("_baseline_reset_token") or ""),
             aliases=aliases,
             filter_reposts_enabled=self.parse_bool(
                 raw_group.get("filter_reposts_enabled", True),

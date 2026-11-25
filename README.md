@@ -1,7 +1,7 @@
 # 推文订阅
 
 <p align="center">
-  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-3.0.0-blue?style=for-the-badge" /></a>
+  <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/releases"><img alt="Version" src="https://img.shields.io/badge/version-2.2.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/shitianyaa/astrbot_plugin_nitter_tweets/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=for-the-badge" /></a>
   <a href="https://github.com/Soulter/AstrBot"><img alt="AstrBot" src="https://img.shields.io/badge/AstrBot-plugin-00A86B?style=for-the-badge" /></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12+-3776AB?style=for-the-badge&logo=python&logoColor=white" />
@@ -158,7 +158,7 @@ curl -fsSL https://raw.githubusercontent.com/shitianyaa/nitter-installer/main/ni
 
 这里的访问密钥与部署脚本中录入的 Twitter 账号凭证不同；`auth_token`、`ct0` 等账号凭证只配置在 Nitter 服务端，不填入插件的实例地址。
 
-如果需要关注较多账号，建议在 Nitter 中建立 List，再使用插件的 List 分组订阅。List 时间线通常比逐个轮询用户页产生更少请求，更不容易触发实例的 429。RSS 和 HTML 共用 `retry_attempts`、`retry_delay_seconds`，无需分别调整两套参数。
+如果需要关注较多账号，建议在 Nitter 中建立 List，再使用插件的 List 分组订阅。List 时间线通常比逐个轮询用户页产生更少请求，更不容易触发实例的 429。RSS 和 HTML 共用内置重试策略，最多 2 轮、轮间等待 5 秒。
 
 实例地址按部署拓扑填写：AstrBot 与 Nitter 同一 Docker network 使用 `http://nitter:8080`；AstrBot 在容器、Nitter 在宿主机时使用宿主机可达地址（如 `http://host.docker.internal:8080`）；两者都在宿主机进程时可使用 `http://127.0.0.1:8080`；跨机器使用 Nitter 服务器的公网 IP 或域名。AstrBot 容器内的 `127.0.0.1` 只指向 AstrBot 容器本身。
 
@@ -271,11 +271,11 @@ List 通过配置文件或 WebUI 添加 ID，暂无导入命令。
 - **禁止闭源与盗用**：严禁任何未保留原作者版权的二次分发、闭源倒卖或二次封装为商业闭源软件的行为；
 - **第三方资产独立授权**：`pages/dashboard/fonts/` 下内置的字体属于独立聚合分发资产，分别遵循其各自独立许可证（MiSans 字体遵循小米官方许可；JetBrains Mono 字体遵循 SIL Open Font License 1.1），详见各字体目录下的许可文本。
 
-## 3.0 升级行为
+## 2.2 升级行为
 
 分组重新启用后的首次成功检查只记录当前基线，随后检查推送新帖。旧 seen 和推送历史继续保留。已产生积压的分组可再次停用、启用以重建基线。
 
-`max_tweets_per_check` 沿用旧数值，改为整个分组每轮合计上限。各订阅源统一按推文 ID 从新到旧选择，超额旧帖跳过。0 表示不限量，范围 0–200。Pages 分组编辑器可以维护该上限。
+`max_tweets_per_check` 沿用旧数值，改为整个分组每轮合计上限。同组重叠订阅的相同推文只占一个名额并发送一次，各订阅源统一按推文 ID 从新到旧选择，超额旧帖跳过。0 表示不限量，范围 0–200。Pages 分组编辑器可以维护该上限。
 
 Nitter 重试内置为 2 轮、间隔 5 秒，HTML 请求间隔内置为 3 秒，Base64 单文件上限内置为 8 MB。翻译最少 8 字，中文占比阈值为 0.2。旧自定义参数升级后采用这些数值。请求超时、翻页预算、媒体大小和时长仍可配置。
 

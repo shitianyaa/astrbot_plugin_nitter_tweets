@@ -387,8 +387,8 @@ tweet_groups:
 - [Nitter 项目](https://github.com/zedeus/nitter)
 - [插件仓库](https://github.com/shitianyaa/astrbot_plugin_nitter_tweets)
 
-## 3.0 升级行为
+## 2.2 升级行为
 
 List 分组每次重新启用后先记录当前基线，跳过停用期间的积压和媒体下载。`max_tweets_per_check` 沿用旧数值，改为组内所有 List 每轮合计上限，统一选取最新推文。超额旧帖跳过。
 
-技术参数的内置值及 Pages 缓存清理说明见 [3.0 升级行为](../README.md#30-升级行为)。
+技术参数的内置值及 Pages 缓存清理说明见 [2.2 升级行为](../README.md#22-升级行为)。

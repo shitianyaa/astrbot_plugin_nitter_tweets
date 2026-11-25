@@ -395,6 +395,12 @@
                 "type": "int",
                 "default": 0,
                 "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
+              },
+              "_baseline_reset_token": {
+                "type": "string",
+                "default": "",
+                "invisible": true,
+                "description": "内部恢复基线请求标记"
               }
             }
           },
@@ -518,6 +524,12 @@
                 "type": "int",
                 "default": 0,
                 "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
+              },
+              "_baseline_reset_token": {
+                "type": "string",
+                "default": "",
+                "invisible": true,
+                "description": "内部恢复基线请求标记"
               }
             }
           },
@@ -640,6 +652,12 @@
                 "type": "int",
                 "default": 0,
                 "hint": "0 表示不限量，范围 0–200。组内统一选择最新 N 条，超额旧帖跳过。"
+              },
+              "_baseline_reset_token": {
+                "type": "string",
+                "default": "",
+                "invisible": true,
+                "description": "内部恢复基线请求标记"
               }
             }
           }

@@ -594,3 +594,161 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
                 await scheduler.storage.get_seen_ids("lists1", "list:12345")
             )
         )
+
+    async def test_overlapping_lists_share_unique_slots_and_retry_failed_owner(self):
+        for limit, fail_owner in ((0, False), (2, False), (2, True)):
+            with self.subTest(limit=limit, fail_owner=fail_owner):
+                config = self._config()
+                config["tweet_groups"][0].update(
+                    watch_lists=["12345", "67890"], max_tweets_per_check=limit
+                )
+                first = [self._tweet(i) for i in ("305", "304", "100")]
+                second = [self._tweet(i) for i in ("305", "303", "200")]
+                backend = _ListBackend(
+                    [
+                        ("https://list.test", [self._tweet("100")]),
+                        ("https://list.test", [self._tweet("200")]),
+                        ("https://list.test", first),
+                        ("https://list.test", second),
+                        ("https://list.test", first),
+                        ("https://list.test", second),
+                    ]
+                )
+                sender = base._Sender()
+                scheduler = self._create_scheduler(
+                    backend, config=config, sender=sender
+                )
+                # Each subcase has an independent group even though the storage
+                # fixture shares the same database file.
+                await scheduler.storage.clear_seen_records("lists1")
+                await scheduler.run_check(group_name="lists1")
+                prepare = scheduler._prepare_immediate_batch
+
+                async def prepare_candidate(batch, target):
+                    if fail_owner and batch.tweets[0].status_id == "305":
+                        raise RuntimeError("preparation failed")
+                    return await prepare(batch, target)
+
+                with patch.object(
+                    scheduler, "_prepare_immediate_batch", side_effect=prepare_candidate
+                ):
+                    result = await scheduler.run_check(group_name="lists1")
+                sent_ids = [sid for item in sender.sent for sid in item[3]]
+                expected = (
+                    ["304"]
+                    if fail_owner
+                    else (["305", "304", "303"] if limit == 0 else ["305", "304"])
+                )
+                self.assertEqual(sent_ids, expected)
+                self.assertEqual(result.selected_tweet_count, 3 if limit == 0 else 2)
+                for key in ("list:12345", "list:67890"):
+                    seen = await scheduler.storage.get_seen_ids("lists1", key)
+                    self.assertEqual("305" in seen, not fail_owner)
+                if fail_owner:
+                    scheduler.media = base._Media()
+                    await scheduler.run_check(group_name="lists1")
+                    self.assertEqual(
+                        [sid for item in sender.sent for sid in item[3]], ["304", "305"]
+                    )
+                    self.assertIn(
+                        "305",
+                        await scheduler.storage.get_seen_ids("lists1", "list:67890"),
+                    )
+
+    async def test_reenable_request_survives_failed_config_sync(self):
+        from config import config_get
+        from plugin_api.api import NitterWebAPI
+        from types import SimpleNamespace
+
+        class SavingConfig(dict):
+            def save_config(self):
+                pass
+
+        for failed_operation in ("disable", "enable"):
+            with self.subTest(failed_operation=failed_operation):
+                config = SavingConfig(self._config())
+                backend = _ListBackend(
+                    [
+                        ("https://list.test", [self._tweet("100")]),
+                        ("https://list.test", [self._tweet("101")]),
+                        ("https://list.test", [self._tweet("102"), self._tweet("101")]),
+                    ]
+                )
+                sender = base._Sender()
+                scheduler = self._create_scheduler(
+                    backend, config=config, sender=sender
+                )
+                await scheduler.storage.clear_seen_records("lists1")
+                await scheduler.run_check(group_name="lists1")
+                api = NitterWebAPI(SimpleNamespace(config=config, scheduler=scheduler))
+                for enabled in (False, True):
+                    operation = "enable" if enabled else "disable"
+                    if operation == failed_operation:
+                        with patch.object(
+                            scheduler.storage,
+                            "migrate_and_sync",
+                            side_effect=RuntimeError("sync unavailable"),
+                        ):
+                            result = await api.update_group(
+                                {"group_id": "lists1", "enabled": enabled}
+                            )
+                        self.assertIn("sync_error", result)
+                    else:
+                        result = await api.update_group(
+                            {"group_id": "lists1", "enabled": enabled}
+                        )
+                        self.assertNotIn("sync_error", result)
+                token = config_get(config, "tweet_groups")[0]["_baseline_reset_token"]
+                self.assertTrue(token)
+                scheduler.storage.close()
+                await scheduler.run_check(group_name="lists1")
+                self.assertEqual(sender.sent, [])
+                self.assertEqual(
+                    await scheduler.storage.get_pending_baselines("lists1"), set()
+                )
+                # A later snapshot sync must not reapply an already consumed request.
+                self.assertEqual(await api._sync_groups(), "")
+                self.assertEqual(
+                    await scheduler.storage.get_pending_baselines("lists1"), set()
+                )
+                await scheduler.run_check(group_name="lists1")
+                self.assertEqual(sender.sent[-1][3], ["102"])
+
+    async def test_duplicate_seen_write_failure_does_not_redeliver_owner(self):
+        config = self._config()
+        config["tweet_groups"][0].update(
+            watch_lists=["12345", "67890"], max_tweets_per_check=1
+        )
+        first = [self._tweet(i) for i in ("305", "100")]
+        second = [self._tweet(i) for i in ("305", "200")]
+        backend = _ListBackend(
+            [
+                ("https://list.test", [self._tweet("100")]),
+                ("https://list.test", [self._tweet("200")]),
+                ("https://list.test", first),
+                ("https://list.test", second),
+                ("https://list.test", first),
+                ("https://list.test", second),
+            ]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(backend, config=config, sender=sender)
+        await scheduler.run_check(group_name="lists1")
+        store = scheduler._store_incremental_seen_ids
+
+        async def fail_duplicate(group_id, username, status_ids, seen_map):
+            if username == "list:67890" and "305" in status_ids:
+                raise RuntimeError("duplicate seen write failed")
+            await store(group_id, username, status_ids, seen_map)
+
+        with patch.object(
+            scheduler, "_store_incremental_seen_ids", side_effect=fail_duplicate
+        ):
+            with self.assertRaisesRegex(RuntimeError, "duplicate seen write failed"):
+                await scheduler.run_check(group_name="lists1")
+        self.assertEqual([sid for item in sender.sent for sid in item[3]], ["305"])
+        await scheduler.run_check(group_name="lists1")
+        self.assertEqual([sid for item in sender.sent for sid in item[3]], ["305"])
+        self.assertIn(
+            "305", await scheduler.storage.get_seen_ids("lists1", "list:67890")
+        )

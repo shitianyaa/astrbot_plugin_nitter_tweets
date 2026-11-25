@@ -102,7 +102,7 @@ sender._should_use_merge_for_count(tweet_count)
   路径档失败先换 base64 重试，成功则视频从未被丢弃。
 - 编码档：`path` / `base64` / `url` / `skip`。`skip` 只有视频有，复用既有的
   `TweetMessageRenderer.video_not_sent_notice`；图片没有对应文案，失败交给内容降级链。
-- `base64` 档受 `media_transport_base64_max_mb` 单文件上限约束，同一个数字同时管住图片和视频。
+- `base64` 档受内置的 8 MB 单文件上限约束，同时作用于图片和视频。
 - twimg 白名单主机的 URL 档自动加入梯度（路径与 base64 都失败后交给协议端直传）；xdown 直链带 token、
   时效短且对 Referer 敏感，永不交给协议端。
 - `uncertain`（超时）**不推进梯度**，否则会重复投递。

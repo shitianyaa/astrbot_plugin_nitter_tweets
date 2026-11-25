@@ -143,6 +143,56 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         ).fetchone()
         return row[0] if row else None
 
+    def _apply_baseline_reset_unlocked(
+        self, group_id: str, token: str, *, force: bool = False
+    ) -> bool:
+        assert self.conn is not None
+        marker_key = f"group_baseline_reset:{group_id}"
+        previous = self.conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (marker_key,)
+        ).fetchone()
+        requested = bool(token) and (previous is None or previous[0] != token)
+        if not force and not requested:
+            return False
+        now = int(time.time())
+        self.conn.execute(
+            """
+            INSERT INTO scan_watermarks
+                (group_id, username, initialized, status_ids, updated_at)
+            SELECT group_id, username, 0, '[]', ?
+            FROM seen_tweets WHERE group_id = ?
+            GROUP BY group_id, username
+            ON CONFLICT(group_id, username) DO UPDATE SET
+                initialized = 0, updated_at = excluded.updated_at
+            """,
+            (now, group_id),
+        )
+        self.conn.execute(
+            "UPDATE scan_watermarks SET initialized = 0, updated_at = ? "
+            "WHERE group_id = ?",
+            (now, group_id),
+        )
+        if token:
+            self.conn.execute(
+                "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (marker_key, token, now),
+            )
+        return True
+
+    def apply_baseline_reset(self, group_id: str, token: str) -> None:
+        """Atomically consume a durable reset request once."""
+        normalized_group_id = normalize_stable_group_id(group_id)
+        if self._apply_baseline_reset_unlocked(normalized_group_id, token):
+            # A check may consume the request after a failed Pages sync.
+            # Acknowledge enabled together with the request to prevent a later
+            # snapshot sync from applying the same transition a second time.
+            self.conn.execute(
+                "UPDATE groups SET enabled = 1 WHERE group_id = ?",
+                (normalized_group_id,),
+            )
+
     def upsert_group(
         self,
         group_id: str,
@@ -158,6 +208,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         send_user_interval: float,
         notify_no_updates: bool,
         aliases: list[str],
+        baseline_reset_token: str = "",
     ) -> None:
         """插入或更新分组配置."""
         assert self.conn is not None
@@ -172,23 +223,11 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         ).fetchone()
 
         created_at = row[0] if row else now
-        if row is not None and not bool(row[1]) and enabled:
-            self.conn.execute(
-                """
-                INSERT INTO scan_watermarks
-                    (group_id, username, initialized, status_ids, updated_at)
-                SELECT group_id, username, 0, '[]', ?
-                FROM seen_tweets WHERE group_id = ?
-                GROUP BY group_id, username
-                ON CONFLICT(group_id, username) DO UPDATE SET
-                    initialized = 0, updated_at = excluded.updated_at
-                """,
-                (now, normalized_group_id),
-            )
-            self.conn.execute(
-                "UPDATE scan_watermarks SET initialized = 0, updated_at = ? "
-                "WHERE group_id = ?",
-                (now, normalized_group_id),
+        if enabled:
+            self._apply_baseline_reset_unlocked(
+                normalized_group_id,
+                baseline_reset_token,
+                force=row is not None and not bool(row[1]),
             )
 
         self.conn.execute(
@@ -566,6 +605,10 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """Delete one group's runtime rows."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
+        self.conn.execute(
+            "DELETE FROM meta WHERE key = ?",
+            (f"group_baseline_reset:{normalized_group_id}",),
+        )
         summary = {
             "groups_deleted": 0,
             "users_deleted": 0,
@@ -996,6 +1039,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                     "group_id": group.group_id,
                     "name": group.name,
                     "enabled": group.enabled,
+                    "baseline_reset_token": getattr(group, "baseline_reset_token", ""),
                     "check_on_startup": group.check_on_startup,
                     "interval_check_enabled": group.interval_check_enabled,
                     "check_interval_minutes": group.check_interval_minutes,
@@ -1045,6 +1089,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 send_user_interval=group.send_user_interval,
                 notify_no_updates=group.notify_no_updates,
                 aliases=group.aliases,
+                baseline_reset_token=getattr(group, "baseline_reset_token", ""),
             )
 
             # 同步订阅账号
@@ -1067,6 +1112,7 @@ for _method_name in (
     "set_meta",
     "get_meta",
     "upsert_group",
+    "apply_baseline_reset",
     "set_group_users",
     "get_group_users",
     "set_group_targets",
