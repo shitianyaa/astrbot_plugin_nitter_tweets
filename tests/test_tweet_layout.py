@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from rendering.tweets import TweetMessageRenderer as R
 from shared.utils import normalize_external_links, strip_external_links
 
@@ -601,3 +603,62 @@ def test_normalize_external_links_does_not_rewrite_arbitrary_urls():
 def test_strip_external_links_preserves_legitimate_dash_lines():
     text = "第一段\n—\n第二段\n——\n第三段"
     assert strip_external_links(text) == text
+
+
+def test_build_image_node_has_no_repeated_caption():
+    """Images ride in the tweet node; the caption text stays single and leading."""
+    renderer = R()
+    tweet = _tw()
+    tweet.media.append(_img_media())
+    components = renderer.build_components(
+        1,
+        "nasa",
+        tweet,
+        source="https://nitter.example",
+        include_images=True,
+        include_videos=False,
+        omit_status_url=False,
+    )
+    plains = [c for c in components if "plain" in type(c).__name__.lower()]
+    assert len(plains) == 1
+    images = [c for c in components if "image" in type(c).__name__.lower()]
+    assert len(images) == 1
+
+    raw_content = renderer._build_onebot_tweet_content(
+        1,
+        "nasa",
+        "https://nitter.example",
+        tweet,
+        include_videos=False,
+        include_images=True,
+        omit_status_url=False,
+    )
+    assert [part["type"] for part in raw_content] == ["text", "image"]
+
+
+@pytest.mark.parametrize("class_call", [False, True], ids=["instance", "class"])
+def test_video_attachment_caption_and_node_contract(class_call):
+    renderer = R()
+    formatter = R if class_call else renderer
+    tweet = _tw()
+    caption = formatter.format_video_attachment_text(
+        1,
+        "nasa",
+        tweet,
+        omit_status_url=False,
+        hide_original_when_translated=False,
+        link_style="plain",
+    )
+    assert "视频" in caption or "GIF" in caption
+    assert "nasa" in caption.lower()
+    assert tweet.link in caption
+    components = renderer.build_video_node_components(
+        1,
+        "nasa",
+        tweet,
+        _vid_media(),
+        omit_status_url=False,
+        hide_original_when_translated=False,
+        link_style="plain",
+    )
+    assert [_kind(component) for component in components] == ["video"]

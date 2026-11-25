@@ -89,26 +89,6 @@ async def _send(adapter, *, media_only: bool):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_media_only_without_any_media_is_not_success(monkeypatch):
-    adapter = _adapter()
-    _patch_umo(monkeypatch, media=[])
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is False
-
-
-@pytest.mark.asyncio
-async def test_scheduled_media_only_with_media_stays_success(monkeypatch):
-    adapter = _adapter()
-    _patch_umo(monkeypatch, media=["image"])
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is True
-
-
-@pytest.mark.asyncio
 async def test_pure_media_lark_post_has_no_generated_title(monkeypatch):
     from delivery.lark_support import _lark_post_title
 
@@ -134,20 +114,14 @@ async def test_scheduled_plain_mode_without_media_stays_success(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_fallback_media_only_without_media_is_not_success(monkeypatch):
+@pytest.mark.parametrize("post_ok", [False, True], ids=["fallback", "post"])
+@pytest.mark.parametrize("media", [[], ["image"]], ids=["empty", "delivered"])
+async def test_scheduled_media_only_requires_delivered_media(
+    monkeypatch, post_ok, media
+):
     adapter = _adapter()
-    _patch_umo(monkeypatch, media=[], post_ok=False)
+    _patch_umo(monkeypatch, media=media, post_ok=post_ok)
 
     outcome = await _send(adapter, media_only=True)
 
-    assert outcome.success is False
-
-
-@pytest.mark.asyncio
-async def test_scheduled_fallback_media_only_with_media_stays_success(monkeypatch):
-    adapter = _adapter()
-    _patch_umo(monkeypatch, media=["image"], post_ok=False)
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is True
+    assert outcome.success is bool(media)

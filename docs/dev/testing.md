@@ -28,6 +28,8 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 - 历史分页在 Quart 请求上下文中直接调用 `handle_history()`，再经 StorageAdapter 和 SQLite 验证四档条数及 150 条下的状态筛选分支；不覆盖路由注册或请求分发。各状态与重推最新结果语义由同文件的存储/序列化测试覆盖。
 - Dashboard 日志增量去重、切档和重启由 Node 行为测试覆盖；静态断言保留行为测试尚未覆盖的安全、接线和布局约束，不锁定纯展示文案或无行为意义的函数名。
 - 重试测试模拟等待并断言次数与延迟参数；并发、取消和仲裁测试需要真实任务交错时不全局替换 sleep。
+- RSS 轮换重试和本轮失效主机隔离集中在 `test_rss_retry.py`；HTML 全局重试与限流线程安全在 `test_global_retry.py`。旧配置键只保留在兼容契约测试中。
+- 历史投递聚合、分组编辑、附件渲染和媒体清理分别沿用对应专题文件，不按历史 PR 或修复阶段建独立文件。Dashboard 沙箱、安全和接线的源码约束集中在 `test_dashboard_contracts.py`，已有 Node 行为覆盖的守卫不再重复锁定源码。
 
 ## 分层验证矩阵
 
@@ -38,7 +40,7 @@ python -m py_compile main.py scheduler/__init__.py scheduler/runner.py scheduler
 | 结构化日志、双环与 HTML 页面分类 | `python -m pytest -q tests/test_observability.py tests/test_log_buffer.py tests/test_web_logs_api.py tests/test_html_quiet_log.py tests/test_html_gate_detection.py` | 脱敏字段、摘要统计、主环/DEBUG 独立容量与读取、HTML 过程分流、时间线/空页/登录维护/异常页分类 |
 | WebUI 历史分页与状态筛选 | `python -m pytest -q tests/test_web_history_api.py` | 在 Quart 请求上下文中直接调用 `handle_history()` → StorageAdapter → SQLite，验证五组分页场景；不覆盖路由注册或请求分发。保留四档条数、带状态筛选的分页、双目标合并、总页数、下一页探测与末页完整性，以及独立的各状态筛选和最新投递语义测试 |
 | Dashboard 历史表格与主题 | `python -m pytest -q tests/test_dashboard_history.py` | 需要 Node；来源中文、状态标签、表头、跨页序号、空列表、宿主主题同步与首帧主题。浏览器另检查浅暗配色、表内吸顶、分页/选择/详情和响应式列对齐 |
-| Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_list_support.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复 |
+| Dashboard 日志档位与轮询 | `python -m pytest -q tests/test_dashboard_log_polling.py tests/test_dashboard_contracts.py` | 需要 Node；快速切档、迟到响应/错误/收尾、重启重拉、去重与暂停恢复，以及乱序游标、旧服务端和安全接线约束 |
 | 推文版式与订阅显示 | `python -m pytest -q tests/test_tweet_layout.py tests/test_search_display_username.py tests/test_subscription_display.py` | 来源链接清理、正文布局与翻译显隐、搜索作者、分组/实例显示 |
 | 推送进度重置命令 | `python -m pytest -q tests/test_maintenance_commands.py tests/test_scheduler_delivery.py` | 无确认参数、默认全部/指定组、未知分组不清理、推送历史和订阅保留、下次检查重新记录当前推文而不发送 |
 | 静态推文帮助图 | `python -m pytest -q tests/test_tweet_help.py` | 全部入口与真实注册一致、必填/可选参数、尖括号转义、字体/图标内联及随包 PNG；修改文案后另运行 `scripts/render_tweet_help.py` 并查看实际图片，见 `docs/dev/setup.md` |

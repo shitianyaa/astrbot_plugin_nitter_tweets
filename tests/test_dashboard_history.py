@@ -182,6 +182,8 @@ const notices = [];
 let confirm, resolvePost;
 const timers = new Map();
 let timerId = 0;
+let cacheChecksComplete = false;
+process.on('beforeExit', () => assert.ok(cacheChecksComplete, 'cache checks must finish every awaited scenario'));
 function setTimeout(callback, delay) { timers.set(++timerId, {callback, delay}); return timerId; }
 function clearTimeout(id) { timers.delete(id); }
 function setBusy() {}
@@ -199,6 +201,11 @@ let apiGet = () => Promise.reject(new Error('refresh failed'));
   confirmClearCache();
   const pending = confirm.action();
   assert.equal(state.actionBusy, true);
+  const firstPost = resolvePost;
+  const duplicate = confirm.action();
+  assert.equal(resolvePost, firstPost, 'duplicate confirmation must share the active operation');
+  assert.equal(timers.size, 1);
+  await duplicate;
   const timeout = [...timers.values()].find(timer => timer.delay === 30000);
   assert.ok(timeout);
   timeout.callback();
@@ -222,6 +229,7 @@ let apiGet = () => Promise.reject(new Error('refresh failed'));
   assert.equal(notices.at(-1)[1], 'warn');
   assert.ok(notices.at(-1)[0].includes('refresh failed'));
   assert.equal(timers.size, 0);
+  cacheChecksComplete = true;
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
     )

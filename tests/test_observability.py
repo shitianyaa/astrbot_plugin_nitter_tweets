@@ -412,3 +412,15 @@ def test_summary_baseline_rebuild_failed_line_redacts_urls():
     message = result.format_message()
     assert "http://" not in message
     assert "64.112.40.168" not in message
+
+
+def test_no_watch_queries_has_chinese_label():
+    result = ScheduledCheckResult(
+        reason="manual",
+        skipped_reason="no_watch_queries",
+        group_id="tag1",
+        group_name="标签组",
+    )
+    msg = result.format_message()
+    assert "no_watch_queries" not in msg
+    assert "watch_queries" in msg or "搜索订阅" in msg or "标签" in msg

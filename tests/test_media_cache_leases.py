@@ -350,3 +350,51 @@ def test_cache_clear_counts_inaccessible_subtree_and_keeps_cleaning(
     assert (blocked / "keep.jpg").exists()
     with pytest.raises(PermissionError):
         cache.cache_stats()
+
+
+def test_cache_result_serializes_active_lease_skips():
+    from plugin_api.api import NitterWebAPI
+
+    payload = NitterWebAPI._serialize_cache_result(SimpleNamespace(skipped_active=2))
+
+    assert payload["skipped_active"] == 2
+
+
+def test_scheduler_batch_cleanup_continues_after_one_failure():
+    from scheduler.runner import NitterTweetScheduler
+    from scheduler.models import PendingTweetBatch
+
+    scheduler = NitterTweetScheduler.__new__(NitterTweetScheduler)
+    cleaned: list[str] = []
+
+    async def cleanup_one(batch: PendingTweetBatch) -> None:
+        if batch.username == "bad":
+            raise RuntimeError("boom")
+        cleaned.append(batch.username)
+        batch.media_cleaned = True
+
+    scheduler._cleanup_batch_media = cleanup_one  # type: ignore[method-assign]
+
+    batches = [
+        PendingTweetBatch(
+            username="bad",
+            instance="i",
+            tweets=[],
+            fetched_ids=[],
+            seen_ids=[],
+        ),
+        PendingTweetBatch(
+            username="good",
+            instance="i",
+            tweets=[],
+            fetched_ids=[],
+            seen_ids=[],
+        ),
+    ]
+
+    async def run() -> None:
+        await scheduler._cleanup_batch_media_many(batches)
+
+    # Must not raise; second batch still cleaned
+    asyncio.run(run())
+    assert "good" in cleaned

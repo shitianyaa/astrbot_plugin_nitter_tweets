@@ -29,8 +29,6 @@ def _translator(context: _Context) -> TweetTranslator:
         context,
         {
             "translate_enabled": True,
-            "translate_min_chars": 0,
-            "translate_chinese_ratio_threshold": 1.0,
         },
     )
 

@@ -41,6 +41,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   const main = reloadLogs({ reset: true });
   const debug = setLogsLevel("debug");
   assert.equal(pending[1].params.level, "debug");
+  assert.equal(await reloadLogs(), "skipped");
+  assert.equal(pending.length, 2, 'incremental polling must wait for the reset');
   pending[0].resolve(response("main", 90));
   assert.equal(await main, "skipped");
   assert.equal(logsResetPending, true);
@@ -62,6 +64,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
   const incremental = reloadLogs();
   assert.equal(pending[4].params.after_seq, 1);
+  assert.equal(await reloadLogs(), "skipped");
+  assert.equal(pending.length, 5, 'one channel must have at most one incremental request');
   pending[4].resolve({ ...response("main", 2), entries: [response("main", 1).entries[0], response("main", 2).entries[0]] });
   await incremental;
   assert.deepEqual(state.logs.map(e => e.seq), [1, 2]);

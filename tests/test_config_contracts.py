@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 import config.compat as compat
@@ -625,4 +627,51 @@ def test_removed_tuning_and_group_overrides_are_cleaned_idempotently(tmp_path):
     migrate_default_group_config(config)
     assert config == before
     client = NitterClient(config)
+    assert (client.retry_attempts, client.retry_delay_seconds) == (2, 5.0)
+
+
+@pytest.mark.parametrize(
+    "group_id, query",
+    [("t1", "#foo"), ("T1", "#bar")],
+    ids=["plain-id", "normalized-id"],
+)
+def test_watch_queries_heal_object_form(group_id, query):
+    class Config(dict):
+        saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    config = Config(
+        {
+            "tweet_groups": [
+                {
+                    "name": "Tags",
+                    "group_id": group_id,
+                    "group_type": "tag",
+                    "watch_queries": [{"query": query, "type": "tag"}],
+                    "enabled": True,
+                    "push_targets": ["telegram:FriendMessage:1"],
+                }
+            ]
+        }
+    )
+    groups = SchedulerConfigReader(config, None).schedule_groups(
+        log_invalid_targets=False
+    )
+    assert len(groups) == 1
+    assert groups[0].group_id == group_id.lower()
+    assert groups[0].queries_info.queries[0].type == "tag"
+    assert config["tweet_groups"][0]["watch_queries"] == [query]
+    assert config.saved >= 1
+
+
+def test_retired_retry_values_are_ignored_without_migration():
+    client = NitterClient(
+        {
+            "instances": ["https://a.example"],
+            "retry_attempts": 4,
+            "retry_delay_seconds": 1.5,
+        }
+    )
     assert (client.retry_attempts, client.retry_delay_seconds) == (2, 5.0)

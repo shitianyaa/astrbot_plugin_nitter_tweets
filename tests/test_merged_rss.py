@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -42,8 +42,6 @@ def _client() -> NitterClient:
         side_effect=lambda key, default=None: {
             "instances": ["http://nitter:8080"],
             "request_timeout": 12.0,
-            "retry_attempts": 2,
-            "retry_delay_seconds": 0.0,
             "filter_reposts_enabled": True,
         }.get(key, default)
     )
@@ -201,6 +199,8 @@ def test_fetch_merged_with_watermark(monkeypatch):
 def test_fetch_merged_empty_feed(monkeypatch):
     """Empty merged feed returns empty results (runner falls back to per-user)."""
     client = _client()
+    sleep = AsyncMock()
+    monkeypatch.setattr("media_support.client.asyncio.sleep", sleep)
     xml = _rss_xml([])
 
     def fake_urlopen(request, timeout, *, proxy_url=None):
@@ -219,6 +219,8 @@ def test_fetch_merged_empty_feed(monkeypatch):
     # Both users get empty results
     assert len(results["alice"].tweets) == 0
     assert len(results["bob"].tweets) == 0
+
+    sleep.assert_awaited_once_with(5.0)
 
 
 def test_fetch_merged_boundary_collision(monkeypatch):

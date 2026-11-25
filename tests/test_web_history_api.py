@@ -395,3 +395,95 @@ def test_history_page_size_through_route_and_sqlite(limit, status):
             sqlite.close()
 
     asyncio.run(run())
+
+
+def _history_record(
+    *, record_id: int, target: str, pushed_at: int, status: str, error: str = ""
+):
+    return types.SimpleNamespace(
+        id=record_id,
+        group_id="default",
+        username="nasa",
+        status_id="123",
+        original_link="https://x.com/nasa/status/123",
+        target_umo=target,
+        source="scheduled",
+        instance="https://nitter.example",
+        pushed_at=pushed_at,
+        tweet=make_tweet(),
+        delivery_status=status,
+        delivery_error=error,
+    )
+
+
+def test_history_group_uses_latest_delivery_status_per_target():
+    records = [
+        _history_record(
+            record_id=3,
+            target="telegram:FriendMessage:1",
+            pushed_at=200,
+            status="success",
+        ),
+        _history_record(
+            record_id=2,
+            target="telegram:FriendMessage:1",
+            pushed_at=100,
+            status="partial_failed",
+            error="old media failure",
+        ),
+    ]
+
+    grouped = WebAPIHistoryMixin._group_history_records(records, {}, {})
+
+    assert grouped[0]["delivery_status"] == "success"
+    assert grouped[0]["delivery_error"] == ""
+
+
+def test_history_group_keeps_partial_status_when_error_text_is_empty():
+    records = [
+        _history_record(
+            record_id=1,
+            target="lark:GroupMessage:1",
+            pushed_at=100,
+            status="partial_failed",
+            error="",
+        )
+    ]
+
+    grouped = WebAPIHistoryMixin._group_history_records(records, {}, {})
+
+    assert grouped[0]["delivery_status"] == "partial_failed"
+    assert grouped[0]["delivery_error"] == ""
+
+
+def test_history_group_exposes_failed_status_and_error():
+    record = _history_record(
+        record_id=1,
+        target="qq:GroupMessage:1",
+        pushed_at=100,
+        status="failed",
+        error="消息内容违规",
+    )
+
+    grouped = WebAPIHistoryMixin._group_history_records([record], {}, {})
+
+    assert grouped[0]["delivery_status"] == "failed"
+    assert grouped[0]["delivery_error"] == "消息内容违规"
+
+
+def test_history_group_exposes_tag_type_for_query_display():
+    record = _history_record(
+        record_id=1,
+        target="telegram:FriendMessage:1",
+        pushed_at=100,
+        status="success",
+    )
+    record.username = "q:#Space"
+
+    grouped = WebAPIHistoryMixin._group_history_records(
+        [record],
+        {},
+        {"default": types.SimpleNamespace(targets=[], group_type="tag")},
+    )
+
+    assert grouped[0]["group_type"] == "tag"

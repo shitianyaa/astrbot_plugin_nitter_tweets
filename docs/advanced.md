@@ -353,7 +353,7 @@ python scripts\probe_nitter_fetch.py nasa 5 --instance http://nitter:8080 --incl
 `scripts/test_video_download.py` 可用于验证 xdown 解析、视频分辨率选择和最长下载时长：
 
 ```text
-python scripts\test_video_download.py https://x.com/user/status/123 --resolution highest --max-duration-minutes 8
+python scripts\test_video_download.py https://x.com/user/status/123 --media-quality high --max-duration-minutes 8
 ```
 
 ## 抓取后端策略（fetch_backend）

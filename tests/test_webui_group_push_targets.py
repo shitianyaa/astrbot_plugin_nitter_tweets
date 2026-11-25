@@ -513,3 +513,235 @@ async def test_group_create_delete_wait_for_check_lock(operation):
         storage.delete_group_runtime_data.assert_not_awaited()
     assert (await task)["success"] is True
     storage.migrate_and_sync.assert_awaited_once()
+
+
+def test_update_group_saves_url_and_translation_flags():
+    """Saving omit_status_url / hide_original via WebUI must not crash."""
+
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "默认分组",
+                "group_id": "default",
+                "enabled": True,
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "watch_queries": [],
+                "push_targets": ["aiocqhttp:GroupMessage:1"],
+                "interval_check_enabled": True,
+                "daily_check_times": [],
+                "filter_plain_text_enabled": False,
+                "media_only_enabled": False,
+                "omit_status_url": True,
+                "hide_original_when_translated": False,
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {
+            "group_id": "default",
+            "name": "默认分组",
+            "omit_status_url": False,
+            "hide_original_when_translated": True,
+        }
+    )
+    assert result.get("success") is True, result
+    groups = config_get(config, "tweet_groups", [])
+    assert groups, config
+    saved = groups[0]
+    assert saved["omit_status_url"] is False
+    assert saved["hide_original_when_translated"] is True
+
+
+def test_webui_update_finds_explicit_legacy_global_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "默认分组",
+                "group_id": "global",
+                "enabled": True,
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "watch_queries": [],
+                "push_targets": [],
+                "interval_check_enabled": True,
+                "daily_check_times": [],
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {"group_id": "global", "name": "默认分组", "enabled": False}
+    )
+
+    assert result.get("success") is True, result
+    saved = config_get(config, "tweet_groups", [])[0]
+    assert saved["group_id"] == "global"
+    assert saved["enabled"] is False
+
+
+def test_webui_update_by_alias_preserves_stable_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Current name",
+                "group_id": "stable_id",
+                "aliases": ["old_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {
+            "group_id": "old_alias",
+            "name": "Updated name",
+            "enabled": False,
+        }
+    )
+
+    # group_id 仍用稳定标识；group 为 None（本测试的编辑器无序列化能力，
+    # 前端据 presence 走原位替换或整组重拉）
+    assert result["success"] is True
+    assert result["group_id"] == "stable_id"
+    assert result["group"] is None
+    saved = config_get(config, "tweet_groups", [])[0]
+    assert saved["group_id"] == "stable_id"
+    assert saved["name"] == "Updated name"
+
+
+def test_webui_delete_by_alias_returns_stable_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Disposable group",
+                "group_id": "stable_id",
+                "aliases": ["old_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.delete_group(
+        {"group_id": "old_alias", "force": True, "confirm": "DELETE"}
+    )
+
+    assert result["success"] is True
+    assert result["group_id"] == "stable_id"
+    assert config_get(config, "tweet_groups", []) == []
+
+
+def test_webui_default_group_alias_cannot_bypass_delete_protection():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Default group",
+                "group_id": "default",
+                "aliases": ["legacy_default_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.delete_group(
+        {
+            "group_id": "legacy_default_alias",
+            "force": True,
+            "confirm": "DELETE",
+        }
+    )
+
+    assert result == {"success": False, "error": "默认分组不能在 WebUI 中删除"}
+    assert config_get(config, "tweet_groups", [])[0]["group_id"] == "default"
+
+
+def test_dashboard_update_preserves_inactive_mixed_legacy_watch_lists():
+    config = _FakeConfig(
+        {
+            "_default_group_config_migrated": True,
+            "push": {
+                "tweet_groups": [
+                    {
+                        "name": "mixed blogger",
+                        "group_id": "mixed_blogger",
+                        "group_type": "blogger",
+                        "watch_users": ["nasa"],
+                        "watch_queries": ["#space"],
+                        "push_targets": [],
+                    },
+                    {
+                        "name": "mixed tag",
+                        "group_id": "mixed_tag",
+                        "group_type": "tag",
+                        "watch_users": ["legacy_user"],
+                        "watch_queries": ["#space"],
+                        "push_targets": [],
+                    },
+                ]
+            },
+        }
+    )
+    editor = _make_editor(config)
+    editor.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+
+    blogger_result = editor.update_group(
+        {
+            "group_id": "mixed_blogger",
+            "name": "mixed blogger",
+            "enabled": False,
+        }
+    )
+    tag_result = editor.update_group(
+        {
+            "group_id": "mixed_tag",
+            "name": "mixed tag",
+            "enabled": False,
+        }
+    )
+
+    assert blogger_result.get("success") is True, blogger_result
+    assert tag_result.get("success") is True, tag_result
+    groups = {
+        group["group_id"]: group for group in config_get(config, "tweet_groups", [])
+    }
+    assert groups["mixed_blogger"]["watch_queries"] == ["#space"]
+    assert groups["mixed_tag"]["watch_users"] == ["legacy_user"]
+
+
+def test_dashboard_group_serialization_preserves_hide_original_toggle():
+    config = {
+        "tweet_groups": [
+            {
+                "name": "默认分组",
+                "group_id": "default",
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": ["aiocqhttp:GroupMessage:1"],
+                "hide_original_when_translated": True,
+            }
+        ]
+    }
+    group = SchedulerConfigReader(config, context=None).schedule_groups()[0]
+    plugin = MagicMock()
+    plugin.config = config
+
+    payload = NitterWebAPI(plugin)._serialize_group(group)
+
+    assert payload["hide_original_when_translated"] is True
+
+
+def test_dashboard_query_editor_preserves_explicit_phrase_type():
+    config = {"tweet_groups": []}
+    editor = _make_editor(config)
+    editor.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+
+    stored = editor._normalized_watch_queries([{"query": "#literal", "type": "phrase"}])
+
+    assert stored == ["nitter-query:phrase:#literal"]
