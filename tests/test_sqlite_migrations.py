@@ -6,6 +6,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from shared.utils import TweetItem
 from storage import SQLiteStorage
@@ -44,9 +45,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 storage.add_seen_ids("g", "list:12345", ["305"], handled=True)
                 # Baseline rewrites preserve real handling evidence and the
                 # newest-first ordering, without promoting the other seed IDs.
-                storage.put_group_seen_map_and_scan_watermark(
-                    "g", "list:12345", {"list:12345": ["306", "305", "100"]}, ["306"]
-                )
+                storage.put_scan_baseline("g", "list:12345", ["306", "305"])
                 storage.close()
                 await storage.connect()
                 self.assertEqual(
@@ -58,6 +57,26 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(storage.get_group_handled_seen_map("other"), {})
                 storage.clear_seen_tweets("g")
                 self.assertEqual(storage.get_group_handled_seen_map("g"), {})
+            finally:
+                storage.close()
+
+    async def test_scan_baseline_rolls_back_seen_if_watermark_write_fails(self):
+        with TemporaryDirectory() as temp_dir:
+            storage = SQLiteStorage(Path(temp_dir) / "state.db")
+            await storage.connect()
+            try:
+                storage.put_scan_baseline("g", "list:12345", ["100"])
+                with patch.object(
+                    storage,
+                    "_set_scan_watermark_unlocked",
+                    side_effect=OSError("watermark unavailable"),
+                ):
+                    with self.assertRaisesRegex(OSError, "watermark unavailable"):
+                        storage.put_scan_baseline("g", "list:12345", ["101"])
+                self.assertEqual(storage.get_seen_ids("g", "list:12345"), ["100"])
+                self.assertEqual(
+                    storage.get_group_scan_watermarks("g"), {"list:12345": ["100"]}
+                )
             finally:
                 storage.close()
 

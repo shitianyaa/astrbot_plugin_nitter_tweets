@@ -590,17 +590,12 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """设置一个分组账号的最近扫描基准组并标记为已初始化。"""
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
-    def put_group_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None = None,
+    def put_scan_baseline(
+        self, group_id: str, username: str, status_ids: list[str]
     ) -> None:
-        """在同一事务中写入 seen map 和一个账号的扫描水位。"""
-        for seen_username, seen_ids in seen_map.items():
-            if seen_ids:
-                self._add_seen_ids_unlocked(group_id, seen_username, seen_ids)
+        """在同一事务中写入单个订阅源的新基线 ID 和扫描水位。"""
+        if status_ids:
+            self._add_seen_ids_unlocked(group_id, username, status_ids)
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
     def count_seen_tweets_by_group(self) -> dict[str, int]:
@@ -1154,7 +1149,7 @@ for _method_name in (
     "get_group_scan_watermarks",
     "get_pending_baselines",
     "set_scan_watermark",
-    "put_group_seen_map_and_scan_watermark",
+    "put_scan_baseline",
     "clear_seen_tweets",
     "delete_group_runtime_data",
     "record_push_history",

@@ -112,20 +112,15 @@ class StorageAdapter:
                     sqlite.add_seen_ids, storage_group_id, username, status_ids
                 )
 
-    async def put_group_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None = None,
+    async def put_scan_baseline(
+        self, group_id: str, username: str, status_ids: list[str]
     ) -> None:
-        """Atomically save a seen map and one account's scan watermark."""
+        """Persist one source's baseline IDs and watermark in one transaction."""
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
-            sqlite.put_group_seen_map_and_scan_watermark,
+            sqlite.put_scan_baseline,
             self._storage_group_id(group_id),
             username,
-            seen_map,
             status_ids,
         )
 

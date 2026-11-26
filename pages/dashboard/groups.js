@@ -989,9 +989,9 @@ async function submitCreateGroup() {
   const sel = els.createGroupType?.querySelector('input[name="createGroupType"]:checked');
   const gType = sel?.value || "blogger";
   const name = (els.createGroupName?.value || "").trim() || "新订阅分组";
-  closeCreateGroupModal();
   await withAction(async () => {
     const res = await apiPost("web/groups/create", { name, group_type: gType });
+    closeCreateGroupModal();
     if (res?.group) state.selectedGroupId = res.group.group_id;
   }, "分组创建成功");
 }

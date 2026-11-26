@@ -152,6 +152,7 @@ class _SchedulerNitter:
                 ),
                 latest_status_id=str(scan.get("latest_status_id", "")),
                 plain_text_filtered=0,
+                reposts_filtered=scan.get("reposts_filtered", 0),
                 complete=scan.get("complete", True),
             ),
         )
@@ -802,6 +803,61 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed.new_tweet_count, 1)
         self.assertEqual(len(sender.sent), 2)
         self.assertEqual(sender.sent[-1][3], ["103"])
+
+    async def test_blogger_repost_only_rss_keeps_baseline_without_html(self):
+        for watermark in (None, ["100"]):
+            with self.subTest(watermark=watermark):
+                group_id = (
+                    "bloggers_first" if watermark is None else "bloggers_existing"
+                )
+                sender = _Sender()
+                nitter = _SchedulerNitter(
+                    {
+                        "NASA": [
+                            {"reposts_filtered": 2},
+                            {
+                                "tweets": [self._make_tweet("NASA", "110")],
+                                "scanned_status_ids": ["110", *(watermark or [])],
+                            },
+                        ]
+                    }
+                )
+                nitter.fetch_user_html = Mock(
+                    return_value=("https://html.test", [self._make_tweet("NASA", "90")])
+                )
+                scheduler = self._create_scheduler(
+                    {
+                        "basic": {"fetch_backend": "nitter"},
+                        "tweet_groups": [
+                            {
+                                "name": "博主",
+                                "group_id": group_id,
+                                "watch_users": ["NASA"],
+                                "push_targets": ["telegram:FriendMessage:1"],
+                            }
+                        ],
+                    },
+                    nitter=nitter,
+                    sender=sender,
+                )
+                if watermark is not None:
+                    await scheduler.storage.add_seen_ids(group_id, "NASA", watermark)
+                    await scheduler.storage.set_scan_watermark(
+                        group_id, "NASA", watermark
+                    )
+
+                result = await scheduler.run_check(group_name=group_id)
+
+                self.assertEqual(result.retweet_filtered, 2)
+                self.assertEqual(sender.sent, [])
+                self.assertEqual(
+                    await scheduler.storage.get_group_scan_watermarks(group_id),
+                    {"NASA": watermark or []},
+                )
+                nitter.fetch_user_html.assert_not_called()
+
+                await scheduler.run_check(group_name=group_id)
+                self.assertEqual([item[3] for item in sender.sent], [["110"]])
 
     async def test_blogger_repost_filter_override_reaches_rss_and_html_fetch(
         self,

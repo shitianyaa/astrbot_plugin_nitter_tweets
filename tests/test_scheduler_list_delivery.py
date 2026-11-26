@@ -81,6 +81,10 @@ class _LegacySeenStorage:
         del group_id, username, status_ids
         self.calls.append("watermark")
 
+    @staticmethod
+    def merge_seen_ids(new_ids, old_ids):
+        return list(dict.fromkeys([*new_ids, *old_ids]))
+
 
 class _SeenWriterHarness(SchedulerSeenMixin):
     def __init__(self, storage):
@@ -117,23 +121,15 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         storage = _LegacySeenStorage()
         writer = _SeenWriterHarness(storage)
 
-        await writer._put_seen_map_and_scan_watermark(
-            "lists1",
-            "list:12345",
-            {"list:12345": ["101"]},
-            ["101"],
-        )
+        await writer._rebuild_scan_baseline("lists1", "list:12345", {}, ["101"])
 
         self.assertEqual(storage.calls, ["seen", "watermark"])
 
         failed_storage = _LegacySeenStorage(fail_seen=True)
         failed_writer = _SeenWriterHarness(failed_storage)
         with self.assertRaisesRegex(RuntimeError, "seen unavailable"):
-            await failed_writer._put_seen_map_and_scan_watermark(
-                "lists1",
-                "list:12345",
-                {"list:12345": ["101"]},
-                ["101"],
+            await failed_writer._rebuild_scan_baseline(
+                "lists1", "list:12345", {}, ["101"]
             )
         self.assertEqual(failed_storage.calls, ["seen"])
 
@@ -528,6 +524,32 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
             ["100"],
         )
 
+    async def test_rebuild_baseline_only_writes_new_ids_for_the_current_source(self):
+        scheduler = self._create_scheduler(_ListBackend([]))
+        storage = scheduler.storage
+        source, other_source = "list:12345", "list:67890"
+        await storage.add_seen_ids("lists1", source, ["99"], handled=True)
+        await storage.add_seen_ids("lists1", other_source, ["150"], handled=True)
+        await storage.set_scan_watermark("lists1", other_source, ["150"])
+        seen_map = await storage.get_group_seen_map("lists1")
+        sqlite = storage.sqlite
+        with patch.object(
+            sqlite, "_add_seen_ids_unlocked", wraps=sqlite._add_seen_ids_unlocked
+        ) as write_seen:
+            await scheduler._rebuild_scan_baseline("lists1", source, seen_map, ["100"])
+
+        write_seen.assert_called_once_with("lists1", source, ["100"])
+        self.assertEqual(seen_map, {source: ["100", "99"], other_source: ["150"]})
+        self.assertEqual(await storage.get_group_seen_map("lists1"), seen_map)
+        self.assertEqual(
+            await storage.get_group_handled_seen_map("lists1"),
+            {source: ["99"], other_source: ["150"]},
+        )
+        self.assertEqual(
+            await storage.get_group_scan_watermarks("lists1"),
+            {source: ["100"], other_source: ["150"]},
+        )
+
     async def test_reenabled_list_reseeds_after_restart_and_write_failure(self):
         backend = _ListBackend(
             [
@@ -550,7 +572,7 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
         with patch.object(
             scheduler.storage,
-            "put_group_seen_map_and_scan_watermark",
+            "put_scan_baseline",
             side_effect=RuntimeError("write failed"),
         ):
             with self.assertRaisesRegex(RuntimeError, "write failed"):

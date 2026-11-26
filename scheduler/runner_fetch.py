@@ -573,7 +573,15 @@ class SchedulerFetchMixin:
                     else list(raw_anchor_status_ids)
                 )
                 tweets = list(scan_result.tweets)
-                if not tweets:
+                repost_only_scan = (
+                    scan_result.complete
+                    and not tweets
+                    and bool(scan_result.reposts_filtered)
+                    and not scan_result.scanned_status_ids
+                )
+                if repost_only_scan:
+                    nitter_attempts.append("单账号RSS=转推已过滤")
+                elif not tweets:
                     nitter_attempts.append("单账号RSS=无推文")
                     html_result = await self._fetch_user_html_after_rss(
                         index,

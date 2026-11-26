@@ -88,28 +88,6 @@ class SchedulerSeenMixin:
     ) -> None:
         await self.storage.put_group_seen_map(group_id, seen_map)
 
-    async def _put_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None,
-    ) -> None:
-        writer = getattr(
-            self.storage,
-            "put_group_seen_map_and_scan_watermark",
-            None,
-        )
-        if callable(writer):
-            await writer(group_id, username, seen_map, status_ids)
-            return
-
-        # Keep lightweight/legacy storage adapters usable until they expose
-        # the SQLite transaction-backed operation. Match the atomic writer's
-        # ordering so a failed watermark write cannot run ahead of seen data.
-        await self._put_seen_map(group_id, seen_map)
-        await self._set_scan_watermark(group_id, username, status_ids)
-
     @staticmethod
     def _normalize_scan_baseline_ids(status_ids: list[str] | str | None) -> list[str]:
         """Keep only valid numeric status IDs for an automatic baseline."""
@@ -132,14 +110,13 @@ class SchedulerSeenMixin:
         if not isinstance(current_seen, list):
             current_seen = []
         updated_seen_ids = self._merge_seen_ids(baseline_ids, current_seen)
-        updated_seen_map = dict(seen_map)
-        updated_seen_map[username] = updated_seen_ids
-        await self._put_seen_map_and_scan_watermark(
-            group_id,
-            username,
-            updated_seen_map,
-            baseline_ids,
-        )
+        writer = getattr(self.storage, "put_scan_baseline", None)
+        if callable(writer):
+            await writer(group_id, username, baseline_ids)
+        else:
+            # Legacy writers must still persist seen before the watermark.
+            await self._put_seen_map(group_id, {**seen_map, username: updated_seen_ids})
+            await self._set_scan_watermark(group_id, username, baseline_ids)
         seen_map[username] = updated_seen_ids
         return len(baseline_ids)
 

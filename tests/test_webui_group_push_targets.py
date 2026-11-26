@@ -451,19 +451,6 @@ async def test_group_limit_validation_and_partial_save(limit):
 
 
 @pytest.mark.asyncio
-async def test_group_update_waits_for_check_lock():
-    api, config, _ = _make_group_api("list")
-    async with api.scheduler._check_lock:
-        task = asyncio.create_task(
-            api.update_group({"group_id": "g", "enabled": False})
-        )
-        await asyncio.sleep(0)
-        assert not task.done()
-        assert config_get(config, "tweet_groups")[0]["enabled"] is True
-    assert (await task)["group"]["enabled"] is False
-
-
-@pytest.mark.asyncio
 async def test_group_sync_waits_for_storage_initialization():
     api, config, storage = _make_group_api("list")
     entered, release = asyncio.Event(), asyncio.Event()
@@ -493,25 +480,31 @@ async def test_group_sync_reports_storage_initialization_failure():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["create", "delete"])
-async def test_group_create_delete_wait_for_check_lock(operation):
+@pytest.mark.parametrize(
+    ("operation", "payload"),
+    [
+        ("create", {"name": "new", "group_type": "tag"}),
+        ("update", {"group_id": "g", "enabled": False}),
+        ("delete", {"group_id": "g", "force": True, "confirm": "DELETE"}),
+    ],
+)
+async def test_group_write_reports_busy_without_mutation_and_can_retry(
+    operation, payload
+):
     api, config, storage = _make_group_api("list")
     storage.delete_group_runtime_data = AsyncMock(return_value={})
+    write = getattr(api, f"{operation}_group")
     async with api.scheduler._check_lock:
-        if operation == "create":
-            task = asyncio.create_task(
-                api.create_group({"name": "new", "group_type": "tag"})
-            )
-        else:
-            task = asyncio.create_task(
-                api.delete_group({"group_id": "g", "force": True, "confirm": "DELETE"})
-            )
-        await asyncio.sleep(0)
-        assert not task.done()
+        with patch.object(config, "save_config") as save:
+            result = await asyncio.wait_for(write(payload), timeout=0.5)
+        assert result["success"] is False
+        assert "稍后重试" in result["error"]
+        save.assert_not_called()
         assert [g["group_id"] for g in config_get(config, "tweet_groups")] == ["g"]
+        assert _group_raw(config)["enabled"] is True
         storage.migrate_and_sync.assert_not_awaited()
         storage.delete_group_runtime_data.assert_not_awaited()
-    assert (await task)["success"] is True
+    assert (await write(payload))["success"] is True
     storage.migrate_and_sync.assert_awaited_once()
 
 

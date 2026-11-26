@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from astrbot.api import logger
@@ -49,6 +50,7 @@ except ImportError:
 
 
 PLUGIN_NAME = "astrbot_plugin_nitter_tweets"
+_GROUP_WRITE_BUSY = "后台检查或分组操作正在进行，本次更改未保存，请稍后重试"
 
 
 class NitterWebAPI(
@@ -244,8 +246,26 @@ class NitterWebAPI(
 
         return await self._json_response(action)
 
+    @asynccontextmanager
+    async def _try_group_write_lock(self) -> AsyncIterator[bool]:
+        lock = self.scheduler._check_lock
+        try:
+            # A free lock acquires inline. Never queue a write behind a check,
+            # even during handoff to an already waiting check.
+            async with asyncio.timeout(0):
+                await lock.acquire()
+        except TimeoutError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
+
     async def create_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        async with self.scheduler._check_lock:
+        async with self._try_group_write_lock() as acquired:
+            if not acquired:
+                return self._error(_GROUP_WRITE_BUSY)
             result = self._group_editor().create_group(data)
             if not result.get("success"):
                 return result
@@ -263,7 +283,9 @@ class NitterWebAPI(
         return payload
 
     async def update_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        async with self.scheduler._check_lock:
+        async with self._try_group_write_lock() as acquired:
+            if not acquired:
+                return self._error(_GROUP_WRITE_BUSY)
             result = self._group_editor().update_group(data)
             if not result.get("success"):
                 return result
@@ -281,7 +303,9 @@ class NitterWebAPI(
         return payload
 
     async def delete_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        async with self.scheduler._check_lock:
+        async with self._try_group_write_lock() as acquired:
+            if not acquired:
+                return self._error(_GROUP_WRITE_BUSY)
             result = self._group_editor().delete_group(data)
             if not result.get("success"):
                 return result
