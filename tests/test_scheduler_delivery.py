@@ -14,6 +14,7 @@ import delivery.telegram as telegram_delivery_module
 import scheduler as scheduler_module
 from delivery import DefaultDeliveryAdapter, TweetSender
 from delivery.outcomes import SendAttempt, SendOutcome
+from media_support.client import SchedulerFetchResult
 from rendering import TweetMessageRenderer
 from scheduler import NitterTweetScheduler
 from shared import TweetItem, TweetMedia
@@ -140,7 +141,7 @@ class _SchedulerNitter:
         scan = scans.pop(0) if len(scans) > 1 else scans[0]
         return (
             "https://scheduler.test",
-            types.SimpleNamespace(
+            SchedulerFetchResult(
                 tweets=list(scan.get("tweets", [])),
                 scanned_status_ids=list(scan.get("scanned_status_ids", [])),
                 anchor_status_ids=list(
@@ -3188,8 +3189,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def _run_merged_html_check(self, *, merged_down=False, media_filter=False):
-        from media_support.client import SchedulerFetchResult
-
         new_tweet = self._make_tweet("NASA", "102")
         old_checkpoint = self._make_tweet("NASA", "100")
         other_checkpoint = self._make_tweet("NASAHubble", "200")
@@ -3271,8 +3270,6 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_merged_failure_preserves_watermark_until_rss_recovers(self):
-        from media_support.client import SchedulerFetchResult
-
         scheduler, nitter, sender, result = await self._run_merged_html_check(
             merged_down=True
         )
@@ -3548,7 +3545,7 @@ class SchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_fetch_passes_path_override_without_type_error(self):
         from unittest.mock import AsyncMock
 
-        from media_support.client import NitterClient, SchedulerFetchResult
+        from media_support.client import NitterClient
         from scheduler.runner_fetch import SchedulerFetchMixin
 
         client = NitterClient({"instances": ["http://127.0.0.1:8080"]})

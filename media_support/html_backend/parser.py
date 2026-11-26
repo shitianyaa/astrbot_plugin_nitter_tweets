@@ -337,7 +337,7 @@ def parse_timeline_html(
 
     chunks = re.split(r'(?=<div class="timeline-item\b)', html)
     tweets: list[TweetItem] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str, bool]] = set()
     raw = 0
     for chunk in chunks:
         if "tweet-content" not in chunk and "tweet-body" not in chunk:
@@ -350,7 +350,8 @@ def parse_timeline_html(
             continue
         raw += 1
         user, sid = sm.group("user"), sm.group("id")
-        key = f"{user}:{sid}"
+        is_retweet = is_pure_retweet_chunk(chunk)
+        key = (user, sid, is_retweet)
         if key in seen:
             continue
         seen.add(key)
@@ -364,7 +365,7 @@ def parse_timeline_html(
                 link=link,
                 published=published,
                 media=_extract_media(chunk, instance, quality=quality),
-                is_retweet=is_pure_retweet_chunk(chunk),
+                is_retweet=is_retweet,
             )
         )
     return TimelinePage(

@@ -46,12 +46,18 @@ def test_schema_renders_groups_only_with_values():
     group_keys = [g["key"] for g in result["groups"]]
     assert group_keys == [
         "basic",
-        "media",
-        "ai_translation",
         "schedule",
         "push",
+        "media",
+        "ai_translation",
     ]
     basic = result["groups"][0]
+    assert basic["name"] == "抓取与查询"
+    assert [item["key"] for item in basic["items"][:3]] == [
+        "fetch_backend",
+        "instances",
+        "filter_reposts_enabled",
+    ]
     by_key = {i["key"]: i for i in basic["items"]}
     # 值:分组值优先于 schema default
     assert by_key["default_limit"]["value"] == 7
@@ -67,7 +73,9 @@ def test_schema_marks_template_list_not_editable():
     config = _FakeConfig()
     result = asyncio.run(_Host(config).build_config_schema())
     push = next(g for g in result["groups"] if g["key"] == "push")
-    tg = next(i for i in push["items"] if i["key"] == "tweet_groups")
+    assert push["name"] == "订阅与发送"
+    tg = push["items"][0]
+    assert tg["key"] == "tweet_groups"
     assert tg["editable"] is False
     assert tg["type"] == "template_list"
 

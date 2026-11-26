@@ -299,7 +299,7 @@ def test_list_pagination_uses_cursor_and_global_repost_filter(monkeypatch):
     assert [tweet.status_id for tweet in tweets] == ["9", "8"]
     assert tweets.raw_item_count == 4
     assert tweets.retweet_filtered == 1
-    assert tweets.anchor_status_ids == ["10", "9"]
+    assert tweets.anchor_status_ids == ["9"]
     assert pool._get_html.call_args_list[0].args[1] == "/i/lists/12345"
     assert "cursor=cursor-2" in pool._get_html.call_args_list[1].args[1]
 

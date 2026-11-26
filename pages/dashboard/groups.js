@@ -157,7 +157,9 @@ function groupCard(g) {
   const invalidTargets = d.invalid_push_targets || [];
   const intervalOn = d.interval_check_enabled !== false;
   const daily = (d.daily_check_times || []).join(", ");
-  const repostFilter = d.filter_reposts_enabled ? "已开启" : "已关闭";
+  const effectiveRepostFilter = g.effective_filter_reposts_enabled ?? g.filter_reposts_enabled ?? true;
+  const repostFilter = g.global_filter_reposts_enabled === false ? "全局已关闭"
+    : effectiveRepostFilter ? "已开启" : "分组已关闭";
   const plainFilter = d.filter_plain_text_enabled ? "仅媒体" : "全部";
   const health = groupHealthInfo(g);
   const preview = sources.slice(0, 8);
@@ -343,8 +345,7 @@ function openGroupSheet(gid) {
   });
   contentSelect.onChange(value => updateDraft(gid, "media_only_enabled", value));
 
-  const body = h("div", { class: "vstack" }, [
-    // 名称 + 启停
+  const body = h("div", { class: "vstack group-editor" }, [
     h("label", { class: "field" }, [
       h("span", { text: "分组名称" }),
       h("input", {
@@ -353,55 +354,68 @@ function openGroupSheet(gid) {
         onInput: e => updateDraft(gid, "name", e.target.value.trim()),
       }),
     ]),
-    h("div", { class: "editor-grid" }, [
-      toggleRow(d.enabled, "启用此分组", v => updateDraft(gid, "enabled", v)),
-      toggleRow(d.interval_check_enabled, "启用间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
-      toggleRow(d.filter_reposts_enabled, "过滤转发（需开启全局转发过滤）", v => updateDraft(gid, "filter_reposts_enabled", v)),
-      toggleRow(d.filter_plain_text_enabled, "过滤纯文本推文", v => updateDraft(gid, "filter_plain_text_enabled", v)),
-      h("label", { class: "field" }, [
-        h("span", { text: "推送内容" }),
-        contentSelect,
-        h("span", { class: "hint-line", text: "两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效，节点昵称和时间由客户端显示。" }),
-      ]),
-      toggleRow(d.omit_status_url, "去除推文链接", v => updateDraft(gid, "omit_status_url", v)),
-      toggleRow(d.hide_original_when_translated, "有译文时隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
-    ]),
-    h("label", { class: "field" }, [
-      h("span", { text: "分组每轮最多推送条数" }),
-      h("input", {
-        type: "number", min: 0, max: 200, step: 1, value: d.max_tweets_per_check,
-        onInput: e => updateDraft(gid, "max_tweets_per_check",
-          e.target.value === "" ? "" : Number(e.target.value)),
-      }),
-      h("span", { class: "hint-line", text: "0 表示不限量。组内统一选择最新推文，超额旧帖跳过。" }),
-    ]),
-    h("span", { class: "hint-line", text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
-    h("label", { class: "field" }, [
-      h("span", { text: "每日检查时间（如 08:00, 20:00）" }),
-      h("input", {
-        type: "text",
-        value: (d.daily_check_times || []).join(", "),
-        onInput: e => {
-          const tokens = e.target.value.split(/[,，\s]+/).filter(Boolean);
-          const valid = tokens
-            .filter(t => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
-            .map(t => (t.length === 4 ? "0" + t : t));
-          const hint = document.getElementById("dailyTimesHint");
-          if (hint) {
-            const dropped = tokens.length !== valid.length;
-            hint.textContent = dropped ? "已忽略无效时间，请按 HH:MM 填写" : "";
-            hint.style.display = dropped ? "" : "none";
-          }
-          updateDraft(gid, "daily_check_times", valid);
-        },
-      }),
-      h("span", { id: "dailyTimesHint", class: "field-error", style: { display: "none" } }),
-    ]),
-    // 订阅源：完整能力（chips / 无效隔离 / 批量导入 / 添加）
-    // data-editor-section 供 refreshGroupSheet 在保存后原位重建
+    toggleRow(d.enabled, "启用此分组", v => updateDraft(gid, "enabled", v)),
     h("div", { "data-editor-section": "entities" }, renderEntities(g, d)),
-    // 推送目标：data-editor-section 供 rerenderTargetsSection 局部重建
     h("div", { "data-editor-section": "targets" }, renderTargets(g, d)),
+    h("section", { class: "vstack group-editor-section" }, [
+      h("h3", { class: "section-head", text: "检查计划" }),
+      toggleRow(d.interval_check_enabled, "启用间隔检查", v => updateDraft(gid, "interval_check_enabled", v)),
+      h("span", { class: "hint-line", text: `检查间隔：${g.check_interval_minutes ?? "—"} 分钟` }),
+      h("label", { class: "field" }, [
+        h("span", { text: "每日检查时间（如 08:00, 20:00）" }),
+        h("input", {
+          type: "text",
+          value: (d.daily_check_times || []).join(", "),
+          onInput: e => {
+            const tokens = e.target.value.split(/[,，\s]+/).filter(Boolean);
+            const valid = tokens
+              .filter(t => /^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
+              .map(t => (t.length === 4 ? "0" + t : t));
+            const hint = document.getElementById("dailyTimesHint");
+            if (hint) {
+              const dropped = tokens.length !== valid.length;
+              hint.textContent = dropped ? "已忽略无效时间，请按 HH:MM 填写" : "";
+              hint.style.display = dropped ? "" : "none";
+            }
+            updateDraft(gid, "daily_check_times", valid);
+          },
+        }),
+        h("span", { id: "dailyTimesHint", class: "field-error", style: { display: "none" } }),
+      ]),
+    ]),
+    h("section", { class: "vstack group-editor-section" }, [
+      h("h3", { class: "section-head", text: "推送规则" }),
+      h("div", { class: "editor-grid" }, [
+        h("div", { class: "vstack-sm" }, [
+          toggleRow(d.filter_reposts_enabled, "过滤转推", v => updateDraft(gid, "filter_reposts_enabled", v)),
+          h("span", { class: "hint-line", text: g.global_filter_reposts_enabled === false
+            ? "全局转推过滤已关闭。本分组的设置会保留，开启全局过滤后生效。"
+            : "由「抓取与查询」中的全局转推过滤控制，引用推文仍保留。" }),
+        ]),
+        h("div", { class: "vstack-sm" }, [
+          toggleRow(d.filter_plain_text_enabled, "过滤纯文本推文", v => updateDraft(gid, "filter_plain_text_enabled", v)),
+          h("span", { class: "hint-line", text: "开启后，只推送含作者上传媒体的推文。" }),
+        ]),
+      ]),
+      h("label", { class: "field" }, [
+        h("span", { text: "分组每轮最多推送条数" }),
+        h("input", {
+          type: "number", min: 0, max: 200, step: 1, value: d.max_tweets_per_check,
+          onInput: e => updateDraft(gid, "max_tweets_per_check",
+            e.target.value === "" ? "" : Number(e.target.value)),
+        }),
+        h("span", { class: "hint-line", text: "0 表示不限量。组内统一选择最新推文，超额旧帖跳过。" }),
+      ]),
+      h("label", { class: "field" }, [
+        h("span", { text: "推送内容形式" }),
+        contentSelect,
+        h("span", { class: "hint-line", text: "控制入选推文如何发送。两种仅媒体模式都不发正文和译文。「不含文字」也不发作者、链接或提示，无可用媒体时不发送。QQ 合并转发设置仍生效。" }),
+      ]),
+      h("div", { class: "editor-grid" }, [
+        toggleRow(d.omit_status_url, "去除推文链接", v => updateDraft(gid, "omit_status_url", v)),
+        toggleRow(d.hide_original_when_translated, "有译文时隐藏原文", v => updateDraft(gid, "hide_original_when_translated", v)),
+      ]),
+    ]),
   ]);
 
   const footer = [

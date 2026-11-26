@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from media_support.client import NitterClient
 from media_support.html_backend.parser import is_pure_retweet_chunk, parse_timeline_html
+from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
 from scheduler.runner_fetch import SchedulerFetchMixin
 from shared.utils import TweetItem, TweetMedia
 
@@ -216,3 +219,103 @@ def test_filter_html_plain_text_keeps_media():
     )
     assert filtered == 1
     assert [tweet.status_id for tweet in kept] == ["2"]
+
+
+def _html_row(sid: str, *, author: str = "alice", repost: bool = False) -> str:
+    header = '<div class="retweet-header">Alice retweeted</div>' if repost else ""
+    return (
+        f'<div class="timeline-item"><a href="/{author}/status/{sid}#m"></a>'
+        f'<div class="tweet-body">{header}<div class="tweet-content">Post {sid}</div></div></div>'
+    )
+
+
+@pytest.mark.parametrize("kind", ["list", "tag"])
+@pytest.mark.parametrize("across_pages", [False, True])
+def test_html_filtered_repost_does_not_match_watermark(monkeypatch, kind, across_pages):
+    base = "https://nitter.example"
+    pool = HtmlNitterPool(PoolConfig(instances=[base], max_pages=2))
+    repost = _html_row("100", repost=True)
+    originals = _html_row("120", author="bob") + _html_row("100") + _html_row("80")
+    paths = []
+
+    def fake_get(_base, path):
+        paths.append(path)
+        if across_pages and len(paths) == 1:
+            return (
+                repost + '<div class="show-more"><a href="?cursor=more">More</a></div>'
+            ).encode()
+        return (originals if across_pages else repost + originals).encode()
+
+    monkeypatch.setattr(pool, "_get_html", fake_get)
+    options = {"filter_reposts": True, "anchor_ids": ["100"]}
+    if kind == "list":
+        result = pool._paginate_list(base, "123", 20, **options)
+    else:
+        result = pool._paginate_search(base, "#test", 20, kind="tag", **options)
+    assert len(paths) == (2 if across_pages else 1)
+    assert [tweet.status_id for tweet in result] == ["120", "100"]
+    assert result.anchor_status_ids == ["120", "100", "80"]
+    assert result.scan_complete and result.retweet_filtered == 1
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_blogger_nitter_filters_self_reposts(monkeypatch, enabled):
+    base = "https://nitter.example"
+    client = NitterClient({"basic": {"instances": [base]}})
+    items = [
+        ("101", "RT by @alice: older text", "older text"),
+        ("102", "original text", "original text"),
+    ]
+    body = "".join(
+        f"<item><title>{title}</title><description>{text}</description>"
+        f"<link>{base}/alice/status/{sid}</link></item>"
+        for sid, title, text in items
+    )
+    parsed, _, ids, _ = client._parse_rss(
+        f"<rss><channel>{body}</channel></rss>".encode(),
+        base,
+        0,
+        username="alice",
+        filter_reposts=enabled,
+    )
+    kept, count = client._filter_reposts(parsed, "alice", enabled=enabled)
+    assert (
+        [tweet.status_id for tweet in kept]
+        == ids
+        == (["102"] if enabled else ["101", "102"])
+    )
+    assert count == int(enabled)
+    pool = HtmlNitterPool(PoolConfig(instances=[base]))
+    monkeypatch.setattr(
+        pool,
+        "_get_html",
+        lambda *_: (_html_row("101", repost=True) + _html_row("102")).encode(),
+    )
+    assert [
+        tweet.status_id
+        for tweet in pool._paginate_user(base, "alice", 10, filter_reposts=enabled)
+    ] == ids
+
+
+@pytest.mark.parametrize("kind", ["list", "tag"])
+@pytest.mark.parametrize("other_empty_first", [False, True])
+def test_html_repost_only_page_with_remaining_cursor_is_incomplete(
+    monkeypatch, kind, other_empty_first
+):
+    partial = "https://partial.example"
+    empty = "https://empty.example"
+    instances = [empty, partial] if other_empty_first else [partial, empty]
+    pool = HtmlNitterPool(PoolConfig(instances=instances, max_pages=1))
+    repost_page = (
+        _html_row("100", repost=True)
+        + '<div class="show-more"><a href="?cursor=more">More</a></div>'
+    ).encode()
+    monkeypatch.setattr(
+        pool, "_get_html", lambda base, _path: repost_page if base == partial else b""
+    )
+    if kind == "list":
+        _, result = pool.fetch_list("123", 20, filter_reposts=True)
+    else:
+        _, result = pool.search("#test", 20, kind="tag", filter_reposts=True)
+    assert not result and not result.anchor_status_ids
+    assert not result.scan_complete and result.retweet_filtered == 1

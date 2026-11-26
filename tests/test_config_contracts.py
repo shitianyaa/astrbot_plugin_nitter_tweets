@@ -247,7 +247,7 @@ def test_schema_exposes_only_instances():
         assert key not in basic
     assert "storage_backend" not in basic
     assert basic["filter_reposts_enabled"]["default"] is True
-    assert basic["filter_reposts_enabled"]["description"] == "转发过滤总开关"
+    assert basic["filter_reposts_enabled"]["description"] == "全局转推过滤"
 
 
 def test_removed_user_agent_config_is_persisted_by_startup_migration():

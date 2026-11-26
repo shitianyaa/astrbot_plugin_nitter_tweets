@@ -1291,6 +1291,7 @@ class NitterTweetScheduler(
 
                 instance = fetch_result.instance
                 tweets = fetch_result.tweets
+                result.retweet_filtered += fetch_result.retweet_filtered
                 result.source_statuses[username] = fetch_result.fetch_status or (
                     SourceStatus.SUCCESS if tweets else SourceStatus.EMPTY
                 )

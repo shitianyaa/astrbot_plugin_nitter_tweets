@@ -167,6 +167,7 @@ class ScheduledCheckResult:
     merged_push_total_targets: int = 0
     delivery_warnings: list[str] = field(default_factory=list)
     plain_text_filtered: int = 0
+    retweet_filtered: int = 0
     target_blocked_filtered: int = 0
     media_only_skipped: int = 0
     media_only_retrying: int = 0
@@ -321,6 +322,11 @@ class ScheduledCheckResult:
             if self.plain_text_filtered
             else ""
         )
+        retweet_part = (
+            f", filtered_reposts={self.retweet_filtered}"
+            if self.retweet_filtered
+            else ""
+        )
         target_blocked_part = (
             f", target_blocked={self.target_blocked_filtered}"
             if self.target_blocked_filtered
@@ -352,7 +358,7 @@ class ScheduledCheckResult:
             f"qq_merge_threshold={self.merge_tweet_threshold}, "
             f"push_success={self.pushed_target_successes}/{self.pushed_target_attempts}, "
             f"invalid_targets={len(self.invalid_targets)}{warning_part}"
-            f"{filtered_part}{target_blocked_part}{media_part}"
+            f"{filtered_part}{retweet_part}{target_blocked_part}{media_part}"
         )
 
     def format_structured_task_log(self, duration_ms: float | None = None) -> str:
@@ -488,6 +494,8 @@ class ScheduledCheckResult:
             stats.append(f"过滤后为空 {len(self.filtered_empty_users)} 个源")
         if self.failed_users:
             stats.append(f"抓取失败 {len(self.failed_users)} 个源")
+        if self.retweet_filtered:
+            stats.append(f"过滤转推 {self.retweet_filtered} 条")
         if self.plain_text_filtered:
             stats.append(f"过滤纯文本 {self.plain_text_filtered} 条")
         lines.append(f"  推文统计: {'; '.join(stats)}")
