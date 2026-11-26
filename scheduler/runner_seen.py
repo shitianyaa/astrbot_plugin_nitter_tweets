@@ -23,6 +23,8 @@ class SchedulerSeenMixin:
         username: str,
         status_ids: list[str],
         seen_map: dict[str, list[str]],
+        *,
+        handled: bool = False,
     ) -> None:
         ids = [str(item) for item in status_ids if item]
         if not ids:
@@ -30,8 +32,8 @@ class SchedulerSeenMixin:
         current = seen_map.get(username, [])
         if not isinstance(current, list):
             current = []
+        await self.storage.add_seen_ids(group_id, username, ids, handled=handled)
         seen_map[username] = self._merge_seen_ids(ids, current)
-        await self.storage.add_seen_ids(group_id, username, ids)
 
     async def _get_seen_map(
         self, group_id: str = GLOBAL_GROUP_ID
@@ -46,12 +48,16 @@ class SchedulerSeenMixin:
         getter = getattr(self.storage, "get_group_scan_watermarks", None)
         if callable(getter):
             stored_watermarks = await getter(group_id)
+            pending_getter = getattr(self.storage, "get_pending_baselines", None)
+            pending = (
+                await pending_getter(group_id) if callable(pending_getter) else set()
+            )
             # Older databases and lightweight test adapters may contain seen
             # IDs but no dedicated anchor row yet. Infer only the missing
             # entries; an explicit empty anchor window means the source was
             # initialized with no historical status ID and must be preserved.
             for username, status_ids in seen_map.items():
-                if username in stored_watermarks:
+                if username in stored_watermarks or username in pending:
                     continue
                 if not isinstance(status_ids, list):
                     continue
@@ -82,28 +88,6 @@ class SchedulerSeenMixin:
     ) -> None:
         await self.storage.put_group_seen_map(group_id, seen_map)
 
-    async def _put_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None,
-    ) -> None:
-        writer = getattr(
-            self.storage,
-            "put_group_seen_map_and_scan_watermark",
-            None,
-        )
-        if callable(writer):
-            await writer(group_id, username, seen_map, status_ids)
-            return
-
-        # Keep lightweight/legacy storage adapters usable until they expose
-        # the SQLite transaction-backed operation. Match the atomic writer's
-        # ordering so a failed watermark write cannot run ahead of seen data.
-        await self._put_seen_map(group_id, seen_map)
-        await self._set_scan_watermark(group_id, username, status_ids)
-
     @staticmethod
     def _normalize_scan_baseline_ids(status_ids: list[str] | str | None) -> list[str]:
         """Keep only valid numeric status IDs for an automatic baseline."""
@@ -126,14 +110,13 @@ class SchedulerSeenMixin:
         if not isinstance(current_seen, list):
             current_seen = []
         updated_seen_ids = self._merge_seen_ids(baseline_ids, current_seen)
-        updated_seen_map = dict(seen_map)
-        updated_seen_map[username] = updated_seen_ids
-        await self._put_seen_map_and_scan_watermark(
-            group_id,
-            username,
-            updated_seen_map,
-            baseline_ids,
-        )
+        writer = getattr(self.storage, "put_scan_baseline", None)
+        if callable(writer):
+            await writer(group_id, username, baseline_ids)
+        else:
+            # Legacy writers must still persist seen before the watermark.
+            await self._put_seen_map(group_id, {**seen_map, username: updated_seen_ids})
+            await self._set_scan_watermark(group_id, username, baseline_ids)
         seen_map[username] = updated_seen_ids
         return len(baseline_ids)
 

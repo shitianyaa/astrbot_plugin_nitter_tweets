@@ -35,7 +35,7 @@ def _adapter(*, images, videos, attempts):
         renderer=SimpleNamespace(
             build_direct_components=MagicMock(return_value=[]),
             build_direct_image_items=MagicMock(
-                return_value=[(_media(), c) for c in images]
+                return_value=[(_media(is_video=False), c) for c in images]
             ),
             build_direct_video_items=MagicMock(
                 return_value=[(_media(), c) for c in videos]
@@ -64,85 +64,67 @@ async def _send(adapter, *, media_only: bool):
 
 
 @pytest.mark.asyncio
-async def test_media_only_image_failure_without_video_is_not_success():
-    adapter, sender = _adapter(
-        images=["image"],
-        videos=[],
-        attempts=[
-            SendAttempt(success=True),
-            SendAttempt(success=False, retryable=False, error="image failed"),
-        ],
+@pytest.mark.parametrize(
+    "images,videos,media_only,image_failed,expected",
+    [
+        pytest.param(
+            ["image"],
+            [],
+            True,
+            True,
+            {"success": False, "delivery_error": "image failed"},
+            id="media-only-image-failed",
+        ),
+        pytest.param(
+            ["image"],
+            ["video"],
+            True,
+            True,
+            {
+                "success": True,
+                "delivery_status": "partial_failed",
+                "delivery_error": "image failed",
+            },
+            id="video-delivered-image-failed",
+        ),
+        pytest.param(
+            ["image"],
+            [],
+            False,
+            True,
+            {"success": True, "delivery_status": "partial_failed"},
+            id="text-delivered-image-failed",
+        ),
+        pytest.param([], [], True, False, {"success": False}, id="empty-media-only"),
+        pytest.param([], [], False, False, {"success": True}, id="empty-with-text"),
+        pytest.param(
+            ["image"],
+            ["video"],
+            True,
+            False,
+            {"success": True, "delivery_status": "success", "delivery_error": ""},
+            id="all-media-delivered",
+        ),
+    ],
+)
+async def test_split_media_completion(
+    images, videos, media_only, image_failed, expected
+):
+    attempts = [SendAttempt(success=True)]
+    attempts.extend(
+        SendAttempt(success=False, retryable=False, error="image failed")
+        if image_failed
+        else SendAttempt(success=True)
+        for _ in images
     )
+    attempts.extend(SendAttempt(success=True) for _ in videos)
+    adapter, sender = _adapter(images=images, videos=videos, attempts=attempts)
 
-    outcome = await _send(adapter, media_only=True)
+    outcome = await _send(adapter, media_only=media_only)
 
-    assert outcome.success is False
-    assert outcome.delivery_error == "image failed"
-    assert sender._send_context_message.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_media_only_image_failure_with_delivered_video_stays_success():
-    adapter, sender = _adapter(
-        images=["image"],
-        videos=["video"],
-        attempts=[
-            SendAttempt(success=True),
-            SendAttempt(success=False, retryable=False, error="image failed"),
-            SendAttempt(success=True),
-        ],
-    )
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is True
-    assert outcome.delivery_status == "partial_failed"
-    assert outcome.delivery_error == "image failed"
-    assert sender._send_context_message.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_non_media_only_image_failure_stays_success():
-    adapter, _sender = _adapter(
-        images=["image"],
-        videos=[],
-        attempts=[
-            SendAttempt(success=True),
-            SendAttempt(success=False, retryable=False, error="image failed"),
-        ],
-    )
-
-    outcome = await _send(adapter, media_only=False)
-
-    assert outcome.success is True
-    assert outcome.delivery_status == "partial_failed"
-
-
-@pytest.mark.asyncio
-async def test_media_only_without_any_media_component_is_not_success():
-    # 一个媒体组件都没有时不能凭"没有失败"判定完成，否则整批被静默丢弃。
-    adapter, _sender = _adapter(
-        images=[],
-        videos=[],
-        attempts=[SendAttempt(success=True)],
-    )
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is False
-
-
-@pytest.mark.asyncio
-async def test_plain_mode_without_any_media_component_stays_success():
-    adapter, _sender = _adapter(
-        images=[],
-        videos=[],
-        attempts=[SendAttempt(success=True)],
-    )
-
-    outcome = await _send(adapter, media_only=False)
-
-    assert outcome.success is True
+    for field, value in expected.items():
+        assert getattr(outcome, field) == value, field
+    assert sender._send_context_message.await_count == len(attempts)
 
 
 @pytest.mark.asyncio
@@ -174,22 +156,3 @@ async def test_event_media_only_without_any_media_component_is_not_success():
         )
         is True
     )
-
-
-@pytest.mark.asyncio
-async def test_media_only_all_media_delivered_is_plain_success():
-    adapter, _sender = _adapter(
-        images=["image"],
-        videos=["video"],
-        attempts=[
-            SendAttempt(success=True),
-            SendAttempt(success=True),
-            SendAttempt(success=True),
-        ],
-    )
-
-    outcome = await _send(adapter, media_only=True)
-
-    assert outcome.success is True
-    assert outcome.delivery_status == "success"
-    assert not outcome.delivery_error

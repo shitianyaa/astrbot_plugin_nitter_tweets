@@ -573,7 +573,15 @@ class SchedulerFetchMixin:
                     else list(raw_anchor_status_ids)
                 )
                 tweets = list(scan_result.tweets)
-                if not tweets:
+                repost_only_scan = (
+                    scan_result.complete
+                    and not tweets
+                    and bool(scan_result.reposts_filtered)
+                    and not scan_result.scanned_status_ids
+                )
+                if repost_only_scan:
+                    nitter_attempts.append("单账号RSS=转推已过滤")
+                elif not tweets:
                     nitter_attempts.append("单账号RSS=无推文")
                     html_result = await self._fetch_user_html_after_rss(
                         index,
@@ -600,6 +608,14 @@ class SchedulerFetchMixin:
                         latest_status_id=str(scan_result.latest_status_id or ""),
                         scan_complete=bool(scan_result.complete),
                         plain_text_filtered=int(scan_result.plain_text_filtered or 0),
+                        retweet_filtered=scan_result.reposts_filtered,
+                        fetch_status=(
+                            SourceStatus.FILTERED_EMPTY
+                            if scan_result.complete
+                            and not tweets
+                            and scan_result.reposts_filtered
+                            else None
+                        ),
                     )
                 )
 
@@ -1029,6 +1045,19 @@ class SchedulerFetchMixin:
                     latest_status_id=str(scan_result.latest_status_id or ""),
                     scan_complete=bool(scan_result.complete),
                     plain_text_filtered=int(scan_result.plain_text_filtered or 0),
+                    retweet_filtered=scan_result.reposts_filtered,
+                    fetch_status=(
+                        SourceStatus.FILTERED_EMPTY
+                        if scan_result.complete
+                        and not tweets
+                        # Pure-text originals still advance the scan watermark.
+                        and not scan_result.scanned_status_ids
+                        and (
+                            scan_result.reposts_filtered
+                            or scan_result.plain_text_filtered
+                        )
+                        else None
+                    ),
                 )
         except Exception as exc:
             rss_attempt = _failed_fetch_attempt("ListRSS", exc)

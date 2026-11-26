@@ -10,6 +10,7 @@ try:
         MEDIA_ONLY_MODES,
         config_get,
         migrate_default_group_config,
+        parse_config_bool,
         resolve_media_only_mode,
     )
     from ..shared import clamp_float, clamp_int, load_instances, normalize_username
@@ -28,6 +29,7 @@ except ImportError:
         MEDIA_ONLY_MODES,
         config_get,
         migrate_default_group_config,
+        parse_config_bool,
         resolve_media_only_mode,
     )
     from shared import clamp_float, clamp_int, load_instances, normalize_username
@@ -130,6 +132,7 @@ class ScheduleGroup:
     aliases: list[str] = field(default_factory=list)
     filter_reposts_enabled: bool = True
     media_only_mode: str = MEDIA_ONLY_MODES[0]
+    baseline_reset_token: str = ""
 
     @property
     def hide_media_text(self) -> bool:
@@ -453,6 +456,7 @@ class SchedulerConfigReader:
                 log_invalid=log_invalid_targets,
                 group_id=group_id,
             ),
+            baseline_reset_token=str(raw_group.get("_baseline_reset_token") or ""),
             aliases=aliases,
             filter_reposts_enabled=self.parse_bool(
                 raw_group.get("filter_reposts_enabled", True),
@@ -980,35 +984,4 @@ class SchedulerConfigReader:
 
     @staticmethod
     def parse_bool(value, default: bool = False) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {
-                "1",
-                "true",
-                "yes",
-                "on",
-                "enable",
-                "enabled",
-                "是",
-                "开",
-                "开启",
-            }:
-                return True
-            if normalized in {
-                "0",
-                "false",
-                "no",
-                "off",
-                "disable",
-                "disabled",
-                "否",
-                "关",
-                "关闭",
-            }:
-                return False
-            return default
-        return bool(value)
+        return parse_config_bool(value, default)

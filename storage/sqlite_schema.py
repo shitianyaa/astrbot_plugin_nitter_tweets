@@ -18,7 +18,7 @@ except ImportError:
     from shared.group_ids import DEFAULT_GROUP_ID, LEGACY_GLOBAL_GROUP_ID
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 SCAN_ANCHOR_LIMIT = 20
 
 PUSH_HISTORY_V6_COLUMN_ADD_STATEMENTS: dict[str, str] = {
@@ -135,6 +135,7 @@ class SQLiteSchemaMixin:
                     username TEXT NOT NULL,
                     status_id TEXT NOT NULL,
                     seen_at INTEGER NOT NULL,
+                    handled INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (group_id, username, status_id)
                 )
             """)
@@ -169,6 +170,8 @@ class SQLiteSchemaMixin:
             self._migrate_schema_v8(cursor)
         if stored_version < 9:
             self._migrate_schema_v9(cursor)
+        if stored_version < 10:
+            self._migrate_schema_v10(cursor)
         cursor.execute(
             """
             INSERT INTO meta (key, value, updated_at)
@@ -249,6 +252,16 @@ class SQLiteSchemaMixin:
         self._create_scan_watermarks_table(cursor)
         self._backfill_scan_watermarks(cursor)
 
+    def _migrate_schema_v10(self, cursor: sqlite3.Cursor) -> None:
+        # Old seen rows also contain baseline/over-limit IDs. Keep them scoped
+        # to their source because their terminal handling cannot be inferred.
+        if self._table_exists(cursor, "seen_tweets") and "handled" not in {
+            row[1] for row in cursor.execute("PRAGMA table_info(seen_tweets)")
+        }:
+            cursor.execute(
+                "ALTER TABLE seen_tweets ADD COLUMN handled INTEGER NOT NULL DEFAULT 0"
+            )
+
     @staticmethod
     def _create_scan_watermarks_table(cursor: sqlite3.Cursor) -> None:
         cursor.execute("""
@@ -300,6 +313,8 @@ class SQLiteSchemaMixin:
                 """,
                 (group_id, username),
             ).fetchone()
+            if existing is not None and not bool(existing[0]):
+                continue
             if existing is not None:
                 anchors = cls._normalize_scan_anchor_ids(
                     [*cls._decode_scan_anchor_ids(existing[1]), *seen_anchors]
@@ -513,7 +528,7 @@ class SQLiteSchemaMixin:
                 WHERE group_id = ? AND username = ?
                 """,
                 (
-                    1 if bool(row[1]) or bool(target[0]) else 0,
+                    1 if bool(row[1]) and bool(target[0]) else 0,
                     json.dumps(anchors, ensure_ascii=False),
                     max(int(row[3] or 0), int(target[2] or 0)),
                     default_id,
@@ -538,6 +553,21 @@ class SQLiteSchemaMixin:
     ) -> None:
         if not self._table_exists(cursor, table):
             return
+        if table == "seen_tweets":
+            # A matching legacy row can carry terminal handling evidence.
+            cursor.execute(
+                """
+                UPDATE seen_tweets
+                SET handled = 1
+                WHERE group_id = ?
+                  AND handled = 0
+                  AND (username, status_id) IN (
+                      SELECT username, status_id FROM seen_tweets
+                      WHERE group_id = ? AND handled = 1
+                  )
+                """,
+                (default_id, legacy_id),
+            )
         key_columns = (key_column,) if isinstance(key_column, str) else key_column
         predicate = " AND ".join(
             f"target.{column} = {table}.{column}" for column in key_columns

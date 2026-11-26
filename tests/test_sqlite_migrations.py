@@ -6,6 +6,7 @@ import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from shared.utils import TweetItem
 from storage import SQLiteStorage
@@ -13,6 +14,72 @@ from storage.seen import SeenStore
 
 
 class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_v10_migration_keeps_legacy_seen_scoped_and_preserves_handled_ids(
+        self,
+    ):
+        with TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "state.db"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.executescript("""
+                    CREATE TABLE meta (
+                        key TEXT PRIMARY KEY, value TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    INSERT INTO meta VALUES ('schema_version', '9', 1);
+                    CREATE TABLE seen_tweets (
+                        group_id TEXT NOT NULL, username TEXT NOT NULL,
+                        status_id TEXT NOT NULL, seen_at INTEGER NOT NULL,
+                        PRIMARY KEY (group_id, username, status_id)
+                    );
+                    INSERT INTO seen_tweets VALUES ('g', 'list:12345', '100', 1);
+                """)
+            finally:
+                connection.close()
+            storage = SQLiteStorage(db_path)
+            await storage.connect()
+            try:
+                self.assertEqual(storage.get_meta("schema_version"), "10")
+                self.assertEqual(storage.get_seen_ids("g", "list:12345"), ["100"])
+                self.assertEqual(storage.get_group_handled_seen_map("g"), {})
+                storage.add_seen_ids("g", "list:12345", ["305"], handled=True)
+                # Baseline rewrites preserve real handling evidence and the
+                # newest-first ordering, without promoting the other seed IDs.
+                storage.put_scan_baseline("g", "list:12345", ["306", "305"])
+                storage.close()
+                await storage.connect()
+                self.assertEqual(
+                    storage.get_seen_ids("g", "list:12345"), ["306", "305", "100"]
+                )
+                self.assertEqual(
+                    storage.get_group_handled_seen_map("g"), {"list:12345": ["305"]}
+                )
+                self.assertEqual(storage.get_group_handled_seen_map("other"), {})
+                storage.clear_seen_tweets("g")
+                self.assertEqual(storage.get_group_handled_seen_map("g"), {})
+            finally:
+                storage.close()
+
+    async def test_scan_baseline_rolls_back_seen_if_watermark_write_fails(self):
+        with TemporaryDirectory() as temp_dir:
+            storage = SQLiteStorage(Path(temp_dir) / "state.db")
+            await storage.connect()
+            try:
+                storage.put_scan_baseline("g", "list:12345", ["100"])
+                with patch.object(
+                    storage,
+                    "_set_scan_watermark_unlocked",
+                    side_effect=OSError("watermark unavailable"),
+                ):
+                    with self.assertRaisesRegex(OSError, "watermark unavailable"):
+                        storage.put_scan_baseline("g", "list:12345", ["101"])
+                self.assertEqual(storage.get_seen_ids("g", "list:12345"), ["100"])
+                self.assertEqual(
+                    storage.get_group_scan_watermarks("g"), {"list:12345": ["100"]}
+                )
+            finally:
+                storage.close()
+
     async def test_legacy_tag_seen_key_survives_kv_normalization(self):
         class Owner:
             async def get_kv_data(self, key, default):
@@ -74,6 +141,85 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual([item.status_id for item in default_history], ["101"])
             self.assertEqual(legacy_count, 0)
+
+    async def test_global_group_migration_preserves_handled_on_seen_collisions(self):
+        from scheduler.config import SchedulerConfigReader
+
+        with TemporaryDirectory() as temp_dir:
+            storage = SQLiteStorage(Path(temp_dir) / "state.db")
+            await storage.connect()
+            try:
+                storage.add_seen_ids("default", "nasa", ["120", "121"])
+                storage.add_seen_ids("default", "nasa", ["122"], handled=True)
+                storage.add_seen_ids("default", "other", ["120"])
+                storage.add_seen_ids("global", "nasa", ["120", "123"], handled=True)
+                storage.add_seen_ids("global", "nasa", ["121", "122"])
+                reader = SchedulerConfigReader(
+                    {
+                        "tweet_groups": [
+                            {"group_id": "default", "watch_users": ["nasa"]}
+                        ]
+                    },
+                    None,
+                )
+
+                storage.sync_config_groups(reader.schedule_groups())
+
+                self.assertEqual(storage.get_group_seen_map("global"), {})
+                self.assertEqual(
+                    set(storage.get_seen_ids("default", "nasa")),
+                    {"120", "121", "122", "123"},
+                )
+                handled = storage.get_group_handled_seen_map("default")
+                self.assertEqual(set(handled), {"nasa"})
+                self.assertEqual(set(handled["nasa"]), {"120", "122", "123"})
+            finally:
+                storage.close()
+
+    async def test_pending_baselines_survive_reopen_and_seen_backfill(self):
+        from scheduler.config import SchedulerConfigReader
+        from scheduler.runner_seen import SchedulerSeenMixin
+        from storage import StorageAdapter
+        from unittest.mock import patch, AsyncMock
+
+        for kind, field, value, key in (
+            ("blogger", "watch_users", "nasa", "nasa"),
+            ("tag", "watch_queries", "#foo", "q:#foo"),
+            ("list", "watch_lists", "12345", "list:12345"),
+        ):
+            with self.subTest(kind=kind), TemporaryDirectory() as temp_dir:
+                db = SQLiteStorage(Path(temp_dir) / "state.db")
+                raw = {
+                    "group_id": "g",
+                    "group_type": kind,
+                    field: [value],
+                    "enabled": True,
+                }
+                reader = SchedulerConfigReader({"tweet_groups": [raw]}, None)
+                with patch.object(StorageAdapter, "_init_sqlite", return_value=db):
+                    adapter = StorageAdapter(
+                        types.SimpleNamespace(get_kv_data=AsyncMock(return_value={})),
+                        {},
+                        None,
+                    )
+                await adapter.migrate_and_sync(reader.schedule_groups(False))
+                await adapter.add_seen_ids("g", key, ["100"])
+                await adapter.set_scan_watermark("g", key, ["100"])
+                for enabled in (False, True):
+                    raw["enabled"] = enabled
+                    await adapter.migrate_and_sync(reader.schedule_groups(False))
+                adapter.close()
+                self.assertEqual(await adapter.get_pending_baselines("g"), {key})
+                db._backfill_scan_watermarks(db.conn.cursor())
+                self.assertEqual(await adapter.get_pending_baselines("g"), {key})
+                harness = types.SimpleNamespace(storage=adapter)
+                self.assertEqual(
+                    await SchedulerSeenMixin._get_scan_watermarks(
+                        harness, "g", await adapter.get_group_seen_map("g")
+                    ),
+                    {},
+                )
+                adapter.close()
 
     async def test_v7_migration_preserves_legacy_pending_tables(self):
         with TemporaryDirectory() as temp_dir:
@@ -150,7 +296,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 {"NASA": ["200", "99"], "OpenAI": []},
             )
             self.assertIsNotNone(watermark_table)
-            self.assertEqual(version, "9")
+            self.assertEqual(version, "10")
 
     async def test_tag_seen_key_is_active_subscription_for_orphan_cleanup(self):
         with TemporaryDirectory() as temp_dir:
@@ -212,7 +358,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
             await storage.connect()
             try:
                 self.assertIsNotNone(storage.conn)
-                self.assertEqual(storage.get_meta("schema_version"), "9")
+                self.assertEqual(storage.get_meta("schema_version"), "10")
             finally:
                 storage.close()
 
@@ -269,7 +415,7 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
                 watermarks,
                 {"NASA": ["100"], "OpenAI": []},
             )
-            self.assertEqual(version, "9")
+            self.assertEqual(version, "10")
 
 
 if __name__ == "__main__":

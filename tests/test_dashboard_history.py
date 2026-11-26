@@ -168,3 +168,68 @@ for (const [search, systemDark, expected] of [
 }
 """
     )
+
+
+def test_cache_feedback_survives_timeout_late_response_and_refresh_failure():
+    source = (ROOT / "pages/dashboard/data.js").read_text(encoding="utf-8")
+    boot = (ROOT / "pages/dashboard/boot.js").read_text(encoding="utf-8")
+    boot = boot[: boot.index("/* 存储运维")]
+    run_node(
+        r"""
+const assert = require('node:assert/strict');
+const state = {view:'storage'};
+const notices = [];
+let confirm, resolvePost;
+const timers = new Map();
+let timerId = 0;
+let cacheChecksComplete = false;
+process.on('beforeExit', () => assert.ok(cacheChecksComplete, 'cache checks must finish every awaited scenario'));
+function setTimeout(callback, delay) { timers.set(++timerId, {callback, delay}); return timerId; }
+function clearTimeout(id) { timers.delete(id); }
+function setBusy() {}
+function hideAlert() {}
+function showAlert(...args) { notices.push(args); }
+function openConfirm(value) { confirm = value; }
+function markData() {}
+let apiPost = () => new Promise(resolve => { resolvePost = resolve; });
+let apiGet = () => Promise.reject(new Error('refresh failed'));
+"""
+        + source
+        + boot
+        + r"""
+(async () => {
+  confirmClearCache();
+  const pending = confirm.action();
+  assert.equal(state.actionBusy, true);
+  const firstPost = resolvePost;
+  const duplicate = confirm.action();
+  assert.equal(resolvePost, firstPost, 'duplicate confirmation must share the active operation');
+  assert.equal(timers.size, 1);
+  await duplicate;
+  const timeout = [...timers.values()].find(timer => timer.delay === 30000);
+  assert.ok(timeout);
+  timeout.callback();
+  await pending;
+  assert.equal(state.actionBusy, false);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0][1], 'error');
+  assert.match(notices[0][0], /尚未返回/);
+  const count = notices.length;
+  resolvePost({result:{removed:100}});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(notices.length, count);
+  apiPost = async () => ({result:{removed:2, failed:1, skipped_active:3}});
+  confirmClearCache();
+  await confirm.action();
+  assert.equal(state.actionBusy, false);
+  assert.equal(notices.at(-2)[1], 'warn');
+  assert.ok(notices.at(-2)[0].includes('2'));
+  assert.ok(notices.at(-2)[0].includes('3'));
+  assert.equal(notices.at(-1)[1], 'warn');
+  assert.ok(notices.at(-1)[0].includes('refresh failed'));
+  assert.equal(timers.size, 0);
+  cacheChecksComplete = true;
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    )

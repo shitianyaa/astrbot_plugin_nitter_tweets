@@ -311,6 +311,15 @@ async function saveConfigDraft() {
       touched.push(key);
     }
     refreshConfigRows(touched);
+    if (touched.includes("filter_reposts_enabled")) {
+      const enabled = result.values.filter_reposts_enabled;
+      state.groups = state.groups.map(group => ({
+        ...group,
+        global_filter_reposts_enabled: enabled,
+        effective_filter_reposts_enabled: enabled && group.filter_reposts_enabled !== false,
+      }));
+      markData("groups");
+    }
     if (result.reloaded) {
       // 成功状态由吸顶操作条徽标表达（✓ 配置已保存并热重载），不再发通知弹窗
       state.configJustSaved = true;
@@ -421,7 +430,10 @@ function configControl(item, value) {
   const wrap = h("div", { class: "config-control" });
   const commit = (v, fromControl = true) => commitConfigValue(item.key, v, fromControl);
   if (item.editable === false) {
-    wrap.append(h("span", { class: "badge", text: "在「分组订阅管理」维护" }));
+    wrap.append(h("button", {
+      class: "btn", type: "button", text: "管理推送分组",
+      onClick: () => switchView("groups"),
+    }));
     return wrap;
   }
   if (item.type === "bool") {

@@ -292,3 +292,110 @@ async def test_cancelled_later_media_keeps_all_downloaded_leases_reachable(
     service.cleanup_after_send([tweet])
     assert not first_path.exists()
     assert not second_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_web_cache_clear_shares_worker_after_cancelled_waiter(tmp_path):
+    from plugin_api.api import NitterWebAPI
+
+    cache = _Cache(tmp_path)
+    file = cache.cache_dir / "ordinary.jpg"
+    file.write_bytes(b"image")
+    entered, release = Event(), Event()
+    calls = []
+
+    def cleanup():
+        calls.append(1)
+        entered.set()
+        release.wait(5)
+        return cache.clear_cache()
+
+    api = NitterWebAPI(SimpleNamespace(media=SimpleNamespace(clear_cache=cleanup)))
+    first = asyncio.create_task(api.clear_cache())
+    await asyncio.to_thread(entered.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(api.clear_cache())
+    release.set()
+    result = await second
+    assert len(calls) == 1
+    assert result["result"]["removed"] == 1
+    assert not file.exists()
+
+
+def test_cache_stats_and_cleanup_continue_past_inaccessible_subtree(
+    tmp_path, monkeypatch
+):
+    from media_support import cache as cache_module
+
+    cache = _Cache(tmp_path)
+    blocked = cache.cache_dir / "blocked"
+    blocked.mkdir()
+    (blocked / "keep.jpg").write_bytes(b"image")
+    ordinary = cache.cache_dir / "ordinary.jpg"
+    ordinary.write_bytes(b"image")
+    original_scandir = cache_module.os.scandir
+
+    def scandir(path):
+        if Path(path) == blocked:
+            raise PermissionError("simulated directory denial")
+        return original_scandir(path)
+
+    monkeypatch.setattr(cache_module.os, "scandir", scandir)
+    stats = cache.cache_stats()
+    assert (stats.files, stats.images, stats.bytes) == (1, 1, len(b"image"))
+    result = cache.clear_cache()
+    assert result.failed == 1
+    assert result.removed == 1
+    assert not ordinary.exists()
+    assert (blocked / "keep.jpg").exists()
+    assert cache.cache_stats().files == 0
+
+
+def test_cache_result_serializes_active_lease_skips():
+    from plugin_api.api import NitterWebAPI
+
+    payload = NitterWebAPI._serialize_cache_result(SimpleNamespace(skipped_active=2))
+
+    assert payload["skipped_active"] == 2
+
+
+def test_scheduler_batch_cleanup_continues_after_one_failure():
+    from scheduler.runner import NitterTweetScheduler
+    from scheduler.models import PendingTweetBatch
+
+    scheduler = NitterTweetScheduler.__new__(NitterTweetScheduler)
+    cleaned: list[str] = []
+
+    async def cleanup_one(batch: PendingTweetBatch) -> None:
+        if batch.username == "bad":
+            raise RuntimeError("boom")
+        cleaned.append(batch.username)
+        batch.media_cleaned = True
+
+    scheduler._cleanup_batch_media = cleanup_one  # type: ignore[method-assign]
+
+    batches = [
+        PendingTweetBatch(
+            username="bad",
+            instance="i",
+            tweets=[],
+            fetched_ids=[],
+            seen_ids=[],
+        ),
+        PendingTweetBatch(
+            username="good",
+            instance="i",
+            tweets=[],
+            fetched_ids=[],
+            seen_ids=[],
+        ),
+    ]
+
+    async def run() -> None:
+        await scheduler._cleanup_batch_media_many(batches)
+
+    # Must not raise; second batch still cleaned
+    asyncio.run(run())
+    assert "good" in cleaned

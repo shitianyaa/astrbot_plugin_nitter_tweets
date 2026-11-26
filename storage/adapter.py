@@ -8,7 +8,6 @@ from pathlib import Path
 from astrbot.api import logger
 
 try:
-    from ..config import config_get
     from ..shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -21,7 +20,6 @@ try:
         SQLiteStorage,
     )
 except ImportError:
-    from config import config_get
     from shared.group_ids import (
         DEFAULT_GROUP_ID,
         LEGACY_GLOBAL_GROUP_ID,
@@ -59,16 +57,6 @@ class StorageAdapter:
         self.owner = owner
         self.config = config
         self.context = context
-
-        configured_backend = (
-            str(config_get(config, "storage_backend", "sqlite")).strip().lower()
-        )
-        if configured_backend and configured_backend != "sqlite":
-            logger.info(
-                "[NitterTweets] "
-                f"storage_backend={configured_backend} 已不再支持；"
-                "将使用 SQLite，并仅导入旧 KV seen ID"
-            )
 
         logger.info("[NitterTweets] 使用 SQLite 存储后端")
         self.sqlite: SQLiteStorage | None = self._init_sqlite()
@@ -124,20 +112,15 @@ class StorageAdapter:
                     sqlite.add_seen_ids, storage_group_id, username, status_ids
                 )
 
-    async def put_group_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None = None,
+    async def put_scan_baseline(
+        self, group_id: str, username: str, status_ids: list[str]
     ) -> None:
-        """Atomically save a seen map and one account's scan watermark."""
+        """Persist one source's baseline IDs and watermark in one transaction."""
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
-            sqlite.put_group_seen_map_and_scan_watermark,
+            sqlite.put_scan_baseline,
             self._storage_group_id(group_id),
             username,
-            seen_map,
             status_ids,
         )
 
@@ -149,12 +132,40 @@ class StorageAdapter:
         )
 
     async def add_seen_ids(
-        self, group_id: str, username: str, status_ids: list[str]
+        self,
+        group_id: str,
+        username: str,
+        status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """Add seen IDs for a group/user pair."""
         sqlite = await self._ensure_sqlite_connected()
         await asyncio.to_thread(
-            sqlite.add_seen_ids, self._storage_group_id(group_id), username, status_ids
+            sqlite.add_seen_ids,
+            self._storage_group_id(group_id),
+            username,
+            status_ids,
+            handled=handled,
+        )
+
+    async def get_group_handled_seen_map(self, group_id: str) -> dict[str, list[str]]:
+        """Get terminally handled seen IDs for cross-source recovery."""
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_group_handled_seen_map, self._storage_group_id(group_id)
+        )
+
+    async def apply_baseline_reset(self, group_id: str, token: str) -> None:
+        sqlite = await self._ensure_sqlite_connected()
+        await asyncio.to_thread(
+            sqlite.apply_baseline_reset, self._storage_group_id(group_id), token
+        )
+
+    async def get_pending_baselines(self, group_id: str) -> set[str]:
+        sqlite = await self._ensure_sqlite_connected()
+        return await asyncio.to_thread(
+            sqlite.get_pending_baselines, self._storage_group_id(group_id)
         )
 
     async def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:

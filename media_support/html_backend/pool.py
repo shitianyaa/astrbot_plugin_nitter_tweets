@@ -114,6 +114,20 @@ class HtmlSearchResult(list[TweetItem]):
                 normalized_ids.append(value)
         self.anchor_status_ids = normalized_ids[:20]
 
+    def merge_empty_attempt(self, attempt: "HtmlSearchResult") -> None:
+        # A genuinely empty mirror cannot complete another mirror's filtered scan.
+        had_rows = bool(self.raw_item_count or self.retweet_filtered)
+        has_rows = bool(attempt.raw_item_count or attempt.retweet_filtered)
+        if had_rows == has_rows:
+            self.scan_complete |= attempt.scan_complete
+        elif has_rows:
+            self.scan_complete = attempt.scan_complete
+        self.raw_item_count += attempt.raw_item_count
+        self.retweet_filtered += attempt.retweet_filtered
+        self.anchor_status_ids = list(
+            dict.fromkeys([*self.anchor_status_ids, *attempt.anchor_status_ids])
+        )[:20]
+
     def limited(self, limit: int) -> HtmlSearchResult:
         """Return a bounded result while retaining parser statistics."""
         return HtmlSearchResult(
@@ -467,7 +481,7 @@ class HtmlNitterPool:
         empty_success_base: str | None = None
         attempts: list[str] = []
         empty_success_result = HtmlSearchResult(
-            scan_complete=not bool(anchor_ids),
+            scan_complete=False,
             anchor_status_ids=[],
         )
         hosts = self._hosts_for_rotation(instance)
@@ -503,17 +517,7 @@ class HtmlNitterPool:
                     return base, tweets.limited(limit) if not anchor_ids else tweets
                 empty_success_base = base
                 attempts.append(f"#{index}=空结果")
-                empty_success_result.raw_item_count += tweets.raw_item_count
-                empty_success_result.retweet_filtered += tweets.retweet_filtered
-                empty_success_result.scan_complete = (
-                    empty_success_result.scan_complete or tweets.scan_complete
-                )
-                for status_id in tweets.anchor_status_ids or []:
-                    if status_id not in empty_success_result.anchor_status_ids:
-                        empty_success_result.anchor_status_ids.append(status_id)
-                empty_success_result.anchor_status_ids = (
-                    empty_success_result.anchor_status_ids[:20]
-                )
+                empty_success_result.merge_empty_attempt(tweets)
                 # Empty after RT filter: soft success, not an outage.
                 self.scores.record_success(host, soft=True)
                 errors.append(redact_instance_urls(f"#{index}: empty"))
@@ -650,17 +654,7 @@ class HtmlNitterPool:
                     )
                 empty_success_base = base
                 attempts.append(f"#{index}=空结果")
-                empty_success_result.raw_item_count += tweets.raw_item_count
-                empty_success_result.retweet_filtered += tweets.retweet_filtered
-                empty_success_result.scan_complete = (
-                    empty_success_result.scan_complete or tweets.scan_complete
-                )
-                for status_id in tweets.anchor_status_ids or []:
-                    if status_id not in empty_success_result.anchor_status_ids:
-                        empty_success_result.anchor_status_ids.append(status_id)
-                empty_success_result.anchor_status_ids = (
-                    empty_success_result.anchor_status_ids[:20]
-                )
+                empty_success_result.merge_empty_attempt(tweets)
                 # Empty list: soft success (valid but no content)
                 self.scores.record_success(host, soft=True)
                 errors.append(redact_instance_urls(f"#{index}: empty"))
@@ -718,7 +712,7 @@ class HtmlNitterPool:
         )
 
         page_count = self._page_count(self.config.max_pages)
-        for page_index in range(page_count):
+        for _ in range(page_count):
             # Nitter List path: /i/lists/{list_id}
             path = f"/i/lists/{quote(list_id, safe='')}"
             if cursor:
@@ -734,14 +728,17 @@ class HtmlNitterPool:
 
             raw_count += int(getattr(page, "raw_item_count", len(page.tweets)) or 0)
 
-            if page_index == 0:
+            page_tweets = page.tweets
+            if use_filter_reposts:
+                page_tweets = [tweet for tweet in page.tweets if not tweet.is_retweet]
+                retweet_filtered += len(page.tweets) - len(page_tweets)
+            if not anchor_status_ids:
                 anchor_status_ids = [
                     str(tweet.status_id).strip()
-                    for tweet in page.tweets
+                    for tweet in page_tweets
                     if str(tweet.status_id or "").strip()
                 ][:20]
-
-            for t in page.tweets:
+            for t in page_tweets:
                 k = t.status_id or t.link
                 reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
                 if k in seen:
@@ -749,14 +746,6 @@ class HtmlNitterPool:
                         scan_complete = True
                         break
                     continue
-
-                if use_filter_reposts and t.is_retweet:
-                    retweet_filtered += 1
-                    if reached_boundary:
-                        scan_complete = True
-                        break
-                    continue
-
                 seen.add(k)
                 tweets.append(t)
                 if reached_boundary:
@@ -772,6 +761,9 @@ class HtmlNitterPool:
                 scan_complete = True
                 break
             cursor = page.next_cursor
+        else:
+            if retweet_filtered and not anchor_status_ids:
+                scan_complete = False
 
         return HtmlSearchResult(
             tweets[:limit] if initial_scan else tweets,
@@ -821,7 +813,11 @@ class HtmlNitterPool:
             )
             batch = page.tweets
             if use_filter_reposts:
-                batch = [t for t in batch if (t.username or "").lower() == user.lower()]
+                batch = [
+                    t
+                    for t in batch
+                    if not t.is_retweet and (t.username or "").lower() == user.lower()
+                ]
             for t in batch:
                 k = t.status_id or t.link
                 if k in seen:
@@ -905,22 +901,20 @@ class HtmlNitterPool:
                 raw_item_count += int(
                     getattr(page, "raw_item_count", len(page.tweets)) or 0
                 )
-            if page_i == 0:
+            page_tweets = page.tweets
+            if use_filter_reposts:
+                page_tweets = [tweet for tweet in page.tweets if not tweet.is_retweet]
+                retweet_filtered += len(page.tweets) - len(page_tweets)
+            if not anchor_status_ids:
                 anchor_status_ids = [
                     str(tweet.status_id).strip()
-                    for tweet in page.tweets
+                    for tweet in page_tweets
                     if str(tweet.status_id or "").strip()
                 ][:20]
-            for t in page.tweets:
-                reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
+            for t in page_tweets:
                 k = t.status_id or t.link
+                reached_boundary = bool(t.status_id and t.status_id in boundary_ids)
                 if k in seen:
-                    if reached_boundary:
-                        scan_complete = True
-                        break
-                    continue
-                if use_filter_reposts and getattr(t, "is_retweet", False):
-                    retweet_filtered += 1
                     if reached_boundary:
                         scan_complete = True
                         break
@@ -938,6 +932,10 @@ class HtmlNitterPool:
                 scan_complete = True
                 break
             cursor = page.next_cursor
+        else:
+            if retweet_filtered and not anchor_status_ids:
+                scan_complete = False
+
         return HtmlSearchResult(
             tweets[:limit] if initial_scan else tweets,
             raw_item_count=raw_item_count,

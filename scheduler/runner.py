@@ -16,6 +16,7 @@ try:
         resolve_hide_original_when_translated,
     )
     from ..shared import (
+        TweetItem,
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
@@ -72,6 +73,7 @@ except ImportError:
     from scheduler.runner_send import SchedulerSendMixin
     from scheduler.runner_status import SchedulerStatusMixin
     from shared import (
+        TweetItem,
         format_subscription_source,
         redact_instance_urls,
         safe_block_log,
@@ -496,8 +498,18 @@ class NitterTweetScheduler(
                 safe_block_log("warning", result.format_log_summary())
             else:
                 async with self._check_lock:
+                    current_group = self._schedule_group(group.group_id)
+                    if current_group is None or not current_group.enabled:
+                        result = self._new_check_result(reason, group, target_override)
+                        result.skipped_reason = "group_disabled"
+                        return result
+                    reset_token = getattr(current_group, "baseline_reset_token", "")
+                    if reset_token:
+                        await self.storage.apply_baseline_reset(
+                            current_group.group_id, reset_token
+                        )
                     result = await self._run_check_unlocked(
-                        group,
+                        current_group,
                         reason,
                         notify_no_updates,
                         target_override,
@@ -1118,6 +1130,72 @@ class NitterTweetScheduler(
         )
         return True
 
+    async def _limit_group_candidates(
+        self,
+        group: ScheduleGroup,
+        batches: list[PendingTweetBatch],
+        seen_map: dict[str, list[str]],
+        result: ScheduledCheckResult,
+    ) -> dict[str, str]:
+        # Baselines stay source-scoped. Terminal handling can repair copies
+        # left by an interrupted check without delivering the post again.
+        handled_getter = getattr(self.storage, "get_group_handled_seen_map", None)
+        handled_map = (
+            await handled_getter(group.group_id) if callable(handled_getter) else {}
+        )
+        handled_ids = {
+            status_id
+            for username in group.account_keys
+            for status_id in handled_map.get(username, [])
+        }
+        for batch in batches:
+            handled_copies = [
+                tweet.status_id
+                for tweet in batch.tweets
+                if tweet.status_id in handled_ids
+            ]
+            await self._store_incremental_seen_ids(
+                group.group_id, batch.username, handled_copies, seen_map, handled=True
+            )
+            batch.tweets = [
+                tweet for tweet in batch.tweets if tweet.status_id not in handled_ids
+            ]
+        # The first source owns delivery. Other sources commit their copy only
+        # after the owner's selected tweet reaches a terminal send outcome.
+        candidates: dict[str, tuple[PendingTweetBatch, int, TweetItem]] = {}
+        for batch in batches:
+            for index, tweet in enumerate(batch.tweets):
+                candidates.setdefault(tweet.status_id, (batch, index, tweet))
+        ranked = sorted(
+            candidates.values(),
+            key=lambda item: self._parse_numeric_status_id(item[2].status_id) or 0,
+            reverse=True,
+        )
+        limit = group.max_tweets_per_check
+        selected_entries = ranked[:limit] if limit > 0 else ranked
+        owners = {
+            tweet.status_id: batch.username for batch, _, tweet in selected_entries
+        }
+        selected = {(id(batch), index) for batch, index, _ in selected_entries}
+        for batch in batches:
+            dropped = [
+                tweet.status_id
+                for tweet in batch.tweets
+                if tweet.status_id not in owners
+            ]
+            await self._store_incremental_seen_ids(
+                group.group_id, batch.username, dropped, seen_map, handled=True
+            )
+            batch.tweets = [
+                tweet
+                for index, tweet in enumerate(batch.tweets)
+                if (id(batch), index) in selected
+            ]
+        batches[:] = [batch for batch in batches if batch.tweets]
+        result.selected_tweet_count = len(owners)
+        result.limit_skipped_count = len(candidates) - len(owners)
+        return owners
+
     async def _run_check_unlocked(
         self,
         group: ScheduleGroup,
@@ -1213,6 +1291,7 @@ class NitterTweetScheduler(
 
                 instance = fetch_result.instance
                 tweets = fetch_result.tweets
+                result.retweet_filtered += fetch_result.retweet_filtered
                 result.source_statuses[username] = fetch_result.fetch_status or (
                     SourceStatus.SUCCESS if tweets else SourceStatus.EMPTY
                 )
@@ -1364,10 +1443,11 @@ class NitterTweetScheduler(
                             f"group={group.group_id}, source={source_label}"
                         )
                         continue
-                    seen_map[username] = self.storage.initial_seen_ids(seed_ids)
-                    await self._put_seen_map(group.group_id, seen_map)
-                    await self._set_scan_watermark(
-                        group.group_id, username, full_scanned_status_ids
+                    await self._rebuild_scan_baseline(
+                        group.group_id,
+                        username,
+                        seen_map,
+                        self._normalize_scan_baseline_ids(full_scanned_status_ids),
                     )
                     result.initialized_users[username] = len(seed_ids)
                     result.source_statuses[username] = SourceStatus.INITIALIZED
@@ -1396,28 +1476,6 @@ class NitterTweetScheduler(
                     )
 
                 if new_tweets:
-                    # max_tweets_per_check: keep the newest N; the excess is
-                    # marked seen (like pre-watermark history) so the advanced
-                    # scan watermark cannot silently drop it next round.
-                    max_tweets = group.max_tweets_per_check
-                    if max_tweets > 0 and len(new_tweets) > max_tweets:
-                        dropped_tweets = new_tweets[max_tweets:]
-                        new_tweets = new_tweets[:max_tweets]
-                        dropped_ids = [
-                            tweet.status_id
-                            for tweet in dropped_tweets
-                            if tweet.status_id
-                        ]
-                        if dropped_ids:
-                            seen_ids = self._merge_seen_ids(dropped_ids, seen_ids)
-                            seen_map[username] = seen_ids
-                            await self._put_seen_map(group.group_id, seen_map)
-                        self._log_verbose_info(
-                            "[NitterTweets] 定时检查超出单次推送上限，已跳过较旧推文: "
-                            f"group={group.group_id}, source={source_label}, "
-                            f"max={max_tweets}, skipped={len(dropped_tweets)}"
-                        )
-
                     selected_ids = {
                         tweet.status_id for tweet in new_tweets if tweet.status_id
                     }
@@ -1501,6 +1559,14 @@ class NitterTweetScheduler(
                     f"filtered={group_plain_text_filtered_total}"
                 )
 
+            candidate_sources = {
+                batch.username: {tweet.status_id for tweet in batch.tweets}
+                for batch in discovered_batches
+            }
+            selected_owners = await self._limit_group_candidates(
+                group, discovered_batches, seen_map, result
+            )
+
             fetch_failures = dict(result.failed_users)
             check_batch_summary = self._format_push_batch_summary(
                 discovered_batches,
@@ -1570,10 +1636,23 @@ class NitterTweetScheduler(
                                 batch.username,
                                 status_ids,
                                 seen_map,
+                                handled=True,
                             )
                 finally:
                     for batch in pending_batches:
                         await self._cleanup_batch_media(batch)
+
+            for username, status_ids in candidate_sources.items():
+                handled_duplicates = [
+                    status_id
+                    for status_id in status_ids
+                    if status_id in selected_owners
+                    and selected_owners[status_id] != username
+                    and status_id in seen_map.get(selected_owners[status_id], [])
+                ]
+                await self._store_incremental_seen_ids(
+                    group.group_id, username, handled_duplicates, seen_map, handled=True
+                )
 
             for username, rebuild in incomplete_baseline_candidates.items():
                 source_label = format_subscription_source(username, group.group_type)

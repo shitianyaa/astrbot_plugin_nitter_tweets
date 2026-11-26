@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from urllib.parse import parse_qs, urlsplit
+from xml.sax.saxutils import escape
 
+import pytest
 
 from media_support.client import NitterClient
 
 
-def _rss_xml(tweets: list[tuple[str, str, str]]) -> bytes:
-    """Build minimal RSS XML. tweets = [(author, status_id, text), ...]."""
+def _rss_xml(tweets: list[tuple[str, str, str] | tuple[str, str, str, str]]) -> bytes:
     items = []
-    for author, sid, text in tweets:
+    for author, sid, text, *title in tweets:
         link = f"https://x.com/{author}/status/{sid}"
         items.append(
             "<item>"
-            f"<title>{text}</title>"
-            f"<description>{text}</description>"
+            f"<title>{escape(title[0] if title else text)}</title>"
+            f"<description><![CDATA[{text}]]></description>"
             f"<link>{link}</link>"
             "<pubDate>Mon, 01 Jan 2026 00:00:00 GMT</pubDate>"
             "</item>"
@@ -38,8 +41,6 @@ def _client_with_instance(instance: str = "http://nitter:8080") -> NitterClient:
         side_effect=lambda key, default=None: {
             "instances": [instance],
             "request_timeout": 12.0,
-            "retry_attempts": 2,
-            "retry_delay_seconds": 0.0,
             "filter_reposts_enabled": True,
         }.get(key, default)
     )
@@ -89,31 +90,118 @@ def test_fetch_list_for_scheduler_initial_scan(monkeypatch):
     assert scan_result.anchor_status_ids  # seeded from first page
 
 
-def test_fetch_list_for_scheduler_disables_repost_filter(monkeypatch):
-    """List RSS must not filter reposts by a single username."""
-    client = _client_with_instance()
-    xml = _rss_xml([("userA", "100", "text")])
-
-    captured: dict = {}
-
+def _mock_list_rss(monkeypatch, pages):
     def fake_urlopen(request, timeout, *, proxy_url=None):
-        captured["url"] = request.full_url
-        resp = MagicMock()
-        resp.headers = {"Min-Id": ""}
-        resp.read = MagicMock(return_value=xml)
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-        return resp
+        url = urlsplit(request.full_url)
+        assert url.path == "/i/lists/12345/rss"
+        cursor = parse_qs(url.query).get("cursor", [""])[0]
+        rows, next_cursor = pages[cursor]
+        response = MagicMock()
+        response.headers = {"Min-Id": next_cursor}
+        response.read.return_value = _rss_xml(rows)
+        response.__enter__.return_value = response
+        return response
 
     monkeypatch.setattr("media_support.client.compat_urlopen", fake_urlopen)
 
-    # Pass filter_reposts=True; the method must override to False internally.
-    result = asyncio.run(
-        client.fetch_list_for_scheduler("12345", None, filter_reposts=True)
+
+@pytest.mark.parametrize("global_enabled", [False, True])
+@pytest.mark.parametrize("group_enabled", [False, True])
+def test_list_rss_applies_both_repost_switches(
+    monkeypatch, global_enabled, group_enabled
+):
+    from scheduler.runner_fetch import SchedulerFetchMixin
+
+    _mock_list_rss(
+        monkeypatch,
+        {
+            "": (
+                [
+                    ("alice", "104", "original"),
+                    ("bob", "103", "old post", "RT by @alice: old post"),
+                    ("carol", "102", "my comment<blockquote>quoted post</blockquote>"),
+                    ("bob", "101", "reply", "R to @alice: reply"),
+                    ("carol", "100", "RT by @alice: literal text"),
+                ],
+                "",
+            )
+        },
     )
-    instance, scan_result = result
-    # Tweet should be kept (no repost filtering applied)
-    assert len(scan_result.tweets) == 1
+    runner = SchedulerFetchMixin()
+    runner.config = {"basic": {"filter_reposts_enabled": global_enabled}}
+    runner.nitter = _client_with_instance()
+    runner._log_verbose_info = MagicMock()
+    group = SimpleNamespace(
+        group_id="g", group_type="list", filter_reposts_enabled=group_enabled
+    )
+
+    result = asyncio.run(
+        runner._fetch_group_list(
+            group,
+            0,
+            "list:12345",
+            20,
+            None,
+            filter_reposts=runner._effective_filter_reposts(group),
+        )
+    )
+    applies = global_enabled and group_enabled
+    expected = (
+        ["104", "102", "101", "100"] if applies else ["104", "103", "102", "101", "100"]
+    )
+    assert [tweet.status_id for tweet in result.tweets] == expected
+    assert result.anchor_status_ids == expected
+    assert result.retweet_filtered == int(applies)
+
+
+@pytest.mark.parametrize("watermark", [None, ["100"]])
+def test_list_rss_skips_repost_only_page_and_matches_original(monkeypatch, watermark):
+    client = _client_with_instance()
+    _mock_list_rss(
+        monkeypatch,
+        {
+            "": ([("alice", "100", "old", "RT by @bob: old")], "more"),
+            "more": (
+                [
+                    ("bob", "120", '<img src="/pic/media/example.jpg">'),
+                    ("alice", "100", "old"),
+                ],
+                "later",
+            ),
+        },
+    )
+    _, result = asyncio.run(
+        client.fetch_list_for_scheduler(
+            "12345", watermark, skip_plain_text=True, filter_reposts=True
+        )
+    )
+    assert [tweet.status_id for tweet in result.tweets] == ["120"]
+    assert result.scanned_status_ids == result.anchor_status_ids == ["120", "100"]
+    assert result.plain_text_filtered == result.reposts_filtered == 1
+    assert result.complete and result.reached_watermark is (watermark is not None)
+
+
+@pytest.mark.parametrize("watermark", [None, ["100"]])
+def test_list_rss_entire_feed_filtered_stays_successful(monkeypatch, watermark):
+    from scheduler.runner_fetch import SchedulerFetchMixin, SourceStatus
+
+    _mock_list_rss(
+        monkeypatch, {"": ([("alice", "100", "old", "RT by @bob: old")], "")}
+    )
+    runner = SchedulerFetchMixin()
+    runner.nitter = _client_with_instance()
+    runner._log_verbose_info = MagicMock()
+    group = SimpleNamespace(group_id="g", group_type="list")
+    result = asyncio.run(
+        runner._fetch_group_list(group, 0, "list:12345", 20, watermark)
+    )
+    assert result.fetch_status == SourceStatus.FILTERED_EMPTY
+    assert result.scan_complete and result.retweet_filtered == 1
+    assert (
+        not result.tweets
+        and not result.anchor_status_ids
+        and not result.scanned_status_ids
+    )
 
 
 # --- runner_fetch: List RSS success guard & fallback tests ---
@@ -123,8 +211,6 @@ def test_fetch_group_list_empty_tweets_complete_does_not_fallback():
     """When RSS returns 0 tweets but scan is complete (e.g. calm period,
     watermark reached), do NOT fallback to HTML — return empty result directly.
     """
-    from types import SimpleNamespace
-
     from media_support.client import SchedulerFetchResult
     from scheduler.runner_fetch import SchedulerFetchMixin
 
@@ -156,8 +242,6 @@ def test_fetch_group_list_empty_tweets_complete_does_not_fallback():
 
 def test_fetch_group_list_rss_error_falls_back_to_html():
     """When RSS raises an error, it must fallback to HTML fetch_list."""
-    from types import SimpleNamespace
-
     from scheduler.runner_fetch import SchedulerFetchMixin
 
     runner = SchedulerFetchMixin()

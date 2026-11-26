@@ -143,6 +143,56 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         ).fetchone()
         return row[0] if row else None
 
+    def _apply_baseline_reset_unlocked(
+        self, group_id: str, token: str, *, force: bool = False
+    ) -> bool:
+        assert self.conn is not None
+        marker_key = f"group_baseline_reset:{group_id}"
+        previous = self.conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (marker_key,)
+        ).fetchone()
+        requested = bool(token) and (previous is None or previous[0] != token)
+        if not force and not requested:
+            return False
+        now = int(time.time())
+        self.conn.execute(
+            """
+            INSERT INTO scan_watermarks
+                (group_id, username, initialized, status_ids, updated_at)
+            SELECT group_id, username, 0, '[]', ?
+            FROM seen_tweets WHERE group_id = ?
+            GROUP BY group_id, username
+            ON CONFLICT(group_id, username) DO UPDATE SET
+                initialized = 0, updated_at = excluded.updated_at
+            """,
+            (now, group_id),
+        )
+        self.conn.execute(
+            "UPDATE scan_watermarks SET initialized = 0, updated_at = ? "
+            "WHERE group_id = ?",
+            (now, group_id),
+        )
+        if token:
+            self.conn.execute(
+                "INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (marker_key, token, now),
+            )
+        return True
+
+    def apply_baseline_reset(self, group_id: str, token: str) -> None:
+        """Atomically consume a durable reset request once."""
+        normalized_group_id = normalize_stable_group_id(group_id)
+        if self._apply_baseline_reset_unlocked(normalized_group_id, token):
+            # A check may consume the request after a failed Pages sync.
+            # Acknowledge enabled together with the request to prevent a later
+            # snapshot sync from applying the same transition a second time.
+            self.conn.execute(
+                "UPDATE groups SET enabled = 1 WHERE group_id = ?",
+                (normalized_group_id,),
+            )
+
     def upsert_group(
         self,
         group_id: str,
@@ -158,6 +208,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         send_user_interval: float,
         notify_no_updates: bool,
         aliases: list[str],
+        baseline_reset_token: str = "",
     ) -> None:
         """插入或更新分组配置."""
         assert self.conn is not None
@@ -167,11 +218,17 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
 
         # 检查是否存在
         row = self.conn.execute(
-            "SELECT created_at FROM groups WHERE group_id = ?",
+            "SELECT created_at, enabled FROM groups WHERE group_id = ?",
             (normalized_group_id,),
         ).fetchone()
 
         created_at = row[0] if row else now
+        if enabled:
+            self._apply_baseline_reset_unlocked(
+                normalized_group_id,
+                baseline_reset_token,
+                force=row is not None and not bool(row[1]),
+            )
 
         self.conn.execute(
             """
@@ -352,6 +409,8 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         group_id: str,
         username: str,
         status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """添加已见推文 ID（批量）."""
         assert self.conn is not None
@@ -367,13 +426,25 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         # 批量插入或更新时间戳（REPLACE = DELETE + INSERT）。输入列表是
         # newest-first，因此反向写入，让同秒记录按 rowid DESC 读取时仍
         # 保持原顺序，同时保证后续调用写入的新 ID 不会被限额清理误删。
+        # 基线和配额跳过也复用此入口，重写时保留已有 handled 标记。
         self.conn.executemany(
             """
-            REPLACE INTO seen_tweets (group_id, username, status_id, seen_at)
-            VALUES (?, ?, ?, ?)
+            REPLACE INTO seen_tweets (group_id, username, status_id, seen_at, handled)
+            VALUES (?, ?, ?, ?, MAX(?, COALESCE(
+                (SELECT handled FROM seen_tweets
+                 WHERE group_id = ? AND username = ? AND status_id = ?), 0)))
             """,
             [
-                (normalized_group_id, normalized_username, sid, now)
+                (
+                    normalized_group_id,
+                    normalized_username,
+                    sid,
+                    now,
+                    int(handled),
+                    normalized_group_id,
+                    normalized_username,
+                    sid,
+                )
                 for sid in reversed(status_ids)
                 if sid
             ],
@@ -400,6 +471,19 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
             ),
         )
 
+    def get_group_handled_seen_map(self, group_id: str) -> dict[str, list[str]]:
+        """Return only seen IDs that reached a terminal processing outcome."""
+        assert self.conn is not None
+        rows = self.conn.execute(
+            "SELECT username, status_id FROM seen_tweets "
+            "WHERE group_id = ? AND handled = 1",
+            (normalize_stable_group_id(group_id),),
+        ).fetchall()
+        handled_map: dict[str, list[str]] = {}
+        for row in rows:
+            handled_map.setdefault(str(row[0]), []).append(str(row[1]))
+        return handled_map
+
     def get_group_seen_map(self, group_id: str) -> dict[str, list[str]]:
         """获取指定分组的所有用户 seen map."""
         assert self.conn is not None
@@ -425,6 +509,17 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 seen_map[username].append(status_id)
 
         return seen_map
+
+    def get_pending_baselines(self, group_id: str) -> set[str]:
+        assert self.conn is not None
+        return {
+            str(row[0])
+            for row in self.conn.execute(
+                "SELECT username FROM scan_watermarks "
+                "WHERE group_id = ? AND initialized = 0",
+                (normalize_stable_group_id(group_id),),
+            ).fetchall()
+        }
 
     def get_group_scan_watermarks(self, group_id: str) -> dict[str, list[str]]:
         """获取分组中已初始化账号的最近扫描基准组。"""
@@ -480,9 +575,11 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         group_id: str,
         username: str,
         status_ids: list[str],
+        *,
+        handled: bool = False,
     ) -> None:
         """添加已见推文 ID（批量）."""
-        self._add_seen_ids_unlocked(group_id, username, status_ids)
+        self._add_seen_ids_unlocked(group_id, username, status_ids, handled=handled)
 
     def set_scan_watermark(
         self,
@@ -493,17 +590,12 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """设置一个分组账号的最近扫描基准组并标记为已初始化。"""
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
-    def put_group_seen_map_and_scan_watermark(
-        self,
-        group_id: str,
-        username: str,
-        seen_map: dict[str, list[str]],
-        status_ids: list[str] | str | None = None,
+    def put_scan_baseline(
+        self, group_id: str, username: str, status_ids: list[str]
     ) -> None:
-        """在同一事务中写入 seen map 和一个账号的扫描水位。"""
-        for seen_username, seen_ids in seen_map.items():
-            if seen_ids:
-                self._add_seen_ids_unlocked(group_id, seen_username, seen_ids)
+        """在同一事务中写入单个订阅源的新基线 ID 和扫描水位。"""
+        if status_ids:
+            self._add_seen_ids_unlocked(group_id, username, status_ids)
         self._set_scan_watermark_unlocked(group_id, username, status_ids)
 
     def count_seen_tweets_by_group(self) -> dict[str, int]:
@@ -537,6 +629,10 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
         """Delete one group's runtime rows."""
         assert self.conn is not None
         normalized_group_id = normalize_stable_group_id(group_id)
+        self.conn.execute(
+            "DELETE FROM meta WHERE key = ?",
+            (f"group_baseline_reset:{normalized_group_id}",),
+        )
         summary = {
             "groups_deleted": 0,
             "users_deleted": 0,
@@ -967,6 +1063,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                     "group_id": group.group_id,
                     "name": group.name,
                     "enabled": group.enabled,
+                    "baseline_reset_token": getattr(group, "baseline_reset_token", ""),
                     "check_on_startup": group.check_on_startup,
                     "interval_check_enabled": group.interval_check_enabled,
                     "check_interval_minutes": group.check_interval_minutes,
@@ -1016,6 +1113,7 @@ class SQLiteStorage(SQLiteSchemaMixin, SQLiteSerdeMixin):
                 send_user_interval=group.send_user_interval,
                 notify_no_updates=group.notify_no_updates,
                 aliases=group.aliases,
+                baseline_reset_token=getattr(group, "baseline_reset_token", ""),
             )
 
             # 同步订阅账号
@@ -1038,6 +1136,7 @@ for _method_name in (
     "set_meta",
     "get_meta",
     "upsert_group",
+    "apply_baseline_reset",
     "set_group_users",
     "get_group_users",
     "set_group_targets",
@@ -1046,9 +1145,11 @@ for _method_name in (
     "get_seen_ids",
     "add_seen_ids",
     "get_group_seen_map",
+    "get_group_handled_seen_map",
     "get_group_scan_watermarks",
+    "get_pending_baselines",
     "set_scan_watermark",
-    "put_group_seen_map_and_scan_watermark",
+    "put_scan_baseline",
     "clear_seen_tweets",
     "delete_group_runtime_data",
     "record_push_history",

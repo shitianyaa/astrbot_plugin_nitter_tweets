@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from uuid import uuid4
 from typing import Any
 
 from astrbot.api import logger
@@ -13,6 +14,7 @@ try:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        parse_config_bool,
         sanitize_removed_feature_group,
     )
     from ..media_support.html_backend import encode_watch_query
@@ -30,6 +32,7 @@ except ImportError:
         TWEET_GROUP_TEMPLATE_KEY_FIELD,
         config_get,
         config_set,
+        parse_config_bool,
         sanitize_removed_feature_group,
     )
     from media_support.html_backend import encode_watch_query
@@ -149,9 +152,15 @@ class WebUIGroupEditor:
         )
         raw_group["name"] = name
         raw_group["group_id"] = stable_group_id
-        raw_group["enabled"] = self._bool(
-            data.get("enabled", raw_group.get("enabled", True))
-        )
+        was_enabled = parse_config_bool(raw_group.get("enabled"), True)
+        raw_group["enabled"] = parse_config_bool(data.get("enabled", was_enabled), True)
+        if not was_enabled and raw_group["enabled"]:
+            raw_group["_baseline_reset_token"] = uuid4().hex
+        if "max_tweets_per_check" in data:
+            limit = data["max_tweets_per_check"]
+            if type(limit) is not int or not 0 <= limit <= 200:
+                return {"success": False, "error": "分组推送上限需要 0–200 的整数"}
+            raw_group["max_tweets_per_check"] = limit
         raw_group["group_type"] = existing_type
         raw_group["interval_check_enabled"] = self._bool(
             data.get(

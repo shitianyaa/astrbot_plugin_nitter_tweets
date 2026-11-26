@@ -23,7 +23,6 @@ try:
     from ..shared import (
         TweetItem,
         clamp_float,
-        clamp_int,
         clean_text,
         load_instances,
         normalize_external_links,
@@ -35,7 +34,6 @@ except ImportError:
     from shared import (
         TweetItem,
         clamp_float,
-        clamp_int,
         clean_text,
         load_instances,
         normalize_external_links,
@@ -267,10 +265,8 @@ class NitterClient:
         self.timeout = clamp_float(
             config_get(config, "request_timeout", 12.0), 3.0, 60.0
         )
-        self.retry_attempts = clamp_int(config_get(config, "retry_attempts", 2), 1, 5)
-        self.retry_delay_seconds = clamp_float(
-            config_get(config, "retry_delay_seconds", 5.0), 0.0, 60.0
-        )
+        self.retry_attempts = 2
+        self.retry_delay_seconds = 5.0
         self.filter_reposts_enabled = parse_config_bool(
             config_get(config, "filter_reposts_enabled", True), True
         )
@@ -529,9 +525,8 @@ class NitterClient:
 
         Reuses the same scan loop as blogger RSS. The list path is passed
         as ``path_override`` so the URL targets the list RSS endpoint.
-        Repost filtering is disabled because a list has multiple members
-        and the single-username ``_is_repost_link`` check does not apply;
-        the HTML fallback path handles retweet detection via markup.
+        List rows use the RSS title marker for reposts because the list ID
+        does not identify a single author.
         """
         return await self._fetch_tweets_for_scheduler_from_instances(
             list_id,
@@ -539,7 +534,7 @@ class NitterClient:
             self.instances,
             skip_plain_text=skip_plain_text,
             retry_attempts=self.retry_attempts,
-            filter_reposts=False,
+            filter_reposts=filter_reposts,
             path_override=f"i/lists/{quote(str(list_id).strip(), safe='')}",
         )
 
@@ -1018,6 +1013,7 @@ class NitterClient:
         reposts_filtered_total = 0
         reached_watermark = False
         next_anchor_ids: list[str] = []
+        repost_author = self._rss_repost_author(username, path_override)
         pages = self._iter_scheduler_pages(
             instance,
             username,
@@ -1028,7 +1024,7 @@ class NitterClient:
             path_override=path_override,
         )
 
-        for page_number, page in enumerate(pages, start=1):
+        for page in pages:
             scanned_item_count += page.raw_item_count
             if scanned_item_count > self.SCHEDULER_SCAN_LIMIT:
                 raise RuntimeError(
@@ -1036,7 +1032,7 @@ class NitterClient:
                 )
 
             page_status_ids = page.scanned_status_ids
-            if page_number == 1:
+            if not next_anchor_ids:
                 next_anchor_ids = list(
                     dict.fromkeys(
                         str(status_id)
@@ -1069,7 +1065,7 @@ class NitterClient:
             plain_text_filtered_total += page.plain_text_filtered
             page_tweets, page_reposts_filtered = self._filter_reposts(
                 page.tweets,
-                username,
+                repost_author,
                 enabled=filter_reposts,
             )
             if watermark_index is not None:
@@ -1087,15 +1083,16 @@ class NitterClient:
                 seen_tweets.add(key)
                 tweets.append(tweet)
 
-            # A missing row means first initialization: only seed the current
-            # first page. An explicit empty/non-numeric row means the source
-            # was already initialized without a usable status boundary, so a
-            # complete scan to feed end is required to avoid losing page 2+.
+            # For a fresh source, seed the first page with eligible anchors.
+            # An existing empty watermark still scans through to the feed end.
             reached_watermark = watermark_index is not None
-            if initial_scan or reached_watermark:
+            if reached_watermark or (
+                initial_scan and (next_anchor_ids or not page.next_cursor)
+            ):
                 break
 
-        if boundary_ids and not reached_watermark:
+        only_filtered_reposts = 0 < reposts_filtered_total == scanned_item_count
+        if boundary_ids and not reached_watermark and not only_filtered_reposts:
             raise RuntimeError("后台 RSS 扫描未完成：未找到任何已记录基准 ID")
 
         return SchedulerFetchResult(
@@ -1131,7 +1128,11 @@ class NitterClient:
 
     @staticmethod
     def _is_repost(tweet: TweetItem, username: str) -> bool:
-        return NitterClient._is_repost_link(tweet.link, username)
+        return tweet.is_retweet or NitterClient._is_repost_link(tweet.link, username)
+
+    @staticmethod
+    def _rss_repost_author(username: str, path: str) -> str:
+        return "" if path.startswith("i/lists/") else username
 
     @staticmethod
     def _is_repost_link(link: str, username: str) -> bool:
@@ -1237,7 +1238,7 @@ class NitterClient:
                 instance,
                 0,
                 skip_plain_text,
-                username,
+                self._rss_repost_author(username, path_override),
                 filter_reposts,
             )
         )
@@ -1490,40 +1491,36 @@ class NitterClient:
             description = self._node_text(item, "description")
             link = self._normalize_link(self._node_text(item, "link"), instance)
             published = self._format_pub_date(self._node_text(item, "pubDate"))
-            status_id = TweetItem(text="", link=link, published="").status_id
-            if status_id:
-                scanned_status_ids.append(status_id)
-            # 源头过滤纯文本推文：必须在 clean_text 之前判断原始 HTML，
-            # clean_text 会剥掉 HTML 只剩纯文本。链接预览卡片图
-            # （/pic/card_img）不算作者媒体。转发先交给转发过滤，避免
-            # 把本来就会丢弃的转发也计入纯文本过滤数。
-            lacks_author_media = skip_plain_text and not _has_author_media(description)
-            if lacks_author_media and not (
-                use_filter_reposts and self._is_repost_link(link, username)
-            ):
-                plain_text_filtered += 1
-                continue
             text = clean_text(description or title)
             if not text and not link:
                 continue
-            # Nitter prepends a marker to the title while rendering the original body.
+            # Nitter prepends the repost marker to the title, leaving the body intact.
             repost_prefix = _RSS_REPOST_PREFIX_RE.match(title)
-            tweets.append(
-                TweetItem(
-                    text=normalize_external_links(text) or "(无正文)",
-                    link=link,
-                    published=published,
-                    is_retweet=bool(
-                        repost_prefix
-                        and (
-                            not description
-                            or not " ".join(text.split()).startswith(
-                                " ".join(repost_prefix[0].split())
-                            )
+            tweet = TweetItem(
+                text=normalize_external_links(text) or "(无正文)",
+                link=link,
+                published=published,
+                is_retweet=bool(
+                    repost_prefix
+                    and (
+                        not description
+                        or not " ".join(text.split()).startswith(
+                            " ".join(repost_prefix[0].split())
                         )
-                    ),
-                )
+                    )
+                ),
             )
+            if use_filter_reposts and self._is_repost(tweet, username):
+                # Keep the row for the repost counter, but never use it as an anchor.
+                tweets.append(tweet)
+            else:
+                if tweet.status_id:
+                    scanned_status_ids.append(tweet.status_id)
+                # Inspect the raw HTML for author media, including when text is empty.
+                if skip_plain_text and not _has_author_media(description):
+                    plain_text_filtered += 1
+                    continue
+                tweets.append(tweet)
             if limit > 0 and len(tweets) >= limit:
                 break
         return tweets, plain_text_filtered, scanned_status_ids, len(items)

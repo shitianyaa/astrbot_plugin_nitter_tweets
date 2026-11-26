@@ -6,10 +6,10 @@ from pathlib import Path
 
 try:
     from ..config import config_get, parse_config_bool
-    from ..shared import TweetItem, clamp_float, clamp_int, safe_block_log
+    from ..shared import TweetItem, clamp_int, safe_block_log
 except ImportError:
     from config import config_get, parse_config_bool
-    from shared import TweetItem, clamp_float, clamp_int, safe_block_log
+    from shared import TweetItem, clamp_int, safe_block_log
 
 from .client import NitterClient
 from .html_backend.service import HtmlBackendConfig, HtmlNitterService
@@ -32,9 +32,7 @@ class NitterService(NitterClient):
                 proxy=self.proxy_url,
                 session_dir=session_dir,
                 timeout=self.timeout,
-                min_interval=clamp_float(
-                    config_get(config, "html_min_interval", 3.0), 0.0, 120.0
-                ),
+                min_interval=3.0,
                 max_pages=clamp_int(config_get(config, "html_max_pages", 1), 1, 5),
                 filter_reposts=parse_config_bool(
                     config_get(config, "filter_reposts_enabled", True), True

@@ -105,7 +105,7 @@ function createSelect({ id = "", value = "", options = [] } = {}) {
 function setBusy(isBusy) {
   state.loading = isBusy;
   const busy = isBusy || state.actionBusy;
-  [els.refreshBtn, els.createGroupBtn, els.historyRefreshBtn, els.historyOrphanBtn,
+  [els.cleanCacheBtn, els.refreshBtn, els.createGroupBtn, els.historyRefreshBtn, els.historyOrphanBtn,
    els.historyPrevBtn, els.historyNextBtn, els.mirrorProbeBtn, els.historySelectAllBtn].forEach(b => { if (b) b.disabled = busy; });
   document.querySelectorAll("[data-busy-control]").forEach(control => { control.disabled = busy; });
   document.body.classList.toggle("ui-busy", busy);

@@ -727,6 +727,10 @@ a:hover { text-decoration: underline; }
 .health-dot.ok { background: var(--green); }
 .health-dot.warn { background: var(--yellow); }
 
+.group-editor { gap: 16px; }
+.group-editor-section { padding-top: 12px; border-top: 1px solid var(--border); }
+.group-editor-section > .section-head { margin: 0; }
+
 .editor-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

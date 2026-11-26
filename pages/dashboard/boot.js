@@ -5,14 +5,41 @@
 /* ==========================================================================
    16. Cleanup Actions
    ========================================================================== */
+function waitForCacheRequest(request, timeoutMs, message) {
+  let timer;
+  return Promise.race([
+    request,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 function confirmClearCache() {
+  if (state.actionBusy) return;
   openConfirm({
-    title: "清理媒体缓存？", desc: "删除临时下载的图片与视频附件，不影响推送记录。",
+    title: "清理媒体缓存？", desc: "清理普通缓存，使用中的文件将在发送结束后释放。",
     danger: true,
     action: () => withAction(async () => {
-      const res = await apiPost("web/cache/clear");
-      return { message: `缓存清理完毕: 删除 ${res.result?.removed || 0} 个文件` };
-    }, "缓存已清理"),
+      state.busyLabel = "正在清理…";
+      setBusy(true);
+      const res = await waitForCacheRequest(apiPost("web/cache/clear"), 30000,
+        "清理结果尚未返回，后台可能仍在处理。可刷新统计查看。");
+      const r = res.result || {};
+      const message = `删除 ${r.removed || 0} 个文件（图片 ${r.removed_images || 0}、视频 ${r.removed_videos || 0}、其他 ${r.removed_other || 0}），使用中跳过 ${r.skipped_active || 0} 个，删除失败 ${r.failed || 0} 个`;
+      showAlert(message, r.failed || r.skipped_active ? "warn" : "success");
+      state.busyLabel = "正在刷新统计…";
+      setBusy(true);
+      try {
+        const overview = await waitForCacheRequest(apiGet("web/overview"), 10000,
+          "缓存统计刷新超时，可稍后刷新查看。");
+        state.overview = overview;
+        markData("overview");
+      } catch (error) {
+        showAlert(`清理结果已返回，统计刷新失败：${error.message}`, "warn");
+      }
+      return res;
+    }, false, { reload: false }),
   });
 }
 

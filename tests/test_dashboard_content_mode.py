@@ -24,7 +24,7 @@ def test_content_dropdown_preserves_draft_and_payload():
     ]
     selector = source[
         source.index("  const contentSelect = createSelect") : source.index(
-            '  const body = h("div", { class: "vstack" }'
+            '  const body = h("div"'
         )
     ]
     harness = r"""

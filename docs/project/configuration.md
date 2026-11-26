@@ -7,11 +7,15 @@
 AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）、**标签分组**（`tag`）或 **列表分组**（`list`）。
 旧版单一模板 `group`（用户分组）启动时迁移为 `blogger`。
 
-- `basic`: 抓取后端、自建 Nitter 实例、默认数量、冷却和链接解析。
-- `media`: 图片、视频、传输编码、xdown、缓存。
-- `ai_translation`: 翻译。
-- `schedule`: 后台检查总开关和全局频率。
-- `push`: `tweet_groups`、推送间隔、合并阈值、批次概括横幅与目标级作者黑名单。
+- **抓取与查询**（`basic`）：抓取后端、自建 Nitter、全局转推过滤、手动命令、链接解析与网络参数。
+- **后台检查**（`schedule`）：后台检查总开关、检查间隔、启动检查和无更新通知。
+- **订阅与发送**（`push`）：推送分组、QQ 合并转发、推送统计与发送间隔。Dashboard 可从这里进入分组订阅管理。
+- **媒体与附件**（`media`）：图片、视频、画质与附件限制。
+- **AI 翻译**（`ai_translation`）：翻译开关、模型与提示词。
+
+在 Dashboard 分组编辑器中，填好订阅源与推送目标后，再设置检查计划和推送规则。「过滤纯文本推文」决定哪些推文入选，「推送内容形式」决定如何发送入选推文。
+
+后台检查或另一个分组操作正在进行时，Dashboard 的分组创建、更新和删除会立即提示稍后重试。尚未保存的表单内容会保留，本次请求不会在后台排队。
 
 日志采用固定分级，不再暴露配置开关。实例诊断页切换摘要与告警 / DEBUG 过程，独立有界内存缓冲各保留 200 条，重载即清。旧日志与并发配置会在升级时静默清除，不影响其他配置与迁移标记。
 
@@ -34,9 +38,9 @@ AstrBot WebUI 的 `tweet_groups` 添加时先选 **博主分组**（`blogger`）
 
 后台 FxTwitter 博主抓取固定最多三并发；Nitter 优先合并 RSS，逐账号回退和媒体/翻译准备均串行。旧并发配置已退役，不影响多实例故障切换。
 
-关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用 `retry_attempts` 和 `retry_delay_seconds`。
+关注对象较多时建议优先使用 Nitter List 分组，减少逐用户抓取造成的请求量和 429；RSS 与 HTML 共用内置重试策略，最多 2 轮、轮间等待 5 秒。
 
-相关：`cooldown_seconds`、`search_max_limit`、`html_min_interval`、`html_max_pages`（同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度）。`request_timeout`、`retry_attempts`、`retry_delay_seconds` 同时作用于 RSS 和 HTML。
+相关配置包括 `cooldown_seconds`、`search_max_limit`、`html_max_pages`（同时控制 FxTwitter 媒体抓取及过滤翻页的最大深度）。`request_timeout` 同时作用于 RSS 和 HTML；HTML 请求间隔内置为 3 秒。
 
 `auto_parse_tweet_links_enabled`（`basic`，默认 `false`）：被动解析聊天中的公开 status 链接；不进 `tweet_groups` 模板。翻译与 `show_original_when_translated` 跟随全局 AI 配置。
 
@@ -51,7 +55,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `name`: 显示名，可用于命令。
 - `group_id`: 存储 ID。新建默认分组为 `default`；由插件自动分配并保持稳定，已有值（包括旧 `global`）保留。缺失时，安全英文数字分组名会作为旧 ID 继承，否则自动补齐为 `group_N`。
 - `group_type`: `blogger`（默认）、`tag` 或 `list`。创建后锁定；决定使用哪类订阅字段。Tag 组抓取由 `fetch_backend` 决定，`mix` 和 `fx` 模式优先走 FxTwitter（仅 `mix` 模式在失败时回退至 Nitter HTML 搜索，`fx` 模式不回退）；List 组物理隔离强制走自建 Nitter（优先走 RSS `/i/lists/<id>/rss`，失败回退 HTML 翻页）。
-- `enabled`: 是否启用。
+- `enabled`: 是否启用。Pages 重新启用时同时保存内部 `_baseline_reset_token`，用于在数据库同步失败后重试恢复基线；该字段隐藏并由插件维护。
 - `watch_users`: **Blogger 组**博主订阅源；其他类型忽略。
 - `watch_queries`: **Tag 组**搜索订阅列表。**落盘为字符串列表**（如 `#圣娅`、`蔚蓝档案`）。前导 `#` → tag，否则 phrase；phrase 禁止自动加 `#`。仍可读旧 `{query,type}` 对象，但会规范成字符串，避免 AstrBot `list` 显示 `[object Object]`。
 - `watch_lists`: **List 组**正 `uint64` List ID 列表（`1` 至 `18446744073709551615`）；其他类型忽略。List 走统一 `instances`，不新增手动命令。
@@ -64,9 +68,11 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `hide_original_when_translated`: 分组级；有译文时隐藏原文（在全局 `show_original_when_translated=true` 时生效）。
 - `media_only_enabled`: 分组「推送内容」下拉，支持「完整推文」「仅媒体（保留作者）」「仅媒体（不含文字）」。旧布尔 false/true 分别兼容前两项。两种仅媒体模式均不调用翻译，受全局媒体类型与单条媒体数量上限控制；保留作者模式在全局媒体不可用时沿用完整内容回退，不含文字模式则不发送。后者不附加作者、正文、翻译、链接、概括或无更新提示，仍遵循现有 QQ 合并转发设置，节点昵称和时间由客户端显示。Pages 分组抽屉使用相同下拉，修改草稿后点击页脚保存生效。
 - `send_target_interval` / `send_user_interval`: 分组级发送间隔（秒）；未填时回退全局同名配置，同时用于 Tag/List 订阅源之间的串行抓取间隔。
-- `max_tweets_per_check`: 单个订阅源单次检查最多推送的推文条数（`0` 不限制，范围 0-200）；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
+- `max_tweets_per_check`: 整个分组单次检查最多推送的不同推文条数（`0` 不限制，范围 0-200）；同组按状态 ID 去重，只准备和发送一次；Blogger、Tag、List 均生效。Tag/List 扫描未完整且找不到旧基准时，`0` 跳过推送并自动重建当前第一页基准，正数按上限推送后再重建；发送准备失败、首屏基准无效或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。
 
-全局 `filter_reposts_enabled` 是后台检查与手动命令的转发过滤总开关。后台检查的实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动 `/推文` 与 `/推图` 命令亦遵循此全局总开关（手动命令不读取分组子开关）。
+「抓取与查询」中的「全局转推过滤」是后台检查和手动查询的总开关，对应 `basic.filter_reposts_enabled`。后台检查的实际过滤条件为“全局总开关 && 分组子开关”；二者默认均开启，旧分组缺少子开关时按开启处理。全局关闭时任何分组都不能单独强制开启。手动 `/推文` 与 `/推图` 命令亦遵循此全局总开关（手动命令不读取分组子开关）。
+
+单账号 RSS 确认整轮只有被过滤的转推时，首次检查记录空水位，后续检查保留旧水位；真正的空响应和抓取失败仍按原规则尝试 HTML 后备。
 
 全局 AI：
 
@@ -95,7 +101,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 
 `watch_users` 和 `push_targets` 顶层字段是旧版兼容字段，启动后迁移到默认分组。
 
-后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页直到命中任意基准，然后按推文 ID 与 seen 做差集并发送全部新推文。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
+后台**博主**检查固定扫描 RSS 首屏约 20 条；首屏未命中上次最多 20 个扫描基准 ID 时按 `Min-Id` 翻页查找基准，按推文 ID 与 seen 做差集收集候选。发送前按整组额度选取最新的不重复推文，超额旧帖标记为已处理；额度为 `0` 时不限制条数。旧配置中的 `scheduled_fetch_limit` 会在迁移时清理，不再作为运行参数。
 
 后台**Tag**检查：每个 `watch_query` 的检索路由由 `fetch_backend` 决定：在 `mix`（默认）或 `fx` 模式下优先使用 FxTwitter 接口搜索，且仅在 `mix` 模式遇到 SafeSearch 404、限流或故障时平滑回退至自建 Nitter HTML 搜索；`nitter` 模式则固定使用 `instances` 的 HTML 搜索。组内串行、订阅源之间按 `send_user_interval` 等待。首轮最多取 20 条建立基准；已有水位时本轮扫描可超过 20 条，并按 `html_max_pages` 翻页到旧水位或游标结束，持久化水位仍最多保存 20 个 ID。达到页数上限仍未命中旧基准时，`max_tweets_per_check=0` 会跳过推送并自动重建当前第一页基准，正数会按上限推送后再重建；首屏没有有效状态 ID、发送准备失败或基准写入失败时保留旧水位，发送调用失败则跳过当前批次并推进 seen。按全局和分组双层开关决定是否过滤转发，可选纯文本/仅媒体，再与 seen（`q:...`）差集后发送新帖（`max_tweets_per_check > 0` 时按该上限截断，默认不限制）。首次有可用结果只 init 不推历史；真正空首轮不初始化 seen 或扫描水位；有原始结果但全被过滤时记录空扫描水位。
 
@@ -113,15 +119,12 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 
 ## 媒体传输编码
 
-`media` 分组下仅 `media_transport_base64_max_mb` 可配置（传输模式恒为 `auto`，twimg 白名单主机的 URL 档自动加入梯度），只影响私人号 OneBot 的媒体投递，行为见
+传输模式内置为 `auto`，Base64 单文件上限固定为 8 MB，twimg 白名单主机的 URL 档自动加入梯度。这套梯度只影响私人号 OneBot 的媒体投递，行为见
 [平台发送指南](./platform-delivery.md#媒体传输编码)：
 
-| 配置键 | 默认 | 说明 |
-| --- | --- | --- |
-| `media_transport_base64_max_mb` | `8.0` | clamp 到 `0.5-32`；同时约束图片和视频 |
+Base64 单文件上限固定为 8 MB，同时约束图片和视频。旧配置中的自定义上限在升级时清理。
 
-解析函数在 `config/compat.py`：`resolve_media_transport_base64_max_mb`；
-`TransportConfig.from_config()` 负责组装。
+内部解析函数为 `config/compat.py` 中的 `resolve_media_transport_base64_max_mb`，`TransportConfig.from_config()` 负责组装传输策略。
 
 ## 兼容规则
 
@@ -138,3 +141,7 @@ Dashboard 实例能力诊断一次检查统一 `instances` 的用户 RSS、用�
 - `docs/advanced.md` 完整配置说明。
 - 本文件。
 - 相关测试。
+
+## 2.2 升级行为
+
+分组重新启用后先重建当前基线。分组额度改为所有订阅源合计，超额旧帖跳过。六项技术参数改用内置值，升级时清理旧自定义值。完整说明见 [2.2 升级行为](../../README.md#22-升级行为)。

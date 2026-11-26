@@ -165,10 +165,13 @@ def set_import_group_queries(
 
 async def sync_import_config_groups(scheduler: Any) -> str:
     try:
-        schedule_groups = scheduler.config_reader.schedule_groups(
-            log_invalid_targets=False
-        )
-        await scheduler.storage.migrate_and_sync(schedule_groups)
+        async with scheduler._check_lock:
+            if not await scheduler._ensure_storage_ready():
+                return "调度存储初始化未完成，请稍后重试"
+            schedule_groups = scheduler.config_reader.schedule_groups(
+                log_invalid_targets=False
+            )
+            await scheduler.storage.migrate_and_sync(schedule_groups)
     except Exception as exc:
         logger.warning(f"[NitterTweets] 同步导入订阅失败: {exc}")
         return str(exc)

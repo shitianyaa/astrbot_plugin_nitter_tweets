@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -369,7 +370,10 @@ def _make_group_api(group_type: str = "blogger"):
     plugin = SimpleNamespace(
         config=config,
         scheduler=SimpleNamespace(
-            config_reader=SchedulerConfigReader(config, context=None), storage=storage
+            config_reader=SchedulerConfigReader(config, context=None),
+            storage=storage,
+            _check_lock=asyncio.Lock(),
+            _ensure_storage_ready=AsyncMock(return_value=True),
         ),
     )
     return NitterWebAPI(plugin), config, storage
@@ -398,6 +402,25 @@ async def test_update_group_response_carries_serialized_group_without_warning(
     storage.migrate_and_sync.assert_awaited_once()
     assert storage.migrate_and_sync.await_args.args[0][0].enabled is False
     warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_enabled", ["disabled", "disable", "关"])
+async def test_group_reenable_recognizes_legacy_false_value(stored_enabled):
+    api, config, storage = _make_group_api("list")
+    _group_raw(config)["enabled"] = stored_enabled
+    assert not api.scheduler.config_reader.schedule_groups()[0].enabled
+
+    assert (await api.update_group({"group_id": "g", "name": "改名"}))["success"]
+    assert _group_raw(config)["enabled"] is False
+    assert not _group_raw(config).get("_baseline_reset_token")
+
+    _group_raw(config)["enabled"] = stored_enabled
+    assert (await api.update_group({"group_id": "g", "enabled": True}))["success"]
+    assert _group_raw(config)["enabled"] is True
+    token = _group_raw(config)["_baseline_reset_token"]
+    assert token
+    assert storage.migrate_and_sync.await_args.args[0][0].baseline_reset_token == token
 
 
 @pytest.mark.asyncio
@@ -431,3 +454,306 @@ async def test_update_group_sync_failure_keeps_saved_group_and_reports_error():
     storage.migrate_and_sync.assert_awaited_once()
     warning.assert_called_once()
     assert "WebUI 分组同步失败" in warning.call_args.args[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [0, 1, 200, -1, 201, True, 1.5, "5", None])
+async def test_group_limit_validation_and_partial_save(limit):
+    api, config, _ = _make_group_api("list")
+    result = await api.update_group({"group_id": "g", "max_tweets_per_check": limit})
+    valid = type(limit) is int and 0 <= limit <= 200
+    assert result["success"] is valid
+    if valid:
+        assert result["group"]["max_tweets_per_check"] == limit
+        result = await api.update_group({"group_id": "g", "enabled": False})
+        assert result["group"]["max_tweets_per_check"] == limit
+
+
+@pytest.mark.asyncio
+async def test_group_sync_waits_for_storage_initialization():
+    api, config, storage = _make_group_api("list")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def initialize():
+        entered.set()
+        await release.wait()
+        return True
+
+    api.scheduler._ensure_storage_ready.side_effect = initialize
+    task = asyncio.create_task(api.update_group({"group_id": "g", "enabled": False}))
+    await entered.wait()
+    storage.migrate_and_sync.assert_not_awaited()
+    release.set()
+    assert (await task)["success"] is True
+    storage.migrate_and_sync.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_group_sync_reports_storage_initialization_failure():
+    api, config, storage = _make_group_api("list")
+    api.scheduler._ensure_storage_ready.return_value = False
+    result = await api.update_group({"group_id": "g", "enabled": False})
+    assert result["success"] is True
+    assert result["sync_error"]
+    storage.migrate_and_sync.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "payload"),
+    [
+        ("create", {"name": "new", "group_type": "tag"}),
+        ("update", {"group_id": "g", "enabled": False}),
+        ("delete", {"group_id": "g", "force": True, "confirm": "DELETE"}),
+    ],
+)
+async def test_group_write_reports_busy_without_mutation_and_can_retry(
+    operation, payload
+):
+    api, config, storage = _make_group_api("list")
+    storage.delete_group_runtime_data = AsyncMock(return_value={})
+    write = getattr(api, f"{operation}_group")
+    async with api.scheduler._check_lock:
+        with patch.object(config, "save_config") as save:
+            result = await asyncio.wait_for(write(payload), timeout=0.5)
+        assert result["success"] is False
+        assert "稍后重试" in result["error"]
+        save.assert_not_called()
+        assert [g["group_id"] for g in config_get(config, "tweet_groups")] == ["g"]
+        assert _group_raw(config)["enabled"] is True
+        storage.migrate_and_sync.assert_not_awaited()
+        storage.delete_group_runtime_data.assert_not_awaited()
+    assert (await write(payload))["success"] is True
+    storage.migrate_and_sync.assert_awaited_once()
+
+
+def test_update_group_saves_url_and_translation_flags():
+    """Saving omit_status_url / hide_original via WebUI must not crash."""
+
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "默认分组",
+                "group_id": "default",
+                "enabled": True,
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "watch_queries": [],
+                "push_targets": ["aiocqhttp:GroupMessage:1"],
+                "interval_check_enabled": True,
+                "daily_check_times": [],
+                "filter_plain_text_enabled": False,
+                "media_only_enabled": False,
+                "omit_status_url": True,
+                "hide_original_when_translated": False,
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {
+            "group_id": "default",
+            "name": "默认分组",
+            "omit_status_url": False,
+            "hide_original_when_translated": True,
+        }
+    )
+    assert result.get("success") is True, result
+    groups = config_get(config, "tweet_groups", [])
+    assert groups, config
+    saved = groups[0]
+    assert saved["omit_status_url"] is False
+    assert saved["hide_original_when_translated"] is True
+
+
+def test_webui_update_finds_explicit_legacy_global_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "默认分组",
+                "group_id": "global",
+                "enabled": True,
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "watch_queries": [],
+                "push_targets": [],
+                "interval_check_enabled": True,
+                "daily_check_times": [],
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {"group_id": "global", "name": "默认分组", "enabled": False}
+    )
+
+    assert result.get("success") is True, result
+    saved = config_get(config, "tweet_groups", [])[0]
+    assert saved["group_id"] == "global"
+    assert saved["enabled"] is False
+
+
+def test_webui_update_by_alias_preserves_stable_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Current name",
+                "group_id": "stable_id",
+                "aliases": ["old_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.update_group(
+        {
+            "group_id": "old_alias",
+            "name": "Updated name",
+            "enabled": False,
+        }
+    )
+
+    # group_id 仍用稳定标识；group 为 None（本测试的编辑器无序列化能力，
+    # 前端据 presence 走原位替换或整组重拉）
+    assert result["success"] is True
+    assert result["group_id"] == "stable_id"
+    assert result["group"] is None
+    saved = config_get(config, "tweet_groups", [])[0]
+    assert saved["group_id"] == "stable_id"
+    assert saved["name"] == "Updated name"
+
+
+def test_webui_delete_by_alias_returns_stable_group_id():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Disposable group",
+                "group_id": "stable_id",
+                "aliases": ["old_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.delete_group(
+        {"group_id": "old_alias", "force": True, "confirm": "DELETE"}
+    )
+
+    assert result["success"] is True
+    assert result["group_id"] == "stable_id"
+    assert config_get(config, "tweet_groups", []) == []
+
+
+def test_webui_default_group_alias_cannot_bypass_delete_protection():
+    editor, config = _partial_update_editor(
+        [
+            {
+                "name": "Default group",
+                "group_id": "default",
+                "aliases": ["legacy_default_alias"],
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": [],
+            }
+        ]
+    )
+
+    result = editor.delete_group(
+        {
+            "group_id": "legacy_default_alias",
+            "force": True,
+            "confirm": "DELETE",
+        }
+    )
+
+    assert result == {"success": False, "error": "默认分组不能在 WebUI 中删除"}
+    assert config_get(config, "tweet_groups", [])[0]["group_id"] == "default"
+
+
+def test_dashboard_update_preserves_inactive_mixed_legacy_watch_lists():
+    config = _FakeConfig(
+        {
+            "_default_group_config_migrated": True,
+            "push": {
+                "tweet_groups": [
+                    {
+                        "name": "mixed blogger",
+                        "group_id": "mixed_blogger",
+                        "group_type": "blogger",
+                        "watch_users": ["nasa"],
+                        "watch_queries": ["#space"],
+                        "push_targets": [],
+                    },
+                    {
+                        "name": "mixed tag",
+                        "group_id": "mixed_tag",
+                        "group_type": "tag",
+                        "watch_users": ["legacy_user"],
+                        "watch_queries": ["#space"],
+                        "push_targets": [],
+                    },
+                ]
+            },
+        }
+    )
+    editor = _make_editor(config)
+    editor.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+
+    blogger_result = editor.update_group(
+        {
+            "group_id": "mixed_blogger",
+            "name": "mixed blogger",
+            "enabled": False,
+        }
+    )
+    tag_result = editor.update_group(
+        {
+            "group_id": "mixed_tag",
+            "name": "mixed tag",
+            "enabled": False,
+        }
+    )
+
+    assert blogger_result.get("success") is True, blogger_result
+    assert tag_result.get("success") is True, tag_result
+    groups = {
+        group["group_id"]: group for group in config_get(config, "tweet_groups", [])
+    }
+    assert groups["mixed_blogger"]["watch_queries"] == ["#space"]
+    assert groups["mixed_tag"]["watch_users"] == ["legacy_user"]
+
+
+def test_dashboard_group_serialization_preserves_hide_original_toggle():
+    config = {
+        "tweet_groups": [
+            {
+                "name": "默认分组",
+                "group_id": "default",
+                "group_type": "blogger",
+                "watch_users": ["nasa"],
+                "push_targets": ["aiocqhttp:GroupMessage:1"],
+                "hide_original_when_translated": True,
+            }
+        ]
+    }
+    group = SchedulerConfigReader(config, context=None).schedule_groups()[0]
+    plugin = MagicMock()
+    plugin.config = config
+
+    payload = NitterWebAPI(plugin)._serialize_group(group)
+
+    assert payload["hide_original_when_translated"] is True
+
+
+def test_dashboard_query_editor_preserves_explicit_phrase_type():
+    config = {"tweet_groups": []}
+    editor = _make_editor(config)
+    editor.scheduler.config_reader = SchedulerConfigReader(config, context=None)
+
+    stored = editor._normalized_watch_queries([{"query": "#literal", "type": "phrase"}])
+
+    assert stored == ["nitter-query:phrase:#literal"]

@@ -1,195 +1,122 @@
-"""Test global retry mechanism in HtmlNitterPool."""
+"""HTML global retry delays, stop conditions, and rate-limiter thread safety."""
 
-from __future__ import annotations
-
-import time
+import threading
+from unittest.mock import MagicMock, call
 
 import pytest
 
 from media_support.html_backend.pool import HtmlNitterPool, PoolConfig
+from media_support.html_backend.rate_limit import RateLimiter
 
 
-def test_search_global_retry_on_all_instances_fail():
-    """All instances fail in round 1, succeed in round 2."""
-    call_count = 0
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count <= 1:  # First attempt: fail
-            raise RuntimeError("all instances failed")
-        # Second attempt: succeed
-        return ("https://a.example", [])
-
-    config = PoolConfig(
-        instances=["https://a.example", "https://b.example"],
-        max_global_retries=2,
-        retry_delay_base=0.01,  # Fast for testing
-    )
-    pool = HtmlNitterPool(config)
-    pool._search_once = mock_search_once
-
-    start = time.time()
-    base, _tweets = pool.search("#test", limit=5)
-    elapsed = time.time() - start
-
-    assert call_count == 2  # 1 failed + 1 success
-    assert base == "https://a.example"
-    assert elapsed >= 0.01  # At least one delay happened
-
-
-def test_search_global_retry_respects_max_retries():
-    """Exhaust max_global_retries and raise the final error."""
-    call_count = 0
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        raise RuntimeError("persistent failure")
-
-    config = PoolConfig(
-        instances=["https://a.example"],
-        max_global_retries=2,
-        retry_delay_base=0.01,
-    )
-    pool = HtmlNitterPool(config)
-    pool._search_once = mock_search_once
-
-    with pytest.raises(RuntimeError, match="persistent failure"):
-        pool.search("#test", limit=5)
-
-    assert call_count == 2  # Tried max_global_retries times
-
-
-def test_search_global_retry_on_cooldown_uses_longer_delay():
-    """When all instances are cooling, use retry_delay_on_cooldown."""
-    call_count = 0
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise RuntimeError("all instances in cooldown")
-        return ("https://a.example", [])
-
-    config = PoolConfig(
-        instances=["https://a.example"],
-        max_global_retries=2,
-        retry_delay_base=0.01,
-        retry_delay_on_cooldown=0.05,
-    )
-    pool = HtmlNitterPool(config)
-    pool._search_once = mock_search_once
-
-    start = time.time()
-    _base, _tweets = pool.search("#test", limit=5)
-    elapsed = time.time() - start
-
-    assert call_count == 2
-    assert elapsed >= 0.05  # Used longer cooldown delay
-
-
-def test_fetch_user_global_retry_on_all_instances_fail():
-    """fetch_user also retries globally on total failure."""
-    call_count = 0
-
-    def mock_fetch_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise RuntimeError("all instances failed")
-        return ("https://a.example", [])
-
-    config = PoolConfig(
-        instances=["https://a.example"],
-        max_global_retries=2,
-        retry_delay_base=0.01,
-    )
-    pool = HtmlNitterPool(config)
-    pool._fetch_user_once = mock_fetch_once
-
-    base, _tweets = pool.fetch_user("testuser", limit=5)
-    assert call_count == 2
-    assert base == "https://a.example"
-
-
-def test_search_no_retry_on_explicit_instance():
-    """Explicit instance (probe mode) skips global retry."""
-    call_count = 0
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        raise RuntimeError("instance failed")
-
-    config = PoolConfig(
-        instances=["https://a.example"],
-        max_global_retries=2,
-    )
-    pool = HtmlNitterPool(config)
-    pool._search_once = mock_search_once
-
-    with pytest.raises(RuntimeError, match="instance failed"):
-        pool.search("#test", limit=5, instance="https://probe.example")
-
-    assert call_count == 1  # No retry, direct failure
-
-
-def test_search_validation_error_no_retry():
-    """ValueError (e.g. empty query) should not trigger retry."""
-    call_count = 0
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        raise ValueError("empty query")
-
-    config = PoolConfig(
-        instances=["https://a.example"],
-        max_global_retries=2,
-    )
-    pool = HtmlNitterPool(config)
-    pool._search_once = mock_search_once
-
-    with pytest.raises(ValueError, match="empty query"):
-        pool.search("#test", limit=5)
-
-    assert call_count == 1  # No retry on validation error
-
-
-def test_global_retry_delay_increases_progressively():
-    """Retry delay increases: 5s, 10s, 15s..."""
-    call_count = 0
-    delays = []
-
-    original_sleep = time.sleep
-
-    def mock_sleep(seconds):
-        delays.append(seconds)
-        original_sleep(0.001)  # Actually sleep briefly for realism
-
-    time.sleep = mock_sleep
-
-    def mock_search_once(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count <= 2:
-            raise RuntimeError("fail")
-        return ("https://a.example", [])
-
-    try:
-        config = PoolConfig(
-            instances=["https://a.example"],
-            max_global_retries=3,
+@pytest.mark.parametrize("operation", ["search", "fetch_user"])
+@pytest.mark.parametrize("cooldown", [False, True], ids=["failure", "cooldown"])
+def test_global_retry_recovers_with_expected_delay(monkeypatch, operation, cooldown):
+    sleep = MagicMock()
+    monkeypatch.setattr("media_support.html_backend.pool.time.sleep", sleep)
+    pool = HtmlNitterPool(
+        PoolConfig(
+            instances=["https://a.example", "https://b.example"],
+            max_global_retries=2,
             retry_delay_base=5.0,
+            retry_delay_on_cooldown=30.0,
         )
-        pool = HtmlNitterPool(config)
-        pool._search_once = mock_search_once
+    )
+    once = MagicMock(
+        side_effect=[
+            RuntimeError(
+                "all instances in cooldown" if cooldown else "all instances failed"
+            ),
+            ("https://a.example", []),
+        ]
+    )
+    monkeypatch.setattr(
+        pool, "_search_once" if operation == "search" else "_fetch_user_once", once
+    )
+    assert getattr(pool, operation)("test", limit=5) == ("https://a.example", [])
+    assert once.call_count == 2
+    assert sleep.call_args_list == [call(30.0 if cooldown else 5.0)]
 
-        _base, _tweets = pool.search("#test", limit=5)
-        assert call_count == 3  # 2 failed + 1 success
-        assert len(delays) == 2  # 2 retries = 2 delays
-        assert delays[0] == 5.0  # First retry: 5s
-        assert delays[1] == 10.0  # Second retry: 10s
-    finally:
-        time.sleep = original_sleep
+
+@pytest.mark.parametrize("operation", ["search", "fetch_user"])
+def test_global_retry_exhausts_budget_and_propagates_final_error(
+    monkeypatch, operation
+):
+    sleep = MagicMock()
+    monkeypatch.setattr("media_support.html_backend.pool.time.sleep", sleep)
+    pool = HtmlNitterPool(
+        PoolConfig(
+            instances=["https://a.example"], max_global_retries=2, retry_delay_base=5.0
+        )
+    )
+    once = MagicMock(side_effect=RuntimeError("persistent failure"))
+    monkeypatch.setattr(
+        pool, "_search_once" if operation == "search" else "_fetch_user_once", once
+    )
+    with pytest.raises(RuntimeError, match="persistent failure"):
+        getattr(pool, operation)("test", limit=5)
+    assert once.call_count == 2
+    assert sleep.call_args_list == [call(5.0)]
+
+
+@pytest.mark.parametrize(
+    "probe", [False, True], ids=["validation-error", "explicit-instance"]
+)
+def test_search_does_not_retry_validation_or_explicit_instance(monkeypatch, probe):
+    sleep = MagicMock()
+    monkeypatch.setattr("media_support.html_backend.pool.time.sleep", sleep)
+    pool = HtmlNitterPool(
+        PoolConfig(instances=["https://a.example"], max_global_retries=2)
+    )
+    error = RuntimeError("instance failed") if probe else ValueError("empty query")
+    once = MagicMock(side_effect=error)
+    monkeypatch.setattr(pool, "_search_once", once)
+    with pytest.raises(type(error), match=str(error)):
+        pool.search(
+            "test", limit=5, **({"instance": "https://probe.example"} if probe else {})
+        )
+    assert once.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_global_retry_delay_increases_progressively(monkeypatch):
+    sleep = MagicMock()
+    monkeypatch.setattr("media_support.html_backend.pool.time.sleep", sleep)
+    pool = HtmlNitterPool(
+        PoolConfig(
+            instances=["https://a.example"], max_global_retries=3, retry_delay_base=5.0
+        )
+    )
+    once = MagicMock(
+        side_effect=[
+            RuntimeError("fail"),
+            RuntimeError("fail"),
+            ("https://a.example", []),
+        ]
+    )
+    monkeypatch.setattr(pool, "_search_once", once)
+    pool.search("test", limit=5)
+    assert once.call_count == 3
+    assert sleep.call_args_list == [call(5.0), call(10.0)]
+
+
+def test_rate_limiter_concurrent_punish_reward_and_cooling():
+    limiter = RateLimiter()
+    errors = []
+
+    def worker():
+        try:
+            for _ in range(20):
+                limiter.punish("host.example")
+                limiter.is_cooling("host.example")
+                limiter.reward("host.example")
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []

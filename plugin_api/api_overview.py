@@ -421,6 +421,7 @@ class WebAPIOverviewMixin:
             "group_id": group.group_id,
             "name": group.name,
             "enabled": group.enabled,
+            "max_tweets_per_check": group.max_tweets_per_check,
             "group_type": group.group_type,
             "aliases": list(group.aliases),
             "watch_users": list(group.users),

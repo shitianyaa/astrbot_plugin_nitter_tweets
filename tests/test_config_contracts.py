@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 import config.compat as compat
@@ -245,7 +247,7 @@ def test_schema_exposes_only_instances():
         assert key not in basic
     assert "storage_backend" not in basic
     assert basic["filter_reposts_enabled"]["default"] is True
-    assert basic["filter_reposts_enabled"]["description"] == "转发过滤总开关"
+    assert basic["filter_reposts_enabled"]["description"] == "全局转推过滤"
 
 
 def test_removed_user_agent_config_is_persisted_by_startup_migration():
@@ -569,3 +571,107 @@ def test_tag_import_persists_reversible_string_queries():
         ("#foo", "tag"),
         ("#literal", "phrase"),
     ]
+
+
+def test_removed_tuning_and_group_overrides_are_cleaned_idempotently(tmp_path):
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from media_support.client import NitterClient
+    from config import config_get, migrate_default_group_config
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                LEGACY_CONFIG_MIGRATION_KEY: True,
+                "basic": {
+                    "retry_attempts": 5,
+                    "retry_delay_seconds": 0,
+                    "html_min_interval": 0,
+                },
+                "push": {
+                    "tweet_groups": [
+                        {
+                            "group_id": "g",
+                            "check_on_startup": True,
+                            "notify_no_updates": True,
+                            "check_interval_minutes": 1,
+                            "max_tweets_per_check": 7,
+                            "_baseline_reset_token": "persisted-request",
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = AstrBotConfig(
+        str(path), schema=json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    )
+    migrate_legacy_grouped_config(config)
+    migrate_default_group_config(config)
+    removed_basic = {"retry_attempts", "retry_delay_seconds", "html_min_interval"}
+    assert not removed_basic & config["basic"].keys()
+    assert (
+        not removed_basic
+        & json.loads(path.read_text(encoding="utf-8-sig"))["basic"].keys()
+    )
+    group = config_get(config, "tweet_groups")[0]
+    assert group["max_tweets_per_check"] == 7
+    assert group["_baseline_reset_token"] == "persisted-request"
+    assert (
+        not {"check_on_startup", "notify_no_updates", "check_interval_minutes"}
+        & group.keys()
+    )
+    before = json.loads(json.dumps(config))
+    migrate_legacy_grouped_config(config)
+    migrate_default_group_config(config)
+    assert config == before
+    client = NitterClient(config)
+    assert (client.retry_attempts, client.retry_delay_seconds) == (2, 5.0)
+
+
+@pytest.mark.parametrize(
+    "group_id, query",
+    [("t1", "#foo"), ("T1", "#bar")],
+    ids=["plain-id", "normalized-id"],
+)
+def test_watch_queries_heal_object_form(group_id, query):
+    class Config(dict):
+        saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    config = Config(
+        {
+            "tweet_groups": [
+                {
+                    "name": "Tags",
+                    "group_id": group_id,
+                    "group_type": "tag",
+                    "watch_queries": [{"query": query, "type": "tag"}],
+                    "enabled": True,
+                    "push_targets": ["telegram:FriendMessage:1"],
+                }
+            ]
+        }
+    )
+    groups = SchedulerConfigReader(config, None).schedule_groups(
+        log_invalid_targets=False
+    )
+    assert len(groups) == 1
+    assert groups[0].group_id == group_id.lower()
+    assert groups[0].queries_info.queries[0].type == "tag"
+    assert config["tweet_groups"][0]["watch_queries"] == [query]
+    assert config.saved >= 1
+
+
+def test_retired_retry_values_are_ignored_without_migration():
+    client = NitterClient(
+        {
+            "instances": ["https://a.example"],
+            "retry_attempts": 4,
+            "retry_delay_seconds": 1.5,
+        }
+    )
+    assert (client.retry_attempts, client.retry_delay_seconds) == (2, 5.0)
