@@ -142,6 +142,40 @@ class SQLiteMigrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([item.status_id for item in default_history], ["101"])
             self.assertEqual(legacy_count, 0)
 
+    async def test_global_group_migration_preserves_handled_on_seen_collisions(self):
+        from scheduler.config import SchedulerConfigReader
+
+        with TemporaryDirectory() as temp_dir:
+            storage = SQLiteStorage(Path(temp_dir) / "state.db")
+            await storage.connect()
+            try:
+                storage.add_seen_ids("default", "nasa", ["120", "121"])
+                storage.add_seen_ids("default", "nasa", ["122"], handled=True)
+                storage.add_seen_ids("default", "other", ["120"])
+                storage.add_seen_ids("global", "nasa", ["120", "123"], handled=True)
+                storage.add_seen_ids("global", "nasa", ["121", "122"])
+                reader = SchedulerConfigReader(
+                    {
+                        "tweet_groups": [
+                            {"group_id": "default", "watch_users": ["nasa"]}
+                        ]
+                    },
+                    None,
+                )
+
+                storage.sync_config_groups(reader.schedule_groups())
+
+                self.assertEqual(storage.get_group_seen_map("global"), {})
+                self.assertEqual(
+                    set(storage.get_seen_ids("default", "nasa")),
+                    {"120", "121", "122", "123"},
+                )
+                handled = storage.get_group_handled_seen_map("default")
+                self.assertEqual(set(handled), {"nasa"})
+                self.assertEqual(set(handled["nasa"]), {"120", "122", "123"})
+            finally:
+                storage.close()
+
     async def test_pending_baselines_survive_reopen_and_seen_backfill(self):
         from scheduler.config import SchedulerConfigReader
         from scheduler.runner_seen import SchedulerSeenMixin

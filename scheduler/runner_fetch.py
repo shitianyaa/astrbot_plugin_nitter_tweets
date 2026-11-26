@@ -1050,6 +1050,8 @@ class SchedulerFetchMixin:
                         SourceStatus.FILTERED_EMPTY
                         if scan_result.complete
                         and not tweets
+                        # Pure-text originals still advance the scan watermark.
+                        and not scan_result.scanned_status_ids
                         and (
                             scan_result.reposts_filtered
                             or scan_result.plain_text_filtered

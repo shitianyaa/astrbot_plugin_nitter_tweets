@@ -7,7 +7,7 @@ import unittest
 from itertools import product
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _ROOT = _TESTS_DIR.parent
@@ -18,9 +18,10 @@ if str(_TESTS_DIR) not in sys.path:
 
 import test_scheduler_delivery as base  # noqa: E402
 
+from media_support.client import SchedulerFetchResult  # noqa: E402
 from media_support.html_backend.pool import HtmlSearchResult  # noqa: E402
 from scheduler.runner_seen import SchedulerSeenMixin  # noqa: E402
-from shared.utils import TweetItem  # noqa: E402
+from shared.utils import TweetItem, TweetMedia  # noqa: E402
 from storage import SQLiteStorage, StorageAdapter  # noqa: E402
 
 
@@ -217,6 +218,75 @@ class ListSchedulerDeliveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.new_tweet_count, 1)
         self.assertEqual(sender.sent[-1][3], ["102"])
         self.assertIn("102", await scheduler.storage.get_seen_ids("lists1", key))
+
+    async def test_list_rss_advances_filtered_originals_but_not_repost_only(self):
+        key = "list:12345"
+        media_tweet = self._tweet("140")
+        media_tweet.media = [
+            TweetMedia(kind="image", url="https://pbs.twimg.com/media/example.jpg")
+        ]
+        scans = [
+            SchedulerFetchResult(
+                [],
+                ["120", "110", "100"],
+                ["120", "110", "100"],
+                plain_text_filtered=3,
+                complete=True,
+            ),
+            SchedulerFetchResult([], [], reposts_filtered=2, complete=True),
+            SchedulerFetchResult(
+                [],
+                ["130", "120"],
+                ["130", "120"],
+                plain_text_filtered=2,
+                reposts_filtered=1,
+                complete=True,
+            ),
+            SchedulerFetchResult(
+                [media_tweet],
+                ["140", "130"],
+                ["140", "130"],
+                complete=True,
+            ),
+        ]
+        config = self._config()
+        config["tweet_groups"][0]["filter_plain_text_enabled"] = True
+        nitter = base._Nitter()
+        nitter.fetch_list_for_scheduler = AsyncMock(
+            side_effect=[("https://list.test", scan) for scan in scans]
+        )
+        sender = base._Sender()
+        scheduler = self._create_scheduler(
+            _ListBackend([]), sender=sender, nitter=nitter, config=config
+        )
+        storage = scheduler.storage
+        await storage.add_seen_ids("lists1", key, ["100"])
+        await storage.set_scan_watermark("lists1", key, ["100"])
+
+        for expected, plain_count, repost_count in (
+            (["120", "110", "100"], 3, 0),
+            (["120", "110", "100"], 0, 2),
+            (["130", "120"], 2, 1),
+        ):
+            filtered = await scheduler.run_check(group_name="lists1")
+            self.assertEqual(filtered.plain_text_filtered, plain_count)
+            self.assertEqual(filtered.retweet_filtered, repost_count)
+            self.assertEqual(
+                filtered.filtered_empty_users, [] if plain_count else [key]
+            )
+            self.assertEqual(
+                await storage.get_group_scan_watermarks("lists1"), {key: expected}
+            )
+            self.assertEqual(sender.sent, [])
+
+        self.assertEqual(
+            await storage.get_seen_ids("lists1", key), ["130", "120", "110", "100"]
+        )
+        await scheduler.run_check(group_name="lists1")
+        self.assertEqual(
+            nitter.fetch_list_for_scheduler.await_args.args[1], ["130", "120"]
+        )
+        self.assertEqual([item[3] for item in sender.sent], [["140"]])
 
     async def test_list_group_can_disable_repost_filter(self):
         backend = _ListBackend([("https://list.test", [self._tweet("100")])])

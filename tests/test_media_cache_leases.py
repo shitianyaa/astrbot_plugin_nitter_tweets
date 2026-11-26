@@ -324,7 +324,7 @@ async def test_web_cache_clear_shares_worker_after_cancelled_waiter(tmp_path):
     assert not file.exists()
 
 
-def test_cache_clear_counts_inaccessible_subtree_and_keeps_cleaning(
+def test_cache_stats_and_cleanup_continue_past_inaccessible_subtree(
     tmp_path, monkeypatch
 ):
     from media_support import cache as cache_module
@@ -343,13 +343,14 @@ def test_cache_clear_counts_inaccessible_subtree_and_keeps_cleaning(
         return original_scandir(path)
 
     monkeypatch.setattr(cache_module.os, "scandir", scandir)
+    stats = cache.cache_stats()
+    assert (stats.files, stats.images, stats.bytes) == (1, 1, len(b"image"))
     result = cache.clear_cache()
     assert result.failed == 1
     assert result.removed == 1
     assert not ordinary.exists()
     assert (blocked / "keep.jpg").exists()
-    with pytest.raises(PermissionError):
-        cache.cache_stats()
+    assert cache.cache_stats().files == 0
 
 
 def test_cache_result_serializes_active_lease_skips():

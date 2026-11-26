@@ -405,6 +405,25 @@ async def test_update_group_response_carries_serialized_group_without_warning(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stored_enabled", ["disabled", "disable", "关"])
+async def test_group_reenable_recognizes_legacy_false_value(stored_enabled):
+    api, config, storage = _make_group_api("list")
+    _group_raw(config)["enabled"] = stored_enabled
+    assert not api.scheduler.config_reader.schedule_groups()[0].enabled
+
+    assert (await api.update_group({"group_id": "g", "name": "改名"}))["success"]
+    assert _group_raw(config)["enabled"] is False
+    assert not _group_raw(config).get("_baseline_reset_token")
+
+    _group_raw(config)["enabled"] = stored_enabled
+    assert (await api.update_group({"group_id": "g", "enabled": True}))["success"]
+    assert _group_raw(config)["enabled"] is True
+    token = _group_raw(config)["_baseline_reset_token"]
+    assert token
+    assert storage.migrate_and_sync.await_args.args[0][0].baseline_reset_token == token
+
+
+@pytest.mark.asyncio
 async def test_update_group_save_failure_preserves_config_and_skips_sync():
     api, config, storage = _make_group_api()
     previous = config_get(config, "tweet_groups")

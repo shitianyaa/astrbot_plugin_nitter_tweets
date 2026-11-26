@@ -553,6 +553,21 @@ class SQLiteSchemaMixin:
     ) -> None:
         if not self._table_exists(cursor, table):
             return
+        if table == "seen_tweets":
+            # A matching legacy row can carry terminal handling evidence.
+            cursor.execute(
+                """
+                UPDATE seen_tweets
+                SET handled = 1
+                WHERE group_id = ?
+                  AND handled = 0
+                  AND (username, status_id) IN (
+                      SELECT username, status_id FROM seen_tweets
+                      WHERE group_id = ? AND handled = 1
+                  )
+                """,
+                (default_id, legacy_id),
+            )
         key_columns = (key_column,) if isinstance(key_column, str) else key_column
         predicate = " AND ".join(
             f"target.{column} = {table}.{column}" for column in key_columns

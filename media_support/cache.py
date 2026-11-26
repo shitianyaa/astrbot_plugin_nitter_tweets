@@ -242,18 +242,12 @@ class MediaCacheMixin:
             self._stat_cache_dir(cache_dir, stats)
         return stats
 
-    @staticmethod
-    def _raise_walk_error(error: OSError) -> None:
-        raise error
-
     @classmethod
     def _iter_cache_paths(
         cls, cache_dir: Path, on_error: Callable[[OSError], None] | None = None
     ) -> Iterator[Path]:
         directories = []
-        for current, dirs, files in os.walk(
-            cache_dir, onerror=on_error or cls._raise_walk_error
-        ):
+        for current, dirs, files in os.walk(cache_dir, onerror=on_error):
             if Path(current) == cache_dir:
                 dirs[:] = [
                     name
