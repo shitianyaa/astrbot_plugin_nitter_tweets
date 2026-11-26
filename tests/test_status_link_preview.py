@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -304,16 +305,19 @@ def test_fx_payload_maps_photo_tweet():
     assert tweet.media[0].is_image
 
 
-def test_resolve_falls_back_across_sources(monkeypatch):
+@pytest.mark.parametrize("syndication_succeeds", [True, False])
+def test_resolve_falls_back_across_sources_without_attempt_logs(
+    monkeypatch, caplog, syndication_succeeds
+):
     link = StatusLink("u", "9", "https://x.com/u/status/9")
     calls: list[str] = []
 
     def fake_fetch(url: str, *, timeout: float, proxy_url=None):
         calls.append(url)
         if "fxtwitter" in url:
-            raise StatusResolveError("fx down")
-        if "vxtwitter" in url:
-            raise StatusResolveError("vx down")
+            raise TimeoutError("fx down")
+        if "vxtwitter" in url or not syndication_succeeds:
+            return {}
         return {
             "text": "hello from syn",
             "user": {"screen_name": "u"},
@@ -322,10 +326,24 @@ def test_resolve_falls_back_across_sources(monkeypatch):
         }
 
     monkeypatch.setattr("media_support.status_resolve._fetch_json", fake_fetch)
-    tweet = resolve_status_tweet(link, timeout=1)
-    assert tweet.text == "hello from syn"
+    # AstrBot's logger does not propagate to the root capture handler.
+    host_logger = logging.getLogger("astrbot")
+    host_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="astrbot"):
+            if syndication_succeeds:
+                assert resolve_status_tweet(link, timeout=1).text == "hello from syn"
+            else:
+                with pytest.raises(StatusResolveError) as error:
+                    resolve_status_tweet(link, timeout=1)
+                assert str(error.value) == (
+                    "fxtwitter: TimeoutError; vxtwitter: empty; syndication: empty"
+                )
+    finally:
+        host_logger.removeHandler(caplog.handler)
     assert len(calls) == 3
     assert "syndication" in calls[-1]
+    assert not caplog.records
 
 
 @pytest.mark.asyncio

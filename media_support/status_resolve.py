@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 from urllib.request import Request
 
@@ -33,8 +32,6 @@ except ImportError:
     )
     from media_support.xdown import XdownMediaCandidate
     from shared.utils import TweetItem, TweetMedia, format_tweet_published
-
-from astrbot.api import logger
 
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_RESPONSE_BYTES = 1_500_000
@@ -628,35 +625,18 @@ def resolve_status_tweet(
     ]
     errors: list[str] = []
     for name, url, builder in sources:
-        started = time.perf_counter()
         try:
             payload = _fetch_json(url, timeout=timeout, proxy_url=proxy_url)
             tweet = builder(link, payload)
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
             if tweet is None:
                 errors.append(f"{name}: empty")
-                logger.info(
-                    f"[NitterTweets] 链接解析为空: source={name}, "
-                    f"status_id={sid}, elapsed_ms={elapsed_ms}"
-                )
                 continue
             _apply_image_quality(tweet, media_quality)
-            logger.info(
-                f"[NitterTweets] 链接解析成功: source={name}, "
-                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
-                f"media={len(tweet.media)}, quality={media_quality}"
-            )
             return tweet
         except HttpProxyConfigError as exc:
             raise StatusResolveError(str(exc.reason)) from exc
         except Exception as exc:
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
             errors.append(f"{name}: {type(exc).__name__}")
-            logger.info(
-                f"[NitterTweets] 链接解析失败: source={name}, "
-                f"status_id={sid}, elapsed_ms={elapsed_ms}, "
-                f"error={type(exc).__name__}"
-            )
     raise StatusResolveError("; ".join(errors) or "resolve failed")
 
 
